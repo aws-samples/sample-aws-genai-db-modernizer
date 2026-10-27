@@ -1,0 +1,935 @@
+{
+  "contract_version": "2.5",
+  "agent_metadata": {
+    "agent_name": "opensearch-analysis-agent",
+    "agent_version": "1.0.0",
+    "target_database": "opensearch",
+    "analysis_timestamp": "2026-10-26T20:38:08.773274",
+    "analysis_duration_seconds": 0.018994
+  },
+  "table_recommendations": [
+    {
+      "table_id": "wordpress.wp_actionscheduler_actions",
+      "confidence_score": 81,
+      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 100,
+        "performance_score": 40,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_claims",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_actionscheduler_claims. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_groups",
+      "confidence_score": 82,
+      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 100,
+        "performance_score": 40,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_logs",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_actionscheduler_logs. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_commentmeta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_commentmeta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_comments",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_comments. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_links",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_links. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_options",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_options. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_postmeta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_postmeta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_posts",
+      "confidence_score": 81,
+      "rationale": "[SEARCH] Detected patterns: wildcard search, time range query. High query throughput (25 calls/sec) suits OpenSearch search scalability.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 90,
+        "performance_score": 50,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "os-02",
+        "os-05"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_term_relationships",
+      "confidence_score": 78,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (17 calls/sec) suits OpenSearch search scalability.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_term_taxonomy",
+      "confidence_score": 81,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (20 calls/sec) suits OpenSearch search scalability.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 95,
+        "performance_score": 40,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_termmeta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_termmeta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_terms",
+      "confidence_score": 82,
+      "rationale": "[SEARCH] Detected patterns: wildcard search. High query throughput (20 calls/sec) suits OpenSearch search scalability.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 100,
+        "performance_score": 40,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_usermeta",
+      "confidence_score": 80,
+      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 100,
+        "performance_score": 30,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_users",
+      "confidence_score": 81,
+      "rationale": "[SEARCH] Detected patterns: wildcard search.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 100,
+        "performance_score": 35,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "os-02"
+      ],
+      "concerns": [
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_note_actions",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_admin_note_actions. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_notes",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_admin_notes. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_category_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_category_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_customer_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_customer_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_download_log",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_download_log. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_addresses",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_addresses. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_coupon_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_coupon_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_operational_data",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_operational_data. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_product_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_product_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_stats",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_stats. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_tax_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_order_tax_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_orders. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders_meta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_orders_meta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_attributes_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_product_attributes_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_download_directories",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_product_download_directories. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_meta_lookup",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_product_meta_lookup. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_rate_limits",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_rate_limits. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_reserved_stock",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_reserved_stock. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_tax_rate_classes",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_tax_rate_classes. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_webhooks",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_wc_webhooks. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_api_keys",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_api_keys. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "acid-transactions: Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth.",
+        "audit-columns-only: Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_attribute_taxonomies",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_attribute_taxonomies. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_downloadable_product_permissions. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_log",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_log. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_order_itemmeta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": [
+        "os-05"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_items",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_order_items. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": [
+        "os-05"
+      ],
+      "concerns": [
+        "multi-index-joins: Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately.",
+        "Complex joins detected: must be handled in application layer or denormalized."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokenmeta",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_payment_tokenmeta. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokens",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_payment_tokens. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_sessions",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_sessions. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_locations",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_shipping_zone_locations. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_methods",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_shipping_zone_methods. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zones",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_shipping_zones. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rate_locations",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_tax_rate_locations. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rates",
+      "confidence_score": 0,
+      "rationale": "[NOT_SUITABLE] No OpenSearch patterns detected for wordpress.wp_woocommerce_tax_rates. This table does not exhibit search or time-series access patterns.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 0,
+        "performance_score": 0,
+        "cost_score": 0
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "os-02",
+        "pattern_type": "wildcard-search",
+        "confidence": "MEDIUM",
+        "description": "LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets, with no full-table scan.",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": 4.67
+      },
+      {
+        "pattern_id": "os-05",
+        "pattern_type": "time-range-query",
+        "confidence": "MEDIUM",
+        "description": "Range queries on timestamp columns (created_at, event_time, etc.). OpenSearch time-series indices with date histograms excel at this access pattern.",
+        "query_ids": [
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+        ],
+        "table_ids": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 3.74
+      }
+    ],
+    "anti_patterns_detected": [
+      {
+        "anti_pattern_id": "os-ap-01",
+        "anti_pattern_type": "multi-index-joins",
+        "severity_weight": 0.8,
+        "description": "Queries joining multiple tables (join_count >= 2). OpenSearch has no join across indexes: nested documents and the join field type relate documents inside one index only, so the data must be denormalized into one index or joined in the application layer (OpenSearch documentation, Joining queries).",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+        ],
+        "table_ids": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "recommendation": "Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately."
+      },
+      {
+        "anti_pattern_id": "os-ap-02",
+        "anti_pattern_type": "acid-transactions",
+        "severity_weight": 0.6,
+        "description": "Frequent UPDATE/DELETE operations (> 1 CPS) indicate mutable data with ACID transactional requirements. OpenSearch has no multi-document transactions: each document write stands alone (OpenSearch documentation, Bulk API).",
+        "query_ids": [
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2"
+        ],
+        "table_ids": [
+          "wordpress.wp_options",
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "recommendation": "Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
+      },
+      {
+        "anti_pattern_id": "os-ap-03",
+        "anti_pattern_type": "audit-columns-only",
+        "severity_weight": 0.1,
+        "description": "Timestamp columns (created_at, updated_at, event_time, etc.) used only in equality checks, not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification; guidance only, since no OpenSearch limit applies (OpenSearch documentation, Date field type).",
+        "query_ids": [
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f",
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+          "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_comments",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users",
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "recommendation": "Tables with timestamp columns used only for audit/metadata purposes are not time-series candidates. Evaluate for search suitability instead."
+      }
+    ]
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 246.26,
+    "cost_components": {
+      "instance_cost_usd": 243.82,
+      "storage_cost_usd": 2.44,
+      "instance_type": "r6g.large.search",
+      "data_nodes": 2,
+      "storage_gb": 20.0,
+      "list_prices": "opensearch.managed",
+      "price_list": {
+        "source": "AWS Price List",
+        "region": "us-east-1",
+        "pricing_model": "on-demand",
+        "retrieved_on": "2026-10-25"
+      }
+    },
+    "pricing_assumptions": [
+      "2 r6g.large.search data nodes ($0.167/hr each)",
+      "gp3 EBS storage at $0.122/GB/month",
+      "20% storage overhead for OpenSearch index structures",
+      "Minimum 20 GB storage assumed",
+      "Region: us-east-1"
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": null,
+  "key_scoped_writes": null,
+  "key_scoped_counts": null,
+  "redesign_requirements": null,
+  "carried_writes": null
+}

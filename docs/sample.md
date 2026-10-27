@@ -4,7 +4,7 @@ This is one example of what the deliverables look like, for the `wordpress` samp
 
 ## How this sample was produced
 
-This is a real model run of the `wordpress` sample at release v0.3.0-beta.1: one interactive `/modernize` run in Claude Code, with its approval gate, on the collection shipped in `docs/examples/wordpress`. Claude wrote the parts a model writes in every run: the reality-check review, the per-engine schema designs (Aurora MySQL, DynamoDB with its design review, ElastiCache) and the executive summary. Collect, Triage, Analyze, Assign, the ranking, the TCO and the risk list are deterministic, as they are for you.
+This is a real model run of the `wordpress` sample at release v0.4.0-beta.1: one interactive `/modernize` run in Claude Code, with its approval gate, on the collection shipped in `docs/examples/wordpress`. Claude wrote the parts a model writes in every run: the reality-check review, the per-engine schema designs (Aurora MySQL, DynamoDB with its design review, ElastiCache) and the executive summary. Collect, Triage, Analyze, Assign, the ranking, the TCO and the risk list are deterministic, as they are for you.
 
 The run's synthesis report is committed under [`docs/examples/wordpress/sample-run/`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/examples/wordpress/sample-run), and each build of this site renders the deliverables from it with the current code, so wording and layout fixes show up here without a new run. The assessment itself is the recorded one, and it is refreshed once per release.
 

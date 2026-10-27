@@ -1,0 +1,3202 @@
+{
+  "schema_version": 3,
+  "about": "Each query's access-pattern class and class scores, as routing scored its pattern dimension as written (ADR-031 Decision 14, Amendments 5 and 7, #728); for a query a redesign applies to, ``redesign``: the keys it assumes and the class and class scores routing scored instead; its anti-pattern findings, each fixable by redesign or intrinsic (ADR-031 Decision 2 Amendment 13, #1231); and ``candidate_keys``: each column the redesign considered as a key, accepted or refused with every guard that refused it (#1361). Routing does not read this file.",
+  "by_class": {
+    "aggregation": 7,
+    "key_lookup": 25,
+    "key_scoped": 59,
+    "reference_read": 1,
+    "unanchored_join": 1,
+    "utility": 14
+  },
+  "findings_by_kind": {
+    "fixable": 1,
+    "intrinsic": 81
+  },
+  "redesigned_queries": 0,
+  "queries": [
+    {
+      "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+      "class": "key_lookup",
+      "reason": "one row of wp_woocommerce_api_keys by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "acid-transactions",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+      "class": "aggregation",
+      "reason": "aggregates rows no visible key anchors (read from a digest the collector cut short, up to its last complete predicate; later predicates are not seen)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "frequent-full-scan",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_actionscheduler_actions, wp_actionscheduler_groups (key wp_actionscheduler_actions.hook, wp_actionscheduler_actions.status, wp_actionscheduler_groups.slug: an index's leading column, with no cardinality statistics to confirm it); its pattern match only filters the keyed rows",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "elasticache",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_actionscheduler_actions.claim_id",
+          "table_id": "wordpress.wp_actionscheduler_actions",
+          "via": "equality",
+          "outcome": "accepted",
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "query_id": "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+      "class": "key_lookup",
+      "reason": "one row of wp_options by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "acid-transactions",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+      "class": "key_lookup",
+      "reason": "one row of wp_options by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "high-frequency-pk-lookup",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "upsert",
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+      "class": "key_lookup",
+      "reason": "one row of wp_options by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+      "class": "aggregation",
+      "reason": "groups rows and combines their values (GROUP BY)",
+      "facts": [
+        "time_bucket"
+      ],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 90
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_woocommerce_order_items.order_item_type",
+          "table_id": "wordpress.wp_woocommerce_order_items",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_relationships, wp_term_taxonomy",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "upsert",
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_order_itemmeta addressed by a non-unique key value (key wp_woocommerce_order_itemmeta.order_item_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_comments"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_relationships, wp_term_taxonomy, wp_termmeta",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+      "class": "key_scoped",
+      "reason": "rows of wp_options addressed by a non-unique key value (key wp_options.autoload: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_order_itemmeta addressed by a non-unique key value (key wp_woocommerce_order_itemmeta.order_item_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "512f04288099c9814a913aae14c9aac9bfbdd56b82be78c7646704e9a0d185ce",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+      "class": "key_lookup",
+      "reason": "one row of wp_options by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_order_itemmeta addressed by a non-unique key value (key wp_woocommerce_order_itemmeta.meta_key, wp_woocommerce_order_itemmeta.order_item_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+      "class": "key_scoped",
+      "reason": "rows of wp_termmeta addressed by a non-unique key value (key wp_termmeta.meta_key, wp_termmeta.term_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+      "class": "key_scoped",
+      "reason": "rows of wp_wc_reserved_stock addressed by a non-unique key value",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_status, wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_posts.post_title",
+          "table_id": "wordpress.wp_posts",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_actionscheduler_actions",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_order_items addressed by a non-unique key value (key wp_woocommerce_order_items.order_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+      "class": "key_scoped",
+      "reason": "rows of wp_actionscheduler_actions addressed by a non-unique key value (key wp_actionscheduler_actions.hook, wp_actionscheduler_actions.status: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+      "class": "key_lookup",
+      "reason": "inserts rows by key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_downloadable_product_permissions addressed by a non-unique key value (key wp_woocommerce_downloadable_product_permissions.order_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "write"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_order_itemmeta addressed by a non-unique key value (key wp_woocommerce_order_itemmeta.meta_key, wp_woocommerce_order_itemmeta.order_item_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_terms",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+      "class": "aggregation",
+      "reason": "groups rows and combines their values (GROUP BY)",
+      "facts": [
+        "partition_range",
+        "time_bucket"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 90
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+      "class": "unanchored_join",
+      "reason": "joins tables with no visible key path (read from a digest the collector cut short, up to its last complete predicate; later predicates are not seen)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 90,
+        "aurora_postgresql": 90,
+        "documentdb": 0,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "frequent-full-scan",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "7ebf84ab111bbc0d6f83fde78d7e195c120dd7686f89241e6478fefdd11d61ef",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_comments"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+      "class": "reference_read",
+      "reason": "reads all of wp_wc_tax_rate_classes, a small table (2 rows), with no predicate",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 85,
+        "dynamodb": 90,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (pagination, 85)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "frequent-full-scan",
+          "penalty": 20,
+          "kind": "fixable",
+          "evidence": "a whole read of a small reference table, which the design keeps as one item collection or caches",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
+      "class": "key_scoped",
+      "reason": "rows of wp_usermeta addressed by a non-unique key value (key wp_usermeta.user_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_usermeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a0eaf5312a583fe93b56c8c694d81007ae5a0e79e2b713b1f7651d2bda0b73b5",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_posts, wp_terms; its pattern match only filters the keyed rows",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_terms"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: with a key on wp_posts.post_password the rows are still not anchored by a key (wp_posts.post_title: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "elasticache",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: with a key on wp_posts.post_password the rows are still not anchored by a key (wp_posts.post_title: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_posts.post_password",
+          "table_id": "wordpress.wp_posts",
+          "via": "equality",
+          "outcome": "accepted",
+          "reasons": []
+        },
+        {
+          "column": "wp_posts.post_title",
+          "table_id": "wordpress.wp_posts",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+      "class": "key_scoped",
+      "reason": "rows of wp_woocommerce_api_keys addressed by a non-unique key value (key wp_woocommerce_api_keys.consumer_key: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "d1671227c280b76415519d9cd822726dceea9ec18daa5ef501d9a51b7a82e588",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "c81fa21d6b210e6a0a6e03fc3f5188d08c78938ac79a164758911b0ba05113fd",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_taxonomy",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "34f3e7563d77a268cd5a48f3df9df7b43699795e2af79ef2d5a7ee8ffdd8f2d9",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_relationships, wp_term_taxonomy",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f33fba2bc06e09310598d8ec1c8e79805064b1b47ae2d3d52d54634cdac4a019",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_taxonomy (key wp_term_taxonomy.taxonomy: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+      "class": "key_lookup",
+      "reason": "one row of wp_users by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_users"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "91603b5bf10532c65d3876110eb2d65dcfa43b79f682739496d60ed82a9071ad",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "519c47a0c8729eb1c2256dcfb3bf5253f2c809fdcd717d6920aa644981bac7b6",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "b065d0f32c1e6491039cf7a3ed2b48bed98783293749e636139aa1883fe6eb11",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+      "class": "key_scoped",
+      "reason": "aggregate over the rows one key value of wp_postmeta addresses (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "key_scoped_count"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_taxonomy",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a35498ec1aa88e4a99d9f05d0d9bbd508d654e1cc0618decbee3abc5bfe91f09",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+      "class": "key_scoped",
+      "reason": "rows of wp_termmeta addressed by a non-unique key value (key wp_termmeta.meta_key, wp_termmeta.term_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+      "class": "key_scoped",
+      "reason": "aggregate over the rows one key value of wp_comments addresses (key wp_comments.comment_post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [
+        "key_scoped_count"
+      ],
+      "tables": [
+        "wordpress.wp_comments"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_comments.comment_approved",
+          "table_id": "wordpress.wp_comments",
+          "via": "equality",
+          "outcome": "accepted",
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "query_id": "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_relationships, wp_term_taxonomy",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_taxonomy, wp_terms (key wp_term_taxonomy.taxonomy, wp_terms.name: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "unknown"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+      "class": "key_scoped",
+      "reason": "aggregate over a key-anchored join: every table reached by key from wp_postmeta, wp_posts",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+      "class": "aggregation",
+      "reason": "aggregates rows no visible key anchors (read from a digest the collector cut short, up to its last complete predicate; later predicates are not seen)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "documentdb",
+          "pattern": "heavy-cross-collection-joins",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "dynamodb",
+          "pattern": "frequent-full-scan",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: its predicates cannot all be read, so no key is evidenced",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_term_taxonomy, wp_terms (key wp_term_taxonomy.taxonomy, wp_terms.slug: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+      "class": "key_lookup",
+      "reason": "one row of wp_comments by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_comments"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+      "class": "key_scoped",
+      "reason": "rows of wp_postmeta addressed by a non-unique key value (key wp_postmeta.meta_key, wp_postmeta.post_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+      "class": "key_scoped",
+      "reason": "rows of wp_termmeta addressed by a non-unique key value (key wp_termmeta.term_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_status, wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_usermeta (key wp_usermeta.meta_key: an index's leading column, with no cardinality statistics to confirm it); its pattern match only filters the keyed rows",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "elasticache",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+      "class": "key_lookup",
+      "reason": "one row of wp_term_relationships by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_term_relationships"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_usermeta (key wp_usermeta.meta_key: an index's leading column, with no cardinality statistics to confirm it); its pattern match only filters the keyed rows",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "elasticache",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+      "class": "aggregation",
+      "reason": "groups rows and combines their values (GROUP BY)",
+      "facts": [
+        "time_bucket"
+      ],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 90
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_woocommerce_order_items.order_item_type",
+          "table_id": "wordpress.wp_woocommerce_order_items",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+      "class": "key_lookup",
+      "reason": "one row of wp_users by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_users"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d",
+      "class": "key_scoped",
+      "reason": "rows of wp_actionscheduler_groups addressed by a non-unique key value (key wp_actionscheduler_groups.slug: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+      "class": "key_scoped",
+      "reason": "aggregate over a key-anchored join: every table reached by key from wp_posts, wp_woocommerce_order_itemmeta",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "opensearch",
+          "pattern": "multi-index-joins",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry (wp_woocommerce_order_items.order_item_type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_woocommerce_order_items.order_item_type",
+          "table_id": "wordpress.wp_woocommerce_order_items",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290",
+      "class": "key_lookup",
+      "reason": "one row of wp_posts by its full unique key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 80,
+        "aurora_postgresql": 80,
+        "documentdb": 80,
+        "dynamodb": 100,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {
+        "documentdb": "parity anchor: no engine-specific evidence yet (key-value-lookup, 80)"
+      },
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+      "class": "aggregation",
+      "reason": "groups rows and combines their values (GROUP BY)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+      "class": "key_scoped",
+      "reason": "key-anchored join: every table reached by key from wp_usermeta (key wp_usermeta.meta_key: an index's leading column, with no cardinality statistics to confirm it); its pattern match only filters the keyed rows",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "elasticache",
+          "pattern": "wildcard-search",
+          "penalty": 40,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_status, wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+      "class": "key_scoped",
+      "reason": "aggregate over a key-anchored join: every table reached by key from wp_term_taxonomy (key wp_term_taxonomy.taxonomy: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+      "class": "aggregation",
+      "reason": "aggregate over wp_wc_admin_notes with no anchoring key",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_wc_admin_notes"
+      ],
+      "class_scores": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 75,
+        "dynamodb": 0,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: it reads rows of wp_wc_admin_notes that no key value narrows (wp_wc_admin_notes.is_deleted: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys; wp_wc_admin_notes.status: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys; wp_wc_admin_notes.type: a date, time, true/false, enum or category column, or one the statistics show low-cardinality, which no redesign keys)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": [
+        {
+          "column": "wp_wc_admin_notes.is_deleted",
+          "table_id": "wordpress.wp_wc_admin_notes",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        },
+        {
+          "column": "wp_wc_admin_notes.status",
+          "table_id": "wordpress.wp_wc_admin_notes",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        },
+        {
+          "column": "wp_wc_admin_notes.type",
+          "table_id": "wordpress.wp_wc_admin_notes",
+          "via": "equality",
+          "outcome": "refused",
+          "reasons": [
+            "not_key_eligible"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+      "class": "key_scoped",
+      "reason": "rows of wp_commentmeta addressed by a non-unique key value (key wp_commentmeta.comment_id: an index's leading column, with no cardinality statistics to confirm it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_commentmeta"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "aurora_mysql",
+          "pattern": "no-relational-need",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        },
+        {
+          "engine": "aurora_mysql",
+          "pattern": "single-access-pattern-table",
+          "penalty": 20,
+          "kind": "intrinsic",
+          "evidence": "no redesign removes what this pattern's penalty is about (a capability the engine lacks, which engine the access suits, or a shape a key does not change)",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value (key wp_posts.post_status, wp_posts.post_type: no index or foreign key, but other queries look the table up by it)",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+      "class": "key_scoped",
+      "reason": "rows of wp_posts addressed by a non-unique key value",
+      "facts": [],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "class_scores": {
+        "aurora_mysql": 70,
+        "aurora_postgresql": 70,
+        "documentdb": 85,
+        "dynamodb": 75,
+        "elasticache": 0,
+        "opensearch": 0
+      },
+      "parity_anchors": {},
+      "anti_pattern_findings": [
+        {
+          "engine": "dynamodb",
+          "pattern": "complex-aggregation",
+          "penalty": 30,
+          "kind": "intrinsic",
+          "evidence": "no redesign anchors the rows: no filter a key could carry",
+          "columns": [],
+          "new_columns": []
+        }
+      ],
+      "redesign": null,
+      "candidate_keys": []
+    },
+    {
+      "query_id": "3a5af258b286c55a86defe9dc509fee3e199c02019eb8faa10ce2d072ee1427a",
+      "class": "utility",
+      "reason": "reads or writes no table data",
+      "facts": [],
+      "tables": [
+        "unknown"
+      ],
+      "class_scores": {},
+      "parity_anchors": {},
+      "anti_pattern_findings": [],
+      "redesign": null,
+      "candidate_keys": []
+    }
+  ]
+}

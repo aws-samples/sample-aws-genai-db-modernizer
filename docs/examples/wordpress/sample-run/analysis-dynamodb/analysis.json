@@ -1,0 +1,1699 @@
+{
+  "contract_version": "2.5",
+  "agent_metadata": {
+    "agent_name": "dynamodb-analysis-agent",
+    "agent_version": "1.1.0",
+    "target_database": "dynamodb",
+    "analysis_timestamp": "2026-10-26T20:38:08.861841",
+    "analysis_duration_seconds": 0.031986
+  },
+  "table_recommendations": [
+    {
+      "table_id": "wordpress.wp_actionscheduler_actions",
+      "confidence_score": 80,
+      "rationale": "Detected patterns: time series event log, bounded parent child, co accessed tables. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 86,
+        "complexity_score": 70,
+        "performance_score": 40,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "dynamodb-04",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_claims",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_actionscheduler_claims.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_groups",
+      "confidence_score": 77,
+      "rationale": "Detected patterns: bounded parent child, co accessed tables. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 76,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_logs",
+      "confidence_score": 88,
+      "rationale": "Detected patterns: time series event log. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 95,
+        "performance_score": 25,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "dynamodb-04"
+      ],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_commentmeta",
+      "confidence_score": 28,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_commentmeta.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 75
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_comments",
+      "confidence_score": 90,
+      "rationale": "Detected patterns: key value lookup, time series event log. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 85,
+        "performance_score": 30,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "dynamodb-01",
+        "dynamodb-04"
+      ],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_links",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_links.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_options",
+      "confidence_score": 93,
+      "rationale": "Detected patterns: key value lookup, write heavy ingestion. High throughput (93 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 90,
+        "performance_score": 40,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "dynamodb-01",
+        "dynamodb-03"
+      ],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_postmeta",
+      "confidence_score": 81,
+      "rationale": "Detected patterns: write heavy ingestion, bounded parent child, co accessed tables. High throughput (38 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 65,
+        "performance_score": 50,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "dynamodb-03",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] frequent-full-scan: The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign.",
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_posts",
+      "confidence_score": 87,
+      "rationale": "Detected patterns: key value lookup, range query, time series event log, bounded parent child, co accessed tables. High throughput (25 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 55,
+        "performance_score": 50,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "dynamodb-01",
+        "dynamodb-02",
+        "dynamodb-04",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] frequent-full-scan: The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign.",
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_term_relationships",
+      "confidence_score": 90,
+      "rationale": "Detected patterns: key value lookup, metadata config store, co accessed tables. High throughput (17 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 70,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "dynamodb-01",
+        "dynamodb-05",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_term_taxonomy",
+      "confidence_score": 85,
+      "rationale": "Detected patterns: metadata config store, bounded parent child, co accessed tables. High throughput (20 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 94,
+        "complexity_score": 65,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "dynamodb-05",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_termmeta",
+      "confidence_score": 91,
+      "rationale": "Detected patterns: metadata config store. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 80,
+        "performance_score": 35,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "dynamodb-05"
+      ],
+      "concerns": [
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_terms",
+      "confidence_score": 86,
+      "rationale": "Detected patterns: metadata config store, bounded parent child, co accessed tables. High throughput (20 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 94,
+        "complexity_score": 70,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "dynamodb-05",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_usermeta",
+      "confidence_score": 76,
+      "rationale": "Detected patterns: bounded parent child, co accessed tables. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 76,
+        "complexity_score": 80,
+        "performance_score": 30,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_users",
+      "confidence_score": 92,
+      "rationale": "Detected patterns: key value lookup, metadata config store, bounded parent child, co accessed tables. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 80,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "dynamodb-01",
+        "dynamodb-05",
+        "dynamodb-07a",
+        "dynamodb-07c"
+      ],
+      "concerns": [],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_note_actions",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_admin_note_actions.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_notes",
+      "confidence_score": 26,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_admin_notes.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 75
+      },
+      "supporting_patterns": [],
+      "concerns": [
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_wc_category_lookup",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_category_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_customer_lookup",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_customer_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_download_log",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_download_log.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_addresses",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_addresses.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_coupon_lookup",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_coupon_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_operational_data",
+      "confidence_score": 22,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_operational_data.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_product_lookup",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_product_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_stats",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_stats.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_tax_lookup",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_order_tax_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders",
+      "confidence_score": 22,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_orders.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders_meta",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_orders_meta.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_attributes_lookup",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_product_attributes_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_download_directories",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_product_download_directories.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_meta_lookup",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_product_meta_lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_rate_limits",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_rate_limits.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_reserved_stock",
+      "confidence_score": 28,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_reserved_stock.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_tax_rate_classes",
+      "confidence_score": 31,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_tax_rate_classes.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 95
+      },
+      "supporting_patterns": [],
+      "concerns": [
+        "[source db] frequent-full-scan: The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_wc_webhooks",
+      "confidence_score": 23,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_wc_webhooks.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_api_keys",
+      "confidence_score": 90,
+      "rationale": "Detected patterns: write heavy ingestion. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 93,
+        "complexity_score": 95,
+        "performance_score": 50,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "dynamodb-03"
+      ],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_attribute_taxonomies",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_attribute_taxonomies.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_downloadable_product_permissions.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_log",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_log.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+      "confidence_score": 82,
+      "rationale": "Detected patterns: write heavy ingestion, co accessed tables. High throughput (19 calls/sec) suits DynamoDB on-demand. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 70,
+        "performance_score": 40,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "dynamodb-03",
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_items",
+      "confidence_score": 75,
+      "rationale": "Detected patterns: co accessed tables. Has primary key: maps to DynamoDB partition key. Small table: cost-effective on DynamoDB.",
+      "score_breakdown": {
+        "pattern_match_score": 75,
+        "complexity_score": 75,
+        "performance_score": 45,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "dynamodb-07c"
+      ],
+      "concerns": [
+        "[source db] frequent-full-scan: The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign.",
+        "[source db] complex-aggregation: Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "Complex joins (>2): needs careful single-table design or separate queries."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokenmeta",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_payment_tokenmeta.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokens",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_payment_tokens.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_sessions",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_sessions.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_locations",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_shipping_zone_locations.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_methods",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_shipping_zone_methods.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zones",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_shipping_zones.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rate_locations",
+      "confidence_score": 25,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_tax_rate_locations.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rates",
+      "confidence_score": 24,
+      "rationale": "No strong DynamoDB patterns detected for wordpress.wp_woocommerce_tax_rates.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 60
+      },
+      "supporting_patterns": [],
+      "concerns": [],
+      "migration_complexity": "LOW"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "dynamodb-01",
+        "pattern_type": "key-value-lookup",
+        "confidence": "HIGH",
+        "description": "Single-item reads by the full primary key: GetItem, or BatchGetItem for up to 100 keys and 16 MB, at single-digit-millisecond latency at any scale (Amazon DynamoDB Developer Guide, Working with items; Amazon DynamoDB API Reference, BatchGetItem).",
+        "query_ids": [
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+          "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+          "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+        ],
+        "table_ids": [
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-02",
+        "pattern_type": "range-query",
+        "confidence": "HIGH",
+        "description": "Queries that pin a partition key value and bound a sort key by a range: a DynamoDB Query with a KeyConditionExpression, returned in sort-key order, at most 1 MB per page; with a local secondary index an item collection is limited to 10 GB (Amazon DynamoDB API Reference, Query; Amazon DynamoDB Developer Guide, Local secondary indexes).",
+        "query_ids": [
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67"
+        ],
+        "table_ids": [
+          "wordpress.wp_posts"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-03",
+        "pattern_type": "write-heavy-ingestion",
+        "confidence": "HIGH",
+        "description": "Frequent writes that address their items by key (INSERT, or UPDATE/DELETE by key): PutItem, UpdateItem and DeleteItem write one item by its primary key, and capacity scales with the table's partitions (Amazon DynamoDB Developer Guide, Working with items).",
+        "query_ids": [
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+          "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+          "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+          "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40"
+        ],
+        "table_ids": [
+          "wordpress.wp_options",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-04",
+        "pattern_type": "time-series-event-log",
+        "confidence": "HIGH",
+        "description": "Time-ordered data with timestamp-based range reads. Maps to DynamoDB with entity ID as partition key and timestamp as sort key. TTL for automatic expiry (Amazon DynamoDB Developer Guide, Time to Live).",
+        "query_ids": [
+          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+          "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f",
+          "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_comments",
+          "wordpress.wp_posts"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-05",
+        "pattern_type": "metadata-config-store",
+        "confidence": "HIGH",
+        "description": "Small, rarely written reference tables read by key (feature flags, config, lookup tables): GetItem or BatchGetItem on the key, with DynamoDB Accelerator for microsecond reads at an extra node cost (Amazon DynamoDB Developer Guide, Working with items; In-memory acceleration with DAX).",
+        "query_ids": [
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+          "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+        ],
+        "table_ids": [
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-07a",
+        "pattern_type": "bounded-parent-child",
+        "confidence": "MEDIUM",
+        "description": "Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index (then 10 GB). The bound is domain-driven (e.g., order \u2192 items, user \u2192 addresses) (Amazon DynamoDB Developer Guide, Local secondary indexes). Large item collections may need creative sort key design for efficient range queries.",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "dynamodb-07c",
+        "pattern_type": "co-accessed-tables",
+        "confidence": "MEDIUM",
+        "description": "Tables frequently accessed together in the same queries (co-access frequency > 50 calls/hour). Strong signal for denormalization into one item collection that a single Query returns (Amazon DynamoDB Developer Guide, Best practices for modeling relational data).",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": null
+      }
+    ],
+    "anti_patterns_detected": [
+      {
+        "anti_pattern_id": "dynamodb-ap-01",
+        "anti_pattern_type": "frequent-full-scan",
+        "severity_weight": 0.5,
+        "description": "A read more frequent than once a minute that pins no column to a value, so no partition key value can address it whatever the key design. On DynamoDB that is a Scan, which reads every item and consumes read capacity for every item it reads, not only the ones it returns (Amazon DynamoDB Developer Guide, Scanning tables).",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e"
+        ],
+        "table_ids": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "recommendation": "The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign."
+      },
+      {
+        "anti_pattern_id": "dynamodb-ap-02",
+        "anti_pattern_type": "complex-aggregation",
+        "severity_weight": 0.7,
+        "description": "GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join (one key's COUNT or SUM is a Query on that key, not this pattern). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query).",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+          "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "recommendation": "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+      }
+    ]
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 100.61,
+    "cost_components": {
+      "read_request_units": 63.91,
+      "write_request_units": 36.67,
+      "storage_gb": 0.03,
+      "read_request_units_per_month": 511277993.13,
+      "write_request_units_per_month": 58668031.67,
+      "pricing_mode": "on-demand",
+      "list_prices": "dynamodb.on_demand",
+      "price_list": {
+        "source": "AWS Price List",
+        "region": "us-east-1",
+        "pricing_model": "on-demand",
+        "retrieved_on": "2026-10-25"
+      },
+      "footnotes": [
+        "DynamoDB reads are priced eventually consistent, except transactions, which are priced at transactional rates."
+      ]
+    },
+    "pricing_assumptions": [
+      "On-demand capacity mode (no provisioned throughput), on average load",
+      "Region: us-east-1",
+      "Reads billed on the bytes each call returns (rows times the table's average row size), rounded up to 4 KB",
+      "Writes billed on each item's size (the table's average row), rounded up to 1 KB; an update's new size is not collected, so the larger of the item before and after it is taken as that average",
+      "71 reads priced eventually consistent (0.5 RRU per 4 KB)",
+      "22 writes priced at the standard rate (1 WRU per 1 KB per item)",
+      "1 multi-item write (2 to 100 items, kept atomic as one TransactWriteItems call) priced transactional (2 WRU per 1 KB per item)",
+      "Global secondary indexes are not modelled: their write and storage costs are not included",
+      "No DAX, backups, or global tables included",
+      "DynamoDB reads are priced eventually consistent, except transactions, which are priced at transactional rates."
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": [
+    {
+      "aggregate_id": "agg-wp_actionscheduler_actions",
+      "root_table": "wordpress.wp_actionscheduler_actions",
+      "member_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "co_access_confidence": 90,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_actionscheduler_claims",
+      "root_table": "wordpress.wp_actionscheduler_claims",
+      "member_tables": [
+        "wordpress.wp_actionscheduler_claims"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_actionscheduler_logs",
+      "root_table": "wordpress.wp_actionscheduler_logs",
+      "member_tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_commentmeta",
+      "root_table": "wordpress.wp_commentmeta",
+      "member_tables": [
+        "wordpress.wp_commentmeta"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_comments",
+      "root_table": "wordpress.wp_comments",
+      "member_tables": [
+        "wordpress.wp_comments"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_links",
+      "root_table": "wordpress.wp_links",
+      "member_tables": [
+        "wordpress.wp_links"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_options",
+      "root_table": "wordpress.wp_options",
+      "member_tables": [
+        "wordpress.wp_options"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_postmeta",
+      "root_table": "wordpress.wp_postmeta",
+      "member_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_terms",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "co_access_confidence": 100,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_users",
+      "root_table": "wordpress.wp_users",
+      "member_tables": [
+        "wordpress.wp_usermeta",
+        "wordpress.wp_users"
+      ],
+      "co_access_confidence": 95,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_admin_note_actions",
+      "root_table": "wordpress.wp_wc_admin_note_actions",
+      "member_tables": [
+        "wordpress.wp_wc_admin_note_actions"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_admin_notes",
+      "root_table": "wordpress.wp_wc_admin_notes",
+      "member_tables": [
+        "wordpress.wp_wc_admin_notes"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_category_lookup",
+      "root_table": "wordpress.wp_wc_category_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_category_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_customer_lookup",
+      "root_table": "wordpress.wp_wc_customer_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_customer_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_download_log",
+      "root_table": "wordpress.wp_wc_download_log",
+      "member_tables": [
+        "wordpress.wp_wc_download_log"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_addresses",
+      "root_table": "wordpress.wp_wc_order_addresses",
+      "member_tables": [
+        "wordpress.wp_wc_order_addresses"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_coupon_lookup",
+      "root_table": "wordpress.wp_wc_order_coupon_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_order_coupon_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_operational_data",
+      "root_table": "wordpress.wp_wc_order_operational_data",
+      "member_tables": [
+        "wordpress.wp_wc_order_operational_data"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_product_lookup",
+      "root_table": "wordpress.wp_wc_order_product_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_order_product_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_stats",
+      "root_table": "wordpress.wp_wc_order_stats",
+      "member_tables": [
+        "wordpress.wp_wc_order_stats"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_order_tax_lookup",
+      "root_table": "wordpress.wp_wc_order_tax_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_order_tax_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_orders",
+      "root_table": "wordpress.wp_wc_orders",
+      "member_tables": [
+        "wordpress.wp_wc_orders"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_orders_meta",
+      "root_table": "wordpress.wp_wc_orders_meta",
+      "member_tables": [
+        "wordpress.wp_wc_orders_meta"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_product_attributes_lookup",
+      "root_table": "wordpress.wp_wc_product_attributes_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_product_attributes_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_product_download_directories",
+      "root_table": "wordpress.wp_wc_product_download_directories",
+      "member_tables": [
+        "wordpress.wp_wc_product_download_directories"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_product_meta_lookup",
+      "root_table": "wordpress.wp_wc_product_meta_lookup",
+      "member_tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_rate_limits",
+      "root_table": "wordpress.wp_wc_rate_limits",
+      "member_tables": [
+        "wordpress.wp_wc_rate_limits"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_reserved_stock",
+      "root_table": "wordpress.wp_wc_reserved_stock",
+      "member_tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_tax_rate_classes",
+      "root_table": "wordpress.wp_wc_tax_rate_classes",
+      "member_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_wc_webhooks",
+      "root_table": "wordpress.wp_wc_webhooks",
+      "member_tables": [
+        "wordpress.wp_wc_webhooks"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_api_keys",
+      "root_table": "wordpress.wp_woocommerce_api_keys",
+      "member_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_attribute_taxonomies",
+      "root_table": "wordpress.wp_woocommerce_attribute_taxonomies",
+      "member_tables": [
+        "wordpress.wp_woocommerce_attribute_taxonomies"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_downloadable_product_permissions",
+      "root_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "member_tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_log",
+      "root_table": "wordpress.wp_woocommerce_log",
+      "member_tables": [
+        "wordpress.wp_woocommerce_log"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_payment_tokenmeta",
+      "root_table": "wordpress.wp_woocommerce_payment_tokenmeta",
+      "member_tables": [
+        "wordpress.wp_woocommerce_payment_tokenmeta"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_payment_tokens",
+      "root_table": "wordpress.wp_woocommerce_payment_tokens",
+      "member_tables": [
+        "wordpress.wp_woocommerce_payment_tokens"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_sessions",
+      "root_table": "wordpress.wp_woocommerce_sessions",
+      "member_tables": [
+        "wordpress.wp_woocommerce_sessions"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_shipping_zone_locations",
+      "root_table": "wordpress.wp_woocommerce_shipping_zone_locations",
+      "member_tables": [
+        "wordpress.wp_woocommerce_shipping_zone_locations"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_shipping_zone_methods",
+      "root_table": "wordpress.wp_woocommerce_shipping_zone_methods",
+      "member_tables": [
+        "wordpress.wp_woocommerce_shipping_zone_methods"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_shipping_zones",
+      "root_table": "wordpress.wp_woocommerce_shipping_zones",
+      "member_tables": [
+        "wordpress.wp_woocommerce_shipping_zones"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_tax_rate_locations",
+      "root_table": "wordpress.wp_woocommerce_tax_rate_locations",
+      "member_tables": [
+        "wordpress.wp_woocommerce_tax_rate_locations"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    },
+    {
+      "aggregate_id": "agg-wp_woocommerce_tax_rates",
+      "root_table": "wordpress.wp_woocommerce_tax_rates",
+      "member_tables": [
+        "wordpress.wp_woocommerce_tax_rates"
+      ],
+      "co_access_confidence": 40,
+      "combined_migration_complexity": "LOW",
+      "partition_key": null,
+      "sort_key": null,
+      "key_design_rationale": null,
+      "supporting_access_patterns": []
+    }
+  ],
+  "key_scoped_writes": [
+    {
+      "query_id": "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+      "table_id": "wordpress.wp_termmeta",
+      "columns": [
+        "meta_key",
+        "term_id"
+      ],
+      "schema_note": "wp_termmeta.meta_key, wp_termmeta.term_id must each become the partition key of an item collection (or a GSI's) so this write reads its items by key",
+      "anchors": [
+        {
+          "column": "meta_key",
+          "cardinality": "unknown",
+          "lookup_query_ids": []
+        },
+        {
+          "column": "term_id",
+          "cardinality": "unknown",
+          "lookup_query_ids": []
+        }
+      ]
+    },
+    {
+      "query_id": "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+      "table_id": "wordpress.wp_wc_reserved_stock",
+      "columns": [
+        "order_id"
+      ],
+      "schema_note": "wp_wc_reserved_stock.order_id must become the partition key of an item collection (or a GSI's) so this write reads its items by key",
+      "anchors": [
+        {
+          "column": "order_id",
+          "cardinality": "unknown",
+          "lookup_query_ids": []
+        }
+      ]
+    },
+    {
+      "query_id": "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17",
+      "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "columns": [
+        "order_id"
+      ],
+      "schema_note": "wp_woocommerce_downloadable_product_permissions.order_id must become the partition key of an item collection (or a GSI's) so this write reads its items by key",
+      "anchors": [
+        {
+          "column": "order_id",
+          "cardinality": "unknown",
+          "lookup_query_ids": []
+        }
+      ]
+    }
+  ],
+  "key_scoped_counts": [
+    {
+      "query_id": "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+      "table_id": "wordpress.wp_postmeta",
+      "columns": [
+        "meta_key",
+        "post_id"
+      ],
+      "keys": [
+        {
+          "column": "meta_key",
+          "cardinality": "unknown"
+        },
+        {
+          "column": "post_id",
+          "cardinality": "unknown"
+        }
+      ],
+      "schema_note": "Served as a Query on this key with Select = COUNT, which reads and bills every matching item (1 MB per page, summed over the pages): give the key a partition key of an item collection (the base table's or a GSI's); for a low- or unknown-cardinality key, or a hot count, prefer a maintained counter item."
+    },
+    {
+      "query_id": "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+      "table_id": "wordpress.wp_comments",
+      "columns": [
+        "comment_post_id"
+      ],
+      "keys": [
+        {
+          "column": "comment_post_id",
+          "cardinality": "unknown"
+        }
+      ],
+      "schema_note": "Served as a Query on this key with Select = COUNT, which reads and bills every matching item (1 MB per page, summed over the pages): give the key a partition key of an item collection (the base table's or a GSI's); for a low- or unknown-cardinality key, or a hot count, prefer a maintained counter item."
+    }
+  ],
+  "redesign_requirements": null,
+  "carried_writes": null
+}

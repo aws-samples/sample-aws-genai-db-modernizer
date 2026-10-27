@@ -35,7 +35,7 @@ from src.shared.report_facts import (
 )
 
 REPO = Path(__file__).resolve().parents[3]
-SAMPLE_RUN = REPO / "docs/examples/wordpress/sample-run/synthesis/v2/report.json"
+SAMPLE_RUN = REPO / "tests/unit/report/fixtures/wordpress_sample_run_0_3_report.json"
 
 
 # --------------------------------------------------------------------------

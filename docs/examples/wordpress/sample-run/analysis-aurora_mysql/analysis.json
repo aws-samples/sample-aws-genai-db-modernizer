@@ -1,0 +1,1249 @@
+{
+  "contract_version": "2.5",
+  "agent_metadata": {
+    "agent_name": "aurora-mysql-analysis-agent",
+    "agent_version": "1.0.0",
+    "target_database": "aurora_mysql",
+    "analysis_timestamp": "2026-10-26T20:38:08.827461",
+    "analysis_duration_seconds": 0.042621
+  },
+  "table_recommendations": [
+    {
+      "table_id": "wordpress.wp_actionscheduler_actions",
+      "confidence_score": 81,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 100,
+        "performance_score": 40,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_claims",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_actionscheduler_claims. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_groups",
+      "confidence_score": 84,
+      "rationale": "Detected relational patterns: pagination, simple join, batch in list.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 100,
+        "performance_score": 50,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_logs",
+      "confidence_score": 47,
+      "rationale": "No strong relational patterns detected for wordpress.wp_actionscheduler_logs. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 90,
+        "performance_score": 35,
+        "cost_score": 55
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_commentmeta",
+      "confidence_score": 65,
+      "rationale": "Detected relational patterns: batch in list.",
+      "score_breakdown": {
+        "pattern_match_score": 70,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "aurora-common-11"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_comments",
+      "confidence_score": 73,
+      "rationale": "Detected relational patterns: aggregation analytics, pagination, key value lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 82,
+        "complexity_score": 95,
+        "performance_score": 30,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "aurora-common-02",
+        "aurora-common-08",
+        "aurora-common-12"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_links",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_links. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_options",
+      "confidence_score": 78,
+      "rationale": "Detected relational patterns: pagination, standard crud, key value lookup, upsert duplicate key. Active workload (93 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 95,
+        "performance_score": 50,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-10",
+        "aurora-common-12",
+        "aurora-mysql-03"
+      ],
+      "concerns": [
+        "high-frequency-pk-lookup: Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator).",
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "Very high frequency simple lookups may benefit from a caching layer or DynamoDB."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_postmeta",
+      "confidence_score": 81,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, simple join, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (38 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 95,
+        "performance_score": 60,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_posts",
+      "confidence_score": 81,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, standard crud, batch in list, key value lookup. Complex joins (4 tables) are a core Aurora MySQL strength. Active workload (25 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 93,
+        "complexity_score": 80,
+        "performance_score": 60,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11",
+        "aurora-common-12"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_term_relationships",
+      "confidence_score": 84,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, batch in list, key value lookup. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (17 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 90,
+        "performance_score": 50,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-08",
+        "aurora-common-11",
+        "aurora-common-12"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_term_taxonomy",
+      "confidence_score": 82,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (20 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 85,
+        "performance_score": 50,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_termmeta",
+      "confidence_score": 82,
+      "rationale": "Detected relational patterns: complex join, standard crud, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 100,
+        "performance_score": 45,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_terms",
+      "confidence_score": 84,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, pagination, simple join, batch in list. Complex joins (3 tables) are a core Aurora MySQL strength. Active workload (20 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 90,
+        "performance_score": 50,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_usermeta",
+      "confidence_score": 80,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 100,
+        "performance_score": 30,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_users",
+      "confidence_score": 83,
+      "rationale": "Detected relational patterns: pagination, simple join, standard crud, batch in list, key value lookup.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 100,
+        "performance_score": 45,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "aurora-common-08",
+        "aurora-common-09",
+        "aurora-common-10",
+        "aurora-common-11",
+        "aurora-common-12"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_note_actions",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_admin_note_actions. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_notes",
+      "confidence_score": 62,
+      "rationale": "Detected relational patterns: aggregation analytics, batch in list.",
+      "score_breakdown": {
+        "pattern_match_score": 70,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "aurora-common-02",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_category_lookup",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_category_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_customer_lookup",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_customer_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_download_log",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_download_log. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_addresses",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_addresses. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_coupon_lookup",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_coupon_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_operational_data",
+      "confidence_score": 29,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_operational_data. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_product_lookup",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_product_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_stats",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_stats. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_tax_lookup",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_order_tax_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders",
+      "confidence_score": 29,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_orders. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 80,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders_meta",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_orders_meta. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_attributes_lookup",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_product_attributes_lookup. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_download_directories",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_product_download_directories. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_meta_lookup",
+      "confidence_score": 71,
+      "rationale": "Detected relational patterns: upsert duplicate key.",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 80,
+        "performance_score": 35,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "aurora-mysql-03"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_wc_rate_limits",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_rate_limits. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_reserved_stock",
+      "confidence_score": 46,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_reserved_stock. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_wc_tax_rate_classes",
+      "confidence_score": 67,
+      "rationale": "Detected relational patterns: standard crud.",
+      "score_breakdown": {
+        "pattern_match_score": 60,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "aurora-common-10"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_wc_webhooks",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_wc_webhooks. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_api_keys",
+      "confidence_score": 74,
+      "rationale": "Detected relational patterns: standard crud.",
+      "score_breakdown": {
+        "pattern_match_score": 60,
+        "complexity_score": 100,
+        "performance_score": 60,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "aurora-common-10"
+      ],
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_attribute_taxonomies",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_attribute_taxonomies. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "confidence_score": 43,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_downloadable_product_permissions. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "no-relational-need: Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        "single-access-pattern-table: Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      ],
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_log",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_log. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+      "confidence_score": 79,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Active workload (19 calls/sec) benefits from Aurora MySQL query optimizer.",
+      "score_breakdown": {
+        "pattern_match_score": 82,
+        "complexity_score": 100,
+        "performance_score": 50,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_items",
+      "confidence_score": 83,
+      "rationale": "Detected relational patterns: complex join, aggregation analytics, standard crud, batch in list. Complex joins (4 tables) are a core Aurora MySQL strength.",
+      "score_breakdown": {
+        "pattern_match_score": 89,
+        "complexity_score": 95,
+        "performance_score": 55,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-10",
+        "aurora-common-11"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokenmeta",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_payment_tokenmeta. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokens",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_payment_tokens. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_sessions",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_sessions. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_locations",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_shipping_zone_locations. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_methods",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_shipping_zone_methods. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zones",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_shipping_zones. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rate_locations",
+      "confidence_score": 32,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_tax_rate_locations. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rates",
+      "confidence_score": 30,
+      "rationale": "No strong relational patterns detected for wordpress.wp_woocommerce_tax_rates. This table may not benefit significantly from Aurora MySQL.",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "aurora-common-01",
+        "pattern_type": "complex-join",
+        "confidence": "HIGH",
+        "description": "Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale.",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+        ],
+        "table_ids": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 12.15
+      },
+      {
+        "pattern_id": "aurora-common-02",
+        "pattern_type": "aggregation-analytics",
+        "confidence": "HIGH",
+        "description": "Aggregation queries with GROUP BY, HAVING, and aggregate functions (SUM, COUNT, AVG). Aurora handles analytical aggregations efficiently with parallel query execution.",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+          "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_comments",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 16.82
+      },
+      {
+        "pattern_id": "aurora-common-08",
+        "pattern_type": "pagination",
+        "confidence": "HIGH",
+        "description": "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly.",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+          "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+          "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+          "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": 20.56
+      },
+      {
+        "pattern_id": "aurora-common-09",
+        "pattern_type": "simple-join",
+        "confidence": "MEDIUM",
+        "description": "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins.",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+          "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": 10.28
+      },
+      {
+        "pattern_id": "aurora-common-10",
+        "pattern_type": "standard-crud",
+        "confidence": "MEDIUM",
+        "description": "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache.",
+        "query_ids": [
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+          "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+          "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+          "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+          "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+          "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+          "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+          "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+          "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+          "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
+          "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+          "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+        ],
+        "table_ids": [
+          "unknown",
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_options",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 28.04
+      },
+      {
+        "pattern_id": "aurora-common-11",
+        "pattern_type": "batch-in-list",
+        "confidence": "MEDIUM",
+        "description": "Batch lookups using WHERE column IN (...) with multiple values: one index scan probes every listed value (PostgreSQL documentation, Indexes, a ScalarArrayOpExpr on a B-tree; MySQL Reference Manual, Range Optimization, equality ranges for IN lists), with no item limit, where DynamoDB's BatchGetItem takes at most 100 keys and 16 MB (Amazon DynamoDB API Reference, BatchGetItem). In the key-lookup class it raises no score: key-value-lookup rates the same read at 80.",
+        "query_ids": [
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+          "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+          "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 30.84
+      },
+      {
+        "pattern_id": "aurora-common-12",
+        "pattern_type": "key-value-lookup",
+        "confidence": "HIGH",
+        "description": "A read of one row, or an IN-list batch, by its full primary or unique key: a B-tree index point read, served from memory once cached, with read replicas to scale the reads (PostgreSQL documentation, Index Types; MySQL Reference Manual, Comparison of B-Tree and Hash Indexes).",
+        "query_ids": [
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+          "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+          "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+        ],
+        "table_ids": [
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": 8.41
+      },
+      {
+        "pattern_id": "aurora-mysql-03",
+        "pattern_type": "upsert-duplicate-key",
+        "confidence": "HIGH",
+        "description": "UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key.",
+        "query_ids": [
+          "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d"
+        ],
+        "table_ids": [
+          "wordpress.wp_options",
+          "wordpress.wp_wc_product_meta_lookup"
+        ],
+        "frequency_percent": 1.87
+      }
+    ],
+    "anti_patterns_detected": [
+      {
+        "anti_pattern_id": "aurora-anti-01",
+        "anti_pattern_type": "high-frequency-pk-lookup",
+        "severity_weight": 0.8,
+        "description": "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora). DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern.",
+        "query_ids": [
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+        ],
+        "table_ids": [
+          "wordpress.wp_options"
+        ],
+        "recommendation": "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
+      },
+      {
+        "anti_pattern_id": "aurora-anti-05",
+        "anti_pattern_type": "no-relational-need",
+        "severity_weight": 0.6,
+        "description": "Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it (Amazon Aurora User Guide, What is Amazon Aurora). This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups).",
+        "query_ids": [
+          "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+          "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+          "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+          "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+          "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+          "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+          "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "recommendation": "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+      },
+      {
+        "anti_pattern_id": "aurora-anti-06",
+        "anti_pattern_type": "single-access-pattern-table",
+        "severity_weight": 0.5,
+        "description": "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora). This is a key-value workload wearing a relational costume, with no query optimizer benefit.",
+        "query_ids": [
+          "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+          "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+          "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "recommendation": "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      }
+    ]
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 497.25,
+    "cost_components": {
+      "serverless_v2": {
+        "compute_monthly_usd": 905.2,
+        "storage_monthly_usd": 0.23,
+        "total_monthly_usd": 905.43,
+        "min_acu": 2.2,
+        "max_acu": 13.3,
+        "avg_acu": 7.8
+      },
+      "provisioned": {
+        "compute_monthly_usd": 492.75,
+        "storage_monthly_usd": 4.5,
+        "total_monthly_usd": 497.25,
+        "instance_type": "db.r6g.xlarge"
+      },
+      "recommended": "provisioned",
+      "list_prices": "aurora_mysql.io_optimized",
+      "price_list": {
+        "source": "AWS Price List",
+        "region": "us-east-1",
+        "pricing_model": "on-demand",
+        "retrieved_on": "2026-10-25"
+      }
+    },
+    "pricing_assumptions": [
+      "Aurora Mysql \u2014 us-east-1",
+      "Serverless v2: $0.16/ACU-hr, 2.2-13.3 ACU range",
+      "Provisioned: db.r6g.xlarge at $0.675/hr",
+      "Aurora I/O-Optimized storage: $0.225/GB/month",
+      "Total data size: 0.14 GB",
+      "Total query throughput: 222.0 calls/second"
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": null,
+  "key_scoped_writes": null,
+  "key_scoped_counts": null,
+  "redesign_requirements": null,
+  "carried_writes": null
+}

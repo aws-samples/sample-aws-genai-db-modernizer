@@ -1,0 +1,973 @@
+{
+  "contract_version": "2.5",
+  "agent_metadata": {
+    "agent_name": "elasticache-analysis-agent",
+    "agent_version": "1.0.0",
+    "target_database": "elasticache",
+    "analysis_timestamp": "2026-10-26T20:38:08.771180",
+    "analysis_duration_seconds": 0.02312
+  },
+  "table_recommendations": [
+    {
+      "table_id": "wordpress.wp_actionscheduler_actions",
+      "confidence_score": 81,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 90,
+        "performance_score": 40,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_claims",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_groups",
+      "confidence_score": 89,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 100,
+        "performance_score": 50,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_actionscheduler_logs",
+      "confidence_score": 40,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 55
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_commentmeta",
+      "confidence_score": 41,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_comments",
+      "confidence_score": 44,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 95,
+        "performance_score": 30,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_links",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_options",
+      "confidence_score": 67,
+      "rationale": "Strong caching candidate",
+      "score_breakdown": {
+        "pattern_match_score": 55,
+        "complexity_score": 95,
+        "performance_score": 40,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "redis-caching-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_postmeta",
+      "confidence_score": 64,
+      "rationale": "Strong caching candidate",
+      "score_breakdown": {
+        "pattern_match_score": 55,
+        "complexity_score": 80,
+        "performance_score": 50,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "redis-caching-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_posts",
+      "confidence_score": 82,
+      "rationale": "Strong caching and leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 75,
+        "performance_score": 50,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_term_relationships",
+      "confidence_score": 83,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_term_taxonomy",
+      "confidence_score": 82,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 80,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_termmeta",
+      "confidence_score": 61,
+      "rationale": "Strong caching candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 35,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "redis-caching-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_terms",
+      "confidence_score": 83,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 100
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_usermeta",
+      "confidence_score": 66,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 55,
+        "complexity_score": 95,
+        "performance_score": 30,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_users",
+      "confidence_score": 67,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 55,
+        "complexity_score": 95,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_note_actions",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_admin_notes",
+      "confidence_score": 41,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_category_lookup",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_customer_lookup",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_download_log",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_addresses",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_coupon_lookup",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_operational_data",
+      "confidence_score": 32,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_product_lookup",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_stats",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_order_tax_lookup",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders",
+      "confidence_score": 32,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_orders_meta",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_attributes_lookup",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_download_directories",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_product_meta_lookup",
+      "confidence_score": 38,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_rate_limits",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_reserved_stock",
+      "confidence_score": 39,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_tax_rate_classes",
+      "confidence_score": 66,
+      "rationale": "Strong caching candidate",
+      "score_breakdown": {
+        "pattern_match_score": 55,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_wc_webhooks",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_api_keys",
+      "confidence_score": 57,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 15,
+        "complexity_score": 100,
+        "performance_score": 60,
+        "cost_score": 90
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_attribute_taxonomies",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "confidence_score": 36,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 90,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_log",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+      "confidence_score": 79,
+      "rationale": "Strong caching and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 80
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_order_items",
+      "confidence_score": 83,
+      "rationale": "Strong caching and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 90,
+        "performance_score": 45,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokenmeta",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_payment_tokens",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_sessions",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_locations",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zone_methods",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_shipping_zones",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rate_locations",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "wordpress.wp_woocommerce_tax_rates",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "redis-caching-001",
+        "pattern_type": "caching",
+        "confidence": "HIGH",
+        "description": "Detected 21 high-frequency SELECT queries suitable for caching",
+        "query_ids": [
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+          "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+          "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+          "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+          "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+          "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+          "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+          "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+          "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_options",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 19.626168224299064
+      },
+      {
+        "pattern_id": "redis-session-001",
+        "pattern_type": "session-store",
+        "confidence": "MEDIUM",
+        "description": "Detected session or user lookup patterns",
+        "query_ids": [
+          "3a5af258b286c55a86defe9dc509fee3e199c02019eb8faa10ce2d072ee1427a"
+        ],
+        "table_ids": [
+          "unknown"
+        ],
+        "frequency_percent": 0.9345794392523363
+      },
+      {
+        "pattern_id": "redis-leaderboard-001",
+        "pattern_type": "leaderboard",
+        "confidence": "MEDIUM",
+        "description": "Detected ranking/leaderboard query patterns (ORDER BY + LIMIT)",
+        "query_ids": [
+          "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+          "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+          "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+          "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+          "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+          "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+          "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+          "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+          "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+          "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms",
+          "wordpress.wp_usermeta",
+          "wordpress.wp_users"
+        ],
+        "frequency_percent": 14.018691588785046
+      },
+      {
+        "pattern_id": "redis-timeseries-001",
+        "pattern_type": "time-series",
+        "confidence": "MEDIUM",
+        "description": "Detected time series aggregation patterns",
+        "query_ids": [
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+          "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+          "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+        ],
+        "table_ids": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "frequency_percent": 15.887850467289718
+      }
+    ],
+    "anti_patterns_detected": []
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 185.12,
+    "cost_components": {
+      "primary_node": 92.27,
+      "replica_nodes": 92.27,
+      "backup_storage": 0.04,
+      "data_transfer": 0.53,
+      "instance_type": "cache.m7g.large",
+      "replica_count": 1,
+      "list_prices": "elasticache.valkey",
+      "price_list": {
+        "source": "AWS Price List",
+        "region": "us-east-1",
+        "pricing_model": "on-demand",
+        "retrieved_on": "2026-10-25"
+      }
+    },
+    "pricing_assumptions": [
+      "Instance: Valkey cache.m7g.large (6.38 GiB, $0.1264/hr) in us-east-1",
+      "Estimated cache size: 0.5 GB (15% of 139 MB source)",
+      "Estimated throughput: 219 ops/sec (197 reads + 21 writes)",
+      "1 replica for high availability",
+      "On-demand pricing (no reserved instances)",
+      "Daily backup snapshot included",
+      "Cross-AZ replication data transfer estimated from write throughput"
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": null,
+  "key_scoped_writes": null,
+  "key_scoped_counts": null,
+  "redesign_requirements": null,
+  "carried_writes": null
+}

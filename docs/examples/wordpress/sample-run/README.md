@@ -4,9 +4,9 @@ The recorded assessment the help site's [Sample report](https://aws-samples.gith
 
 | | |
 |---|---|
-| Release | v0.3.0-beta.1 |
+| Release | v0.4.0-beta.1 |
 | How it ran | Claude Code, interactive `/modernize` (`--llm-mode external`): Claude wrote the reality-check review, the schema designs (Aurora MySQL, DynamoDB with its design review, ElastiCache) and the executive summary; the analysis and the query routing are deterministic, as in every run |
-| Synthesis contract | 1.50 |
+| Synthesis contract | 1.69 |
 | Assignment version | v2 (after the reality check) |
 
 ## What is here
@@ -15,8 +15,8 @@ Only what the deliverable renderers read, under the job folder's own layout:
 
 - `synthesis/v2/report.json`: the run's synthesis report, as the run wrote it (plus a final newline). Every deliverable is rendered from it, including the per-engine schemas.
 - `collector/output.json`: trimmed to the collected names (tables, views, procedures, triggers and their columns) the executive report keeps out of its text. The query text, metrics and host metadata of the real collector output are left out.
-
-The recorded run was saved without its assignments, so the detailed engineering report on the sample page says no assignment was saved. The next refresh also carries the effective assignment's lineage, its access-pattern record and each engine's analysis (#1472), which the detailed report then shows in full.
+- `assignment/v1/assignment.json`, `assignment/v2/assignment.json` and `assignment/v2/access_patterns.json`: the effective assignment's lineage and its access-pattern record, which the detailed engineering report shows in full.
+- `analysis-<engine>/analysis.json`: each engine's analysis (#1472).
 
 The rest of the job (per-phase outputs, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
 

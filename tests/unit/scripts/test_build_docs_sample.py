@@ -269,6 +269,8 @@ def test_a_sample_with_no_recorded_run_needs_the_deterministic_flag(site_dir: Pa
 
 # Each figure the facts reader fills in for an older report (ADR-032 Decision 4),
 # removed the way an older synthesis would not have written it.
+_ANALYSIS_ENGINES = ("aurora_mysql", "documentdb", "dynamodb", "elasticache", "opensearch")
+
 _BACKFILLED = {
     "access_pattern_totals": lambda f: f.pop("access_pattern_totals"),
     "moving_query_count": lambda f: f.pop("moving_query_count"),
@@ -292,65 +294,27 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     older = copy.deepcopy(report)
     _BACKFILLED[figure](older["facts"])
     assert older["facts"] != report["facts"]  # the figure really was removed
-    # The recorded run's own block, read through the same reader: a figure added after
-    # the run was recorded (#1284's waves[].moved_by_later_waves, #212's
-    # table_owner_lines, #1195's cost_assumptions) is filled in for both, every figure
-    # the run stored is read as stored. #212 is the one deliberate exception: the Migration map split counts each
-    # row under its owner now, never on the cache layer, so it is read anew (same total).
+    # The recorded run was written by the release the sample README names, so it stores
+    # every figure: reading it changes nothing, and an older report with one figure
+    # removed is read back to the same block (ADR-032 Decision 4).
+    assert report_facts(report) == report["facts"]
     assert report_facts(older) == report_facts(report)
-    read = copy.deepcopy(report_facts(report))
-    for row in read["waves"]:
-        row.pop("moved_by_later_waves")
-    assert read.pop("table_owner_lines")["table_count"] == len(report["table_mappings"])
-    split = read["table_basis"].pop("mapped_tables_by_move")
-    stored = copy.deepcopy(report["facts"])
-    stored_split = stored["table_basis"].pop("mapped_tables_by_move")
-    assert sum(split.values()) == sum(stored_split.values())
-    assert "cache_layer" in stored_split and "cache_layer" not in split
-    # The recorded sample's 22 rows: the one table the cache layer had joins the 3
-    # that stay on the source engine (its owner is Aurora MySQL).
-    assert split == {"migrate": 15, "kept_in_sync": 3, "stays": 4}
-    # And the by-role count, by owner the same way (the cache layer owns none).
-    by_role = read["table_basis"].pop("mapped_tables_by_role")
-    stored["table_basis"].pop("mapped_tables_by_role")
-    assert by_role == {"Migration target": 15, "Retained": 7}
-    # #1329: filled in for a block recorded before the count (no scope, so 0).
-    if "no_engine_in_scope_query_count" not in stored["unservable"]:
-        assert read["unservable"].pop("no_engine_in_scope_query_count") == 0
-        assert read["unservable"].pop("no_engine_in_scope_closest_engines") == []
-    # #1329: and the headline total with the queries that have no engine (none here).
-    if "query_total_count" not in stored:
-        assert read.pop("no_engine_in_scope_query_count") == 0
-        assert read.pop("query_total_count") == stored["in_scope_query_count"]
-    # #1195: facts.cost_assumptions, also added after the run was recorded.
-    read.pop("cost_assumptions")
-    # #1474: facts.cost_scope_label and facts.cost_caveat, likewise.
-    read.pop("cost_scope_label")
-    read.pop("cost_caveat")
-    # #1252: facts.cache_layer, likewise added after the run was recorded.
-    if "cache_layer" not in stored:
-        cache = read.pop("cache_layer")
-        # The recorded run predates the stored candidates: its dropped reads are counted back in.
-        overlay = report["cache_overlay"]
-        dropped = len(overlay["dropped_query_ids"])
-        assert dropped > 0  # the recorded run did drop some, so this backfill is exercised
-        assert cache["candidate_read_count"] == overlay["query_count"] + dropped
-        assert cache["owner_only_read_count"] == dropped
-        assert cache["candidate_call_share_percent"] is None
-    # #1410: facts.query_group_counts too; its two parts add up to every group.
-    if "query_group_counts" not in stored:
-        groups = read.pop("query_group_counts")
-        assert groups["group_count"] == len(report["query_groups"])
-        assert groups["listed_group_count"] + groups["relational_only_group_count"] == len(
-            report["query_groups"]
-        )
-    assert read == stored
 
 
 def test_committed_run_is_only_what_the_renderers_read() -> None:
     files = sorted(p.relative_to(RUN_DIR).as_posix() for p in RUN_DIR.rglob("*") if p.is_file())
     report_rel = build_docs_sample.sample_run_report(RUN_DIR).relative_to(RUN_DIR).as_posix()
-    assert files == sorted(["README.md", "collector/output.json", report_rel])
+    assert files == sorted(
+        [
+            "README.md",
+            "collector/output.json",
+            report_rel,
+            "assignment/v1/assignment.json",
+            "assignment/v2/assignment.json",
+            "assignment/v2/access_patterns.json",
+            *(f"analysis-{e}/analysis.json" for e in _ANALYSIS_ENGINES),
+        ]
+    )
     collector = json.loads((RUN_DIR / "collector" / "output.json").read_text(encoding="utf-8"))
     assert set(collector) == {"_note", "database_schema"}  # no query text, no metadata
     assert collected_identifiers(collector)  # the names the executive report keeps out
@@ -680,9 +644,11 @@ def test_refresh_records_the_new_report_s_query_ids_in_the_baseline(tmp_path: Pa
     report_rel = (
         "sample-run/" + build_docs_sample.sample_run_report(run_dir).relative_to(run_dir).as_posix()
     )
-    entries = json.loads(baseline_file.read_text(encoding="utf-8"))["results"][report_rel]
-    assert len(entries) == result["scan_baseline_entries"][report_rel] > 0
-    assert {e["filename"] for e in entries} == {report_rel}  # relative, no local path
+    # The commit hook filters 64-hex query ids by value, so the committed baseline may
+    # hold none of them; the entries recorded are exactly the ones the scan reports.
+    entries = json.loads(baseline_file.read_text(encoding="utf-8"))["results"].get(report_rel, [])
+    assert len(entries) == result["scan_baseline_entries"][report_rel]
+    assert {e["filename"] for e in entries} <= {report_rel}  # relative, no local path
 
 
 def test_refresh_refuses_a_job_with_a_private_detail(tmp_path: Path) -> None:
