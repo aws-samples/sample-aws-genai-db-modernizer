@@ -39,7 +39,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
           `name TYPE [NOT NULL] [AI] [DEFAULT x]`, then `(residual; source t)`
           when the script could not resolve the type, or `(source t)` when the
           source type differs from the draft type), `indexes`
-          (`name [UNIQUE] (columns)`) and `foreign_keys` (`col -> table(col)`)
+          (`name [UNIQUE] (columns) [USING method]`) and `foreign_keys` (`col -> table(col)`).
+          An index `USING fulltext` or `USING spatial` is a FULLTEXT or SPATIAL
+          index: the merge keeps it, and an Aurora MySQL delta names no method.
       - The draft itself and the collector output are not in the file, and you
         do not need them.
       - First Read it with `offset: 1` and `limit: 40` to see `input_pages`

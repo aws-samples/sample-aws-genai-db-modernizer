@@ -192,6 +192,30 @@ def test_a_pattern_on_an_index_the_aurora_mysql_draft_does_not_create_needs_judg
     assert postgres["needs_judgment"] is False
 
 
+@pytest.mark.parametrize("method", ["fulltext", "spatial"])
+def test_a_pattern_on_a_fulltext_or_spatial_index_needs_judgment_on_aurora_postgresql(method):
+    """The Aurora PostgreSQL draft notes a FULLTEXT or SPATIAL index instead of creating it
+    (#1596), so the pattern it serves keeps ``index_used`` and needs judgment (#1597)."""
+    table = _orders()
+    table.indexes[0].index_type = IndexType(method)
+    base = AuroraDesignBase(
+        engine="aurora_postgresql",
+        job_id="j",
+        source_database="shop",
+        source_engine="mysql",
+        tables=[table],
+        queries=[_query("q", ["status"])],
+    )
+
+    [pattern] = merge_design_delta(base, _EMPTY_DELTA).output["access_patterns"]
+
+    assert pattern["index_used"] == "idx_orders_status"
+    assert pattern["needs_judgment"] is True
+    assert pattern["judgment_reason"].startswith(
+        "The draft does not create orders.idx_orders_status"
+    )
+
+
 def test_a_pattern_on_an_index_the_delta_removes_needs_judgment():
     delta = {
         "delta_version": "1.0",

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
 from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
+from src.shared.engine_names import display_engine
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
     fk_on_delete_clause,
@@ -93,6 +94,7 @@ class ColumnDDL:
     needs_judgment: bool
     judgment_reason: str
     fragment: str  # e.g. '"email" VARCHAR(255) NOT NULL'
+    nullable: bool
     # What the draft made of the source default (#611): the DEFAULT clause it
     # emits (" DEFAULT ..." or ""), and whether the column is an identity
     # (AUTO_INCREMENT) column, from the source or from a sequence default.
@@ -290,6 +292,7 @@ def _column_from(
         needs_judgment=resolution.needs_judgment,
         judgment_reason=resolution.reason,
         fragment=fragment,
+        nullable=col.nullable,
         default_clause="" if auto_increment else default.clause,
         identity=bool(auto_increment),
         # Dropped means a reason and no clause. A translation that rewrites a default
@@ -430,8 +433,9 @@ def _text_columns(columns: list[ColumnDDL]) -> set[str]:
 
 
 # #293: the PostgreSQL access methods a source index can keep. ``btree`` needs no USING;
-# ``fulltext`` and ``spatial`` (MySQL and SQL Server sources) and ``other`` have no
-# PostgreSQL spelling, so they stay a plain B-tree index as before.
+# ``other`` has no PostgreSQL spelling, so it stays a plain B-tree index as before.
+# ``fulltext`` and ``spatial`` (MySQL and SQL Server sources) are noted instead
+# (``_DROPPED_METHODS``).
 _PG_INDEX_METHODS = frozenset(INDEX_METHODS) - {"btree"}
 # What PostgreSQL builds, which a source index from another engine can break: only a
 # B-tree is UNIQUE, a hash or SP-GiST index takes one column, and a GIN or GiST index needs
@@ -462,17 +466,43 @@ _PG_DEFAULT_OPCLASS_TYPES = {
         }
     ),
 }
-# The methods Aurora MySQL cannot create and no B-tree stands in for: a B-tree on the
-# same columns would not serve the full-text, containment or geometric queries the index
-# exists for, and can fail to build on long values. The draft notes such an index instead
-# of rendering one. A BRIN index is rendered as a B-tree, which serves the same range
-# scans, with a note.
-_MYSQL_DROPPED_METHODS = frozenset({"gin", "gist", "spgist"})
+# The methods a target cannot create and no B-tree stands in for: a B-tree on the same
+# columns would not serve the full-text, containment or geometric queries the index exists
+# for, and can fail to build on long values. The draft notes such an index, with what to use
+# on that target, instead of rendering one: GIN, GiST and SP-GiST on Aurora MySQL; FULLTEXT
+# and SPATIAL on Aurora PostgreSQL, whose equivalents are the ones the mysql-fulltext-search
+# and mysql-spatial-types gap rules name. On Aurora MySQL a BRIN index is rendered as a
+# B-tree, which serves the same range scans, with a note.
+_DROPPED_METHODS: dict[str, dict[str, str]] = {
+    MYSQL.name: dict.fromkeys(
+        ("gin", "gist", "spgist"),
+        "Use a FULLTEXT or SPATIAL index where one fits the columns, or serve the search from "
+        "the application layer.",
+    ),
+    POSTGRES.name: {
+        "fulltext": (
+            "Use PostgreSQL full-text search: a tsvector column or expression with a GIN "
+            "index, queried with @@ and to_tsquery."
+        ),
+        "spatial": "Use the PostGIS extension: a geometry or geography column with a GiST index.",
+    },
+}
+# #1596: the source methods Aurora MySQL keeps, as the index kind (CREATE FULLTEXT INDEX)
+# rather than USING, where the draft's columns take it: FULLTEXT on character columns,
+# SPATIAL on one NOT NULL geometry column, neither UNIQUE. A plain index in their place
+# fails on TEXT (error 1170); where the draft cannot keep the kind, it renders one with a note.
+_MYSQL_INDEX_KINDS = frozenset({"fulltext", "spatial"})
+_MYSQL_SPATIAL_TYPES = ("GEOMETRY", "POINT", "LINESTRING", "POLYGON", "COLLECTION")  # MULTI*
 
 
 def index_method(index: AgentIndex) -> str | None:
     """The source index's access method, or None for an input written before #293."""
     return index.index_type.value if index.index_type else None
+
+
+def _dropped(index: AgentIndex, dialect: Dialect) -> bool:
+    """Whether the draft notes ``index`` instead of rendering it on ``dialect``."""
+    return index_method(index) in _DROPPED_METHODS[dialect.name]
 
 
 def _has_default_opclass(method: str, aurora_type: str) -> bool:
@@ -535,10 +565,40 @@ def _pg_index_method(index: AgentIndex, columns: list[ColumnDDL]) -> tuple[str |
     return method, ""
 
 
+def _mysql_index_kind(index: AgentIndex, columns: list[ColumnDDL]) -> tuple[str | None, str]:
+    """The kind an Aurora MySQL draft keeps for ``index`` (FULLTEXT or SPATIAL; None: a plain
+    B-tree) and, when it cannot keep the source's, the index note that says why ("" otherwise)."""
+    method = index_method(index)
+    if method not in _MYSQL_INDEX_KINDS:
+        return None, ""
+    types = {c.name.lower(): c.aurora_type for c in columns}
+    nullable = {c.name.lower() for c in columns if c.nullable} if method == "spatial" else set()
+    keys = [name.lower() for name in index.columns]
+    kinds = [types.get(key, "").split("(")[0].upper() for key in keys]
+    on = ", ".join(
+        f"{name} ({types.get(key, 'unknown type')}{', nullable' if key in nullable else ''})"
+        for name, key in zip(index.columns, keys, strict=True)
+    )
+    why = ""
+    if index.is_unique:
+        why = f"Aurora MySQL has no UNIQUE {method} index"
+    elif method == "fulltext" and not all(k.endswith(("CHAR", "TEXT")) for k in kinds):
+        why = f"a fulltext index takes only CHAR, VARCHAR and TEXT columns, and this one is on {on}"
+    elif method == "spatial" and (
+        len(keys) != 1 or not kinds[0].endswith(_MYSQL_SPATIAL_TYPES) or keys[0] in nullable
+    ):
+        why = f"a spatial index takes one NOT NULL geometry column, and this one is on {on}"
+    if why:
+        return None, f"{method.upper()} index carried over as a B-tree: {why}."
+    return method, ""
+
+
 def rendered_method(index: AgentIndex, dialect: Dialect, columns: list[ColumnDDL]) -> str | None:
-    """The USING method the draft renders for ``index`` on ``dialect``, or None for a plain
-    B-tree; Aurora MySQL takes no method."""
-    return _pg_index_method(index, columns)[0] if dialect is POSTGRES else None
+    """The method the draft renders for ``index`` on ``dialect``, or None for a plain
+    B-tree: a USING method on Aurora PostgreSQL, FULLTEXT or SPATIAL on Aurora MySQL."""
+    if dialect is POSTGRES:
+        return _pg_index_method(index, columns)[0]
+    return _mysql_index_kind(index, columns)[0]
 
 
 def rendered_key(
@@ -548,19 +608,16 @@ def rendered_key(
     unique = bool(index.is_unique)  # nosemgrep: is-function-without-parentheses
     if dialect is not MYSQL:
         return unique, None
-    plan = mysql_key_plan(index.columns, index.prefix_lengths, columns, index_method(index))
+    kind = rendered_method(index, MYSQL, columns)  # #1596: FULLTEXT/SPATIAL take no prefix
+    plan = mysql_key_plan(index.columns, index.prefix_lengths, columns, kind)
     return unique and not plan.weakens_unique, plan.prefixes
 
 
 def carried_indexes(table: AgentTable, dialect: Dialect) -> list[AgentIndex]:
     """The secondary indexes the draft renders on ``dialect``, in ``TableDDL.index_sql``
-    order: all of them on Aurora PostgreSQL; on Aurora MySQL, all but the GIN, GiST and
-    SP-GiST indexes it cannot create (``_index_sql`` notes those instead)."""
-    return [
-        i
-        for i in secondary_indexes(table)
-        if not (dialect is MYSQL and index_method(i) in _MYSQL_DROPPED_METHODS)
-    ]
+    order: all but the ones ``_index_sql`` notes instead (``_DROPPED_METHODS``: GIN, GiST
+    and SP-GiST on Aurora MySQL, FULLTEXT and SPATIAL on Aurora PostgreSQL)."""
+    return [i for i in secondary_indexes(table) if not _dropped(i, dialect)]
 
 
 # #1623: Aurora MySQL (InnoDB) rejects an index on a TEXT or BLOB column without a key
@@ -616,7 +673,8 @@ def mysql_key_plan(
     longer than the prefix (error 1089). A TEXT or BLOB column with no known prefix gets
     ``MYSQL_DEFAULT_KEY_PREFIX``. When the key is over the byte limit the prefixes are cut
     to share what the unprefixed parts leave; ``fits`` is False when they cannot be cut
-    to a useful length. FULLTEXT and SPATIAL indexes get no prefix.
+    to a useful length. ``method`` is the kind the draft renders (``rendered_method``):
+    a FULLTEXT or SPATIAL index gets no prefix.
     """
     if method in _MYSQL_NO_PREFIX_METHODS:
         return KeyPlan()
@@ -747,26 +805,28 @@ def _index_sql(
             }
         )
     text_columns = _text_columns(column_ddls)
-    if dialect is MYSQL:
-        for idx in secondary_indexes(table):
-            method = index_method(idx)
-            if method in _MYSQL_DROPPED_METHODS:
-                notes.append(
-                    {
-                        "table": table.table_name,
-                        "index": idx.index_name,
-                        "reason": (
-                            f"{method.upper()} index not carried over: Aurora MySQL has no "
-                            f"{method} access method, and a B-tree on the same columns would "
-                            "not serve the queries it exists for. Use a FULLTEXT or SPATIAL "
-                            "index where one fits the columns, or serve the search from the "
-                            "application layer."
-                        ),
-                    }
-                )
+    dropped = _DROPPED_METHODS[dialect.name]
+    target = display_engine(dialect.name)
+    for idx in secondary_indexes(table):
+        method = index_method(idx)
+        if method in dropped:
+            notes.append(
+                {
+                    "table": table.table_name,
+                    "index": idx.index_name,
+                    "reason": (
+                        f"{method.upper()} index not carried over: {target} has no {method} "
+                        "access method, and a B-tree on the same columns would not serve the "
+                        f"queries it exists for. {dropped[method]}"
+                    ),
+                }
+            )
     for idx in carried_indexes(table, dialect):
         method = index_method(idx)
-        using, why = _pg_index_method(idx, column_ddls) if dialect is POSTGRES else (None, "")
+        if dialect is POSTGRES:
+            using, why = _pg_index_method(idx, column_ddls)
+        else:
+            using, why = _mysql_index_kind(idx, column_ddls)
         if why:
             notes.append({"table": table.table_name, "index": idx.index_name, "reason": why})
         if dialect is MYSQL and method == "brin":
@@ -813,7 +873,9 @@ def _index_sql(
                 unique = False  # a full UNIQUE index would reject rows the source accepts
         prefixes = None
         if dialect is MYSQL:
-            plan = mysql_key_plan(idx.columns, idx.prefix_lengths, column_ddls, method)
+            # #1596: the kind the draft keeps; a FULLTEXT or SPATIAL index it renders as a
+            # B-tree instead takes a prefix like any other
+            plan = mysql_key_plan(idx.columns, idx.prefix_lengths, column_ddls, using)
             if not plan.fits:
                 statements.append(_skipped_index(table.table_name, idx, plan))
                 notes.append(
@@ -876,21 +938,25 @@ def render_index(
 ) -> str:
     """One CREATE INDEX statement with every identifier quoted by the dialect.
 
-    ``method``, ``include`` and ``where_sql`` are PostgreSQL-only; the caller
-    validates them (``where_sql`` comes from ``sql_safety.render_predicate``).
-    ``prefix_lengths`` is Aurora MySQL-only: one entry per column, rendered ``col(N)``.
+    ``method``, ``include`` and ``where_sql`` are PostgreSQL-only, except that Aurora MySQL
+    renders a ``fulltext`` or ``spatial`` method as the kind of a non-unique index (#1596);
+    the caller validates them (``where_sql`` comes from ``sql_safety.render_predicate``).
+    ``prefix_lengths`` is Aurora MySQL-only: one entry per column, rendered ``col(N)``; a
+    FULLTEXT or SPATIAL index takes none (#1623).
     ``method`` is checked here too, so no text outside ``INDEX_METHODS`` reaches
     ``USING`` whatever the caller.
     """
+    kind = "UNIQUE " if unique else ""
+    if dialect is MYSQL and method in _MYSQL_INDEX_KINDS and not unique:
+        kind, method = f"{method.upper()} ", None
     if method and method not in INDEX_METHODS:
         raise SqlFragmentError(f"unknown index method '{method}'")
+    if kind not in ("", "UNIQUE ") and any(n is not None for n in prefix_lengths or []):
+        raise SqlFragmentError(f"a {kind.strip()} index takes no key prefix")
     cols = ", ".join(
         dialect.q(c) + _prefix_suffix(prefix_lengths, pos) for pos, c in enumerate(columns)
     )
-    sql = (
-        f"CREATE {'UNIQUE ' if unique else ''}INDEX {dialect.q(index_name)} "
-        f"ON {dialect.q(table_name)}"
-    )
+    sql = f"CREATE {kind}INDEX {dialect.q(index_name)} ON {dialect.q(table_name)}"
     if method:
         sql += f" USING {method}"
     sql += f" ({cols})"
@@ -919,7 +985,7 @@ def _key_columns(table: AgentTable, dialect: Dialect) -> set[str]:
     """Columns in the primary key, an index the draft renders, or a foreign key."""
     cols = {c.lower() for c in table.primary_key or []}
     for idx in table.indexes or []:
-        if dialect is MYSQL and index_method(idx) in _MYSQL_DROPPED_METHODS:
+        if _dropped(idx, dialect):
             continue  # #293: the draft renders no index on these columns
         cols.update(c.lower() for c in idx.columns)
     for fk in table.foreign_keys or []:

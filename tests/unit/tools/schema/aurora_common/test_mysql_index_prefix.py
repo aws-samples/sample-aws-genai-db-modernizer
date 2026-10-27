@@ -10,6 +10,7 @@ import pytest
 from src.contracts.schema_design_input import AgentIndex, AgentTable
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
+    MYSQL_DEFAULT_KEY_PREFIX,
     generate_mysql_ddl,
     generate_pg_ddl,
     render_index,
@@ -192,13 +193,47 @@ def test_a_prefix_not_shorter_than_the_column_is_dropped():
     assert result.tables[0].index_sql == ["CREATE INDEX `ix` ON `wide` (`slug`);"]
 
 
-@pytest.mark.passes_on_main
-@pytest.mark.parametrize("kind", ["fulltext", "spatial"])
-def test_fulltext_and_spatial_indexes_get_no_prefix(kind):
-    index = {"index_name": "ft", "columns": ["body"], "is_unique": False, "index_type": kind}
-    result = generate_mysql_ddl([_wide_table({"body": "text"}, [index])], source_engine="mysql")
-    assert "(191)" not in result.full_ddl and "`body`(" not in result.full_ddl
+def _geo_table(indexes: list[dict]) -> AgentTable:
+    data = _wide_table({"body": "text"}, indexes).model_dump(mode="json")
+    data["columns"].append({"column_name": "geo", "data_type": "geometry", "nullable": False})
+    return AgentTable.model_validate(data)
+
+
+@pytest.mark.parametrize(("kind", "column"), [("fulltext", "body"), ("spatial", "geo")])
+def test_fulltext_and_spatial_indexes_get_no_prefix(kind, column):
+    """A FULLTEXT or SPATIAL index the draft keeps takes no key prefix (#1596)."""
+    index = {"index_name": "ft", "columns": [column], "is_unique": False, "index_type": kind}
+    result = generate_mysql_ddl([_geo_table([index])], source_engine="mysql")
+    assert result.tables[0].index_sql == [
+        f"CREATE {kind.upper()} INDEX `ft` ON `wide` (`{column}`);"
+    ]
     assert [n for n in result.index_notes if n.get("kind") == "key_prefix"] == []
+
+
+@pytest.mark.parametrize(
+    ("index", "source"),
+    [
+        ({"index_type": "spatial", "is_unique": False}, "sqlserver"),  # TEXT, not GEOMETRY
+        ({"index_type": "fulltext", "is_unique": True}, "mysql"),  # no UNIQUE FULLTEXT
+    ],
+)
+def test_a_fulltext_or_spatial_index_carried_as_a_btree_gets_a_prefix(index, source):
+    """Where the draft cannot keep the kind it renders a B-tree (#1596), and a B-tree on a TEXT
+    column needs a key prefix like any other (error 1170), so it gets the default one."""
+    entry = {"index_name": "ft", "columns": ["body"], **index}
+    result = generate_mysql_ddl([_geo_table([entry])], source_engine=source)
+    assert result.tables[0].index_sql == [
+        f"CREATE INDEX `ft` ON `wide` (`body`({MYSQL_DEFAULT_KEY_PREFIX}));"
+    ]
+    assert [n["kind"] for n in result.index_notes if n["index"] == "ft" and n.get("kind")] == [
+        "key_prefix"
+    ]
+
+
+@pytest.mark.parametrize("kind", ["fulltext", "spatial"])
+def test_render_index_refuses_a_prefix_on_a_fulltext_or_spatial_index(kind):
+    with pytest.raises(SqlFragmentError, match="takes no key prefix"):
+        render_index(MYSQL, "wide", "ft", ["body"], method=kind, prefix_lengths=[10])
 
 
 def test_a_primary_key_keeps_its_source_prefix():

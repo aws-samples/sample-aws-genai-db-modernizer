@@ -577,12 +577,255 @@ def test_pg_draft_keeps_gin_or_gist_only_where_a_default_operator_class_covers_i
 
 
 @pytest.mark.passes_on_main  # guards what main already does for these methods
-@pytest.mark.parametrize("method", [None, "btree", "other", "fulltext", "spatial"])
+@pytest.mark.parametrize("method", [None, "btree", "other"])
 def test_pg_draft_renders_a_plain_index_for_a_method_postgres_does_not_spell(method):
     result = generate_pg_ddl([_table([_method_index(method)])], source_engine="postgresql")
 
     assert result.tables[0].index_sql == ['CREATE INDEX "idx_search" ON "topics" ("slug");']
     assert result.index_notes == []
+
+
+@pytest.mark.parametrize("source", ["mysql", "sqlserver"])
+@pytest.mark.parametrize(
+    ("method", "instead"),
+    [
+        (
+            "fulltext",
+            "Use PostgreSQL full-text search: a tsvector column or expression with a GIN "
+            "index, queried with @@ and to_tsquery.",
+        ),
+        (
+            "spatial",
+            "Use the PostGIS extension: a geometry or geography column with a GiST index.",
+        ),
+    ],
+)
+def test_pg_draft_notes_a_fulltext_or_spatial_index_instead_of_a_btree(source, method, instead):
+    """Aurora PostgreSQL has no FULLTEXT or SPATIAL index, and a B-tree on the same columns
+    serves no full-text or spatial query and can fail to build on long values: the draft
+    notes the index with the PostgreSQL equivalent instead of rendering a B-tree, as the
+    Aurora MySQL draft does for a GIN or GiST index (#1596)."""
+    result = generate_pg_ddl([_table([_method_index(method)])], source_engine=source)
+
+    assert result.tables[0].index_sql == []
+    assert result.index_notes == [
+        {
+            "table": "topics",
+            "index": "idx_search",
+            "reason": (
+                f"{method.upper()} index not carried over: Aurora PostgreSQL has no {method} "
+                "access method, and a B-tree on the same columns would not serve the queries "
+                f"it exists for. {instead}"
+            ),
+        }
+    ]
+
+
+def test_the_merge_and_design_view_skip_a_fulltext_index_the_pg_draft_notes():
+    """The merge zips ``draft_index_names`` with ``index_sql`` (strict) and the design view
+    lists ``carried_indexes``, so a FULLTEXT index the Aurora PostgreSQL draft notes instead
+    of rendering is absent from all of them; its note is a merge warning and a design-view
+    index note. The Aurora MySQL draft still lists it."""
+    table = _table(
+        [
+            {"index_name": "topics_pkey", "columns": ["id"], "is_unique": True},
+            _method_index("fulltext", name="ft_slug", columns=("slug",)),
+            _method_index("btree", name="idx_status", columns=("status",)),
+        ]
+    )
+    base = AuroraDesignBase(
+        engine="aurora_postgresql",
+        job_id="j",
+        source_database="db",
+        source_engine="mysql",
+        tables=[table],
+    )
+
+    assert draft_index_names(table, POSTGRES) == ["idx_status"]
+    assert draft_index_names(table, MYSQL) == ["ft_slug", "idx_status"]
+    view = build_design_view(base, _collector_for(table))
+    assert view["tables"][0]["indexes"] == ["idx_status (status)"]
+    assert [n["index"] for n in view["index_notes"]] == ["ft_slug"]
+
+    result = merge_design_delta(
+        base, {"delta_version": "1.0", "tables": [{"table_name": "topics"}]}
+    )
+    assert result.errors == []
+    assert result.output["table_definitions"][0]["indexes"] == [
+        'CREATE INDEX "idx_status" ON "topics" ("status");'
+    ]
+    assert any("ft_slug" in w and "FULLTEXT index not carried over" in w for w in result.warnings)
+    delta, errors = full_contract_to_delta(base, result.output)
+    assert errors == []
+    assert delta["tables"] == []
+
+
+@pytest.mark.parametrize(("method", "column"), [("fulltext", "slug"), ("spatial", "geo")])
+def test_mysql_draft_keeps_a_fulltext_or_spatial_index_through_the_merge(method, column):
+    """MySQL refuses a plain index on a TEXT column (error 1170), so the Aurora MySQL draft
+    renders a FULLTEXT or SPATIAL source index as one, the design view lists it with its
+    method, and an empty delta, a modify (a delta cannot spell either kind) and a legacy
+    echo of the draft keep it (#1596). A modify onto columns the kind cannot take gets a
+    plain index, as before."""
+    data = _table([_method_index(method, columns=(column,))]).model_dump(mode="json")
+    data["columns"].append({"column_name": "geo", "data_type": "geometry", "nullable": False})
+    table = AgentTable.model_validate(data)
+    base = AuroraDesignBase(
+        engine="aurora_mysql",
+        job_id="j",
+        source_database="db",
+        source_engine="mysql",
+        tables=[table],
+    )
+
+    def merged(**change):
+        delta = {"delta_version": "1.0", "tables": [{"table_name": "topics", **change}]}
+        result = merge_design_delta(base, delta)
+        assert result.errors == []
+        return result.output["table_definitions"][0]["indexes"]
+
+    view = build_design_view(base, _collector_for(table))
+    assert view["tables"][0]["indexes"] == [f"idx_search ({column}) USING {method}"]
+    kept = [f"CREATE {method.upper()} INDEX `idx_search` ON `topics` (`{column}`);"]
+    assert merged() == kept
+    assert merged(modify_indexes=[{"index_name": "idx_search", "columns": [column]}]) == kept
+    assert merged(modify_indexes=[{"index_name": "idx_search", "columns": ["id"]}]) == [
+        "CREATE INDEX `idx_search` ON `topics` (`id`);"
+    ]
+    # a B-tree on TEXT takes a key prefix, which a kept FULLTEXT or SPATIAL index never does
+    moved = "CREATE FULLTEXT INDEX" if method == "fulltext" else "CREATE INDEX"
+    prefix = "" if method == "fulltext" else "(191)"
+    assert merged(modify_indexes=[{"index_name": "idx_search", "columns": ["status"]}]) == [
+        f"{moved} `idx_search` ON `topics` (`status`{prefix});"
+    ]
+    with pytest.raises(SqlFragmentError):  # the kind never silently drops UNIQUE
+        render_index(MYSQL, "topics", "idx_search", [column], unique=True, method=method)
+    assert merged(remove_indexes=["idx_search"]) == []
+    legacy = merge_design_delta(base, {"delta_version": "1.0"}).output  # echoes the draft
+    delta, errors = full_contract_to_delta(base, legacy)
+    assert (errors, delta["tables"]) == ([], [])
+
+
+@pytest.mark.passes_on_main  # guards the Aurora MySQL modify branch #1596 adds
+def test_mysql_merge_reports_a_table_listed_twice_instead_of_crashing():
+    """A second entry for a table can modify an index the first one added, which has no
+    draft kind to keep: the merge reports the repeated table instead of raising KeyError."""
+    base = AuroraDesignBase(
+        engine="aurora_mysql",
+        job_id="j",
+        source_database="db",
+        source_engine="mysql",
+        tables=[_table([])],
+    )
+    added = {"index_name": "idx_new", "columns": ["id"]}
+    entries = [
+        {"table_name": "topics", "add_indexes": [added]},
+        {"table_name": "topics", "modify_indexes": [{**added, "columns": ["id", "status"]}]},
+    ]
+
+    result = merge_design_delta(base, {"delta_version": "1.0", "tables": entries})
+
+    assert result.errors == ["tables[1]: table 'topics' is listed more than once"]
+
+
+@pytest.mark.parametrize(
+    ("source", "index", "why", "statement"),
+    [
+        (
+            "mysql",
+            _method_index("spatial", columns=("geo_null",)),
+            "a spatial index takes one NOT NULL geometry column, and this one is on "
+            "geo_null (GEOMETRY, nullable)",
+            "CREATE INDEX `idx_search` ON `topics` (`geo_null`);",
+        ),
+        (
+            "sqlserver",  # TEXT until a type rule makes the column GEOMETRY
+            _method_index("spatial", columns=("geo",)),
+            "a spatial index takes one NOT NULL geometry column, and this one is on geo (TEXT)",
+            # a B-tree on TEXT takes a key prefix (#1623)
+            "CREATE INDEX `idx_search` ON `topics` (`geo`(191));",
+        ),
+        (
+            "mysql",
+            _method_index("fulltext", columns=("id",)),
+            "a fulltext index takes only CHAR, VARCHAR and TEXT columns, and this one is on "
+            "id (BIGINT)",
+            "CREATE INDEX `idx_search` ON `topics` (`id`);",
+        ),
+        (
+            "mysql",
+            {**_method_index("fulltext"), "is_unique": True},
+            "Aurora MySQL has no UNIQUE fulltext index",
+            # the TEXT key's default prefix drops UNIQUE, with its own note (#1623)
+            "CREATE INDEX `idx_search` ON `topics` (`slug`(191));",
+        ),
+        (
+            "mysql",
+            {**_method_index("spatial", columns=("geo",)), "is_unique": True},
+            "Aurora MySQL has no UNIQUE spatial index",
+            "CREATE UNIQUE INDEX `idx_search` ON `topics` (`geo`);",
+        ),
+    ],
+)
+def test_mysql_draft_notes_a_fulltext_or_spatial_index_it_cannot_keep(
+    source, index, why, statement
+):
+    """Where Aurora MySQL cannot build the source's FULLTEXT or SPATIAL index (a nullable or
+    non-geometry column, a non-character one, or UNIQUE), the draft renders a plain index
+    and notes why, rather than failing or guessing silently (#1596, ADR-028 Decision 1)."""
+    data = _table([index]).model_dump(mode="json")
+    data["columns"] += [
+        {"column_name": "geo", "data_type": "geometry", "nullable": False},
+        {"column_name": "geo_null", "data_type": "geometry", "nullable": True},
+    ]
+    table = AgentTable.model_validate(data)
+    result = generate_mysql_ddl([table], source_engine=source)
+
+    assert result.tables[0].index_sql == [statement]
+    base = AuroraDesignBase(
+        engine="aurora_mysql",
+        job_id="j",
+        source_database="db",
+        source_engine=source,
+        tables=[table],
+    )
+    key = statement.split(" (", 1)[1].rsplit(")", 1)[0].replace("`", "")
+    unique = " UNIQUE" if "UNIQUE" in statement else ""
+    view = build_design_view(base, _collector_for(table))  # lists the key the draft renders
+    assert view["tables"][0]["indexes"] == [f"idx_search{unique} ({key})"]
+    assert [n for n in result.index_notes if not n.get("kind")] == [
+        {
+            "table": "topics",
+            "index": "idx_search",
+            "reason": f"{index['index_type'].upper()} index carried over as a B-tree: {why}.",
+        }
+    ]
+    prefixed = "(191)" in statement
+    notes = [n for n in result.index_notes if n["index"] == "idx_search"]
+    assert [n["kind"] for n in notes if n.get("kind")] == ["key_prefix"] * prefixed
+
+
+def test_a_type_rule_to_geometry_brings_a_sql_server_spatial_index_back():
+    """The merge re-renders the draft over the delta's column types, so once a type rule
+    makes a SQL Server spatial column GEOMETRY, its SPATIAL index comes back."""
+    data = _table([_method_index("spatial", columns=("geo",))]).model_dump(mode="json")
+    data["columns"].append({"column_name": "geo", "data_type": "geometry", "nullable": False})
+    base = AuroraDesignBase(
+        engine="aurora_mysql",
+        job_id="j",
+        source_database="db",
+        source_engine="sqlserver",
+        tables=[AgentTable.model_validate(data)],
+        source_data_types={("topics", "geo"): "geometry"},
+    )
+    rule = {"source_data_type": "geometry", "aurora_type": "GEOMETRY"}
+
+    result = merge_design_delta(base, {"delta_version": "1.0", "type_rules": [rule]})
+
+    assert result.errors == []
+    assert result.output["table_definitions"][0]["indexes"] == [
+        "CREATE SPATIAL INDEX `idx_search` ON `topics` (`geo`);"
+    ]
 
 
 def test_pg_draft_keeps_the_method_and_the_partial_predicate_together():
