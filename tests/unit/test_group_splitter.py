@@ -1,7 +1,7 @@
 """Unit tests for the schema design group splitter."""
 
 from src.agents.schema_design.group_splitter import (
-    MAX_GROUP_SIZE,
+    MAX_STATEMENTS_PER_GROUP,
     build_groups,
     get_primary_table,
     has_no_source_table,
@@ -61,10 +61,10 @@ class TestBuildGroups:
         assert len(groups[0]["queries"]) == 10
 
     def test_oversized_table_splits_into_chunks(self):
-        queries = [_make_query(f"q{i}", ["db.users"]) for i in range(MAX_GROUP_SIZE + 5)]
+        queries = [_make_query(f"q{i}", ["db.users"]) for i in range(MAX_STATEMENTS_PER_GROUP + 5)]
         groups = build_groups(queries, "db")
         assert len(groups) == 2
-        assert len(groups[0]["queries"]) == MAX_GROUP_SIZE
+        assert len(groups[0]["queries"]) == MAX_STATEMENTS_PER_GROUP
         assert len(groups[1]["queries"]) == 5
 
     def test_small_tables_batched_together(self):
@@ -96,15 +96,15 @@ class TestBuildGroups:
         assert build_groups([], "db") == []
 
     def test_small_batch_flushed_at_max_size(self):
-        # Create enough small tables to exceed MAX_GROUP_SIZE
+        # Create enough small tables to exceed MAX_STATEMENTS_PER_GROUP
         queries = []
-        for i in range(MAX_GROUP_SIZE + 3):
+        for i in range(MAX_STATEMENTS_PER_GROUP + 3):
             queries.append(_make_query(f"q{i}", [f"db.table_{i}"]))
         groups = build_groups(queries, "db")
         # Should have at least 2 groups (one flushed at MAX, one remainder)
         assert len(groups) >= 2
         total = sum(len(g["queries"]) for g in groups)
-        assert total == MAX_GROUP_SIZE + 3
+        assert total == MAX_STATEMENTS_PER_GROUP + 3
 
 
 class TestTablesForQueries:
@@ -278,8 +278,8 @@ class TestAffinityGrouping:
         assert len(groups[0]["queries"]) == 2
 
     def test_cluster_respects_max_group_size(self):
-        """Even clustered tables should be split when exceeding MAX_GROUP_SIZE."""
-        queries = [_make_query(f"q{i}", ["db.orders"]) for i in range(MAX_GROUP_SIZE + 5)]
+        """Even clustered tables should be split when exceeding MAX_STATEMENTS_PER_GROUP."""
+        queries = [_make_query(f"q{i}", ["db.orders"]) for i in range(MAX_STATEMENTS_PER_GROUP + 5)]
         queries += [_make_query(f"qoi{i}", ["db.order_items"]) for i in range(3)]
         collector = self._make_collector(
             ["db.orders", "db.order_items"],
@@ -289,9 +289,9 @@ class TestAffinityGrouping:
 
         groups = build_groups(queries, "db", collector, analysis)
         total = sum(len(g["queries"]) for g in groups)
-        assert total == MAX_GROUP_SIZE + 5 + 3
+        assert total == MAX_STATEMENTS_PER_GROUP + 5 + 3
         # Should have been split into chunks
-        assert all(len(g["queries"]) <= MAX_GROUP_SIZE for g in groups)
+        assert all(len(g["queries"]) <= MAX_STATEMENTS_PER_GROUP for g in groups)
 
 
 class TestCoDependencyClustering:

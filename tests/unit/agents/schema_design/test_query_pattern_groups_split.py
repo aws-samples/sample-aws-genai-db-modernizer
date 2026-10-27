@@ -3,7 +3,7 @@
 The queries of one access pattern are designed together: they share the cluster of
 the pattern's first query, sit next to each other, and neither the 20-query chunking
 nor the input-size halving cuts a pattern that fits in one group. A pattern larger than
-``MAX_GROUP_SIZE`` is still cut into chunks of that size.
+``MAX_STATEMENTS_PER_GROUP`` is still cut into chunks of that size.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from src.agents.schema_design.group_splitter import (
-    MAX_GROUP_SIZE,
+    MAX_STATEMENTS_PER_GROUP,
     build_groups,
     fit_groups_to_budget,
     query_pattern_index,
@@ -62,7 +62,7 @@ def test_a_chunk_never_cuts_a_pattern_that_fits(layout: str) -> None:
     groups = build_groups(queries, "db", COLLECTOR)
     where = _group_of(groups)
     assert len({where[q["query_id"]] for q in copies}) == 1
-    assert max(len(g["queries"]) for g in groups) <= MAX_GROUP_SIZE
+    assert max(len(g["queries"]) for g in groups) <= MAX_STATEMENTS_PER_GROUP
     assert sorted(where) == sorted(q["query_id"] for q in queries)
 
 
@@ -91,9 +91,9 @@ def test_halving_cuts_at_a_pattern_boundary() -> None:
 
 
 def test_a_pattern_larger_than_a_group_is_still_cut() -> None:
-    copies = _copies(MAX_GROUP_SIZE + 5)
+    copies = _copies(MAX_STATEMENTS_PER_GROUP + 5)
     groups = build_groups(copies, "db", COLLECTOR)
-    assert [len(g["queries"]) for g in groups] == [MAX_GROUP_SIZE, 5]
+    assert [len(g["queries"]) for g in groups] == [MAX_STATEMENTS_PER_GROUP, 5]
 
 
 def test_queries_of_one_pattern_each_keep_their_order() -> None:
@@ -105,9 +105,9 @@ def test_queries_of_one_pattern_each_keep_their_order() -> None:
 def test_a_large_pattern_fills_the_open_chunk_and_leaves_no_tiny_group() -> None:
     """#1146 review: a pattern of more than 20 queries no longer flushes the open
     chunk before it, which left 1-query design groups."""
-    queries = [*_distinct(3), *_copies(MAX_GROUP_SIZE + 5), *_distinct(7)[3:]]
+    queries = [*_distinct(3), *_copies(MAX_STATEMENTS_PER_GROUP + 5), *_distinct(7)[3:]]
     groups = build_groups(queries, "db", COLLECTOR)
-    assert [len(g["queries"]) for g in groups] == [MAX_GROUP_SIZE, 12]
+    assert [len(g["queries"]) for g in groups] == [MAX_STATEMENTS_PER_GROUP, 12]
 
 
 def test_keeping_patterns_whole_never_adds_a_group() -> None:

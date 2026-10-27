@@ -21,7 +21,7 @@ from src.agents.schema_design.group_input import (
 from src.agents.schema_design.group_splitter import (
     MAX_GROUP_INPUT_CHARS,
     MAX_GROUP_INPUT_PAGES,
-    MAX_GROUP_SIZE,
+    MAX_STATEMENTS_PER_GROUP,
     build_groups,
     fit_groups_to_budget,
     split_schema_input,
@@ -312,7 +312,7 @@ def test_misc_batch_never_exceeds_the_group_cap() -> None:
         for i in range(3)
     ]
     groups = build_groups(queries, "db")
-    assert max(len(g["queries"]) for g in groups) <= MAX_GROUP_SIZE
+    assert max(len(g["queries"]) for g in groups) <= MAX_STATEMENTS_PER_GROUP
     assert sum(len(g["queries"]) for g in groups) == len(queries)
 
 
@@ -373,7 +373,7 @@ def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> Non
     """#367 review finding 1: ``filter_collector_for_assignment`` resolves the
     #116 qualifier mismatch, but ``tables_for_queries`` in group_splitter.py
     did not use the same resolver, so ``--split`` wrote zero-table group parts
-    for any engine with more than ``MAX_GROUP_SIZE`` queries once the
+    for any engine with more than ``MAX_STATEMENTS_PER_GROUP`` queries once the
     collector's table_id qualifier (customer-entered database label)
     diverged from the SQL schema qualifier a query's ``tables_accessed``
     carries. 25 queries forces the sub-split that single-group runs (and the
@@ -410,7 +410,7 @@ def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> Non
         store=store,
     )
 
-    # 25 queries, all on one table, over MAX_GROUP_SIZE=20: the cluster is
+    # 25 queries, all on one table, over MAX_STATEMENTS_PER_GROUP=20: the cluster is
     # sub-split into two chunks (20 + 5), so no group has zero tables and no
     # query is excluded (none of these queries is pseudo-table-only).
     assert manifest.excluded_queries == []
@@ -487,7 +487,7 @@ def test_split_excludes_catalog_queries_even_when_the_largest_group_is_full(
 ) -> None:
     """#367 review finding 1 (critical): folding tableless queries into the
     target group used to re-chunk it once the merge pushed it over
-    MAX_GROUP_SIZE, so a chunk after the first held only catalog queries --
+    MAX_STATEMENTS_PER_GROUP, so a chunk after the first held only catalog queries --
     a zero-table group again, just one layer removed. Excluding catalog
     queries before grouping at all means the real group's size is never
     inflated by them in the first place, so this can't happen regardless of
@@ -497,7 +497,7 @@ def test_split_excludes_catalog_queries_even_when_the_largest_group_is_full(
     base = collector["queries"]["query_patterns"][0]
     real_queries = [
         {**base, "query_id": f"q-prod-{i}", "tables_accessed": [PRODUCTS]}
-        for i in range(MAX_GROUP_SIZE)  # the largest group already has exactly 20 queries
+        for i in range(MAX_STATEMENTS_PER_GROUP)  # the largest group already has exactly 20 queries
     ]
     catalog_queries = _catalog_queries(6)
     queries = real_queries + catalog_queries
@@ -520,11 +520,11 @@ def test_split_excludes_catalog_queries_even_when_the_largest_group_is_full(
     }
     for g in manifest.groups:
         assert g.table_count > 0, f"group {g.group_name!r} has no tables"
-        assert g.query_count <= MAX_GROUP_SIZE
+        assert g.query_count <= MAX_STATEMENTS_PER_GROUP
         data = json.loads((tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text())
         CollectorOutputContract.model_validate(data["collector_output"])
     # The real queries were never inflated by the catalog queries riding along.
-    assert sum(g.query_count for g in manifest.groups) == MAX_GROUP_SIZE
+    assert sum(g.query_count for g in manifest.groups) == MAX_STATEMENTS_PER_GROUP
 
 
 def test_split_leaves_a_genuine_resolution_failure_in_its_own_group(tmp_path) -> None:

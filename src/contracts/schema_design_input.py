@@ -507,10 +507,16 @@ class SchemaDesignGroupsManifest(BaseModel):
       access method the collectors capture, so the Aurora draft keeps GIN, GiST,
       SP-GiST, BRIN and hash indexes instead of rendering every index as B-tree; absent
       in older inputs, read as btree.
+    - 1.4 (2026-10-27, #1602): Added optional groups[].pattern_count and
+      AgentQueryPattern.query_pattern_id: DynamoDB's design parts are capped at
+      MAX_PATTERNS_PER_PART query patterns, and a part's input lists one entry per pattern (a
+      representative statement with the pattern's summed traffic), with every member's
+      query id in queries.query_pattern_groups; a manifest or input written before has
+      none, and still loads.
     """
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str

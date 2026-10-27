@@ -14,6 +14,9 @@ Version History:
 - 1.1 (2026-10-17, #976): every model: Unknown fields are accepted and kept
   (``extra="allow"``, was ``"forbid"``): a file written by a later MINOR loads in
   older code (ADR-008 Decision 5, #976).
+- 1.2 (2026-10-27, #1602): Added optional queries[].member_query_ids: a row for an input
+  entry that stands for a query pattern lists every member statement, and its rates are
+  the members' total; a row written before has none, and still loads.
 """
 
 from __future__ import annotations
@@ -177,7 +180,7 @@ class DesignMetricsContract(BaseModel):
     """Every number the schema designer reads instead of computing (#626)."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     engine: str = Field(..., description="Target engine the metrics are for")
     growth_multiplier: float = Field(

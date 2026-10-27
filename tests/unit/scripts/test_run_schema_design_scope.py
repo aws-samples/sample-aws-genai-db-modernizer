@@ -446,7 +446,8 @@ def test_bedrock_grouped_path_returns_merge_violations(monkeypatch, tmp_path):
         {"query_id": "q-users-2", "tables_accessed": ["mydb.users"]}
     )
     store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
-    monkeypatch.setattr("src.agents.schema_design.group_splitter.MAX_GROUP_SIZE", 1)
+    monkeypatch.setattr("src.agents.schema_design.group_splitter.MAX_STATEMENTS_PER_GROUP", 1)
+    monkeypatch.setattr("src.agents.schema_design.group_splitter.MAX_PATTERNS_PER_PART", 1)
     design = _design("dynamodb", "mydb.orders", "q-orders")
     monkeypatch.setattr(
         handler, "_dispatch_schema_agent", lambda *_a, **_k: (json.dumps(design), None)

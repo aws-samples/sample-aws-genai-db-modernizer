@@ -1177,7 +1177,7 @@ def run_schema_design_auto(
 ) -> ScopeReport:
     """Run schema design with automatic group splitting for large workloads.
 
-    If the number of in-scope queries exceeds MAX_GROUP_SIZE, splits into groups,
+    If the number of in-scope statements exceeds MAX_STATEMENTS_PER_GROUP, splits into groups,
     runs schema design per group (in parallel), then merges. Otherwise falls back
     to the standard single-call path. Aurora engines always run single-pass (see
     ``_NON_GROUPED_ENGINES``).
@@ -1193,7 +1193,7 @@ def run_schema_design_auto(
     prepared LLM input and returns (group splitting for external runs is the
     explicit ``scripts/run_schema_design.py --split`` step).
     """
-    from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+    from src.agents.schema_design.group_splitter import MAX_STATEMENTS_PER_GROUP
 
     if llm_mode == "bedrock":
         require_valid_guardrail_config()
@@ -1238,9 +1238,9 @@ def run_schema_design_auto(
     else:
         queries = collector_output.get("queries", {}).get("query_patterns", [])
 
-    if len(queries) <= MAX_GROUP_SIZE:
+    if len(queries) <= MAX_STATEMENTS_PER_GROUP:
         say(
-            f"[schema-design/{target_type}] {len(queries)} queries <= {MAX_GROUP_SIZE} "
+            f"[schema-design/{target_type}] {len(queries)} queries <= {MAX_STATEMENTS_PER_GROUP} "
             f"— running single-pass"
         )
         return run_schema_design(
@@ -1254,7 +1254,7 @@ def run_schema_design_auto(
 
     # Split into groups
     say(
-        f"[schema-design/{target_type}] {len(queries)} queries > {MAX_GROUP_SIZE} "
+        f"[schema-design/{target_type}] {len(queries)} queries > {MAX_STATEMENTS_PER_GROUP} "
         f"— splitting into groups"
     )
     run_schema_split(

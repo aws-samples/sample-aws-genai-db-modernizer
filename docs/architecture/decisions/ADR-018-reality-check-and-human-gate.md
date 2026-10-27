@@ -60,7 +60,7 @@ For large workloads (20+ tables per engine), split into groups before schema des
 - MAX_GROUP_SIZE = 20 tables (empirically determined — balances LLM context limits with design quality)
 - Groups processed in parallel, then merged into a unified schema per engine
 
-*Superseded (#701): `MAX_GROUP_SIZE = 20` in `src/agents/schema_design/group_splitter.py` caps groups at 20 queries, and `src/agents/schema_design/handler.py` decides whether to split by counting in-scope queries, not tables.*
+*Superseded (#701): `MAX_STATEMENTS_PER_GROUP = 20` in `src/agents/schema_design/group_splitter.py` caps groups at 20 statements (`MAX_PATTERNS_PER_PART = 20` caps DynamoDB parts at 20 query patterns, ADR-027), and `src/agents/schema_design/handler.py` decides whether to split by counting in-scope queries, not tables.*
 
 ## Enforcement
 

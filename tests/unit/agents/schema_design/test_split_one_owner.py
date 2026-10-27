@@ -24,7 +24,7 @@ import pytest
 
 from src.agents.prompt_framing import is_framed
 from src.agents.schema_design.group_splitter import (
-    MAX_GROUP_SIZE,
+    MAX_PATTERNS_PER_PART,
     assign_table_owners,
     build_groups,
     split_schema_input,
@@ -234,7 +234,7 @@ def test_every_sample_query_is_in_exactly_one_group(sample_split) -> None:
 def test_every_sample_group_holds_at_most_the_cap(sample_split) -> None:
     """#1602: the cap counts query patterns, one input entry each."""
     sample, manifest, inputs, _ = sample_split
-    assert max(g["pattern_count"] for g in manifest["groups"]) <= MAX_GROUP_SIZE, sample
+    assert max(g["pattern_count"] for g in manifest["groups"]) <= MAX_PATTERNS_PER_PART, sample
     for g in manifest["groups"]:
         entries = inputs[g["group_index"]]["collector_output"]["queries"]["query_patterns"]
         assert len(entries) == g["pattern_count"], (sample, g["group_index"])

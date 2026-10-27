@@ -8,7 +8,7 @@ patterns, not statements:
 
 - :func:`pattern_units` turns a design call's statements into one unit per query
   pattern, the members in collection order;
-- the splitter caps a part by units (``group_splitter.MAX_GROUP_SIZE`` patterns) and
+- the splitter caps a part by units (``group_splitter.MAX_PATTERNS_PER_PART`` patterns) and
   keeps today's table ownership and context tables, computed on the member statements;
 - a part's input lists one entry per unit (:func:`pattern_entry`): a representative
   statement with the pattern's summed traffic, and the pattern's members, combined

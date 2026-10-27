@@ -9618,6 +9618,25 @@
                   "type": "number"
                 }
               },
+              "member_query_ids": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "query_id": {
                 "required": true,
                 "schema": {
@@ -9706,8 +9725,8 @@
         }
       }
     },
-    "schema_hash": "da8f40d2b183ad0d87936796d59f3aa45e4960411f76b863edc7f924bbfa63fa",
-    "version": "1.1"
+    "schema_hash": "2ce41a32349f22ab276a2d6894fbff18a3cf3016c024152327ae4fe7508edbc5",
+    "version": "1.2"
   },
   "documentdb_decision_trace.DocumentDBDecisionTrace": {
     "fields": {
@@ -20057,6 +20076,23 @@
                   "kind": "array"
                 }
               },
+              "pattern_count": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "primary_tables": {
                 "required": true,
                 "schema": {
@@ -20119,8 +20155,8 @@
         }
       }
     },
-    "schema_hash": "c40e9988029f80f48f925c665ee76689bef7a834cf3ead63cd314f24bc6b8c62",
-    "version": "1.3"
+    "schema_hash": "fb03486c2d38bd24e3424182dd12dd66624d2426aac8371f2937c94a8c50e8fd",
+    "version": "1.4"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {

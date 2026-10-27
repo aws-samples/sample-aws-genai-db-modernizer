@@ -1,7 +1,7 @@
 """DynamoDB schema design works per access pattern, not per statement (#1602).
 
 ``--split`` builds DynamoDB's design parts from query patterns (#1146): a part holds at
-most ``MAX_GROUP_SIZE`` patterns, its input lists one entry per pattern (a
+most ``MAX_PATTERNS_PER_PART`` patterns, its input lists one entry per pattern (a
 representative statement with the pattern's summed traffic) and every member's query
 id, and everything keyed by query id still reads every member. The design must still
 name every member statement: ``design_metrics`` gives a pattern one row with its
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from src.agents.schema_design.group_merger import merge_schema_groups
-from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE, split_schema_input
+from src.agents.schema_design.group_splitter import MAX_PATTERNS_PER_PART, split_schema_input
 from src.agents.schema_design.pe_review_external import (
     prepare_pe_review_llm_input,
     request_key,
@@ -235,15 +235,17 @@ def test_parts_are_capped_by_patterns(tmp_path: Path) -> None:
     assert [g["pattern_count"] for g in manifest["groups"]] == [20, 10]
     assert [g["query_count"] for g in manifest["groups"]] == [60, 30]
     for g in manifest["groups"]:
-        assert len(_entries(inputs[g["group_index"]])) == g["pattern_count"] <= MAX_GROUP_SIZE
+        assert (
+            len(_entries(inputs[g["group_index"]])) == g["pattern_count"] <= MAX_PATTERNS_PER_PART
+        )
     placed = [qid for data in inputs.values() for qid in _statements(data)]
     assert sorted(placed) == sorted(q["query_id"] for q in queries)
 
 
 def test_a_pattern_of_more_statements_than_the_cap_stays_one_entry(tmp_path: Path) -> None:
-    _, manifest, inputs = _split(tmp_path, _members(1, MAX_GROUP_SIZE + 5))
+    _, manifest, inputs = _split(tmp_path, _members(1, MAX_PATTERNS_PER_PART + 5))
     assert [(g["pattern_count"], g["query_count"]) for g in manifest["groups"]] == [
-        (1, MAX_GROUP_SIZE + 5)
+        (1, MAX_PATTERNS_PER_PART + 5)
     ]
     assert len(_entries(inputs[0])) == 1
 

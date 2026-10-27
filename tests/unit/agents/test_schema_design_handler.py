@@ -227,7 +227,7 @@ class TestSchemaDesignHandler:
 
 # ---------------------------------------------------------------------------
 # run_schema_design_auto routing (ADR-027 amendment): grouping on the deployed
-# path, single-pass fallback at/under MAX_GROUP_SIZE, Aurora always single-pass.
+# path, single-pass fallback at/under MAX_STATEMENTS_PER_GROUP, Aurora always single-pass.
 # ---------------------------------------------------------------------------
 
 
@@ -290,11 +290,11 @@ class TestRunSchemaDesignAutoRouting:
         split.assert_not_called()
 
     def test_small_workload_runs_single_pass(self, tmp_path):
-        """At or under MAX_GROUP_SIZE, no split happens."""
-        from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+        """At or under MAX_STATEMENTS_PER_GROUP, no split happens."""
+        from src.agents.schema_design.group_splitter import MAX_STATEMENTS_PER_GROUP
         from src.agents.schema_design.handler import run_schema_design_auto
 
-        store = _store_with_queries(tmp_path, "dynamodb", MAX_GROUP_SIZE)
+        store = _store_with_queries(tmp_path, "dynamodb", MAX_STATEMENTS_PER_GROUP)
         with (
             patch("src.agents.schema_design.handler.run_schema_design") as single,
             patch("src.agents.schema_design.handler.run_schema_split") as split,
@@ -304,11 +304,11 @@ class TestRunSchemaDesignAutoRouting:
         split.assert_not_called()
 
     def test_large_remodeling_workload_splits_into_groups(self, tmp_path):
-        """Above MAX_GROUP_SIZE, a remodeling engine takes the grouping path."""
-        from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+        """Above MAX_STATEMENTS_PER_GROUP, a remodeling engine takes the grouping path."""
+        from src.agents.schema_design.group_splitter import MAX_STATEMENTS_PER_GROUP
         from src.agents.schema_design.handler import run_schema_design_auto
 
-        store = _store_with_queries(tmp_path, "dynamodb", MAX_GROUP_SIZE + 10)
+        store = _store_with_queries(tmp_path, "dynamodb", MAX_STATEMENTS_PER_GROUP + 10)
 
         def _empty_manifest(
             job_id, database_name, target_type, store, assignment_version=0

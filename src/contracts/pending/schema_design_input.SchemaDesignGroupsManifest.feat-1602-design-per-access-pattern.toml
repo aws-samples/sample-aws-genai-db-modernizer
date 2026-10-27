@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py after the last rebase.
-contract = "schema_design_input.SchemaDesignGroupsManifest"
-kind = "minor"
-reason = "Added optional groups[].pattern_count and AgentQueryPattern.query_pattern_id: DynamoDB's design parts are capped at MAX_GROUP_SIZE query patterns, and a part's input lists one entry per pattern (a representative statement with the pattern's summed traffic), with every member's query id in queries.query_pattern_groups; a manifest or input written before has none, and still loads."
-issue = 1602

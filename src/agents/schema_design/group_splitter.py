@@ -2,7 +2,7 @@
 Group Splitter — Splits large schema design workloads into manageable groups.
 
 When a database has 50+ tables, a single LLM prompt can't handle all of them
-within token limits. This module splits tables into groups (MAX_GROUP_SIZE),
+within token limits. This module splits tables into groups (MAX_STATEMENTS_PER_GROUP),
 writes per-group input files, and produces a manifest for the schema design
 pipeline to iterate over.
 
@@ -11,7 +11,7 @@ The grouping strategy (enhanced with analysis signals):
   2. Map queries to their cluster (not just primary table)
   3. Clusters with SMALL_GROUP_THRESHOLD+ queries get their own group
   4. Smaller clusters are batched together into misc groups
-  5. Groups exceeding MAX_GROUP_SIZE are sub-split into chunks, each table's
+  5. Groups exceeding MAX_STATEMENTS_PER_GROUP are sub-split into chunks, each table's
      queries kept in one chunk when they fit
   6. Each table is primary in exactly one group, its owner (#1243): the group
      holding most of the queries whose primary table it is. Another group whose
@@ -21,14 +21,14 @@ The grouping strategy (enhanced with analysis signals):
 The queries of one query pattern (``src.tools.sql.query_pattern_groups``, #1146) are
 designed together: they go to the cluster of the pattern's first query, sit next to
 each other, and a chunk or a halved group does not cut a pattern that fits in one, so a
-designer sees each pattern once. A pattern of more than ``MAX_GROUP_SIZE`` queries is
+designer sees each pattern once. A pattern of more than ``MAX_STATEMENTS_PER_GROUP`` queries is
 still cut into chunks of that size, filling the chunk before it and leaving its last
 part open for the next pattern. Keeping patterns whole never takes more chunks or
 halved parts than the plain cut would: when it would, the plain cut is kept.
 
 DynamoDB (``pattern_input.PATTERN_ENGINES``, #1602) is split per query pattern instead:
 each pattern is one unit, so the sizes above count patterns (a part holds at most
-``MAX_GROUP_SIZE`` of them, however many statements they have) and a part's input lists
+``MAX_PATTERNS_PER_PART`` of them, however many statements they have) and a part's input lists
 one entry per pattern. Clustering, table ownership, context tables and naming still read
 every member statement. A single pattern too large for one part's input is cut between
 its members (:func:`fit_units_to_budget`).
@@ -71,14 +71,19 @@ NO_SOURCE_TABLE_REASON = "not designed: no source table"
 
 # Groups with fewer queries than this get batched together
 SMALL_GROUP_THRESHOLD = 5
-# Maximum queries per group — larger groups get sub-split by primary table. For the
-# engines split per query pattern (DynamoDB, #1602) it counts patterns, not statements.
-MAX_GROUP_SIZE = 20
+# Maximum statements per group for the engines designed per statement — larger groups
+# get sub-split by primary table. Table ownership, coverage and every deliverable
+# figure count statements too.
+MAX_STATEMENTS_PER_GROUP = 20
+# Maximum query patterns per part for the engines split per query pattern (DynamoDB,
+# #1602), however many statements those patterns have.
+MAX_PATTERNS_PER_PART = 20
 # Maximum size of one group's input file: three Read pages (see
 # group_input.READ_PAGE_CHARS), both in characters and in the whole-line pages
 # read_pages() lists, so a group subagent reads its input in at most three
 # Read calls. A group over it is halved until every part fits (or
-# has one query); MAX_GROUP_SIZE stays the upper bound on queries per group (#272).
+# has one query); MAX_STATEMENTS_PER_GROUP (MAX_PATTERNS_PER_PART for the per-pattern engines) stays the
+# upper bound per group (#272).
 MAX_GROUP_INPUT_PAGES = 3
 MAX_GROUP_INPUT_CHARS = MAX_GROUP_INPUT_PAGES * READ_PAGE_CHARS
 
@@ -256,6 +261,7 @@ def build_groups(
     collector_output: dict | None = None,
     analysis_output: dict | None = None,
     co_dependency_groups: list[list[str]] | None = None,
+    max_size: int | None = None,
 ) -> list[dict]:
     """Split queries into groups using table affinity clusters.
 
@@ -264,8 +270,12 @@ def build_groups(
     relatedness). Queries are assigned to clusters, then clusters are sized into
     groups so co-dependent / related queries are designed together.
 
+    ``max_size`` caps a group: statements (default ``MAX_STATEMENTS_PER_GROUP``), or the
+    query pattern units of an engine split per pattern (``MAX_PATTERNS_PER_PART``, #1602).
+
     Returns a list of dicts with keys: group_name, primary_tables, queries.
     """
+    cap = MAX_STATEMENTS_PER_GROUP if max_size is None else max_size
     # Resolver for canonicalising tables_accessed before clustering (367-2),
     # built once from the collector's own schema; None keeps the pre-367-2
     # qualify-only fallback when there is no collector output to resolve against.
@@ -322,7 +332,7 @@ def build_groups(
         group_base_name = _short_name(cluster_root)
 
         if len(cluster_queries) >= SMALL_GROUP_THRESHOLD:
-            if len(cluster_queries) <= MAX_GROUP_SIZE:
+            if len(cluster_queries) <= cap:
                 groups.append(
                     {
                         "group_name": group_base_name,
@@ -333,7 +343,7 @@ def build_groups(
             else:
                 # Sub-split large clusters by chunk: whole tables per chunk when they
                 # fit, whole query patterns otherwise (#1243, #1146).
-                chunks = _table_chunks(cluster_queries, primary_of, pattern_of, MAX_GROUP_SIZE)
+                chunks = _table_chunks(cluster_queries, primary_of, pattern_of, cap)
                 for chunk_num, chunk in enumerate(chunks, start=1):
                     suffix = f"_part{chunk_num}" if len(chunks) > 1 else ""
                     groups.append(
@@ -344,8 +354,8 @@ def build_groups(
                         }
                     )
         else:
-            # Flush first so the batch never goes over MAX_GROUP_SIZE (#272).
-            if small_batch and len(small_batch) + len(cluster_queries) > MAX_GROUP_SIZE:
+            # Flush first so the batch never goes over the cap (#272).
+            if small_batch and len(small_batch) + len(cluster_queries) > cap:
                 groups.append(
                     {
                         "group_name": f"misc_batch_{len(groups)}",
@@ -357,7 +367,7 @@ def build_groups(
                 small_tables = []
             small_batch.extend(cluster_queries)
             small_tables.extend(tables_in_cluster)
-            if len(small_batch) >= MAX_GROUP_SIZE:
+            if len(small_batch) >= cap:
                 groups.append(
                     {
                         "group_name": f"misc_batch_{len(groups)}",
@@ -595,7 +605,7 @@ def tables_for_queries(
     saw while ``table_id`` is qualified with the customer-entered database
     label, and an exact-string join drops every table when the two diverge.
     Review finding 367-1: this is the join ``--split`` uses for every group
-    once an engine has more than ``MAX_GROUP_SIZE`` queries, so it needs the
+    once an engine has more than ``MAX_STATEMENTS_PER_GROUP`` queries, so it needs the
     same resolution ``filter_collector_for_assignment`` already has, or the
     qualifier mismatch resurfaces downstream of it. Falls back to the exact
     match when no resolver is given, for callers that build it once per split
@@ -827,7 +837,7 @@ def split_schema_input(
         if has_no_source_table(q) and q.get("query_id") is not None
     ]
     # #1602: the engine's parts are built from query patterns, one unit each, capped at
-    # MAX_GROUP_SIZE patterns; ownership and context still count every statement.
+    # MAX_PATTERNS_PER_PART patterns; ownership and context still count every statement.
     by_pattern = engine in PATTERN_ENGINES
     groups = build_groups(
         (
@@ -839,6 +849,7 @@ def split_schema_input(
         collector_output,
         analysis_output,
         co_dependency_groups=co_dependency_groups,
+        max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
     )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 

@@ -1,6 +1,0 @@
-# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
-# uv run python scripts/resolve_contract_versions.py after the last rebase.
-contract = "design_metrics.DesignMetricsContract"
-kind = "minor"
-reason = "Added optional queries[].member_query_ids: a row for an input entry that stands for a query pattern lists every member statement, and its rates are the members' total; a row written before has none, and still loads."
-issue = 1602

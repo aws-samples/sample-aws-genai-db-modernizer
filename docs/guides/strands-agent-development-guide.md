@@ -194,7 +194,7 @@ runner = SchemaDesignRunner(
 output, trace = runner.run(designer_prompt, input_summary)
 ```
 
-**DynamoDB specifically always splits into groups** (roughly 20 queries each)
+**DynamoDB specifically always splits into groups** (at most 20 query patterns each)
 that are designed independently and then merged by
 `src/agents/schema_design/dynamodb_merge.py` — this is mandatory, not a
 large-workload fallback like the analysis advisor's group splitting.

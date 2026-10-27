@@ -1083,6 +1083,8 @@ def test_split_status_line_carries_each_groups_query_count(tmp_path) -> None:
     manifest = {"groups": [{"group_index": 0, "primary_tables": ["t"], "query_count": 18}]}
     (entry,) = run_schema_design._group_entries(store, "db/job/schema-dynamodb/v1", manifest)
     assert entry["query_count"] == 18
+    # The same figure under its unit's name (#1602); the old key stays for readers.
+    assert entry["statement_count"] == 18
 
 
 def test_split_status_line_numbers_queries_consecutively_in_group_order(tmp_path) -> None:

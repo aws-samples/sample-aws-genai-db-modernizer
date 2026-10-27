@@ -141,13 +141,13 @@ def test_both_design_pools_hand_the_run_on(
     design pool (one thread per engine) and schema design's group pool (DynamoDB's 40
     statements split into groups of at most 20) both log their threads' progress.
     Without ``in_context`` at either pool, those threads' lines would reach stdout."""
-    from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+    from src.agents.schema_design.group_splitter import MAX_STATEMENTS_PER_GROUP
     from src.assessment.runner import AssessmentRunError
     from src.storage.local_store import LocalArtifactStore
     from tests.assess_models import DESIGNER, MODEL_ENTRY_POINTS
 
     placed = assess(_request("reality_check"))
-    assert placed.summary.statements_per_engine["dynamodb"] > MAX_GROUP_SIZE
+    assert placed.summary.statements_per_engine["dynamodb"] > MAX_STATEMENTS_PER_GROUP
     capsys.readouterr()
 
     def agent(target_type: str, **kw: Any) -> Any:

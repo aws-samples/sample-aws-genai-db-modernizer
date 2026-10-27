@@ -214,7 +214,7 @@ follows once this and the assignment re-entry work (ADR-029) land.
 
 - **A. Wire the deployed path through grouping.** `run_schema_design_core` calls
   `run_schema_design_auto` (split -> per-group design -> merge) instead of the
-  single-shot `run_schema_design`, preserving the existing `<= MAX_GROUP_SIZE`
+  single-shot `run_schema_design`, preserving the existing `<= MAX_STATEMENTS_PER_GROUP`
   single-pass fallback so small engines are unchanged.
 - **B. Co-dependency-aware clustering.** Fold the assignment's `co_dependency_groups`
   into the table-affinity union in `_build_table_clusters`, alongside FK / aggregate
@@ -253,6 +253,20 @@ quality gain.
   (`schema-<engine>/v<N>/schema_output.json`) is unchanged; synthesis and fixtures
   see the same shape.
 
+## Amendment (2026-10-27, #1602): DynamoDB designs per access pattern, not per statement
+
+A large workload repeats one access pattern in many statement shapes (#1146: the same tables, predicate shape, order, limit class and operation, with different literals, IN-list lengths or returned columns). On the scoped discourse sample 717 DynamoDB statements are 321 query patterns, and the split made 45 parts of up to 20 statements, each designed and PE-reviewed with its own copy of the neighbouring tables.
+
+DynamoDB's split now works on query patterns (`src/agents/schema_design/pattern_input.py`, `PATTERN_ENGINES`):
+
+- Two counts, each counted on its own: patterns size the parts, statements decide everything else. A part holds at most `MAX_PATTERNS_PER_PART` (20) query patterns, however many statements they have (`pattern_count` in the manifest and the `--split` status line); the other engines' groups hold at most `MAX_STATEMENTS_PER_GROUP` (20) statements. A group's statements are the manifest's `query_count`, which the `--split` status line also gives as `statement_count` (and `statement_total`, beside `query_total`). Clustering (FK, aggregate, co-access and co-dependency), table ownership and context tables (#1243) and naming (#1386) still count every member statement, and no neighbouring-table context is trimmed.
+- A part's input lists one `queries.query_patterns` entry per pattern: a representative statement (the busiest member) with the pattern's summed traffic (frequency, calls per second and totals; the worst member's 95th and 99th percentiles; call-weighted averages) and a `query_pattern_id`. Its `queries.query_pattern_groups` entry lists every member's query id, the members' combined frequency and the union of the columns they return. The analysis signals, key-scoped writes and counts, redesign requirements and carried writes keep every member.
+- `design_metrics` gives the pattern one row with its summed rate and its `member_query_ids`; `check_design_numbers` fails an access pattern that names some members of a pattern and not the others, and counts the pattern's rate once.
+- One pattern too large for a part's input budget is cut between its members (first half first), so it is still designed in deterministic parts.
+- `--merge` adds a member no access pattern names to the access pattern that serves the rest of its pattern, with a note in `merge_reconciliation`, so every statement still maps to its design. The PE review request names every member statement, and stays one review per part.
+
+The single-pass designers are not changed: the samples give DocumentDB one repeated pattern in 166 statements, OpenSearch and ElastiCache are not routed any, and Aurora reads a design view, not statements. Routing never reads any of this (ADR-031): the routing snapshot is unchanged.
+
 ## Enforcement
 
 Each amendment names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when an amendment has no row here, or when a row names a test file, class or function that does not exist. An amendment with no guard yet says `none yet` and the issue that will add one; one that is prose only and states no rule says `no rule` and why; it is never left blank.
@@ -260,3 +274,4 @@ Each amendment names the guard test that fails when the code stops following it.
 | Decision | Enforced by |
 |---|---|
 | Amendment 2026-08-27: restore per-engine query grouping on the deployed path + co-dependency-aware clustering | `tests/unit/atx_orchestrator/test_schema_design_core.py::TestGroupingWiring`<br>`tests/unit/test_group_splitter.py::TestCoDependencyClustering`<br>`tests/unit/test_group_merger.py::TestMergeGroupDrafts`<br>`tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting` |
+| Amendment 2026-10-27 (#1602): DynamoDB designs per access pattern, not per statement | `tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_parts_are_capped_by_patterns`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_a_pattern_with_many_members_is_one_entry`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_an_access_pattern_serving_a_pattern_names_every_member`<br>`tests/unit/agents/schema_design/test_design_per_access_pattern.py::test_member_ids_survive_the_merge` |
