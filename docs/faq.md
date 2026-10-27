@@ -10,7 +10,7 @@ No. `/modernize` names the run from the file name (`shop-collection.json` become
 
 ## Amazon Bedrock model access
 
-An `AccessDeniedException` or a similar error from `--llm-mode bedrock` usually means the account can't invoke the Anthropic models yet: **Claude Sonnet** (used for Reality Check validation and for Synthesis) and **Claude Opus** (used for Schema Design). Most Bedrock model access is on by default, but Anthropic models need a use-case form, submitted once per account. Select the model in the Bedrock console's model catalog for the same region as `AWS_DEFAULT_REGION`/`AWS_REGION`, or call `PutUseCaseForModelAccess`. See [Request access to models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html). Access is per-account and can take a few minutes to propagate after you submit the form.
+An `AccessDeniedException` or a similar error from `--llm-mode bedrock` usually means the account can't invoke the Anthropic models yet: **Claude Sonnet** (used for Reality Check validation and for Synthesis), **Claude Opus** (used for Schema Design) and **Claude Haiku** (used to validate free-text answers). Most Bedrock model access is on by default, but Anthropic models need a use-case form, submitted once per account. Select the model in the Bedrock console's model catalog for the same region as `AWS_DEFAULT_REGION`/`AWS_REGION`, or call `PutUseCaseForModelAccess`. See [Request access to models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html). Access is per-account and can take a few minutes to propagate after you submit the form.
 
 ## Claude Code permissions
 

@@ -7,7 +7,7 @@ This page is the short map for extending the pipeline. [CONTRIBUTING.md](https:/
 The pipeline runs locally: a `LocalOrchestrator` calls each phase's agent as a direct function call over a local artifact store (no event bus, no hosted queue). See the
 [guides index](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/README.md) and
 [high-level design](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/high-level-design.md)
-for the full picture, and the [architecture decision records](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/architecture/decisions) for how the design got here.
+for the full picture, and the [architecture decision records](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/README.md) (indexed by status) for how the design got here.
 
 ## Agents and the LLM seam pattern
 
@@ -33,12 +33,12 @@ Commands live in [`.claude/commands/`](https://github.com/aws-samples/sample-aws
 
 | Tier | Command | What it checks |
 | --- | --- | --- |
-| Lint | `make lint` / `./ci/lint.sh` | ruff, black, isort, mypy, markdownlint, the command validator |
+| Lint | `make lint` (all pre-commit hooks, including markdownlint); `./ci/lint.sh` (ruff, black, isort, mypy, the command validator, the generated-file checks) | style, types, docs, command references |
 | Unit/contract | `make test` / `./ci/test.sh -q` | unit, contract, property, graph; no network |
 | Deterministic e2e | `make e2e` / `./ci/e2e.sh` | full pipeline on both samples, the rendered deliverables (executive PDF, engineering report), UI smoke test, the built help site |
 | Headless LLM e2e | `make e2e-llm` | a real `/modernize --auto` run against a model, same deliverable checks plus a rubric judge |
 
-See [`ci/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/ci/README.md) for what each script runs and why, and the testing guide for strategy per agent type.
+See [`ci/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/ci/README.md) for what each script runs and why, and the [testing guide](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/testing-guide.md) for strategy per agent type.
 
 ## Release process
 

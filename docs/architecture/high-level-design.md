@@ -2,8 +2,8 @@
 
 ## Document Information
 
-**Version:** 12.0 (Hosted Deployment Removed, #175)
-**Date:** October 5, 2026
+**Version:** 13.0 (query-first routing, one approval gate)
+**Date:** October 27, 2026
 **Status:** Approved
 **Owner:** Database Modernizer Assessment Engineering Team
 
@@ -19,24 +19,28 @@ Getting the answer wrong means failed modernizations, re-architecture mid-projec
 
 The core pipeline is **fully deterministic** — pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
 
-**Supported sources:** PostgreSQL, MySQL, MariaDB (Redis planned)
+**Supported sources:** PostgreSQL, MySQL, MariaDB, SQL Server and Oracle, through the read-only collection scripts `scripts/collect-*.sql`. There is no Redis source.
 
-**Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
+**Target engines:** DynamoDB, DocumentDB, OpenSearch (a search read model), ElastiCache (Valkey; a cache that owns no query), Aurora PostgreSQL and Aurora MySQL. Neptune and Keyspaces are catalog placeholders that are never analysed, designed or routed ([ADR-031](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md) Decision 9).
 
 ### Key Design Decisions
 
 - **Local-first deployment**: Runs entirely on the user's machine — via Claude Code (`/modernize`), the deterministic CLI, or a local FastAPI + React UI — against RDS instances the user already has access to. Offline and DDL collection need no database connection at all; live collection runs through an opt-in, not-yet-fully-wired SSM automation path (§7.1), not a direct connection. The hosted, AWS-account-deployed version of this tool was retired; see [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)
 - **Deterministic core**: Full pipeline runs without LLM calls (`--llm-mode none`); GenAI is an enhancement layer, not a dependency
-- **Strands SDK agent framework**: Open-source agentic framework for agent orchestration, tool management, and LLM integration
-- **Multi-agent architecture**: Independent, composable agents (Collector, Referee-Triage, Analysis, Assignment Resolution, Reality Check, Referee-Synthesis, Schema Design, Load Testing)
-- **Local orchestration**: A single `LocalOrchestrator` runs phases as direct function calls against the local artifact store — no job-scheduling service, message bus, or hosted workflow engine
-- **Two human-in-the-loop gates**: Pipeline pauses after triage (assignment review) and after reality check (schema design approval); the user resumes each gate via the UI, API, or the relevant Claude Code command
-- **Reality check consolidation**: CTO-level engine consolidation eliminates low-value engines, reducing operational complexity
+- **Strands SDK where a model is involved**: the model-backed steps (schema design and its reviewer, the reality-check review, the executive summary, the analysis advisor) build Strands agents on Bedrock; the same steps run through Claude Code with `--llm-mode external`. Collection, triage, analysis, assignment and reality-check scoring never touch Strands
+- **Phased pipeline**: Collect, Triage, Analysis (one deterministic analysis per selected engine), Assignment, Reality Check, the assignment review gate, Schema Design, Load Test (optional) and Synthesis, in the order of the `Phase` enum
+- **Query-first routing**: the query is the unit. One scorer (`query_scoring.score_query_for_engine`) reads the rule catalog in `src/catalog/`; a table has one writer; every engine change is a Move recorded in the move ledger, and only `move_ledger.apply` writes `assigned_engine` ([ADR-031](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md))
+- **Local orchestration**: a single `LocalOrchestrator` runs phases as direct function calls against the local artifact store, with no job-scheduling service, message bus, or hosted workflow engine
+- **One human gate**: the pipeline pauses once, after the reality check, for the assignment review ([ADR-028 (customer assignment review gate)](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-028-customer-assignment-review-gate.md)); the user resumes it through the UI, the API or the Claude Code command. Nothing waits for approval after triage
+- **Engine scope**: the customer can limit the engines a plan may use (`--target-databases`); the scope is recorded under `decisions/engine_scope.json`, triage skips engines outside it, and a query no in-scope engine can serve has no engine
+- **Reality check consolidation**: CTO-level engine consolidation removes engines that do not earn their cost, reducing operational complexity, and replays from the move ledger
+- **One facts layer**: synthesis computes every customer-facing figure once into `report.json`'s `facts`, and the renderers (engineering Markdown, executive report PDF, the UI) only format them ([ADR-032](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-032-one-facts-layer-renderers-only-format.md))
+- **A library entry point**: `assess()` (`src/assessment/`) runs the phases in process up to a chosen `run_through` and returns a typed, versioned result ([contracts/assess.md](../contracts/assess.md))
 - **Load testing validation**: k6 empirical performance testing against real target infrastructure with per-pattern latency and cost measurement ([ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md))
-- **Query journey materialization**: Progressive per-query files tracking each query from source through assignment, schema design, and load testing ([ADR-019](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)), now served from the context graph read-model ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
-- **Hybrid analysis selection**: AI-driven triage selects relevant analysis agents; the local orchestrator executes them deterministically
-- **AWS Transform integration**: `src/atx_orchestrator/` lets AWS Transform run the same agents over S3-backed storage, independent of the local-only API/UI path
-- **Bedrock integration**: AWS Bedrock for AI-powered analysis (optional, enhances results)
+- **Query journeys from the context graph**: per-query detail is served from the context graph read-model ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
+- **Deterministic triage**: triage selects every query-owning engine; its signals are evidence for scoring and reports, not a filter. Only ElastiCache, which owns no query, depends on a signal
+- **AWS Transform integration**: `src/atx_orchestrator/` lets AWS Transform run the same phases over S3-backed storage, independent of the local-only API/UI path
+- **Bedrock integration**: AWS Bedrock for the model-backed steps (optional)
 - **Open-source distribution**: GitHub repository with MIT-0 license
 
 ### Design Philosophy
@@ -60,7 +64,7 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 
 1. System Architecture Overview
 2. Deployment Architecture
-3. Agent Framework Design
+3. Pipeline Design
 4. Data Flow and Storage
 5. API Architecture
 6. Technology Stack
@@ -74,46 +78,48 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 
 ### 1.1 High-Level Architecture
 
-**For detailed architecture diagrams, see:**
+**For diagrams, see:**
 
 - [System Context Diagram](diagrams/01-system-context.md)
-- [Agent Framework Architecture](diagrams/04-agent-framework.md)
+- [Pipeline and Data Flow](diagrams/06-data-flow.md)
 
 ### Architecture Components
 
 **Application Layer:**
 
-- Web UI (React SPA, local build): Assessment report viewer, interactive recommendation review, query journey explorer
+- Web UI (React SPA, local build): the results page and the deliverables download panel ([Understand the results](../understand-the-results.md))
 - API Server (FastAPI, run locally with `uvicorn`): REST endpoints for the UI, loopback-only by default (see [`src/api/host_guard.py`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/api/host_guard.py))
-- Orchestrator (`LocalOrchestrator`): runs phases as direct function calls against the local artifact store — no job-scheduling service or message bus
+- Orchestrator (`LocalOrchestrator`): runs phases as direct function calls against the local artifact store, with no job-scheduling service or message bus
+- Library (`assess()`): the same phases in process, returning a typed result
 
-**Agent Layer (Strands SDK):**
+**Pipeline phases (`src/agents/`):**
 
-- Collector Category: MySQL, PostgreSQL, MariaDB, SQL Server, Oracle, DB2, Redis collectors
-- Analysis Category: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Neptune, Keyspaces, Aurora analysis agents
-- Referee-Triage Agent: Reads collector output, selects relevant analysis agents based on workload signals
-- Assignment Resolution Agent: Maps each query to best-fit engine using signal-driven overrides and anti-pattern penalties
-- Reality Check Agent: CTO-level engine consolidation — eliminates engines that add operational complexity without unique value
-- Referee-Synthesis Agent: Produces weighted ranking with confidence scores, may request deeper analysis
-- Schema Design Agents: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Neptune, Keyspaces schema generators (with group splitting for large workloads)
-- Load Testing Category: Engine-specific load test coordinators — provision target infrastructure, seed data, generate k6 scripts, execute, measure, teardown
+- Collect: the offline parser builds the `CollectorOutputContract` from a script's output (MySQL, MariaDB, PostgreSQL, SQL Server, Oracle); DDL and live modes are the other inputs
+- Referee-Triage: deterministic; selects the engines to analyse and records the signals as evidence
+- Analysis: one per selected engine (DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL), deterministic, with an optional model advisor
+- Assignment: maps each query to its best-fit engine with the one scorer, write groups and tie-break; every change is a Move
+- Reality Check: CTO-level engine consolidation, replayed from the move ledger, with a model review of the consolidation
+- Assignment review: the one human gate
+- Schema Design: one designer per assigned engine (including both Aurora engines), with group splitting and a reviewer loop
+- Load Testing: engine-specific provisioners, seeders and k6 script generators (DynamoDB, DocumentDB, ElastiCache and OpenSearch)
+- Referee-Synthesis: the weighted ranking, TCO, risk, migration waves and executive summary, and the customer deliverables
 
 **Cross-Cutting Concerns:**
 
-- Query Journey Materialization: per-query detail served from the context graph read-model, with a fallback to legacy progressive per-query files for jobs that predate it ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
+- The rule catalog (`src/catalog/`): engines, patterns, gates, thresholds and prices as TOML; the generated [rule-catalog.md](rule-catalog.md)
+- The context graph: per-query detail served from a read-model ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
 
 **Data Storage Layer:**
 
 - Local filesystem (`LocalArtifactStore`, default `./artifacts`): collector outputs, reports, job artifacts, query journeys (path: `<database-name>/<job-id>/<agent-name>/artifact.json`)
 - S3 (`S3ArtifactStore`, used only by the AWS Transform integration — `S3_BUCKET` env var): same path convention, for ATX-orchestrated jobs
-- Local job metadata file (`.meta/<job-id>.json` under the artifact store): phase progression, status tracking
+- Local job metadata file (`.meta/<job-id>.json` at the artifact store root): phase progression, status tracking
 
 **Source Databases (Customer-Owned, Read-Only Access):**
 
-- RDS Instances: MySQL, PostgreSQL, MariaDB, SQL Server, Oracle, DB2 (reachable from wherever the tool runs — a laptop, a bastion, or a customer VPC)
-- Redis Instances: ElastiCache for Redis or self-managed Redis (customer infrastructure)
-- CloudWatch metrics and Performance Insights read via the AWS APIs, when analyzing a live, customer-owned RDS instance
-- Database Modernizer Assessment does NOT deploy its own RDS/Redis instances
+- PostgreSQL, MySQL, MariaDB, SQL Server and Oracle, read by the collection scripts the user runs (or, in the opt-in live mode, by SSM Run Command on an automation instance). Db2 is an enum value with no script
+- CloudWatch metrics and Performance Insights read via the AWS APIs, only in live mode
+- Database Modernizer Assessment does NOT deploy its own database instances
 
 **AWS Services (used directly by the user's own credentials, not a hosted role):**
 
@@ -130,7 +136,7 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 
 **External Systems:**
 
-- Amazon RDS instances and Redis (read-only access, live mode only)
+- Source databases (read-only access, live mode only)
 - AWS APIs (CloudWatch, Performance Insights, RDS API, Secrets Manager) — live mode only
 - AWS Bedrock for AI-powered analysis (optional)
 
@@ -165,7 +171,7 @@ roles for the AWS Transform integration (§2.4).
 ### 2.1 Primary Mode: Claude Code
 
 - `/modernize` drives the full pipeline from a Claude Code session, with
-  per-phase approval gates; the default experience is chat and the local UI
+  the assignment-review gate; the default experience is chat and the local UI
   together, `--mode chat` is chat only, and `--mode ui` is UI-first (chat
   stays to the approval-gate numbers, UI pointers, and the result line)
 - No infrastructure to deploy — Claude Code runs the deterministic scripts and
@@ -213,279 +219,153 @@ the hosted-deployment removal.
 
 ---
 
-## 3. Agent Framework Design
+## 3. Pipeline Design
 
-**For detailed agent architecture diagrams, see:**
+**For diagrams, see:** [Pipeline and Data Flow](diagrams/06-data-flow.md).
 
-- [Agent Framework Architecture](diagrams/04-agent-framework.md)
-- [Workflow Sequence Diagram](diagrams/05-workflow-sequence.md)
-- [Data Flow Diagram](diagrams/06-data-flow.md)
+### 3.1 Phases
 
-### 3.1 Multi-Agent Architecture
+The phases are the `Phase` enum in `src/contracts/phase_models.py`, run in this order by `LocalOrchestrator`: `collect_triage`, `analysis`, `assignment`, `reality_check`, `assignment_review`, `schema_design`, `load_test`, `synthesis`.
 
-**Agent Categories:**
+**1. Collect and Triage**
 
-**1. Collector Category (Source Database Collection)**
+- The user runs a read-only script (`scripts/collect-postgresql.sql`, `collect-mysql.sql`, `collect-sqlserver.sql`, `collect-oracle.sql`) against their own database and gives the tool the JSON it writes. `parse_offline_collection` and `build_offline_collector_output` turn it into a `CollectorOutputContract` (sources: PostgreSQL, MySQL, MariaDB, SQL Server, Oracle). DDL parsing and the opt-in live mode (SQL run via SSM Run Command on a per-VPC automation instance, §7.1) are the other inputs. No collector reads table rows (#387)
+- Referee-Triage is deterministic (`src/agents/referee/triage.py`): it detects workload signals (key-value lookups, text search, write-heavy, aggregations and so on), each naming the engines it is evidence for and the `query_ids` and `table_ids` that triggered it. It selects every query-owning engine; signals are evidence, not a filter, and only ElastiCache, which owns no query, runs when one of its signals fires. Engines outside the customer's engine scope are skipped with a stated reason. Neptune and Keyspaces are placeholders and are never selected
 
-- Individual agents: MySQL, PostgreSQL, MariaDB, SQL Server, Oracle, DB2, Redis
-- Can spawn mini-collector agents for large databases (1000+ tables)
-- Mini-collectors run in parallel (100 tables each) for 8x speedup
-- Supports two input modes: live (SQL run via SSM Run Command on a per-VPC automation instance — opt-in, gated, see §7.1) and offline (pre-collected JSON)
+**2. Analysis**
 
-**2. Analysis Category (Modernization Analysis)**
+- One deterministic analysis per selected engine (DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL), run concurrently as local function calls. Each writes `analysis.json` and a decision trace. An optional model advisor comments on unmatched queries (`--llm-mode bedrock`)
+- The patterns, scores, penalties, weights and prices come from the rule catalog, not from per-engine code ([ADR-031](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md) Decision 8; [rule-catalog.md](rule-catalog.md))
 
-- Individual agents: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Neptune, Keyspaces, Aurora (7 total)
-- Only agents selected by Referee-Triage run (not always all 7)
-- Run concurrently as local function calls (`LocalOrchestrator`)
-- Can spawn sub-agents for specialized analysis
+**3. Assignment (query-to-engine mapping)**
 
-**3. Referee-Triage Agent (Workload Analysis & Agent Selection)**
+- The query is the unit. The one scorer, `query_scoring.score_query_for_engine`, scores each query on each engine (pattern, complexity, performance and cost); a query's pattern score is its access-pattern class's score on the engine, not its tables'
+- A table has one writer ([ADR-031](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md) Amendment 9): its writes and locking reads form a write group placed as one unit, with any co-dependency group it touches. Its reads stay per query
+- Exact ties go through `tie_break.break_tie`, using settled counts only. No engine is preferred by name
+- Every engine change is a Move: only `move_ledger.apply` and `apply_to_assignment` write `assigned_engine`, and each Move records its pass, rule, scores and runner-up. The result is a versioned artifact, `assignment/v<N>/assignment.json`, and each query's access-pattern record, `access_patterns.json`
 
-- Reads collector output, detects workload signals (key-value lookups, text search, write-heavy, aggregations, etc.)
-- Selects relevant analysis agents based on signals (e.g., skips Neptune for key-value workloads)
-- Each signal maps to target engines and carries the `query_ids` / `table_ids` that triggered it
-- Returns structured list with reasons for selection/skipping
-- Logged to the local artifact store for auditability
+**4. Reality Check (CTO-level engine consolidation)**
 
-**4. Assignment Resolution Agent (Query-to-Engine Mapping)**
+- Asks, per engine, whether it earns its place given its standing cost, its operational weight and whether another engine already in the architecture serves its queries well enough. Default posture: at most two committed engines, and a third needs a capability no other committed engine has
+- Steps: Settle, Place, Justification floors, Records (derived from the move ledger) and Architectural patterns. A moved query goes to its highest-scoring remaining engine, using the same per-query scores as the first assignment
+- A model reviews the consolidation (can the target engine really serve the moved queries?) and flags, never chooses a destination. It writes a new assignment version and `reality-check/output.json`
 
-- Reads all analysis outputs and maps each query to its best-fit engine
-- Uses signal-driven overrides: triage signals (e.g., `text_search`) can override per-engine confidence scores
-- Applies anti-pattern penalties: penalizes engines when queries hit known anti-patterns (e.g., full table scans on DynamoDB)
-- Resolves multi-engine tables: when a table's queries split across engines, applies a majority-engine heuristic
-- Produces versioned assignment artifacts (`assignment/v{N}/assignment.json`)
+**5. Assignment review (the one human gate)**
 
-**5. Reality Check Agent (CTO-Level Engine Consolidation)**
+- The pipeline pauses once. The customer reviews the plan, edits the engine of any query or takes a query out of scope, and approves; a feasibility review can block an unworkable edit ([ADR-028 (customer assignment review gate)](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-028-customer-assignment-review-gate.md), [ADR-029](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-029-assignment-reentry-and-feasibility-review.md)). A customer edit writes a new assignment version and never overwrites one
+- Resumption happens through the UI/API (`POST /resume`), the deterministic CLI (`run_assessment.py --resume-reality-check`), or the matching Claude Code command
 
-- Evaluates the assignment output with a practical, cost-conscious lens
-- Eliminates engines that add operational complexity without providing unique capabilities
-- For each eliminated engine, reassigns its queries to the best surviving engine
-- Outputs: `before_distribution`, `after_distribution`, `consolidations[]`, `architectural_patterns[]`, `recommendations[]`
-- Example: if DocumentDB handles 15 queries but DynamoDB can serve them all, DocumentDB is eliminated — saving ~$500/mo in operational overhead
+**6. Schema Design (target schema generation)**
 
-**6. Referee-Synthesis Agent (Validation & Ranking)**
+- One designer per assigned engine: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL and Aurora MySQL. Schema design always uses a model, so `--llm-mode none` skips it with a stated reason
+- **Group splitting:** DynamoDB always splits into groups of about 20 queries (co-accessed tables stay together), designs them independently and merges them. The pipeline runs three stages locally: split, design (per group), merge
+- A reviewer loop (capped at `MAX_PE_ITERATIONS = 2`) validates each design, and a design trace (`design_trace.json`) is written
 
-- Receives selected analysis outputs and the post-reality-check assignment
-- Produces weighted ranking with confidence scores
-- May request deeper analysis (capped at 2 iterations)
-- Generates final modernization report
+**7. Load Testing (optional empirical validation)**
 
-**7. Schema Design Category (Target Schema Generation)**
-
-- Individual agents: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Neptune, Keyspaces
-- Generate target-specific schemas
-- **Group splitting**: Large workloads (20+ tables per engine) are split into groups using analysis signals for intelligent clustering (co-accessed tables stay together)
-- Groups are processed in parallel, then merged into a unified schema per engine
-- Pipeline runs three stages locally: split (grouping), design (per-group generation), merge (combine groups)
-- Runs per-engine, chained after human approval
-- Includes PE review loop for design validation; produces `design_trace.json` artifact
-
-**8. Load Testing Category (Empirical Performance Validation)**
-
-- Engine-agnostic coordinator orchestrates: provision → seed → generate → dry-run → execute → parse → teardown
-- Uses **k6** as load generation engine, run locally (`scripts/run_load_test.py`) or inside the `agent-load-test` container image (bundled k6 binary). No GitHub Actions workflow builds or runs this image today — it exists for parity with the former hosted path and for manual/future use
-- Abstract base classes (`BaseProvisioner`, `BaseSeeder`, `BaseScriptGenerator`, `BaseRunner`) enable engine extensibility
-- **DynamoDB engine** (implemented): k6 AWS jslib with SigV4 signing, `ReturnConsumedCapacity` per request, Jinja2 templates for 7 operation types (GetItem, Query, PutItem, UpdateItem, DeleteItem, BatchGetItem, BatchWriteItem)
-- **Future engines**: OpenSearch (k6 HTTP module), ElastiCache (xk6-redis), DocumentDB (xk6-mongo)
-- Generated k6 scripts serve dual purpose: test execution AND customer deliverable (copy-paste ready code)
-- Non-blocking: on failure, catches and proceeds to synthesis (results still valid without load test)
+- An engine-agnostic coordinator provisions, seeds, generates scripts, dry-runs, executes, parses and tears down. It uses k6, run locally (`scripts/run_load_test.py`) or inside the `agent-load-test` image; abstract base classes (`BaseProvisioner`, `BaseSeeder`, `BaseScriptGenerator`, `BaseRunner`) make an engine pluggable
+- Implemented for DynamoDB, DocumentDB, ElastiCache and OpenSearch ([load-testing guide](../guides/load-testing-new-engine.md)). The generated scripts are also a customer deliverable. Non-blocking: on failure the pipeline continues to synthesis
 - Per [ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
 
-**9. Query Journey Read-Model (Cross-Cutting)**
+**8. Synthesis and deliverables**
 
-- The per-query modernization story (source → assignment → design → load test) is
-  materialized in the LadybugDB context graph, built at two single-writer pipeline
-  boundaries (end of assessment-core, end of synthesis) and published as a
-  downloadable `.lbug` artifact
-- Readers (the query-journeys API behind the results page) serve per-query detail from
-  the graph, with a fallback to legacy per-query journey artifacts only for jobs
-  that predate the graph
-- Supersedes the progressive per-query journey files in [ADR-019]
-  (decisions/ADR-019-query-journey-materialization.md), which caused artifact-API
-  throttling on the ATX backend when writing ~1,654 files serially
-- Per [ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md)
+- Deterministic: the weighted ranking, table mappings, TCO, risk assessment, migration waves and the `facts` layer, written to `synthesis/v<N>/report.json`. A model writes only the executive summary, which is checked against the facts; with no model, a deterministic summary is kept
+- Renderers only format the facts. The latest version's customer folder, `deliverables/`, holds the executive report PDF, the engineering report, the detailed engineering report, `assessment-data.json` and `index.md` (the list is `FOLDER_ENTRIES` in `src/report/deliverables.py`)
 
-### 3.2 Strands SDK Architecture
+**Query journeys (cross-cutting).** The per-query story (source, assignment, design, load test) is a read-model in the LadybugDB context graph, served by the query-journeys API; see [ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md) and the [graph cookbook](../guides/context-graph-query-cookbook.md).
 
-**Strands SDK** is an open-source agentic framework that provides:
+### 3.2 Strands SDK
 
-- Agent orchestration and lifecycle management
-- Tool management and composition
-- LLM integration and coordination
-- Built-in hooks for progress tracking
-
-**Why Strands SDK:**
-
-- Simplified agent creation without inheritance hierarchies
-- Reusable tools across different agents
-- Clear separation between behavior (prompts) and capabilities (tools)
-- Independently testable components
-
-**Key Components:**
-
-1. **Strands Agent**: Framework-provided agent class
-2. **Custom Tools**: Database-specific operations (connect, collect schema, query patterns)
-3. **System Prompts**: Define agent behavior and execution logic
-4. **Contracts**: Pydantic models enforce input/output structure
+**Strands SDK** is the open-source agentic framework used where a model is involved: the schema designers and reviewers, the reality-check review, the executive summary and the analysis advisor. Collection, triage, assignment and the reality-check scoring are plain Python and never import it ([strands-agent-development-guide.md](../guides/strands-agent-development-guide.md)). Every model-backed phase follows the LLM seam pattern (`run_*_deterministic`, `prepare_*_llm_input`, `apply_*_llm_output`), so the same code serves Bedrock, Claude Code and deterministic runs. Contracts (Pydantic models) enforce the structure of every input and output.
 
 ### 3.3 Orchestration Pattern
 
-**Local orchestration.** A prior version of this project used a three-layer
-cloud orchestration (Step Functions for workflow, EventBridge for
-notifications, ECS tasks per agent — see
-[ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), now
-superseded). The current `LocalOrchestrator` (`src/orchestrator/`) replaces
-all three layers with direct, in-process function calls against the local
-artifact store:
+**Local orchestration.** A prior version of this project used cloud orchestration (Step Functions, EventBridge and ECS tasks per agent; see [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), partly superseded). `LocalOrchestrator` (`src/orchestrator/`) replaces it with direct, in-process function calls against the local artifact store:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  LocalOrchestrator                                            │
-│  Collector → Triage → [Human Gate 1] → Analysis (concurrent)  │
-│  → Assignment Resolution → Reality Check                      │
-│  → [Human Gate 2] → Schema Design (split/design/merge)        │
-│  → Load Test → Synthesis → [deeper analysis loop?]            │
-└──────────────────────────────────────────────────────────────┘
+```text
+Collect and Triage -> Analysis (per engine, concurrent) -> Assignment -> Reality Check
+  -> [assignment review: the one human gate] -> Schema Design (per engine, concurrent)
+  -> Load Test (optional) -> Synthesis
 ```
 
-- Each phase runs as a direct Python function call — no workflow service,
-  message bus, or container boundary between phases
-- Analysis and schema design run per-engine concurrently, via a
-  `ThreadPoolExecutor` in `LocalOrchestrator`; load testing runs per-engine
-  sequentially (`_run_load_test` is a plain loop, not parallelized)
-- **Two human approval gates**, unchanged in intent from the original design:
-  - **Gate 1 (after Triage):** the user reviews triage signals and proposed
-    engine selections before analysis begins
-  - **Gate 2 (after Reality Check):** the user reviews final query-to-engine
-    assignments before schema design proceeds
-  - Resumption happens through the UI/API (`POST /resume`), the deterministic
-    CLI, or the matching Claude Code command — there is no task-token
-    callback to a workflow service
-- Progress is tracked in a local phase-progression file next to the job's
-  artifacts, not in DynamoDB or EventBridge; the API's `/execution-history`
-  and `/agents` endpoints derive status from the artifact directory layout
-  (`LocalExecutionService`)
-
-**Intra-Agent Orchestration (Strands SDK):**
-
-- Manages tool execution within a single agent
-- LLM-driven decision making
-- Agents spawn sub-processes internally for parallelism (e.g., mini-collectors)
-- Error handling and retries within the agent
+- Each phase is a direct Python function call. Analysis and schema design run per engine concurrently through a `ThreadPoolExecutor`; load testing runs per engine sequentially
+- There is **one** human approval gate, after the reality check. Resumption happens through the UI/API, the CLI or the Claude Code command; there is no task-token callback to a workflow service
+- Progress is tracked in a local phase-progression file (`.meta/<job_id>.json`), not in DynamoDB or EventBridge. The API's `/execution-history` and `/agents` endpoints derive status from the artifact layout (`LocalExecutionService`)
+- The `AWS Transform` integration drives the same phases as a four-agent fleet over A2A ([guide](../guides/aws-transform-integration.md))
 
 ### 3.4 Restart Strategy
 
-**Restart-from-scratch per step:**
-
-No intra-step checkpointing. If a step fails, it restarts from scratch. This keeps agent code simple — no partial state recovery logic.
-
-**Agent-Defined Restart Points:**
-
-Each agent declares its mini-steps (e.g., connect, collect_schema, collect_metrics, collect_samples). Restarting a previous mini-step triggers a cascade: all subsequent mini-steps and downstream agents are invalidated and must re-run.
-
-**Why restart-from-scratch:**
-
-- Simpler agent code — no partial state recovery
-- Avoids stale data propagation
-- Acceptable cost given <6 hour total job target
-- `LocalOrchestrator` does not retry automatically — a failed phase stays
-  failed until the user re-runs it (CLI, API, or Claude Code command); see
-  §8
+**Restart-from-scratch per step.** There is no intra-step checkpointing above the collector. If a step fails, it restarts from scratch, which keeps agent code simple: no partial state recovery, and no stale data propagating. `LocalOrchestrator` does not retry automatically; a failed phase stays failed until the user re-runs it (CLI, API, or Claude Code command). A revision or customer edit writes a new version of the downstream artifacts (§4.2).
 
 ### 3.5 Progress Reporting
 
-**Architecture:**
-
-- The UI/API polls `GET /api/v1/assessments/{job_id}` and
-  `/execution-history`, which derive progress from which artifact
-  directories and files exist on disk (`LocalExecutionService`) — there is
-  no event bus or push channel
+- The UI/API polls `GET /api/v1/assessments/{job_id}` and `/execution-history`, which derive progress from which artifact directories and files exist on disk (`LocalExecutionService`). There is no event bus or push channel
 - Claude Code sessions report progress directly as part of the conversation
-
-**Progress Granularity:**
-
-- Stage-level updates (e.g., collector, referee-triage, per-engine analysis) derived from artifact presence
-- Users can override triage and request full analysis via API parameter
+- Updates are stage-level (collect, triage, per-engine analysis, and so on), derived from artifact presence
 
 ---
 
 ## 4. Data Flow and Storage
 
-**For detailed data flow diagram, see:**
-
-- [Data Flow Diagram](diagrams/06-data-flow.md)
-- [Storage Architecture](diagrams/07-storage-architecture.md)
+**For the data flow diagram, see:** [Pipeline and Data Flow](diagrams/06-data-flow.md).
 
 ### 4.1 Data Collection Flow
 
-```
-RDS Instance → Collector Agent → LocalArtifactStore (raw data)
-    ↓
-CloudWatch API → Collector Agent → LocalArtifactStore (metrics)
-    ↓
-Performance Insights → Collector Agent → LocalArtifactStore (query patterns)
-    ↓
-Collector Output (JSON) → LocalArtifactStore + Query Journey files (source)
-    ↓
-LocalOrchestrator → Referee-Triage → detects workload signals, selects engines
-    ↓
-Human Gate 1 → User reviews engine selection
-    ↓
-LocalOrchestrator → Per-engine analysis agents (concurrent) → LocalArtifactStore
-    ↓
-LocalOrchestrator → Assignment Resolution → query-to-engine mapping → LocalArtifactStore
-    ↓                                        + Query Journey files (assignment)
-LocalOrchestrator → Reality Check → engine consolidation → LocalArtifactStore
-    ↓
-Human Gate 2 → User reviews/overrides assignments
-    ↓
-LocalOrchestrator → Per-engine: group split → schema design
-    ↓                (+ PE review) → group merge → LocalArtifactStore
-    ↓                + Query Journey files (design)
-LocalOrchestrator → Per-engine: provision → seed → k6 execute
-    ↓                → parse results → teardown → LocalArtifactStore
-    ↓                + Query Journey files (load_test)
-LocalOrchestrator → Referee-Synthesis → weighted ranking → LocalArtifactStore
-    ↓
-Deeper analysis loop (max 2 iterations) if needed
-    ↓
-Modernization Report → LocalArtifactStore → User
+```text
+Source database --(user runs scripts/collect-*.sql)--> collection JSON
+    |
+    v
+Collect: offline parser -> CollectorOutputContract -> collector/output.json
+    |
+    v
+Triage -> referee-triage/triage.json (engines selected, signals as evidence)
+    |
+    v
+Analysis (per engine, concurrent) -> analysis-<engine>/analysis.json + decision-trace.json
+    |
+    v
+Assignment -> assignment/v<N>/assignment.json (+ access_patterns.json); every change a Move
+    |
+    v
+Reality Check -> reality-check/output.json and a new assignment version
+    |
+    v
+Assignment review (the one human gate) -> decisions/
+    |
+    v
+Schema Design (per engine: split -> design + review -> merge) -> schema-<engine>/v<N>/
+    |
+    v
+Load Test (optional) -> load-test-<engine>/v<N>/
+    |
+    v
+Synthesis -> synthesis/v<N>/report.json -> deliverables/
 ```
 
-(The AWS Transform integration runs the same flow against `S3ArtifactStore`
-instead of `LocalArtifactStore`, orchestrated over A2A rather than
-`LocalOrchestrator` — see [§2.4](#24-aws-transform-integration).)
+(The AWS Transform integration runs the same flow against `S3ArtifactStore` instead of `LocalArtifactStore`, orchestrated over A2A rather than `LocalOrchestrator`; see [§2.4](#24-aws-transform-integration).)
 
 ### 4.2 Storage Architecture
 
 **Artifact Storage (`ArtifactStore` abstraction, `src/storage/`):**
 
-`LocalArtifactStore` (default) writes to the local filesystem; `S3ArtifactStore`
-(used only by the AWS Transform integration) writes to S3. Both use the same
-path convention: `<database-name>/<job-id>/<agent-name>/artifact.json`
+`LocalArtifactStore` (default) writes to the local filesystem; `S3ArtifactStore` (used only by the AWS Transform integration) writes to S3. Both use the same path convention: `<database-name>/<job-id>/<agent-name>/<file>`. The layout, with the files each phase writes, is in the [storage guide](../guides/storage-architecture-guide.md); every JSON file a job writes, by kind, is in [contracts/artifacts.md](../contracts/artifacts.md). In short:
 
-- Collector outputs: `<db-name>/<job-id>/collector/output.json`
-- Triage decisions: `<db-name>/<job-id>/referee-triage/triage.json`
-- Analysis outputs: `<db-name>/<job-id>/analysis-<type>/analysis.json`
-- Assignment versions: `<db-name>/<job-id>/assignment/v{N}/assignment.json`
-- Reality check: `<db-name>/<job-id>/reality-check/reality_check.json`
-- Schema designs: `<db-name>/<job-id>/schema-<target>/v1/schema_output.json`
-- Design traces: `<db-name>/<job-id>/schema-<target>/v1/design_trace.json`
-- Load test results: `<db-name>/<job-id>/load-test-<engine>/v{N}/results/summary.json`
-- Load test scripts: `<db-name>/<job-id>/load-test-<engine>/v{N}/scripts/` (customer deliverable)
-- Load test per-pattern: `<db-name>/<job-id>/load-test-<engine>/v{N}/results/{query_id}.json`
-- Query journeys: `<db-name>/<job-id>/query-journeys/{query_id}.json`
-- Synthesis report: `<db-name>/<job-id>/referee-synthesis/report.json`
-- Uploads (offline): `<db-name>/<job-id>/uploads/collector-output.json`
+- `collector/output.json`, `referee-triage/triage.json`, `analysis-<engine>/analysis.json`
+- `assignment/v{N}/assignment.json` and `access_patterns.json`, `reality-check/output.json`, `decisions/`
+- `schema-<engine>/v{N}/schema_output.json` and `design_trace.json`
+- `load-test-<engine>/v{N}/` (results, scripts as a customer deliverable)
+- `synthesis/v{N}/report.json` (`referee-synthesis/report.json` only for assignment version 0)
+- `deliverables/`: the customer folder for the latest version
+- `uploads/`: the raw collection
 
 Job IDs are UUIDs: the API uses a full `uuid.uuid4()`; the local scripts and skills (`run_assessment.py`, `run_collect.py`) truncate to the first 8 hex characters for shorter paths. Neither generates a KSUID. The `<database-name>` prefix enables browsing and lifecycle management per source database.
 
 **Local Job Metadata:**
 
 - Stored in a per-job progression file under the artifact store (not a separate database)
-- Progress tracking: current stage, percent complete — derived from which artifact files exist, or recorded explicitly for phase status
+- Progress tracking: derived from which artifact files exist, or recorded explicitly for phase status
 - Phase progression: `collect_triage → analysis → assignment → reality_check → assignment_review → schema_design → load_test → synthesis`
-- Human gate state: phase status, assignment version, approval status
+- Gate state: phase status, assignment version, approval status (recorded under `decisions/`)
 - User information: requester, configuration
 
 ### 4.3 Data Retention
@@ -530,17 +410,18 @@ schema.
 
 **REST API — Assessment Lifecycle:**
 
-- `POST /api/v1/assessments/prepare` - Pre-create job ID + presigned S3 URL (offline upload flow)
+- `POST /api/v1/assessments/prepare` - Pre-create a job ID and an upload URL (offline upload flow; the local file service)
 - `POST /api/v1/assessments` - Start new assessment (live or offline mode)
 - `GET /api/v1/assessments/{job_id}` - Get job status and progress
 - `GET /api/v1/assessments/{job_id}/phases` - Get full phase progression (`PhaseProgression` contract)
 - `GET /api/v1/assessments/{job_id}/results` - Get synthesis report
 - `GET /api/v1/assessments` - List all assessments
 - `DELETE /api/v1/assessments/{job_id}` - Cancel assessment
+- `DELETE /api/v1/assessments/{job_id}/artifacts` - Delete a job's artifacts
 
 **REST API — Upload Flow (Offline Mode):**
 
-- `POST /api/v1/assessments/{job_id}/uploads/confirm` - Confirm presigned URL upload completed
+- `POST /api/v1/assessments/{job_id}/uploads/confirm` - Confirm the upload completed
 - `GET /api/v1/assessments/{job_id}/uploads` - List uploaded files
 - `DELETE /api/v1/assessments/{job_id}/uploads/{filename}` - Delete uploaded file
 
@@ -562,10 +443,17 @@ schema.
 - `POST /api/v1/assessments/{job_id}/schema/{engine}/confirm` - Confirm single engine schema
 - `POST /api/v1/assessments/{job_id}/schema/confirm-all` - Confirm all engine schemas (transitions phase)
 
-**REST API — Query Journeys:**
+**REST API — Deliverables:**
+
+- `GET /api/v1/assessments/{job_id}/deliverables` - The deliverables folder's entries
+- `GET /api/v1/assessments/{job_id}/deliverables/{filename}` - One deliverable
+
+**REST API — Query Journeys and the context graph:**
 
 - `GET /api/v1/assessments/{job_id}/query-journeys` - Paginated query journey list (default 50, max 200)
 - `GET /api/v1/assessments/{job_id}/query-journeys/{query_id}` - Single query journey detail
+- `GET /api/v1/assessments/{job_id}/graph/...` - Curated graph views (table impact, query provenance and trace, engine detail, risks), plus `POST .../graph/query` for read-only Cypher; see the [graph cookbook](../guides/context-graph-query-cookbook.md)
+- `GET /api/v1/assessments/{job_id}/agents/{agent}/questions` and `PUT .../answers` - Agent interaction
 
 **REST API — Observability & Results:**
 
@@ -599,25 +487,17 @@ deployment (#175).
 | ----------------- | ------------------------ | ------- | ---------------------------------------------------------------- |
 | Backend Language  | Python                   | 3.12+   | Rich ecosystem, database drivers, AI/ML libraries                |
 | API Framework     | FastAPI                  | Latest  | Modern, async, auto-generated docs                                |
-| Agent Framework   | Strands SDK              | Latest  | Open-source agentic framework, tool management                   |
+| Agent Framework   | Strands SDK              | Latest  | Open-source agentic framework for the model-backed steps         |
 | Load Testing      | k6                       | Latest  | Built-in rate control, percentiles, AWS jslib for DynamoDB       |
 | Job Orchestration | `LocalOrchestrator`      | -       | Direct function calls over the local artifact store, no cloud workflow service |
-| Frontend          | React + TypeScript       | 18+     | Component reusability, type safety                               |
+| Frontend          | React (JavaScript)       | 18+     | Component reusability                                            |
 | UI Library        | Cloudscape Design System | Latest  | AWS native, professional appearance                               |
 | Container Runtime | Docker                   | Latest  | Used for the `agent-load-test` image and the AWS Transform integration — not for a hosted service |
 | AI/ML             | AWS Bedrock              | -       | Managed LLM access (optional)                                     |
 
 ### 6.2 Database Drivers
 
-| Database   | Python Driver          | Version |
-| ---------- | ---------------------- | ------- |
-| MySQL      | mysql-connector-python | 8.0+    |
-| PostgreSQL | psycopg2-binary        | 2.9+    |
-| MariaDB    | mysql-connector-python | 8.0+    |
-| SQL Server | pymssql                | 2.2+    |
-| Oracle     | cx_Oracle              | 8.3+    |
-| DB2        | ibm_db                 | 3.1+    |
-| Redis      | redis-py               | 5.0+    |
+None. No pipeline module imports a database driver. The collection scripts run in the user's own client (`psql`, `mysql`, `sqlcmd`, `sqlplus`), and live mode runs SQL through SSM Run Command on the automation instance (`src/tools/aws/ssm_executor.py`). The only driver-like import is `redis` in the ElastiCache load-test script generator.
 
 ### 6.3 AWS Services
 
@@ -705,10 +585,9 @@ themselves.
   any other host name by default (`HostAllowlistMiddleware`)
 - CORS restricted to the local UI's origin
 
-**SSL/TLS Requirements:**
+**Database connections:**
 
-- All live database connections use SSL/TLS, certificate verification enabled
-  by default; self-signed certificates supported (opt-in)
+- The tool opens no direct connection to a source database. The collection scripts run in the user's own client under the user's own credentials, and live mode runs SQL on the automation instance through SSM Run Command (§7.1)
 
 ### 7.4 Data Retention
 
@@ -759,21 +638,20 @@ it does not ship a running service.
 
 | Job                  | What it checks                                                           |
 | --------------------- | ------------------------------------------------------------------------- |
-| `lint`                | ruff, black, isort, mypy, Claude Code command/skill reference validation |
-| `test`                | unit, contract, property and graph tests (`./ci/test.sh`)                |
-| `e2e`                 | deterministic end-to-end pipeline run, HTML/PDF checks, UI smoke test     |
-| `security`            | Gitleaks secret scan, Bandit, Semgrep, cfn-lint and Checkov on the surviving CloudFormation templates (`automation.yaml`, `example-ci-runner-iam.yaml`, `pipeline/iam-roles.yaml`), Checkov on both Dockerfiles (`Dockerfile.atx`, `agent-load-test/Dockerfile`) |
-| `validate-contracts`  | Pydantic contract validation + contract tests                            |
+| `lint`                | commit messages and the lint tier (`./ci/lint.sh`: ruff, black, isort, mypy, command/skill reference validation, the generated-file checks) |
+| `test-shard`, `test`  | unit, contract, property and graph tests (`./ci/test.sh`), sharded, then one gate job |
+| `e2e-shard`, `e2e`    | the deterministic end-to-end pipeline run, HTML/PDF checks, UI smoke test (`./ci/e2e.sh`), sharded, then one gate job |
+| `security`            | Gitleaks secret scan, Bandit, Semgrep, cfn-lint and Checkov on the surviving CloudFormation templates, Checkov on both Dockerfiles |
+| `validate-contracts`  | Pydantic contract validation, the snapshot tests and the version-pin check |
 | `ui-build`            | React unit tests (`npm run test:ci`) and a production build              |
 
-Pre-commit hooks run a subset of these scans locally (`cfn-nag` and Checkov on
-`infrastructure/`), so the `security` job in CI is the complete check.
+Every job calls a CI-agnostic entry point in `ci/` rather than inlining commands, so a passing local run means a passing CI run ([ci/README.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/ci/README.md)). `main` has a merge queue that re-runs the required checks on top of the queue. Before pushing, `./ci/pre_merge.sh` fetches main, checks conflicts and contract versions, runs the branch's new tests against main's code, lints and tests, and prints whether a real-model run is needed (`ci/needs_llm_run.sh`). The headless-LLM suite (`ci/e2e-llm.sh`) runs on a mirror, not on every PR.
 
 ### 9.3 Testing Strategy
 
 - **Unit tests**: pytest with parallel execution, coverage reporting
 - **UI tests**: React testing library
-- **Contract validation**: `validate_contracts.py` and `validate_schemas.py` run on every change to `src/` or `src/contracts`
+- **Contract validation**: `validate_contracts.py` and the snapshot tests run on every change to `src/contracts`
 - **End-to-end tests**: the deterministic pipeline rendered against both sample databases, with HTML/PDF/UI checks (`ci/e2e.sh`); a separate headless-LLM suite (`ci/e2e-llm.sh`) exercises a real `/modernize` run and is not gated on every PR
 
 ---
@@ -782,34 +660,15 @@ Pre-commit hooks run a subset of these scans locally (`cfn-nag` and Checkov on
 
 ### Appendix A: Architecture Decision Records
 
-**Key ADRs:**
-
-- [ADR-001: State Management and Checkpoints](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-001-state-management-and-checkpoints.md)
-- [ADR-002: Structured Output and Validation](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
-- [ADR-003: Progress Reporting Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-003-progress-reporting-architecture.md)
-- [ADR-004: RDS Tools and AWS Integration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
-- [ADR-005: Mini-Collectors for Large Databases](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-005-mini-collectors-for-large-databases.md)
-- [ADR-006: Analysis Agent Patterns](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-006-analysis-agent-patterns.md)
-- [ADR-007: Referee Orchestration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-007-referee-orchestration.md)
-- [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
-- [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
-- [ADR-010: Release Management](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-010-release-management.md)
-- [ADR-011: Monorepo Structure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-011-monorepo-structure.md)
-- [ADR-012: CloudFormation over CDK](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-012-cloudformation-over-cdk.md)
-- [ADR-013: Core Infrastructure Cost Optimization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-013-core-infrastructure-cost-optimization.md)
-- [ADR-014: CI/CD Pipeline and Ephemeral Environments](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-014-cicd-pipeline-and-ephemeral-environments.md)
-- [ADR-015: DNS Naming Convention](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-015-dns-naming-convention.md)
-- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [ADR-017: Analysis Agent Scoring Framework](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-017-analysis-agent-scoring-framework.md)
-- [ADR-018: Reality Check and Human Approval Gate](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-018-reality-check-and-human-gate.md)
-- [ADR-019: Query Journey Materialization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)
-- [ADR-020: Load Testing Stage Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
+The ADR index, [decisions/README.md](decisions/README.md), lists every ADR with its status (active, partly superseded, or superseded, retired or not implemented) and its successor. The routing model is [ADR-031](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md); the facts layer is ADR-032; the one human gate is ADR-028 (customer assignment review gate).
 
 ### Appendix B: Related Documentation
 
 **Architecture:**
 
-- [Architecture Diagrams](diagrams/README.md) - Comprehensive Mermaid diagrams
+- [Architecture Diagrams](diagrams/README.md) - The system context and the pipeline
+- [Rule catalog](rule-catalog.md) - Engines, patterns, gates and thresholds (generated)
+- [Adoption paths design](designs/adoption-paths.md) - Design for epic #1128
 
 **Contracts:**
 
@@ -818,8 +677,7 @@ Pre-commit hooks run a subset of these scans locally (`cfn-nag` and Checkov on
 
 **Data Specifications:**
 
-- [Database Collection Matrix](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/data-specs/database-collection-matrix.md) - Data collection requirements
-- [Redis Migration Patterns](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/data-specs/redis-migration-patterns.md) - Redis-specific patterns
+- [Data specifications](../data-specs/README.md) and the [Database Collection Matrix](../data-specs/database-collection-matrix.md) - what the collection scripts gather
 
 **Implementation:**
 
@@ -846,6 +704,7 @@ Pre-commit hooks run a subset of these scans locally (`cfn-nag` and Checkov on
 | 11.0    | 2026-05-20 | tebanieo | **Load Testing & Query Journeys: Added Load Testing stage (k6-on-ECS, DynamoDB engine implemented, abstract base for engine extensibility). Added Query Journey Materialization (progressive per-query S3 files). Updated pipeline to 19 steps with two human gates. Added ~17 missing API endpoints (upload flow, schema revision, query journeys, observability). Added CI/CD pipeline section (Section 9). Updated task sizing table (load test: 4 vCPU / 16 GB). Updated S3 path listing. Updated phase progression to 8 phases. Added ADRs 011-020 to appendix. Named all 7 analysis agents and 6 schema design targets explicitly.** |
 | 11.1    | 2026-06-01 | tebanieo | **Open-source release candidate review: Full architecture documentation audit. Sanitized internal references. Updated ADR statuses (superseded, accepted). Verified diagrams against current codebase. Corrected storage architecture to reflect ArtifactStore abstraction. Added Aurora Absorption (ADR-021) to accepted decisions.**                                                                                                                                                                                                                                                                                                     |
 | 12.0    | 2026-10-05 | tebanieo | **Hosted deployment removed (#175): the ECS Fargate / ALB / Cognito / Step Functions / EventBridge / DynamoDB deployment described in sections 2, 5.3, 6.3, 7 and 8 is gone — the project is local-only (Claude Code, local API/UI, deterministic CLI) plus the separate AWS Transform integration. Rewrote Deployment Architecture, Orchestration Pattern, Progress Reporting, Storage Architecture, API Architecture, Technology Stack, Security Architecture, Operational Considerations and CI/CD Pipeline to describe the current local-first, GitHub-Actions-only reality.**                                                      |
+| 13.0    | 2026-10-27 | maintainers | **Documentation audit (#1600): rewrote sections 1, 3, 4 and 6.2 and the appendices around query-first routing (ADR-031), the move ledger, the engine scope, the facts layer (ADR-032), `assess()` and the one approval gate; fixed sections 5 and 9; removed the Redis, Db2, mini-collector, Neptune and Keyspaces claims and the deeper-analysis loop.** |
 
 ---
 

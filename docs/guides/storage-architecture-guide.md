@@ -192,4 +192,4 @@ KSUIDs, despite what older drafts of this guide (and some ADRs) said.
 
 - [Orchestrator README](../../src/orchestrator/README.md) — the full artifact path table per agent
 - [Strands Collector Guide](strands-collector-guide.md) — the collector's own S3-backed checkpoint stages
-- [Storage Architecture Diagram](../architecture/diagrams/07-storage-architecture.md)
+- [Job artifacts](../contracts/artifacts.md) — every JSON file a job writes, by kind

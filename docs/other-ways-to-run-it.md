@@ -156,6 +156,6 @@ This is an early preview and not supported yet. The automation instance ID is no
 
 | Mode | Credentials needed | Phases covered | Best for |
 | --- | --- | --- | --- |
-| `none` | None | Collect through Reality Check | Quick evaluation, CI/CD, deterministic audits |
+| `none` | None | Collect through Reality Check (through Synthesis with `--all -y`; no schema design) | Quick evaluation, CI/CD, deterministic audits |
 | `external` | Claude Code license | Full pipeline | Local development, interactive exploration |
 | `bedrock` | AWS credentials + Bedrock access | Full pipeline | Production, automation, team use |

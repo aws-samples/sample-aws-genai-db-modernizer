@@ -4,15 +4,15 @@ This directory contains the FastAPI REST API server.
 
 ## Files
 
-- **main.py** - FastAPI application with endpoints
+- **main.py** - FastAPI application; `routes/` holds the routers, `services/` the local execution and file services
 
 ## Endpoints
 
 - `GET /health` - Health check
-- `POST /api/v1/analyses` - Create analysis job
-- `GET /api/v1/analyses/{job_id}` - Get analysis status
-- `GET /api/v1/analyses/{job_id}/results` - Get analysis results
-- `WS /ws/analyses/{job_id}` - WebSocket for real-time updates
+- `/api/v1/assessments/*` - The assessment lifecycle, uploads, per-phase artifacts, the assignment review and resume, schema revisions, deliverables, query journeys and the context graph (routers in `routes/`)
+- `GET /api/v1/dashboard/stats` - Dashboard statistics
+
+Progress is polled (`GET /api/v1/assessments/{job_id}`, `/phases`, `/execution-history`); there is no WebSocket. The running server lists every route at `/docs`, and [the high-level design, section 5](../../docs/architecture/high-level-design.md#5-api-architecture) summarises them.
 
 ## Running
 
