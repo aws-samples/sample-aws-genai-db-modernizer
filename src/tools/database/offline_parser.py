@@ -201,11 +201,16 @@ def parse_offline_collection(
                 "is_primary": idx_name == "PRIMARY",
                 "index_type": str(i.get("index_type") or "btree").lower(),
                 "predicate": i.get("predicate") or None,
+                "prefix_lengths": [],
                 **expression_key_fields(i),
             }
         # An expression key names no column (#295): the index still counts, and is
         # flagged rather than narrowed to its plain keys, whatever the engine.
         add_index_key(indexes_by_table[tbl][idx_name], i, source_engine)
+    for by_name in indexes_by_table.values():
+        for index in by_name.values():
+            if not any(n is not None for n in index["prefix_lengths"]):
+                index["prefix_lengths"] = None
 
     fks_by_table: dict[str, dict[str, dict]] = {}
     for fk in data.get("foreign_keys", []):

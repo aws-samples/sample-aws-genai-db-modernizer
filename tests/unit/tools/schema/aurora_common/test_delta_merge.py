@@ -279,7 +279,8 @@ def test_mysql_index_is_rendered_with_backticks():
         "aurora_mysql",
     )
     assert _table(output, "orders")["indexes"][-2:] == [
-        "CREATE INDEX `idx_orders_total` ON `orders` (`total_cents`);",
+        # total_cents is a residual TEXT in this fixture, so MySQL needs a key prefix (#1623).
+        "CREATE INDEX `idx_orders_total` ON `orders` (`total_cents`(191));",
         "CREATE UNIQUE INDEX `idx_orders_u` ON `orders` (`user_id`, `id`);",
     ]
 

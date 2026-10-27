@@ -124,7 +124,7 @@ class MySQLRemoteCollector:
         # EXPRESSION, a column older servers and MariaDB do not have (#295).
         expression = ", expression" if self._statistics_has_expression() else ""
         raw = self._query(f"""
-            SELECT index_name, column_name, seq_in_index, non_unique, index_type{expression}
+            SELECT index_name, column_name, seq_in_index, non_unique, index_type, sub_part{expression}
             FROM information_schema.statistics
             WHERE table_schema = DATABASE()
               AND table_name = '{table_name}'
@@ -140,10 +140,14 @@ class MySQLRemoteCollector:
                     "is_unique": not r["non_unique"],
                     "is_primary": name == "PRIMARY",
                     "index_type": (str(r.get("index_type") or "btree")).lower(),
+                    "prefix_lengths": [],
                     "has_expressions": False,
                     "index_expressions": None,
                 }
             add_index_key(indexes[name], r, "mysql")
+        for index in indexes.values():
+            if not any(n is not None for n in index["prefix_lengths"]):
+                index["prefix_lengths"] = None  # whole-column index, or an unknown length
         return list(indexes.values())
 
     def collect_foreign_keys(self, table_name: str) -> list[dict]:

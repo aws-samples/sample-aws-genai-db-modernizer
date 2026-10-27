@@ -5510,6 +5510,35 @@
                                       }
                                     ]
                                   }
+                                },
+                                "prefix_lengths": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "items": {
+                                          "kind": "anyOf",
+                                          "members": [
+                                            {
+                                              "exclusiveMinimum": 0,
+                                              "kind": "scalar",
+                                              "type": "integer"
+                                            },
+                                            {
+                                              "kind": "scalar",
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "kind": "array"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
                                 }
                               }
                             },
@@ -8558,8 +8587,8 @@
         }
       }
     },
-    "schema_hash": "f913373e81ba09c589e5f4ccce0d627315cc2b0e631e7bd5d730d283af4ff2f7",
-    "version": "4.3"
+    "schema_hash": "b900acaf0f65a64549fbc31cff0769e1919fdbb354a209a1579bcd86e4805377",
+    "version": "4.4"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -20194,7 +20223,7 @@
       }
     },
     "schema_hash": "fb03486c2d38bd24e3424182dd12dd66624d2426aac8371f2937c94a8c50e8fd",
-    "version": "1.4"
+    "version": "1.5"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {

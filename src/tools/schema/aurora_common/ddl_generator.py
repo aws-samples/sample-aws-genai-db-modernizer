@@ -12,6 +12,7 @@ would collide (out of scope for Phase 1).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -297,10 +298,79 @@ def _column_from(
     )
 
 
-def _create_table_sql(table: AgentTable, columns: list[ColumnDDL], dialect: Dialect) -> str:
+def _mysql_primary_key_prefixes(
+    table: AgentTable, columns: list[ColumnDDL], notes: list[dict]
+) -> dict[str, int]:
+    """Key prefix lengths for an Aurora MySQL primary key (#1623), by lower-cased column name.
+
+    Only prefixes the source recorded (``PRIMARY KEY (url(255))``) are used, cut to fit the
+    key limit with the other key parts. A primary key never gets a default prefix, since a
+    prefix makes it stricter than the source's: a TEXT or BLOB key column with no recorded
+    length, a shortened prefix and a key over the limit each add a note instead.
+    """
+    names = list(table.primary_key or [])
+    lower = [c.lower() for c in names]
+    known: dict[str, int | None] = {}
+    for idx in table.indexes or []:
+        if idx.prefix_lengths and is_primary_key_index(idx, table):
+            known = {c.lower(): n for c, n in zip(idx.columns, idx.prefix_lengths, strict=False)}
+            break
+    plan = mysql_key_plan(names, [known.get(c) for c in lower], columns)
+
+    def note(reason: str) -> None:
+        notes.append(
+            {"table": table.table_name, "index": "PRIMARY", "kind": "key_prefix", "reason": reason}
+        )
+
+    prefixes: dict[str, int] = {}
+    missing: list[str] = []
+    for pos, (name, key) in enumerate(zip(names, lower, strict=True)):
+        chosen = plan.prefixes[pos] if plan.prefixes else None
+        if chosen is None:
+            continue
+        if known.get(key) is None:
+            missing.append(name)
+        else:
+            prefixes[key] = chosen
+    if missing:
+        note(
+            f"Primary key column(s) {', '.join(missing)} are TEXT or BLOB and the source records "
+            "no key length: Aurora MySQL needs one (error 1170). Choose a prefix length or a "
+            "VARCHAR(n) type. The draft adds none, since a prefix would make the key stricter "
+            "than the source's."
+        )
+    cut = [c for c in plan.shrunk if known.get(c.lower()) is not None]
+    if cut:
+        note(
+            f"Primary key prefix shortened on {', '.join(cut)} to keep the key within "
+            f"{MYSQL_MAX_KEY_BYTES} bytes (4 bytes per character on utf8mb4). The key is "
+            "stricter than the source's, so the data load can fail on duplicate keys: check "
+            "the values before loading."
+        )
+    if not plan.fits:
+        note(_over_limit_reason("Primary key"))
+    elif plan.prefixes is None and plan.key_bytes > MYSQL_MAX_KEY_BYTES:
+        note(_over_limit_reason("Primary key", plan.key_bytes))
+    return prefixes
+
+
+def _create_table_sql(
+    table: AgentTable,
+    columns: list[ColumnDDL],
+    dialect: Dialect,
+    notes: list[dict] | None = None,
+) -> str:
     lines = [f"  {c.fragment}" for c in columns]
     if table.primary_key:
-        pk_cols = ", ".join(dialect.q(c) for c in table.primary_key)
+        prefixes = (
+            _mysql_primary_key_prefixes(table, columns, notes if notes is not None else [])
+            if dialect is MYSQL
+            else {}
+        )
+        pk_cols = ", ".join(
+            dialect.q(c) + (f"({prefixes[c.lower()]})" if c.lower() in prefixes else "")
+            for c in table.primary_key
+        )
         lines.append(f"  PRIMARY KEY ({pk_cols})")
     body = ",\n".join(lines)
     return f"CREATE TABLE {dialect.q(table.table_name)} (\n{body}\n);"
@@ -471,6 +541,17 @@ def rendered_method(index: AgentIndex, dialect: Dialect, columns: list[ColumnDDL
     return _pg_index_method(index, columns)[0] if dialect is POSTGRES else None
 
 
+def rendered_key(
+    index: AgentIndex, dialect: Dialect, columns: list[ColumnDDL]
+) -> tuple[bool, list[int | None] | None]:
+    """Whether the draft keeps ``index`` UNIQUE, and its Aurora MySQL key prefixes (#1623)."""
+    unique = bool(index.is_unique)  # nosemgrep: is-function-without-parentheses
+    if dialect is not MYSQL:
+        return unique, None
+    plan = mysql_key_plan(index.columns, index.prefix_lengths, columns, index_method(index))
+    return unique and not plan.weakens_unique, plan.prefixes
+
+
 def carried_indexes(table: AgentTable, dialect: Dialect) -> list[AgentIndex]:
     """The secondary indexes the draft renders on ``dialect``, in ``TableDDL.index_sql``
     order: all of them on Aurora PostgreSQL; on Aurora MySQL, all but the GIN, GiST and
@@ -480,6 +561,156 @@ def carried_indexes(table: AgentTable, dialect: Dialect) -> list[AgentIndex]:
         for i in secondary_indexes(table)
         if not (dialect is MYSQL and index_method(i) in _MYSQL_DROPPED_METHODS)
     ]
+
+
+# #1623: Aurora MySQL (InnoDB) rejects an index on a TEXT or BLOB column without a key
+# prefix (error 1170), and a key longer than 3072 bytes (error 1071). The draft costs a
+# character key part at 4 bytes per character (utf8mb4, the Aurora MySQL 3 default) and a
+# binary key part at its length. 191 is the default prefix when the source records none: it
+# fits one column in 767 bytes, the oldest InnoDB limit.
+MYSQL_DEFAULT_KEY_PREFIX = 191
+MYSQL_MAX_KEY_BYTES = 3072
+_MIN_USEFUL_PREFIX = 16
+_MYSQL_TEXT_TYPES = frozenset({"TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT"})
+_MYSQL_BLOB_TYPES = frozenset({"TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB"})
+_MYSQL_CHAR_TYPES = frozenset({"VARCHAR", "CHAR"})
+_MYSQL_BINARY_TYPES = frozenset({"VARBINARY", "BINARY"})
+_MYSQL_OTHER_PART_BYTES = 8  # an int, date or similar key part; small next to a string
+# FULLTEXT and SPATIAL keys take no prefix; a prefix there would make them a B-tree.
+_MYSQL_NO_PREFIX_METHODS = frozenset({"fulltext", "spatial"})
+_TYPE_RE = re.compile(r"^\s*([A-Za-z]+)\s*(?:\(\s*(\d+))?")
+
+
+@dataclass
+class KeyPlan:
+    """How the draft renders one Aurora MySQL index key (#1623)."""
+
+    prefixes: list[int | None] | None = None
+    defaulted: list[str] = field(default_factory=list)  # TEXT/BLOB columns given the default
+    shrunk: list[str] = field(default_factory=list)  # prefixes cut to fit 3072 bytes
+    fits: bool = True
+    key_bytes: int = 0
+
+    @property
+    def weakens_unique(self) -> bool:
+        """A prefix the source did not have: it would reject rows the source accepts."""
+        return bool(self.defaulted or self.shrunk)
+
+
+def _key_part(aurora_type: str) -> tuple[str, int | None]:
+    m = _TYPE_RE.match(aurora_type)
+    if not m:
+        return "", None
+    return m.group(1).upper(), int(m.group(2)) if m.group(2) else None
+
+
+def mysql_key_plan(
+    index_columns: list[str],
+    known: list[int | None] | None,
+    column_ddls: list[ColumnDDL],
+    method: str | None = None,
+) -> KeyPlan:
+    """The key prefixes of an Aurora MySQL index and whether the key fits 3072 bytes.
+
+    A source prefix is kept on a character or binary column, unless the column is no
+    longer than the prefix (error 1089). A TEXT or BLOB column with no known prefix gets
+    ``MYSQL_DEFAULT_KEY_PREFIX``. When the key is over the byte limit the prefixes are cut
+    to share what the unprefixed parts leave; ``fits`` is False when they cannot be cut
+    to a useful length. FULLTEXT and SPATIAL indexes get no prefix.
+    """
+    if method in _MYSQL_NO_PREFIX_METHODS:
+        return KeyPlan()
+    types = {c.name.lower(): _key_part(c.aurora_type) for c in column_ddls}
+    fixed = 0
+    # (position, requested chars or bytes, bytes per unit, defaulted) of each shrinkable part
+    flex: list[tuple[int, int, int, bool]] = []
+    for pos, name in enumerate(index_columns):
+        base, length = types.get(name.lower(), ("", None))
+        source = known[pos] if known and pos < len(known) else None
+        if base in _MYSQL_TEXT_TYPES | _MYSQL_BLOB_TYPES:
+            unit = 4 if base in _MYSQL_TEXT_TYPES else 1
+            flex.append((pos, source or MYSQL_DEFAULT_KEY_PREFIX, unit, source is None))
+        elif base in _MYSQL_CHAR_TYPES | _MYSQL_BINARY_TYPES:
+            unit = 4 if base in _MYSQL_CHAR_TYPES else 1
+            width = length if length is not None else (1 if base in ("CHAR", "BINARY") else 255)
+            if source is not None and source < width:
+                flex.append((pos, source, unit, False))
+            else:
+                fixed += width * unit
+        else:
+            fixed += _MYSQL_OTHER_PART_BYTES
+    if not flex:
+        return KeyPlan(key_bytes=fixed)
+    prefixes: list[int | None] = [None] * len(index_columns)
+    plan = KeyPlan(prefixes=prefixes)
+    budget = MYSQL_MAX_KEY_BYTES - fixed
+    remaining = len(flex)
+    # Smallest request first: a short prefix keeps its length, the long ones share the rest.
+    for pos, wanted, unit, defaulted in sorted(flex, key=lambda f: f[1] * f[2]):
+        share = budget // remaining
+        take = min(wanted * unit, share)
+        chars = take // unit
+        if chars < min(wanted, _MIN_USEFUL_PREFIX):
+            plan.fits = False
+            chars = max(chars, 1)
+        if chars < wanted:
+            plan.shrunk.append(index_columns[pos])
+        elif defaulted:
+            plan.defaulted.append(index_columns[pos])
+        prefixes[pos] = chars
+        budget -= chars * unit
+        remaining -= 1
+    plan.key_bytes = MYSQL_MAX_KEY_BYTES - budget
+    if budget < 0:
+        plan.fits = False
+    return plan
+
+
+def _key_prefix_note(table: str, index: str, plan: KeyPlan, unique: bool) -> dict:
+    """The index note for a prefix the source did not have (``kind`` key_prefix)."""
+    parts = []
+    if plan.defaulted:
+        parts.append(
+            f"Key prefix of {MYSQL_DEFAULT_KEY_PREFIX} characters added on "
+            f"{', '.join(plan.defaulted)}: Aurora MySQL cannot index a TEXT or BLOB column "
+            "without a prefix length and the source records none."
+        )
+    if plan.shrunk:
+        parts.append(
+            f"Key prefix shortened on {', '.join(plan.shrunk)} to keep the key within "
+            f"{MYSQL_MAX_KEY_BYTES} bytes (4 bytes per character on utf8mb4)."
+        )
+    parts.append("Confirm the lengths against the values and the queries.")
+    if unique:
+        parts.append(
+            "The index is carried over as non-unique, since a prefix would reject rows the "
+            "source accepts; enforce uniqueness another way."
+        )
+    return {"table": table, "index": index, "kind": "key_prefix", "reason": " ".join(parts)}
+
+
+def _not_created_reason(plan: KeyPlan) -> str:
+    return (
+        f"its key parts cannot share {MYSQL_MAX_KEY_BYTES} bytes on Aurora MySQL (4 bytes per "
+        "character on utf8mb4) with a useful prefix on its TEXT or BLOB columns. Index fewer or "
+        "shorter columns, or serve the lookups another way."
+    )
+
+
+def _over_limit_reason(what: str, key_bytes: int | None = None) -> str:
+    size = f" is {key_bytes} bytes and" if key_bytes else ""
+    return (
+        f"{what}{size} is over the {MYSQL_MAX_KEY_BYTES}-byte Aurora MySQL key limit "
+        "(4 bytes per character on utf8mb4), which MySQL rejects (error 1071). Shorten the "
+        "column or key a prefix of it."
+    )
+
+
+def _skipped_index(table_name: str, idx: AgentIndex, plan: KeyPlan) -> str:
+    """A SQL comment standing in for an index the key limit rules out, so the draft keeps
+    one statement per source index and the DDL still applies."""
+    name = " ".join(f"{table_name}.{idx.index_name}".split())
+    return f"-- Index {name} not created: {_not_created_reason(plan)}"
 
 
 def _index_sql(
@@ -580,6 +811,33 @@ def _index_sql(
                     }
                 )
                 unique = False  # a full UNIQUE index would reject rows the source accepts
+        prefixes = None
+        if dialect is MYSQL:
+            plan = mysql_key_plan(idx.columns, idx.prefix_lengths, column_ddls, method)
+            if not plan.fits:
+                statements.append(_skipped_index(table.table_name, idx, plan))
+                notes.append(
+                    {
+                        "table": table.table_name,
+                        "index": idx.index_name,
+                        "kind": "key_prefix",
+                        "reason": f"Index not created: {_not_created_reason(plan)}",
+                    }
+                )
+                continue
+            prefixes = plan.prefixes
+            if plan.prefixes is None and plan.key_bytes > MYSQL_MAX_KEY_BYTES:
+                notes.append(
+                    {
+                        "table": table.table_name,
+                        "index": idx.index_name,
+                        "kind": "key_prefix",
+                        "reason": _over_limit_reason("Index", plan.key_bytes),
+                    }
+                )
+            if plan.defaulted or plan.shrunk:
+                notes.append(_key_prefix_note(table.table_name, idx.index_name, plan, unique))
+                unique = False  # a UNIQUE prefix index would reject rows the source accepts
         statements.append(
             render_index(
                 dialect,
@@ -589,9 +847,19 @@ def _index_sql(
                 unique=unique,
                 method=using,
                 where_sql=where_sql,
+                prefix_lengths=prefixes,
             )
         )
     return statements
+
+
+def _prefix_suffix(prefix_lengths: list[int | None] | None, pos: int) -> str:
+    n = prefix_lengths[pos] if prefix_lengths and pos < len(prefix_lengths) else None
+    if n is None:
+        return ""
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        raise SqlFragmentError(f"index key prefix length must be a positive integer, got {n!r}")
+    return f"({n})"
 
 
 def render_index(
@@ -604,17 +872,21 @@ def render_index(
     method: str | None = None,
     include: list[str] | None = None,
     where_sql: str | None = None,
+    prefix_lengths: list[int | None] | None = None,
 ) -> str:
     """One CREATE INDEX statement with every identifier quoted by the dialect.
 
     ``method``, ``include`` and ``where_sql`` are PostgreSQL-only; the caller
     validates them (``where_sql`` comes from ``sql_safety.render_predicate``).
+    ``prefix_lengths`` is Aurora MySQL-only: one entry per column, rendered ``col(N)``.
     ``method`` is checked here too, so no text outside ``INDEX_METHODS`` reaches
     ``USING`` whatever the caller.
     """
     if method and method not in INDEX_METHODS:
         raise SqlFragmentError(f"unknown index method '{method}'")
-    cols = ", ".join(dialect.q(c) for c in columns)
+    cols = ", ".join(
+        dialect.q(c) + _prefix_suffix(prefix_lengths, pos) for pos, c in enumerate(columns)
+    )
     sql = (
         f"CREATE {'UNIQUE ' if unique else ''}INDEX {dialect.q(index_name)} "
         f"ON {dialect.q(table_name)}"
@@ -704,7 +976,7 @@ def _generate(
             TableDDL(
                 table_name=table.table_name,
                 columns=columns,
-                create_sql=_create_table_sql(table, columns, dialect),
+                create_sql=_create_table_sql(table, columns, dialect, notes),
                 index_sql=_index_sql(table, dialect, notes, columns),
                 fk_sql=_fk_sql(table, dialect),
             )

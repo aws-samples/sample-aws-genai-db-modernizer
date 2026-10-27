@@ -29,6 +29,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from src.tools.database.index_prefix import prefix_length
+
 # Both a JSON dump and a psql text dump reach us, so the boolean arrives
 # either already parsed or as PostgreSQL's own 't'/'f'.
 _TRUTHY = (True, 1, "t", "true", "1")
@@ -74,11 +76,14 @@ def add_index_key(
 
     A column key joins ``index["columns"]``. An expression key sets
     ``has_expressions`` instead, and its text, when the row carries one
-    (MySQL's ``expression``), joins ``index_expressions``.
+    (MySQL's ``expression``), joins ``index_expressions``. An index dict that carries
+    ``prefix_lengths`` gets each column key's prefix length (MySQL ``sub_part``) too.
     """
     column = row.get("column_name")
     if not is_expression_key(column, source_engine):
         index["columns"].append(column)
+        if "prefix_lengths" in index:  # MySQL SUB_PART (#1623), aligned with ``columns``
+            index["prefix_lengths"].append(prefix_length(row.get("sub_part")))
         return
     index["has_expressions"] = True
     text = str(row.get("expression") or "").strip()

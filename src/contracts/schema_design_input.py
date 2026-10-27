@@ -151,6 +151,13 @@ class AgentIndex(BaseModel):
     index_def: str | None = Field(
         None, description="Source CREATE INDEX text; set only when ``has_expressions``"
     )
+    prefix_lengths: list[int | None] | None = Field(
+        None,
+        description=(
+            "Per-column key prefix length aligned with columns (MySQL SUB_PART, #1623); "
+            "absent in older inputs, read as whole-column keys"
+        ),
+    )
 
 
 class AgentForeignKey(BaseModel):
@@ -522,10 +529,12 @@ class SchemaDesignGroupsManifest(BaseModel):
       representative statement with the pattern's summed traffic), with every member's
       query id in queries.query_pattern_groups; a manifest or input written before has
       none, and still loads.
+    - 1.5 (2026-10-28, #1623): Added optional AgentIndex.prefix_lengths, projected from
+      the collector's index prefix lengths.
     """
 
     contract_version: str = Field(
-        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str
@@ -640,6 +649,7 @@ def project_schema_design_input(
                         has_expressions=idx.has_expressions,
                         index_expressions=idx.index_expressions,
                         index_def=idx.index_def,
+                        prefix_lengths=idx.prefix_lengths,
                     )
                     for idx in (t.indexes or [])
                 ]

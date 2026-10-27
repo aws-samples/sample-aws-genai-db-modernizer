@@ -28,6 +28,7 @@ from src.contracts.schema_design_input import (
 from src.tools.schema.aurora_common.ddl_generator import (
     DdlResult,
     carried_indexes,
+    rendered_key,
     rendered_method,
 )
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase
@@ -286,8 +287,12 @@ def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residu
     return " ".join(parts)
 
 
-def _index_line(index, method: str | None) -> str:
-    line = f"{index.index_name}{' UNIQUE' if index.is_unique else ''} ({', '.join(index.columns)})"
+def _index_line(index, method: str | None, unique: bool, prefixes: list | None = None) -> str:
+    cols = [
+        f"{c}({prefixes[pos]})" if prefixes and prefixes[pos] is not None else c
+        for pos, c in enumerate(index.columns)
+    ]
+    line = f"{index.index_name}{' UNIQUE' if unique else ''} ({', '.join(cols)})"
     if method:  # #293: the method the draft renders, so the line matches its DDL
         line += f" USING {method}"
     return f"{line} WHERE {index.predicate}" if index.predicate else line
@@ -332,7 +337,11 @@ def build_design_view(
                 for col, ddl_col in zip(src.columns, ddl.columns, strict=True)
             ],
             "indexes": [
-                _index_line(i, rendered_method(i, base.dialect, ddl.columns))
+                _index_line(
+                    i,
+                    rendered_method(i, base.dialect, ddl.columns),
+                    *rendered_key(i, base.dialect, ddl.columns),
+                )
                 for i in carried_indexes(src, base.dialect)
             ],
         }

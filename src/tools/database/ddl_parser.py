@@ -30,6 +30,31 @@ def _unquote(name: str) -> str:
     return name.strip().strip(_IDENTIFIER_QUOTES).strip()
 
 
+# A parenthesised key-part list that may hold one level of nested parentheses, the
+# MySQL prefix length: ``(slug(10), body(50))``.
+_KEY_LIST = r"\(((?:[^()]|\([^()]*\))+)\)"
+_PREFIXED_PART = re.compile(r"^(.*?)\s*\(\s*(\d+)\s*\)\s*(?:ASC|DESC)?\s*$", re.IGNORECASE)
+
+
+def _key_parts(text: str) -> tuple[list[str], list[int | None] | None]:
+    """The columns of a key-part list and their MySQL prefix lengths (#1623).
+
+    ``slug(10), body(50)`` is ``(["slug", "body"], [10, 50])``. The second value is None
+    when no part has a prefix, so an index without any reads as before.
+    """
+    columns: list[str] = []
+    prefixes: list[int | None] = []
+    for part in _split_top_level(text):
+        m = _PREFIXED_PART.match(part)
+        if m and int(m.group(2)) > 0:
+            columns.append(_unquote(m.group(1)))
+            prefixes.append(int(m.group(2)))
+        else:
+            columns.append(_unquote(part))
+            prefixes.append(None)
+    return columns, (prefixes if any(n is not None for n in prefixes) else None)
+
+
 def fetch_ddl_from_s3(bucket: str, key: str, region: str = "us-east-1") -> str:
     """Download DDL content from S3. Raises on failure (critical)."""
     import boto3
@@ -102,7 +127,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
     columns: list[dict] = []
     indexes = []
     foreign_keys: list[dict] = []
-    primary_key = []
+    primary_key: list[str] = []
 
     # Split body by top-level commas (not inside parens)
     parts = _split_top_level(body)
@@ -116,11 +141,12 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
         # PRIMARY KEY (table-level) — supports both
         # ``PRIMARY KEY (cols)`` and ``CONSTRAINT name PRIMARY KEY (cols)``.
         pk_match = re.match(
-            r"(?i)(?:CONSTRAINT\s+[`\"\[]?\w+[`\"\]]?\s+)?PRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(([^)]+)\)",
+            r"(?i)(?:CONSTRAINT\s+[`\"\[]?\w+[`\"\]]?\s+)?PRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*"
+            + _KEY_LIST,
             part,
         )
         if pk_match:
-            primary_key = [_unquote(c) for c in pk_match.group(1).split(",")]
+            primary_key, pk_prefixes = _key_parts(pk_match.group(1))
             indexes.append(
                 {
                     "index_name": "PRIMARY",
@@ -128,6 +154,7 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
                     "is_unique": True,
                     "is_primary": True,
                     "index_type": "btree",
+                    **({"prefix_lengths": pk_prefixes} if pk_prefixes else {}),
                 }
             )
             continue
@@ -295,7 +322,7 @@ def _parse_column(part: str, ordinal: int) -> dict | None:
 # A key part that names a column: the identifier, an optional MySQL prefix length
 # and an optional sort order. Anything else (MySQL's ``(lower(name))``) is an expression.
 _COLUMN_KEY = re.compile(
-    r"[`\"\[]?(\w+)[`\"\]]?\s*(?:\(\s*\d+\s*\))?(?:\s+(?:ASC|DESC))?", re.IGNORECASE
+    r"[`\"\[]?(\w+)[`\"\]]?\s*(?:\(\s*(\d+)\s*\))?(?:\s+(?:ASC|DESC))?", re.IGNORECASE
 )
 
 
@@ -308,6 +335,7 @@ def _index_keys(key_list: str) -> dict:
     source's, and a narrower UNIQUE index rejects rows the source accepts.
     """
     columns: list[str] = []
+    prefixes: list[int | None] = []
     expressions: list[str] = []
     for key in _split_top_level(_extract_body(key_list) or ""):
         key = key.strip()
@@ -316,12 +344,15 @@ def _index_keys(key_list: str) -> dict:
         plain = _COLUMN_KEY.fullmatch(key)
         if plain:
             columns.append(plain.group(1))
+            # A MySQL key prefix length (#1623), aligned with ``columns``.
+            prefixes.append(int(plain.group(2)) if plain.group(2) and int(plain.group(2)) else None)
         else:
             expressions.append(key)
     return {
         "columns": columns,
         "has_expressions": bool(expressions),
         "index_expressions": ", ".join(expressions) or None,
+        **({"prefix_lengths": prefixes} if any(n is not None for n in prefixes) else {}),
     }
 
 

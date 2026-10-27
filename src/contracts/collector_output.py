@@ -43,6 +43,8 @@ Version History:
   and trigger definitions hold no literal value: each is redacted in the source dialect
   when built, ingested or read (#1625). No field is added or removed; an older output
   loads with its text redacted.
+- 4.4 (2026-10-28, #1623): Added optional Index.prefix_lengths, the per-column key
+  prefix length (MySQL SUB_PART).
 """
 
 import re
@@ -51,7 +53,14 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 
 
 class DatabaseEngine(str, Enum):
@@ -381,6 +390,15 @@ class Index(BaseModel):
     predicate: str | None = Field(
         None, description="Partial-index predicate (PostgreSQL WHERE clause), if any"
     )
+    prefix_lengths: list[PositiveInt | None] | None = Field(
+        None,
+        description=(
+            "Per-column key prefix length, aligned with ``columns`` (MySQL SUB_PART, #1623): "
+            "``CREATE INDEX ix ON t (body(100))`` is [100]; null for a column indexed whole. "
+            "Absent when no column has a prefix or the source does not record one."
+        ),
+    )
+
     has_expressions: bool = Field(
         False,
         description="Index has expression keys, so ``columns`` is not the whole key list",
@@ -837,7 +855,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="4.3",
+        default="4.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

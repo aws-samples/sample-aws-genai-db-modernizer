@@ -73,7 +73,8 @@ SELECT JSON_ARRAYAGG(i_obj) INTO @indexes FROM (
     'column_name', column_name,
     'seq_in_index', seq_in_index,
     'non_unique', non_unique,
-    'index_type', index_type
+    'index_type', index_type,
+    'sub_part', sub_part
   ) AS i_obj
   FROM information_schema.statistics
   WHERE table_schema = @db

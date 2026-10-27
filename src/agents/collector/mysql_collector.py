@@ -722,6 +722,7 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 has_expressions=bool(i.get("has_expressions")),
                 index_expressions=i.get("index_expressions") or None,
                 index_def=i.get("index_def") or None,
+                prefix_lengths=i.get("prefix_lengths") or None,
             )
             for i in t.get("indexes", [])
         ] or None
@@ -789,6 +790,7 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 has_expressions=bool(i.get("has_expressions")),
                 index_expressions=i.get("index_expressions") or None,
                 index_def=i.get("index_def") or None,
+                prefix_lengths=i.get("prefix_lengths") or None,
             )
             for i in t.get("indexes", [])
         ] or None

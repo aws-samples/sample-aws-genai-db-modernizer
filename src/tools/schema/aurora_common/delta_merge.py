@@ -38,6 +38,7 @@ from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOu
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
     AgentCollectorInput,
+    AgentIndex,
     AgentQueryPattern,
     AgentTable,
 )
@@ -51,10 +52,14 @@ from src.tools.schema.aurora_common.ddl_generator import (
     TableDDL,
     TypeOverride,
     TypeOverrides,
+    _key_prefix_note,
+    _not_created_reason,
     assemble_full_ddl,
     carried_indexes,
     generate_mysql_ddl,
     generate_pg_ddl,
+    index_method,
+    mysql_key_plan,
     pg_method_conflict,
     render_index,
     rendered_method,
@@ -263,6 +268,14 @@ class _Index:
     method: str | None
     include: list[str]
     where_sql: str | None
+    prefix_lengths: list[int | None] | None = None
+    notes: list[dict] = field(default_factory=list)
+
+
+def _draft_index(table: AgentTable, name: str) -> AgentIndex | None:
+    """The source index the draft carries under ``name`` (any case), if any."""
+    hits = [i for i in secondary_indexes(table) if i.index_name.lower() == name.lower()]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _structured_index(
@@ -327,13 +340,41 @@ def _structured_index(
     where_sql = (
         render_predicate(spec.where, columns, base.dialect.q) if spec.where is not None else None
     )
+    prefixes = None
+    unique = spec.unique
+    notes: list[dict] = []
+    if base.dialect is MYSQL:
+        # #1623: Aurora MySQL needs a key prefix on a TEXT or BLOB column, within 3072 bytes.
+        # A modified draft index keeps the prefixes its source recorded.
+        draft = _draft_index(table, spec.index_name)
+        by_column = (
+            {c.lower(): n for c, n in zip(draft.columns, draft.prefix_lengths or [], strict=False)}
+            if draft
+            else {}
+        )
+        plan = mysql_key_plan(
+            index_columns,
+            [by_column.get(c.lower()) for c in index_columns],
+            column_ddls,
+            index_method(draft) if draft else None,
+        )
+        if not plan.fits:
+            raise SqlFragmentError(
+                f"index '{spec.index_name}' cannot be created: {_not_created_reason(plan)}"
+            )
+        prefixes = plan.prefixes
+        if plan.weakens_unique:
+            notes.append(_key_prefix_note(table.table_name, spec.index_name, plan, unique))
+            unique = False
     return _Index(
         name=spec.index_name,
         columns=index_columns,
-        unique=spec.unique,
+        unique=unique,
+        notes=notes,
         method=spec.method,
         include=resolved[len(spec.columns) :],
         where_sql=where_sql,
+        prefix_lengths=prefixes,
     )
 
 
@@ -347,6 +388,7 @@ def _render(base: AuroraDesignBase, table: AgentTable, index: _Index) -> str:
         method=index.method,
         include=index.include,
         where_sql=index.where_sql,
+        prefix_lengths=index.prefix_lengths,
     )
 
 
@@ -364,6 +406,7 @@ def _apply_index_changes(
     table_ddls: dict[str, TableDDL],
     draft_indexes: dict[str, list[str]],
     errors: list[str],
+    index_notes: list[dict],
 ) -> dict[str, int]:
     counts = {"added": 0, "modified": 0, "removed": 0}
     for i, change in enumerate(delta.tables):
@@ -385,6 +428,7 @@ def _apply_index_changes(
                 )
                 continue
             del current[existing]
+            _drop_index_notes(index_notes, table.table_name, existing)
             counts["removed"] += 1
 
         for j, entry in enumerate(change.modify_indexes):
@@ -402,6 +446,8 @@ def _apply_index_changes(
                 )
                 continue
             current[existing] = _render(base, table, index)
+            _drop_index_notes(index_notes, table.table_name, existing)
+            index_notes.extend({**n, "index": existing} for n in index.notes)
             counts["modified"] += 1
 
         for j, entry in enumerate(change.add_indexes):
@@ -417,11 +463,33 @@ def _apply_index_changes(
                 )
                 continue
             current[index.name] = _render(base, table, index)
+            index_notes.extend(index.notes)
             counts["added"] += 1
 
         ddl.index_sql = list(current.values())
         draft_indexes[table.table_name] = list(current)
     return counts
+
+
+def _drop_index_notes(notes: list[dict], table: str, index: str) -> None:
+    """Forget the draft's notes about an index the delta removed or replaced."""
+    notes[:] = [
+        n for n in notes if not (n["table"] == table and str(n["index"]).lower() == index.lower())
+    ]
+
+
+def _index_notes(ddl: DdlResult) -> list[dict]:
+    """One deterministic app-layer note per index whose key prefix the draft added, cut or
+    that lost its UNIQUE because of one (#1623), so the deliverables say so."""
+    return [
+        {
+            "feature": "index_key_prefix",
+            "source_object": f"{n['table']}.{n['index']}",
+            "recommendation": n["reason"],
+        }
+        for n in ddl.index_notes
+        if n.get("kind") == "key_prefix"
+    ]
 
 
 def _time_zone_notes(ddl: DdlResult) -> list[dict]:
@@ -583,7 +651,9 @@ def merge_design_delta(
     ddl = base.generate(overrides)
     table_ddls = {t.table_name: t for t in ddl.tables}
     draft_indexes = {t.table_name: draft_index_names(t, base.dialect) for t in base.tables}
-    index_counts = _apply_index_changes(base, contract, by_key, table_ddls, draft_indexes, errors)
+    index_counts = _apply_index_changes(
+        base, contract, by_key, table_ddls, draft_indexes, errors, ddl.index_notes
+    )
 
     for note in ddl.index_notes:
         warnings.append(f"index {note['table']}.{note['index']}: {note['reason']}")
@@ -668,7 +738,9 @@ def merge_design_delta(
                     for c in t_ddl.columns
                 ],
                 "primary_key": list(t.primary_key or []),
-                "indexes": list(t_ddl.index_sql),
+                # A comment standing in for an index the key limit rules out stays in
+                # generated_ddl only, so no deliverable counts an index that is not created.
+                "indexes": [i for i in t_ddl.index_sql if not i.startswith("--")],
                 "foreign_keys": list(t_ddl.fk_sql),
             }
             for t, t_ddl in ((t, table_ddls[t.table_name]) for t in base.tables)
@@ -677,7 +749,8 @@ def merge_design_delta(
         "access_patterns": derived.patterns,
         "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
         + _time_zone_notes(ddl)
-        + _default_notes(ddl),
+        + _default_notes(ddl)
+        + _index_notes(ddl),
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
         "validation_passed": not errors,
