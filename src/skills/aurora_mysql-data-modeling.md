@@ -12,11 +12,13 @@ script's work.
   `tables` (per table: `row_count`, `null` when the source has no count, `read_qps`/`write_qps`, `primary_key`,
   `columns` as `name TYPE [NOT NULL] [AI] [DEFAULT x]` lines, residual columns
   marked `(residual; source <data_type>)` and changed types `(source <data_type>)`,
-  `indexes` as `name [UNIQUE] (columns)` and `foreign_keys` as `col -> table(col)`),
+  `indexes` as `name [UNIQUE] (columns) [USING method]` and `foreign_keys` as `col -> table(col)`),
   `residual_types` (residual columns grouped by source data type),
   `hot_queries` (busiest in-scope queries with tables and filter/sort columns),
   `analysis` (detected patterns, anti-patterns) and `source_features`
-  (triggers, procedures, views).
+  (triggers, procedures, views). An index `USING fulltext` or `USING spatial` is
+  a FULLTEXT or SPATIAL index: the merge keeps it, and an Aurora MySQL delta
+  names no method.
 - **analysis.redesign_requirements** (inside `design_view.analysis`): queries routing scored as a redesigned target would serve them (ADR-031 Decision 2 Amendment 13), each with `index_on`, the `table.column` filters the source has no index on. Where `routing_depends` is true the plan relies on that index: add it in the delta (`add_indexes`, or a partial index for a column tested `IS NOT NULL`). Where it is false the engine already scores the query as well as written: add the index only if the query is hot.
 - **analysis.carried_writes** (inside `design_view.analysis`): write-group members this engine serves poorly (#1362). Each names the statement (`query_id`), what it is for (`intent`: a retention delete, an orphan clean-up, a consistency repair sweep, a duplicate clean-up, a delete by any of several references, a bulk status flip, or another set-based write) and `approach`, the target-native way this engine serves that intent. Routing keeps these statements here because a table has one writer (ADR-031 Decision 1 Amendment 9), not because they fit. Model the statement's intent, not its source shape: the source's set-based SQL is where the investigation starts, not the design. Serve each one as its `approach` says; if the design cannot, say why in `trade_offs`. On Aurora the delta holds index changes only: an index the approach needs goes in `add_indexes` (a carried write's approach counts as a reason for an index, like a hot query); a constraint, a trigger, partitioning or a rule the database can enforce goes in `optimizations` (category `partitioning` or `other`) as a recommendation, and a rule the application must enforce in `app_layer_notes`.
 - **migration_strategy**: `carry_over` (source is MySQL) or `translate`

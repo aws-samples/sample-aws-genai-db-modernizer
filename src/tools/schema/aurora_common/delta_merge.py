@@ -58,7 +58,6 @@ from src.tools.schema.aurora_common.ddl_generator import (
     carried_indexes,
     generate_mysql_ddl,
     generate_pg_ddl,
-    index_method,
     mysql_key_plan,
     pg_method_conflict,
     render_index,
@@ -279,10 +278,19 @@ def _draft_index(table: AgentTable, name: str) -> AgentIndex | None:
 
 
 def _structured_index(
-    base: AuroraDesignBase, table: AgentTable, entry: IndexSpec | str, column_ddls: list[ColumnDDL]
+    base: AuroraDesignBase,
+    table: AgentTable,
+    entry: IndexSpec | str,
+    column_ddls: list[ColumnDDL],
+    *,
+    modify: bool = False,
 ) -> _Index:
     """Validate one delta index entry against the table, its merged column types
-    (``column_ddls``) and the dialect. Raises SqlFragmentError."""
+    (``column_ddls``) and the dialect. Raises SqlFragmentError.
+
+    ``modify``: the entry replaces the draft index of the same name, so on Aurora MySQL it
+    keeps that index's FULLTEXT or SPATIAL kind where the new columns take it (#1596): a
+    delta cannot spell either kind, and neither is ever UNIQUE."""
     engine = base.engine
     columns = [c.column_name for c in table.columns]
     if isinstance(entry, str):
@@ -342,6 +350,7 @@ def _structured_index(
     )
     prefixes = None
     unique = spec.unique
+    method: str | None = spec.method
     notes: list[dict] = []
     if base.dialect is MYSQL:
         # #1623: Aurora MySQL needs a key prefix on a TEXT or BLOB column, within 3072 bytes.
@@ -352,11 +361,13 @@ def _structured_index(
             if draft
             else {}
         )
+        if modify and draft is not None and not spec.unique:
+            moved = draft.model_copy(update={"columns": index_columns})
+            method = rendered_method(moved, MYSQL, column_ddls)
+        # A FULLTEXT or SPATIAL index the merge keeps takes no prefix; one it renders as a
+        # B-tree takes one like any other (#1623)
         plan = mysql_key_plan(
-            index_columns,
-            [by_column.get(c.lower()) for c in index_columns],
-            column_ddls,
-            index_method(draft) if draft else None,
+            index_columns, [by_column.get(c.lower()) for c in index_columns], column_ddls, method
         )
         if not plan.fits:
             raise SqlFragmentError(
@@ -371,7 +382,7 @@ def _structured_index(
         columns=index_columns,
         unique=unique,
         notes=notes,
-        method=spec.method,
+        method=method,
         include=resolved[len(spec.columns) :],
         where_sql=where_sql,
         prefix_lengths=prefixes,
@@ -434,7 +445,7 @@ def _apply_index_changes(
         for j, entry in enumerate(change.modify_indexes):
             where = f"tables[{i}].modify_indexes[{j}]"
             try:
-                index = _structured_index(base, table, entry, ddl.columns)
+                index = _structured_index(base, table, entry, ddl.columns, modify=True)
             except (SqlFragmentError, ValidationError) as exc:
                 errors.append(f"{where}: {exc}")
                 continue
