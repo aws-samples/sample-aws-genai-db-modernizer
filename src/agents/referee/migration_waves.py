@@ -28,8 +28,8 @@ decides the sequence:
    engine serves no query, including one with no analysis), the wave is titled "No
    move to Aurora: ..." instead: the source is not converted to Aurora in this plan,
    no Aurora pick is asked for, and the gate names the engines the plan moves to
-   (``homogeneity`` stays ``heterogeneous``, the marker of a wave 1 with no Aurora
-   engine).
+   (``homogeneity`` is ``no_move``, #1398: still the marker of wave 1, but no
+   reader can take it for a heterogeneous move).
    Skipped when there is no source engine to report at all, or the source is
    already an Aurora engine. For a homogeneous or cross-engine move, ``query_count`` and
    ``workload_share_percent`` are the share still assigned to Aurora once

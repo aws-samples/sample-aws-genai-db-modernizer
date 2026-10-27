@@ -539,7 +539,7 @@ class TestWaveOne:
         ]
         wave1 = self._waves(SCOPE_CHOICE, ranking=ranking, all_on="dynamodb")[0]
         assert wave1["engines"] == []
-        assert wave1["homogeneity"] == "heterogeneous"
+        assert wave1["homogeneity"] == "no_move"
         assert "Aurora PostgreSQL" not in wave1["title"]
         assert "Aurora MySQL" not in wave1["title"] + wave1["rationale"]
 

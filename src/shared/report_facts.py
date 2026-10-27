@@ -2904,6 +2904,7 @@ BRIEF_WAVE_KINDS = (
     "homogeneous",
     "cross_engine",
     "heterogeneous",
+    "no_move",
     "cache",
     "migration",
     "read_model",
@@ -2913,8 +2914,11 @@ BRIEF_EXPOSURE_LIMIT = 2
 
 
 def _brief_wave_kind(wave: Mapping[str, Any]) -> str:
+    # #1398: a report saved before "no_move" stored "heterogeneous" beside the reason.
+    if wave.get("no_move_reason"):
+        return "no_move"
     homogeneity = wave.get("homogeneity")
-    if homogeneity in ("homogeneous", "cross_engine", "heterogeneous"):
+    if homogeneity in ("homogeneous", "cross_engine", "heterogeneous", "no_move"):
         return str(homogeneity)
     if wave.get("fronts") or any(str(e) in CACHE_ENGINES for e in wave.get("engines") or []):
         return "cache"

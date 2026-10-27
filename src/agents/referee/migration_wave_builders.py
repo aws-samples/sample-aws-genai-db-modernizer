@@ -97,9 +97,9 @@ def _aurora_wave(
     query, #1327). Either way the source is not converted to Aurora in this plan, which
     is no heterogeneous move and no Aurora pick to ask for: the title, rationale and gate
     say that, and the gate names the engines the plan moves to instead (never an engine
-    the scope leaves out). ``homogeneity`` stays ``"heterogeneous"``, the contract's
-    marker for a wave 1 with no Aurora engine named (no new contract value). ``None``
-    (no scope, or a scope with an Aurora engine) keeps the wording above.
+    the scope leaves out). ``homogeneity`` is ``"no_move"`` (#1398), a value of its own
+    that still marks the wave as wave 1 but no reader can take for a heterogeneous move.
+    ``None`` (no scope, or a scope with an Aurora engine) keeps the wording above.
 
     The rationale states only what the collector actually reports for
     homogeneity: engine and version. The collector never reports feature or
@@ -260,7 +260,7 @@ def _aurora_wave(
         engines = []
         n = 0
         share = 0.0
-        homogeneity = "heterogeneous"
+        homogeneity = "no_move"
     else:
         rationale = (
             f"The source database ({source_desc}) has no source-compatible Aurora engine in "

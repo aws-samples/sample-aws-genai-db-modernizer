@@ -553,6 +553,8 @@ Version History:
   serve
 - 1.69 (2026-10-25, #1527): facts.derived_copy_sync: the DynamoDB derived copies' stream
   sync, listed and priced; None in an older report
+- 1.70 (2026-10-27, #1398): MigrationWave.homogeneity gains the value no_move for a wave
+  1 that moves nothing (it stored heterogeneous); BriefWave.kind gains no_move
 """
 
 from datetime import datetime
@@ -1083,7 +1085,7 @@ class MigrationWave(BaseModel):
             "empty); this is the fronted engine"
         ),
     )
-    homogeneity: Literal["homogeneous", "cross_engine", "heterogeneous"] | None = Field(
+    homogeneity: Literal["homogeneous", "cross_engine", "heterogeneous", "no_move"] | None = Field(
         None,
         description=(
             "Wave 1 (Aurora) only (#321): 'homogeneous' when the source maps to a "
@@ -1091,10 +1093,11 @@ class MigrationWave(BaseModel):
             "no Aurora dialect of its own but the assignment resolver still picked one of "
             "the two competing Aurora engines (named, with a share, same as 'homogeneous', "
             "but stated as a dialect-and-schema conversion, not a 1:1 carry-over), and "
-            "'heterogeneous' when no Aurora engine was picked at all (#1369: also when the "
-            "customer's engine scope has no Aurora engine or its Aurora engine serves no "
-            "query, where the wave says no Aurora move is planned and the source is not "
-            "necessarily heterogeneous). A heterogeneous wave "
+            "'heterogeneous' when no Aurora engine was picked at all, and 'no_move' (#1398) "
+            "when the customer's engine scope has no Aurora engine or its Aurora engine "
+            "serves no query (#1369), where the wave says no Aurora move is planned and "
+            "the source is not necessarily heterogeneous (a report saved before keeps "
+            "'heterogeneous' there; no_move_reason tells them apart). A heterogeneous wave "
             "1 still runs -- it is not skipped -- it just names no Aurora engine (engines "
             "is then empty, the title says what the source moves off instead of to, and "
             "the gate flags it as a risk). None for every other wave, and for a wave "
@@ -2179,11 +2182,17 @@ class BriefWave(BaseModel):
     wave: int = Field(..., ge=0)
     engines: list[str] = Field(default_factory=list)
     kind: Literal[
-        "homogeneous", "cross_engine", "heterogeneous", "cache", "migration", "read_model"
+        "homogeneous",
+        "cross_engine",
+        "heterogeneous",
+        "no_move",
+        "cache",
+        "migration",
+        "read_model",
     ] = Field(
         ...,
         description=(
-            "Wave 1's homogeneity (homogeneous, cross_engine, heterogeneous), a cache wave, "
+            "Wave 1's homogeneity (homogeneous, cross_engine, heterogeneous, no_move), a cache wave, "
             "a migration wave (moves tables off Aurora) or a read-model wave"
         ),
     )
@@ -2555,7 +2564,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.69",
+        default="1.70",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

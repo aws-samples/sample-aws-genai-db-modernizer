@@ -23531,6 +23531,7 @@
                                         "heterogeneous",
                                         "homogeneous",
                                         "migration",
+                                        "no_move",
                                         "read_model"
                                       ]
                                     }
@@ -26085,7 +26086,8 @@
                           "values": [
                             "cross_engine",
                             "heterogeneous",
-                            "homogeneous"
+                            "homogeneous",
+                            "no_move"
                           ]
                         },
                         {
@@ -30184,8 +30186,8 @@
         }
       }
     },
-    "schema_hash": "180bbed2515988ebc76ed02ff98046a9fa114bdf3004d06a860860936a115d04",
-    "version": "1.69"
+    "schema_hash": "f3260784adf433ac8c10ae3b6800b18771af5ca728ddf36609b1453a35b30afb",
+    "version": "1.70"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

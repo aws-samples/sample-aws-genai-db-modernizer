@@ -86,7 +86,7 @@ def slim_summary_input(payload: dict) -> dict:
             w.pop(name, None)
         if w.get("no_move_reason"):
             # #1383: say plainly that the wave moves nothing and hide the
-            # "heterogeneous" marker, which here only means no Aurora engine was named.
+            # homogeneity marker ("no_move", or "heterogeneous" in a report saved before #1398).
             w.pop("homogeneity", None)
             w["no_move"] = NO_MOVE_STATEMENT
 

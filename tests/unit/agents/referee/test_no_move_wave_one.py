@@ -63,6 +63,36 @@ class TestTheWaveCarriesTheMark:
         assert not wave.get("no_move_reason")
         assert wave["homogeneity"] == "heterogeneous"
 
+    def test_homogeneity_is_never_heterogeneous_for_a_wave_that_moves_nothing(self) -> None:
+        # #1398: the stored marker is its own value, so no reader mistakes the wave.
+        for scope in (["dynamodb"], ["aurora_postgresql", "dynamodb"]):
+            assert _waves(scope)[0]["homogeneity"] == "no_move"
+        wave = _waves(["dynamodb"], source="sqlserver")[0]
+        assert wave["homogeneity"] == "no_move"
+        assert MigrationWave.model_validate(wave).homogeneity == "no_move"
+
+    @pytest.mark.passes_on_main  # behaviour the fix must not change
+    def test_wave_one_is_still_found_by_its_marker(self) -> None:
+        from src.shared.report_facts import wave_retained_engine
+
+        waves = _waves(["dynamodb"])
+        assert waves[0]["homogeneity"] is not None
+        assert wave_retained_engine(waves) is None
+
+    def test_the_brief_calls_the_wave_no_move(self) -> None:
+        from src.shared.report_facts import _brief_wave_kind
+
+        assert _brief_wave_kind(_waves(["dynamodb"])[0]) == "no_move"
+        # a report saved before the fix has "heterogeneous" plus the reason
+        old = {**_waves(["dynamodb"])[0], "homogeneity": "heterogeneous"}
+        assert _brief_wave_kind(old) == "no_move"
+        assert _brief_wave_kind(_waves(None, source="sqlserver")[0]) == "heterogeneous"
+
+    @pytest.mark.passes_on_main  # behaviour the fix must not change
+    def test_a_saved_report_with_the_old_marker_still_loads(self) -> None:
+        old = {**_waves(["dynamodb"])[0], "homogeneity": "heterogeneous"}
+        assert MigrationWave.model_validate(old).homogeneity == "heterogeneous"
+
     def test_facts_say_no_move_once(self) -> None:
         assert wave_facts(_waves(["dynamodb"])[0])["no_move"] is True
         assert wave_facts(_waves(None)[0])["no_move"] is False
