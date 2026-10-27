@@ -236,7 +236,7 @@ Consider splitting into multiple repos if:
 
 ## References
 
-- Release Management: `docs/RELEASE_MANAGEMENT.md`
+- Release Management: CONTRIBUTING.md, "Releases"
 - Contributing Guide: `CONTRIBUTING.md`
 
 ---

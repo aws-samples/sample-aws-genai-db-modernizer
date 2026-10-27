@@ -42,4 +42,4 @@ See [`ci/README.md`](https://github.com/aws-samples/sample-aws-genai-db-moderniz
 
 ## Release process
 
-See [`docs/RELEASE_MANAGEMENT.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/RELEASE_MANAGEMENT.md) for versioning, the git workflow, and the release/hotfix procedures.
+See "Releases" in [`CONTRIBUTING.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/CONTRIBUTING.md) for versioning and the release steps. Every release is a tag on `main`.

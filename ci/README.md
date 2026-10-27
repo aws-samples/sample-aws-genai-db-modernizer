@@ -158,7 +158,7 @@ Before either pytest invocation, this script also builds the help site
 site`), the same way it builds the UI — `tests/e2e/test_docs_site.py` only
 serves and checks `site/`, it does not build it.
 
-The help site's sample report is not a pipeline run: `scripts/build_docs_sample.py` renders the recorded WordPress model run committed under `docs/examples/wordpress/sample-run/` (its README names the release) with the current renderers, so no model is called. Refresh that run once per release (the release checklist in `docs/RELEASE_MANAGEMENT.md`): run `/modernize` on the WordPress sample, then `uv run python scripts/build_docs_sample.py --refresh-from artifacts/wordpress/<job>`, update the release named in the README and in `docs/sample.md`, and have a person read the refreshed `report.json`'s diff before it merges. `--deterministic` renders a fresh deterministic run instead.
+The help site's sample report is not a pipeline run: `scripts/build_docs_sample.py` renders the recorded WordPress model run committed under `docs/examples/wordpress/sample-run/` (its README names the release) with the current renderers, so no model is called. Refresh that run once per release (the release steps in CONTRIBUTING.md, "Releases"): run `/modernize` on the WordPress sample, then `uv run python scripts/build_docs_sample.py --refresh-from artifacts/wordpress/<job>`, update the release named in the README and in `docs/sample.md`, and have a person read the refreshed `report.json`'s diff before it merges. `--deterministic` renders a fresh deterministic run instead.
 
 Runs pytest **twice**, not once:
 

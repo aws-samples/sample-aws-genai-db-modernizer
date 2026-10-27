@@ -551,20 +551,51 @@ The library entry point's request and result (`src/assessment/models.py`, [docs/
 
 ## Releases
 
-The release process is in [docs/RELEASE_MANAGEMENT.md](docs/RELEASE_MANAGEMENT.md). Two steps belong to this repository's guards:
+This section owns the release procedure. Every release is a tag on `main`: there are no release or maintenance branches (a `hotfix/` branch is a short-lived branch off `main` like any other), and a fix for a released version ships as the next tag from `main`. Nothing is built or deployed from a release; the tag publishes a GitHub release.
 
-1. Record the public contract's shipped shape, so the next release is compared with it. `--write-released` refuses a tag that does not exist and reads the models at the tag itself (`git archive`), never the working tree, so run it after pushing the tag, in a pull request to main (a hotfix tag too):
+### Version numbers
+
+The package version is never edited by hand (#391): `pyproject.toml` declares `dynamic = ["version"]`, and `hatch-vcs` derives it from the tag (`v0.4.0` becomes `0.4.0`; a prerelease tag such as `v0.4.0-beta.1` becomes `0.4.0b1`, PEP 440). There is no version field to bump and no release-prep PR for the version. A checkout without the matching tag reports a version that is obviously not a release, and a copy with no `.git` falls back to `0.0.0`.
+
+Tags follow `vMAJOR.MINOR.PATCH`, with a `-beta.N` suffix while the project is in beta (`v0.1.0-beta.2` to `v0.4.0-beta.2` so far). MAJOR is a breaking change for users, MINOR a backward-compatible feature, PATCH a fix. Contract versions are separate and internal (ADR-008); the user-facing number is the tag.
+
+### Steps
+
+1. **Refresh the help site's sample report.** The site renders a recorded model run committed under `docs/examples/wordpress/sample-run/`, and that run should come from the release being prepared. Run `/modernize` on the WordPress sample in Claude Code (`docs/examples/wordpress/wordpress.zip`) on the release candidate, then copy the run in and open a PR with it. Only ever refresh from a synthetic or public sample such as WordPress, never from a customer's database:
+
+   ```bash
+   uv run python scripts/build_docs_sample.py --refresh-from artifacts/wordpress/<job>
+   # Update the release and synthesis contract version in
+   # docs/examples/wordpress/sample-run/README.md and the release in docs/sample.md
+   uv run pytest tests/unit/scripts/test_build_docs_sample.py -q
+   ```
+
+   The refresh copies the synthesis `report.json`, the collected names and the routing records the detailed engineering report reads (the effective assignment's lineage `assignment/v<N>/assignment.json`, its `access_patterns.json` and each engine's `analysis-<engine>/analysis.json`), and refuses the job when either carries one of these (`private_markers` in `scripts/build_docs_sample.py`): a local path, an e-mail address, a non-public URL, an internal hostname, an IP address, an AWS account id, an AWS ARN, an AWS access key id, an API token, a private key, or this machine's user name. It then regenerates the folder's entries in `.secrets.baseline`, so detect-secrets still scans the sample at commit (and gitleaks in CI) and flags anything new in it.
+
+   A pattern list cannot judge free text: the report carries model-written prose (the summary, the reality-check review, the risks and trade-offs) where a customer name or an internal reference would not match any pattern. Before the refresh PR merges, a person reads the diff of the refreshed `report.json`'s prose fields.
+
+2. **Preview the release.** The routing and contract changes it will carry:
+
+   ```bash
+   uv run python scripts/release_notes.py --since <previous tag>
+   ```
+
+3. **Tag `main`.** `main` is protected, so the tag is the only step that publishes a release; nothing commits a version bump back to `main`.
+
+   ```bash
+   git checkout main && git pull
+   git tag -a v0.4.0 -m "Release v0.4.0: <one line>"
+   git push origin v0.4.0
+   ```
+
+4. **Record the public contract's shipped shape**, so the next release is compared with it. `--write-released` refuses a tag that does not exist and reads the models at the tag itself (`git archive`), never the working tree, so run it after pushing the tag, in a pull request to main (a fix release's tag too):
 
    ```bash
    git fetch --tags
    uv run python scripts/contract_schema_snapshot.py --write-released v0.4.0
    ```
 
-2. Pushing the tag runs `.github/workflows/release.yml`. It picks the previous release with `scripts/release_notes.py --previous-tag <tag>` (the highest version tag below it: exact names, PEP 440 order, so `v0.3.0` follows `v0.3.0-beta.2` and a hotfix `v1.5.1` follows `v1.5.0`), then runs `scripts/release_notes.py --since <previous tag> --until <tag>` and attaches its output to the release: the routing-snapshot diff since the previous release (from `tests/e2e/baselines/routing_snapshot.json`: engine changes first, then reason-code-only changes, then queries whose score alone moved), and one changelog line per rule change (a file under `src/catalog/`, with the commits that touched it) and per contract change (an internal contract's version move from `tests/contract/schema_snapshot.json`, and the public contract's from `tests/contract/assess_released_snapshot.json`). The release body (`--body`) lists the first 50 engine and reason-code changes, summarises score-only drift (counts per sample and per score change), keeps 40 changelog lines and stays under GitHub's body limit; `release-changes.md`, attached to the release, carries every row and line. The step is non-blocking: if it fails, the release is published with a warning line in its body. To preview it before tagging:
-
-   ```bash
-   uv run python scripts/release_notes.py --since v0.3.0-beta.1
-   ```
+5. **Check the release.** The tag runs `.github/workflows/release.yml`, which checks out full history, verifies that the resolved `hatch-vcs` version matches the tag (the workflow fails if not) and publishes the GitHub release. The release body is built by `scripts/release_notes.py`: it picks the previous release with `scripts/release_notes.py --previous-tag <tag>` (the highest version tag below it: exact names, PEP 440 order, so `v0.3.0` follows `v0.3.0-beta.2` and `v0.4.1` follows `v0.4.0`), then runs `scripts/release_notes.py --since <previous tag> --until <tag>` and attaches its output to the release: the routing-snapshot diff since the previous release (from `tests/e2e/baselines/routing_snapshot.json`: engine changes first, then reason-code-only changes, then queries whose score alone moved), and one changelog line per rule change (a file under `src/catalog/`, with the commits that touched it) and per contract change (an internal contract's version move from `tests/contract/schema_snapshot.json`, and the public contract's from `tests/contract/assess_released_snapshot.json`). The release body (`--body`) lists the first 50 engine and reason-code changes, summarises score-only drift (counts per sample and per score change), keeps 40 changelog lines and stays under GitHub's body limit; `release-changes.md`, attached to the release, carries every row and line. The step is non-blocking: if it fails, the release is published with a warning line in its body. Step 2 previews it before tagging.
 
 ---
 

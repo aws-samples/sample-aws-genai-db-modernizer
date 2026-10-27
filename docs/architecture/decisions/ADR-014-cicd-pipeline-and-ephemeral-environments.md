@@ -121,4 +121,4 @@ Deferred. Worth revisiting when the team grows, but adds complexity for a small 
 
 - [ADR-012: CloudFormation over CDK](ADR-012-cloudformation-over-cdk.md)
 - [ADR-013: Core Infrastructure Cost Optimization](ADR-013-core-infrastructure-cost-optimization.md)
-- [Release Management Guide](../../RELEASE_MANAGEMENT.md)
+- [Releases (CONTRIBUTING.md)](../../../CONTRIBUTING.md#releases)

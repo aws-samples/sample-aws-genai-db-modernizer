@@ -26,7 +26,7 @@ The rest of the job (per-phase outputs, the context graph, model inputs and resp
 
 ## Refreshing it
 
-The sample is refreshed once per release (see the release process in `docs/RELEASE_MANAGEMENT.md`): run `/modernize` on the WordPress sample with the release candidate, then
+The sample is refreshed once per release (see "Releases" in `CONTRIBUTING.md`): run `/modernize` on the WordPress sample with the release candidate, then
 
 ```bash
 uv run python scripts/build_docs_sample.py --refresh-from artifacts/wordpress/<job>

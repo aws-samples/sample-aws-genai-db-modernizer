@@ -397,11 +397,9 @@ def test_private_markers_find_a_given_user_name_as_a_whole_word() -> None:
 
 
 def test_the_release_step_lists_every_kind_the_refresh_refuses() -> None:
-    release = (build_docs_sample.REPO / "docs" / "RELEASE_MANAGEMENT.md").read_text(
-        encoding="utf-8"
-    )
+    release = (build_docs_sample.REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
     step = release[release.index("Refresh the help site's sample report") :]
-    step = step[: step.index("**Step 3")]
+    step = step[: step.index("2. **Preview the release.**")]
     missing = [k for k in build_docs_sample.PRIVATE_DETAIL_KINDS if k not in step]
     assert missing == []
     assert "a person reads the diff" in step

@@ -11,7 +11,7 @@ the assessment itself (the routing, the schemas, the model-written summary) stay
 the recorded one. A report written by an older release goes through the same facts
 backfill every saved report does (``src.report.facts.report_facts``, ADR-032
 Decision 4). The sample is refreshed once per release with ``--refresh-from``
-(docs/RELEASE_MANAGEMENT.md).
+(CONTRIBUTING.md, "Releases").
 
 ``--deterministic`` runs the deterministic pipeline instead (``--llm-mode none``, no
 model, no AWS credentials -- same as ``tests/e2e/pipeline.py``) against the bundled
@@ -79,7 +79,7 @@ SAMPLE_RUN_README = "README.md"
 COLLECTOR_KEY = Path("collector") / "output.json"
 _SYNTHESIS_VERSION = re.compile(r"^v(\d+)$")
 
-# What a committed sample must never carry, by kind. RELEASE_MANAGEMENT.md lists
+# What a committed sample must never carry, by kind. CONTRIBUTING.md's release steps list
 # the same kinds (tests/unit/scripts/test_build_docs_sample.py keeps them in step).
 # A query id is 64 hex characters, a float has a dot and a UUID has hyphens, so a
 # 12-digit run inside any of them is not an account id. A regex list cannot judge
