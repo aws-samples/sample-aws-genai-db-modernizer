@@ -18,6 +18,9 @@ that is KNOWN to flip the settled engine set across hash seeds before the
 ``_removal_tiebreak_key`` fix (verified by running it, unfixed, under seeds
 0-5: seeds 1, 3, 4 and 5 settled on ``{documentdb, dynamodb}`` while seeds 0
 and 2 settled on ``{aurora_mysql, dynamodb}``).
+
+The focused synthesis check (#903) exercises migration-complexity ties that
+the sample workloads do not necessarily produce, comparing the whole ranking.
 """
 
 from __future__ import annotations
@@ -360,3 +363,41 @@ def test_removal_tiebreak_destination_ignores_hash_seed(tmp_path: Path) -> None:
     for seed, committed in results.items():
         distinct.setdefault(json.dumps(committed), []).append(seed)
     assert len(distinct) == 1, f"settled engines differ by seed: {dict(results.items())}"
+
+
+_COMPLEXITY_SCRIPT = """
+import json
+from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
+from src.agents.referee.synthesis_report import build_ranking
+
+data = SynthesisData(
+    job_id="complexity-tie", database_name="test",
+    engines={"dynamodb": EngineArtifacts(engine="dynamodb", analysis={
+        "table_recommendations": [
+            {"table_id": "a", "confidence_score": 80, "migration_complexity": "MEDIUM"},
+            {"table_id": "b", "confidence_score": 80, "migration_complexity": "HIGH"},
+        ],
+        "cost_estimate": {"monthly_cost_usd": 12.5},
+    })},
+)
+print(json.dumps(build_ranking(data), sort_keys=True))
+"""
+
+
+def test_synthesis_complexity_tie_ignores_hash_seed() -> None:
+    results = {}
+    for seed in SEEDS:
+        proc = subprocess.run(  # nosec B603 -- fixed interpreter and script, repo cwd
+            [sys.executable, "-c", _COMPLEXITY_SCRIPT],
+            cwd=REPO,
+            env={**_env(), "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 0, f"seed {seed} failed:\n{proc.stderr[-2000:]}"
+        results[seed] = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert {seed: rows[0]["migration_complexity_avg"] for seed, rows in results.items()} == {
+        seed: "HIGH" for seed in SEEDS
+    }
+    assert all(rows == results["0"] for rows in results.values())

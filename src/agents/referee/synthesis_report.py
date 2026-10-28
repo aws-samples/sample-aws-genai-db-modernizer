@@ -465,8 +465,10 @@ def build_ranking(data: SynthesisData) -> list[dict]:
 
         complexities = [t.get("migration_complexity", "MEDIUM") for t in table_recs]
         complexity_counts = {c: complexities.count(c) for c in set(complexities)}
+        # Keep the modal category; ties take the higher complexity using the
+        # report's severity order, never hash-dependent set iteration (#903).
         most_common = (
-            max(complexity_counts, key=lambda k: complexity_counts[k])
+            min(complexity_counts, key=lambda k: (-complexity_counts[k], _SEVERITY_ORDER.get(k, 9)))
             if complexity_counts
             else "MEDIUM"
         )
