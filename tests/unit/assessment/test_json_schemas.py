@@ -294,7 +294,7 @@ def test_every_always_written_result_field_is_required() -> None:
 
     result = _schema("assess_result")
     statement = result["$defs"]["StatementResult"]
-    assert len(StatementResult.model_fields) == 23
+    assert len(StatementResult.model_fields) == 24
     added = set(ADDED_IN_1_2["StatementResult"]) | set(ADDED_IN_1_3["StatementResult"])
     assert set(statement["required"]) == set(StatementResult.model_fields) - added
     for name, model in result["$defs"].items():
@@ -304,7 +304,10 @@ def test_every_always_written_result_field_is_required() -> None:
     assert set(result["required"]) == set(AssessmentResult.model_fields)
     request = _schema("assess_request")
     assert request["required"] == ["database_name", "collection"]
-    assert all("required" not in m for m in request["$defs"].values())
+    # An unplaced statement's entry (1.3, #1633) has no default for either field.
+    defs = request["$defs"]
+    assert set(defs["UnplacedStatement"]["required"]) == {"query_id", "reason"}
+    assert all("required" not in m for n, m in defs.items() if n != "UnplacedStatement")
 
 
 def test_a_result_missing_an_always_written_field_is_refused() -> None:

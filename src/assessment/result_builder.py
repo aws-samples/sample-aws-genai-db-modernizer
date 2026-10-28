@@ -91,6 +91,7 @@ from src.assessment.models import (
     TableLine,
     result_label,
 )
+from src.assessment.part_ids import from_query_id_of
 from src.assessment.reason_codes import CONSOLIDATION_CODES, public_reason_code
 from src.assessment.ruleset import ruleset_hash, ruleset_version
 from src.contracts.move_ledger import Move
@@ -624,6 +625,7 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
             parse_status=parse_status,
             matched_anti_patterns=anti_patterns.get(qid, []),
             fit_breakdown=breakdown,
+            from_query_id=from_query_id_of(qid),
         )
         result.set_written_before_1_3(
             {
@@ -1533,7 +1535,7 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
     statements = build_statements(state, request)
     summary = build_summary(state, statements, request.collection)
     label = result_label(state.run_through, summary.designed_engines)
-    return AssessmentResult(
+    result = AssessmentResult(
         # The version the caller wrote the request for (#1603): a 1.1 request's result is
         # a 1.1 result, written as 1.1 writes it; with none, the latest.
         contract_version=request.contract_version,
@@ -1549,3 +1551,6 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
         designs=build_designs(state, summary.designed_engines) if label == "designed" else None,
         artifacts=build_artifacts(state) if request.options.include_artifacts else None,
     )
+    # What ``cut_collection`` cuts (#1633); never part of the result's value.
+    result.keep_cut_source(state.collector)
+    return result

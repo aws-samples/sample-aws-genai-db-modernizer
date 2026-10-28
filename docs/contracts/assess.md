@@ -116,24 +116,112 @@ A designed result always carries the [design block](#the-design-block) (`designs
 |---|---|
 | `contract_version` | The contract version you build on: `"1.0"`, `"1.1"`, `"1.2"` or `"1.3"`; the result is written for the same version ([The result's version](#the-results-version)). Leave it out and you get the latest (`"1.3"` in this release). **Pin it in every request**, so a library upgrade never changes the shape you validate |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. It names the run; it need not match the collection's own database name (see below) |
-| `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (any version the library reads) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
+| `collection` | A raw collection: the unmodified output of the collection scripts, or a cut's `collection` ([Cutting a result per service](#cutting-a-result-per-service)). A collector output (any version the library reads) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
 | `options.target_engines` | Engine scope, as engine catalog ids; `null` means every engine the workload warrants. Unknown, legacy and planned ids, and an empty list, are refused |
 | `options.deterministic` | `true` (default): no model is called. `false`: the reality check has a model review its consolidations, which needs model access. Must be `false` for `"schema_design"` and `"synthesis"`, which always use a model |
 | `options.include_artifacts` | Include the internal contracts (see below) |
-| `scope` | Informational: what a cut workload left out. Echoed back; no rule reads it. Statements in `scope.rewritten_query_ids` are marked `rewritten_by_caller` |
+| `scope` | Informational: what a cut workload left out (`tables`, `derived_from`, `rewritten_query_ids`, `dropped_foreign_keys` and, since `1.3`, `unplaced_statements`). Echoed back; no rule reads it. Statements in `scope.rewritten_query_ids` are marked `rewritten_by_caller`. Since `1.3`, `cut_collection` writes the whole scope for a cut, with each `dropped_foreign_keys` entry as `{"constraint_name", "table_id", "referenced_table_id"}`; any other entry is echoed as given |
 
 Unknown fields are refused, so a misspelt option never runs silently with a default.
 
 `database_name` names the run (and, with your own `store`, its folder `<database_name>/<job_id>/`); it does not have to match the database name the collection records. When the collection records its database name, that name wins: table ids (`summary.tables[].table_id`, `groups[].tables`) keep it, so one collection gives the same result whatever name you pass. That holds too when `database_name` names another database the collection's statements belong to (SQL Server's collection records each statement's database): that database's statements are left out either way, and a warning is logged. When the collection records no database name, the table ids take the one database its statements name, if they name exactly one, and `database_name` otherwise. One case is refused as ambiguous: the collection records no database name and its statements belong to several databases, none of them `database_name`. `assess()` then raises `DatabaseNameMismatchError`, a `ValueError` subclass whose message names the databases, and builds no result. The error is the library's, not a field of the result, so it does not change `contract_version`.
 
+## Cutting a result per service
+
+Since `1.3`, `cut_collection` cuts a result down to some of its tables, so you can assess each piece again: call `assess()` once on the whole database, then cut the result per service and assess each cut.
+
+```python
+from src.assessment import assess, cut_collection
+
+whole = assess({"contract_version": "1.3", "database_name": "shop", "collection": raw_collection})
+cut = cut_collection(
+    whole,
+    table_ids=["shop.SalesOrder", "shop.SalesOrderLine"],
+    parts=[  # optional: a statement that crosses the cut, rewritten for this service
+        {"from_query_id": "0x41A1D5EE8655B412",
+         "query_text": "SELECT l.[ProductID], l.[Quantity] FROM [SalesOrderLine] l "
+                       "JOIN [SalesOrder] o ON o.[SalesOrderID] = l.[SalesOrderID] WHERE o.[CustomerID] = @c"},
+    ],
+)
+orders = assess({
+    "contract_version": "1.3",
+    "database_name": "orders",
+    "collection": cut.collection,
+    "scope": cut.scope,
+    "options": {"run_through": "reality_check"},
+})
+```
+
+`cut_collection(result, *, table_ids, parts=())` returns a frozen `CollectionCut`:
+
+| Field | Meaning |
+|---|---|
+| `table_ids` | The tables (and views) kept, sorted |
+| `query_ids` | The statements kept whole and the parts' ids, in the collection's order (a part stands where its statement stood) |
+| `scope` | A `WorkloadScope` to pass as the next request's `scope`: `tables` (the tables kept), `rewritten_query_ids` (the parts' ids), `dropped_foreign_keys` (each foreign key between a kept table and a dropped one, either way round: `constraint_name`, `table_id`, the table that holds the key, and `referenced_table_id`), `unplaced_statements` (the statements the cut cannot place, see below) and `derived_from` (carried from an earlier cut) |
+| `collection` | Pass it as the next request's `collection`. It is opaque, like a token: do not read or edit it, and read the data from the cut's result instead (`summary.table_facts[]`, `statements[]`) |
+
+Cut the result `assess()` returned: it keeps the collection it read. A result read back from JSON can be cut only when it was assessed with `include_artifacts: true`. The function signature and the four fields are stable and versioned like the result. **Every later release accepts a cut's `collection` written by an earlier one**, even after the library's internal format changes; a test feeds a saved cut back in, and that saved cut is never regenerated (a release that cuts differently adds its own saved cut next to it).
+
+The same result and arguments always give the same cut. Two runs of the same collection give cuts with the same `table_ids`, `query_ids`, `scope` and statements and tables in `collection`; the `collection` also carries the run it was cut from (its job id and the time it read the collection), so those two values differ between runs.
+
+**What a cut keeps.** The tables in `table_ids`, and every statement whose tables all lie among them, whole. `table_ids` can also name a view the collection lists (by the id the statements name it with, for example `vw_ActiveProduct`): a statement over it is then kept, and a part can read it. A view counts as the base tables it reads (its `referenced_tables` when the collection gives them, else its definition as the library's parser reads it in the source dialect), so a view is refused unless every one of its base tables is in `table_ids` too (`ViewOutsideCutError`): keeping `vw_ActiveProduct`, which reads `Product` and `Brand`, in an orders cut would pull the catalog tables back in. A statement that touches a kept table and a dropped one is a *crossing statement*: it is left out, unless you give a part for it. A statement with no kept table is left out. The schema's views and procedures and the database-wide metrics are kept as collected; a trigger on a dropped table is left out. The foreign keys between a kept and a dropped table are left out of the cut and listed in `scope.dropped_foreign_keys`.
+
+**Statements a cut cannot place.** A statement that reads no table of the collection belongs to no service's tables: a procedure call (`EXEC usp_PlaceOrder ...`), a sequence read (`NEXT VALUE FOR ...`), a function call, a session command, or a read of tables the collection does not hold (system catalogs, an unlisted materialized view). No cut keeps one, and every cut lists each in `scope.unplaced_statements` (since `1.3`) as `{"query_id", "reason"}`: `reason` is `no_tables_read` or `tables_not_collected`. Nothing is left out silently. To assess one with a service, give a part for it that names the service's tables (for a procedure, the statement its body runs); it is then placed like any part and is no longer listed.
+
+**Parts.** A part is your rewrite of a crossing (or unplaced) statement over kept tables only: `{"from_query_id": ..., "query_text": ...}` (or a `StatementPart`). A cut takes one part per statement. The library builds each part's `query_id` from your input:
+
+```text
+part-<h>-<from_query_id>
+```
+
+`<h>` is the first 16 lowercase hexadecimal characters of the SHA-256 of the compact JSON array `[from_query_id, [the cut's table_ids, sorted]]` (UTF-8, no spaces). For example, `0x41A1D5EE8655B412` cut to the trailgear orders tables (`trailgear.OrderStatusHistory`, `trailgear.Payment`, `trailgear.SalesOrder`, `trailgear.SalesOrderLine`, `trailgear.Shipment`) is `part-7855a261de974f29-0x41A1D5EE8655B412`. The id depends only on the statement and the cut's tables, never on the part's text or on what the parser reads in it, so a later release's parser never moves it: the same statement cut to the same tables always gets the same id. No collection script writes an id of this form: every digest they write ([Statement ids](#statement-ids-query_id)) and the SHA-256 fallback is hexadecimal, `0x` and hexadecimal, a signed integer, `fms_` and digits, or an Oracle `SQL_ID`, and none starts with `part-`. A raw collection's `digest` is taken as given, so the guard is the cut itself: it refuses a part whose id is already a statement of the collection.
+
+A part inherits every execution statistic of the statement it was cut from (frequency, calls, timings, rows): the database measured the statement as a whole, and splitting its calls or latency would invent numbers. So **a part's cost can be overstated, never understated**. A part of a crossing statement reads only tables its statement reads, a view counting as its base tables, so those statistics never move onto a table the statement does not read. A part of an unplaced statement is the exception: its statement reads no table, so the part's tables are yours, and it carries the statement's statistics onto them. Its text goes through the same parser and literal redaction as the collected statements ([#1625](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1625)), so routing reads its tables, joins and access pattern the same way.
+
+**The dialect.** A part is in the source database's dialect. It must parse, as exactly one statement, with the library's parser in that dialect (sqlglot, which stops at the first error). Then the constructs below are refused, read on its SQL outside strings and comments. This is a fixed list of other dialects' constructs, not a full dialect check: a construct not listed is left to the parser.
+
+| Source | Refused |
+|---|---|
+| SQL Server | MySQL backticks, `$1` parameters (a money literal with a fraction, `$19.99`, is kept), `::` casts (a CLR method such as `geography::Point(...)` and a securable class such as `SCHEMA::sales` are kept), `ILIKE`, `LIMIT`, `ROWNUM`, `RETURNING`, `ON CONFLICT`, `\|\|`, `NOW()`, `IFNULL()`, `NVL()` |
+| PostgreSQL | backticks, `[...]` names, `TOP`, `@name` parameters, `ROWNUM`, `IFNULL()`, `NVL()`, `ISNULL()`, `GETDATE()` |
+| MySQL | `[...]` names, `TOP`, `$1` parameters, `::` casts, `ILIKE`, `ROWNUM`, `RETURNING`, `ON CONFLICT`, `NVL()`, `GETDATE()` |
+| MariaDB | as MySQL, except `RETURNING` and `NVL()`, which MariaDB has |
+| Oracle | backticks, `[...]` names, `TOP`, `@name` parameters, `$1` parameters, `::` casts, `ILIKE`, `LIMIT`, `ON CONFLICT`, `NOW()`, `IFNULL()`, `ISNULL()`, `GETDATE()` |
+
+SQL Server's `"..."` names are kept: T-SQL reads them as names under `QUOTED_IDENTIFIER ON`, the default. Another source (Db2, for one) is checked by its parser only.
+
+**Refusals.** `cut_collection` never drops a part silently: it raises a `CutError` (a `ValueError` subclass) whose subclass says why:
+
+| Error | When |
+|---|---|
+| `InvalidTableIdsError` | `table_ids` is not a list of table ids (a string, `None`, an item that is not a non-empty string) |
+| `EmptyCutError`, `UnknownTableError` | `table_ids` is empty, or names a table or view the collection does not hold |
+| `ViewOutsideCutError` | `table_ids` names a view that reads a table outside `table_ids` (or whose definition names no table the parser can read) |
+| `InvalidPartError` | `parts` is not a list, or a part is not `{"from_query_id", "query_text"}` |
+| `UnknownStatementError` | `from_query_id` is no statement of the collection (a `NotACrossingStatementError`) |
+| `PartOfKeptStatementError` | `from_query_id` is kept whole by the cut: a statement is kept whole or cut into a part, never both |
+| `NotACrossingStatementError` | `from_query_id` takes no part in the cut: none of its tables is kept, and it is not unplaced |
+| `DuplicatePartError` | Two parts name the same statement |
+| `PartDialectError` | The text uses a construct the table above refuses (a `PartParseError`) |
+| `PartParseError` | The parser does not read the text as one statement over tables of the collection (for example two statements, or text that is cut off) |
+| `PartTableOutsideCutError` | The part names a table outside `table_ids` |
+| `PartTableNotInStatementError` | A part of a crossing statement names a kept table its statement never reads (a view counting as its base tables) |
+| `PartIdCollisionError` | A part's id is already a statement's id in the collection |
+| `CutSourceError` | The result holds no collection to cut (read from JSON without `artifacts`) |
+
+**The cut's result.** The cut is assessed like any collection, at any `run_through`. Its statements are the cut's `query_ids`; a part's is marked `rewritten_by_caller` (it is in `scope.rewritten_query_ids`) and, since `1.3`, carries `from_query_id`, the id of the statement it was cut from (read from its id; `null` for every other statement). A request pinned to `1.2` or earlier gets no `from_query_id`, and its echoed `scope` has no `unplaced_statements`. A row count the original collection did not know stays `null` in the cut's result, as in the whole result, and so does each foreign key average that needs it. A statement with no execution count is the one exception: the collector output records a call rate, so in a cut's result it shows one call a day (`1/86400`), where the whole result shows `null`.
+
+**A cut of a cut.** Cut a cut's result again for a narrower service. The new cut carries the earlier one forward: a part it keeps whole stays in `rewritten_query_ids` (so it stays `rewritten_by_caller`, and keeps its `from_query_id`), the earlier `dropped_foreign_keys` that still touch a kept table and the earlier `unplaced_statements` stay listed, and `derived_from` is kept. A part of an earlier part names that part in `from_query_id`.
+
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` added the OpenSearch entry of the design block (#1513), contract `1.2` the fields listed in [From 1.1 to 1.2](#from-11-to-12) (#1603), and contract `1.3` the fields and null rules listed in [From 1.2 to 1.3](#from-12-to-13) (#1632): foreign key statistics, `row_count_basis`, `parse_status`, and `null` for values the collection does not have. The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` added the OpenSearch entry of the design block (#1513), contract `1.2` the fields listed in [From 1.1 to 1.2](#from-11-to-12) (#1603), and contract `1.3` the fields and null rules listed in [From 1.2 to 1.3](#from-12-to-13) (#1632, #1633): foreign key statistics, `row_count_basis`, `parse_status`, `null` for values the collection does not have, and `cut_collection`. The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
 - `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]` (with `unique_query_ids` since `1.2`), `consolidations[]` (with `action` and `queries_retained` since `1.2`), `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines`, `design_note` and, since `1.2`, `table_facts[]` (with `row_count_basis` and `foreign_keys[].avg_children_per_parent` and `basis` since `1.3`);
-- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`, since `1.2` `query_text`, `matched_anti_patterns` and `fit_breakdown`, and since `1.3` `parse_status`;
+- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`, since `1.2` `query_text`, `matched_anti_patterns` and `fit_breakdown`, and since `1.3` `parse_status` and `from_query_id`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
 - `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
 
@@ -290,6 +378,7 @@ The OpenSearch entry was added in contract `1.1` (#1513). From `1.1` on, every e
 - **`query_text`** (since `1.2`): the statement text the library's parser read. When rows sharing a digest merged into one statement (see [Statement ids](#statement-ids-query_id)), it is the costliest variant's text (the highest total time). It is collection text with its literal values redacted ([#1625](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1625)): MySQL and MariaDB (`DIGEST_TEXT`) and PostgreSQL (`pg_stat_statements`) normalise it themselves, and on every source the library replaces each string, number, date and binary literal left in it with the engine's own kind of placeholder (`?`, Oracle's `:n`, PostgreSQL's `$n`) before it stores or parses the text. What the parser reads as structure stays: row limits and offsets (`TOP (10)`, `FETCH FIRST 1 ROWS ONLY`), lock waits (`FOR UPDATE WAIT 5`), sample sizes, `NTILE` counts, `ORDER BY` positions and type sizes (a kept number has at most nine digits, so a card number is never one), JSON paths, date parts and formats, and the shape of a `LIKE` or regular-expression pattern (`'%jane@example.com%'` becomes `'%?%'`, `'Jane%'` becomes `'x%'`); a prefixed string keeps its form (`N'?'`). The redaction keeps what routing reads, so a statement is placed as it was before it (tests hold the bundled samples, and SQL Server and Oracle collections with literals, to that). Comments are kept, less any e-mail address and run of nine or more digits in them; a comment that is not a sqlcommenter tag also has every run between two quotes written `?`. Escape the text when you render it.
 - **`matched_anti_patterns`** (since `1.2`): the penalised anti-patterns found on the statement against any analysed engine, once each, in catalog id order, as `{"id", "name", "intrinsic"}` (for example `{"id": "frequent-full-scan", "name": "Frequent full scan", "intrinsic": false}`). `intrinsic` follows [#1231](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1231): `true` means it costs the engines it is found against points; `false` means it is fixable, because a redesign of the target removes it, so it costs nothing. Which engines it costs, and how much, is in `fit_breakdown[engine].penalties`.
 - **`fit_breakdown`** (since `1.2`): per engine, how the scorer reached `fit` ([The fit breakdown](#the-fit-breakdown)).
+- **`from_query_id`** (since `1.3`): on a statement part of a cut, the `query_id` of the statement it was cut from ([Cutting a result per service](#cutting-a-result-per-service)); `null` for every other statement.
 - **`post_schema_terminal`**: set when a schema design flagged the statement and the post-schema routing could not move it (see [Post-schema terminal statements](#post-schema-terminal-statements)); `null` otherwise, and always `null` before `"schema_design"`.
 - **`query_tags`** are read from the statement text the collection holds, so which sources fill them depends on the collector. A tag is redacted as the comment it came from ([#1625](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1625)): a sqlcommenter tag (a comment that is only comma-separated `key='value'` pairs) keeps its keys and values (they name code: `controller='cart'`), less any e-mail address or run of nine or more digits; any other tag also has every run between two quotes written `?` (`don't 'Jane'` becomes `don'?'?'`). Free words are kept, so a tag can still name a person in plain words: keep personal data out of the comments your application writes. PostgreSQL (`pg_stat_statements` text) keeps every leading comment and every sqlcommenter trailing comment. SQL Server and Oracle collections keep block-comment tags (a `--` comment runs into the statement there, because the collectors replace newlines with spaces), which is what sqlcommenter writes. MySQL and MariaDB collections carry no tags at all: both collectors read `DIGEST_TEXT` from `performance_schema.events_statements_summary_by_digest`, and the server removes comments when it normalizes a digest, so a tag a customer prepends to a statement never reaches the collection. For a MySQL or MariaDB source, `query_tags` is always empty, and the library does not read `QUERY_SAMPLE_TEXT` (it holds literal values; [#1314](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1314)). The join key that works there is `query_id`, which for these sources is the statement's `DIGEST`: it hashes the normalized text, so it does not change with a comment. Keep your own map from the digest to the code that issues the statement (on MySQL 8.0, `SELECT STATEMENT_DIGEST('<your statement>')` returns the digest the server will record for it) and join `statements[].query_id` to that map.
 
@@ -400,7 +489,13 @@ Contract `1.2` (#1603) is a MINOR version. It only adds fields, each exposing a 
 
 ### From 1.2 to 1.3
 
-Contract `1.3` (#1632) is a MINOR version. It adds optional fields: on each `summary.table_facts[].foreign_keys[]` entry, `avg_children_per_parent` and `basis` ([Foreign key statistics](#foreign-key-statistics)); on each `summary.table_facts[]` entry, `row_count_basis` (`"exact"` where the catalogue keeps an exact count, MySQL-family MyISAM and Aria; `"estimate"` for PostgreSQL `reltuples`, Oracle `NUM_ROWS`, InnoDB `TABLE_ROWS` and SQL Server `sys.partitions.rows`; `null` when `row_count` is `null`, or when the collection does not say how its counts were recorded); and on each statement, `parse_status`: `"parsed"` when the library's SQL parser read the statement, `"fallback"` when it could not, so its `query_type`, `join_count` and `tables` are a pattern-based estimate (`null` for a statement with no text). They are statistics from the collection, not a design decision: an average cannot show whether a child set is bounded, and the recommended path for any data model stays `run_through: "schema_design"`.
+Contract `1.3` (#1632, #1633) is a MINOR version. It adds optional fields: on each `summary.table_facts[].foreign_keys[]` entry, `avg_children_per_parent` and `basis` ([Foreign key statistics](#foreign-key-statistics)); on each `summary.table_facts[]` entry, `row_count_basis` (`"exact"` where the catalogue keeps an exact count, MySQL-family MyISAM and Aria; `"estimate"` for PostgreSQL `reltuples`, Oracle `NUM_ROWS`, InnoDB `TABLE_ROWS` and SQL Server `sys.partitions.rows`; `null` when `row_count` is `null`, or when the collection does not say how its counts were recorded); and on each statement, `parse_status`: `"parsed"` when the library's SQL parser read the statement, `"fallback"` when it could not, so its `query_type`, `join_count` and `tables` are a pattern-based estimate (`null` for a statement with no text). They are statistics from the collection, not a design decision: an average cannot show whether a child set is bounded, and the recommended path for any data model stays `run_through: "schema_design"`.
+
+It also adds:
+
+- `cut_collection` and its `CollectionCut` ([Cutting a result per service](#cutting-a-result-per-service)): a cut's `collection` is a new kind of request `collection`, and the request's `scope.dropped_foreign_keys` (a list of objects since `1.0`) gets the entry shape `cut_collection` writes, `{"constraint_name", "table_id", "referenced_table_id"}`; any other entry is still echoed as given;
+- the optional `scope.unplaced_statements` (`{"query_id", "reason"}`), where a cut lists the statements it cannot place; a result written for `1.2` or earlier does not echo it;
+- the optional `statements[].from_query_id`, set on a cut's statement parts.
 
 Unknown is `null` from `1.3`: where the collection gives no value, the fields below are `null` in a `1.3` result, where `1.2` wrote the collector's default for it. A `1.2` result keeps the `1.2` value, so in `1.2` these defaults can mean unknown:
 
