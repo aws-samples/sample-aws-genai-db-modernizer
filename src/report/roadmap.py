@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine, display_source_database
+from src.shared.gate_facts import GATE_TABLES_SHOWN
 from src.shared.report_facts import wave_facts
 
 from . import escaping
@@ -204,15 +205,23 @@ def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
     )
 
 
-def _gate_text(w: dict[str, Any], wf: dict[str, Any], replicated: dict[str, list[str]]) -> str:
+def _gate_text(
+    w: dict[str, Any],
+    wf: dict[str, Any],
+    replicated: dict[str, list[str]],
+    mapped: set[str] | frozenset[str] = frozenset(),
+) -> str:
     """A wave's gate, each table list named once (#1170).
 
     The gate's parts (``gate_parts``, #1028) join back to the stored gate. A list
     the section already gives in full is referred to instead of repeated: the
     wave's kept-in-sync tables (which that line then names in full, however many,
     #1574), the wave's own table list, or the tables the wave's engines write that
-    "Sources of truth and replicas" lists. Any other list, and a gate with no parts,
-    is printed as stored.
+    "Sources of truth and replicas" lists. A list of more than ``GATE_TABLES_SHOWN``
+    tables that are all Migration map rows (``mapped``: each with its owner and readers)
+    names the first few and counts the rest (#1642: the discourse wave 2 gate printed 70
+    names the map already lists). Any other list, and a gate with no parts, is printed
+    as stored.
     """
     parts = w.get("gate_parts")
     if not isinstance(parts, list) or not parts:
@@ -235,6 +244,12 @@ def _gate_text(w: dict[str, Any], wf: dict[str, Any], replicated: dict[str, list
             out.append(" (the tables listed above)")
         elif _same_tables(items, written):
             out.append(' (listed under "Sources of truth and replicas" below)')
+        elif len(items) > GATE_TABLES_SHOWN and {str(i) for i in items} <= mapped:
+            shown = ", ".join(str(i) for i in items[:GATE_TABLES_SHOWN])
+            out.append(
+                f" ({shown} and {len(items) - GATE_TABLES_SHOWN} more; the Migration map "
+                "above lists each with its owner and readers)"
+            )
         else:
             out.append(f" ({', '.join(str(i) for i in items)})")
     return "".join(out)
@@ -277,6 +292,8 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         out.append("")
     facts = _facts_by_wave(report)
     replicated = _replicated_by_source(report)
+    owner_lines = (report_facts(report).get("table_owner_lines") or {}).get("table_lines") or []
+    mapped = {str(r.get("table")) for r in owner_lines if isinstance(r, dict) and r.get("table")}
     for w in waves:
         names = ", ".join(display_engine(e) for e in w.get("engines") or [])
         wf = facts.get(int(w.get("wave") or 0)) or wave_facts(w)
@@ -344,7 +361,7 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             )
         out += _owner_lines_md(wf, kept_in_full=_gate_lists_kept(w, wf))
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
-        gate = _gate_text(w, wf, replicated)
+        gate = _gate_text(w, wf, replicated, mapped)
         out.append(f"- Gate before the next wave: {escaping.md_text(gate or '-')}")
         out += _heterogeneous_lines_md(report, wf)
         out.append("")

@@ -793,6 +793,22 @@ def wave_one_moved_by_later_waves(waves: list[dict[str, Any]]) -> int | None:
     return len({str(t) for t in first.get("tables") or [] if t} & moving)
 
 
+def wave_one_staying_split(
+    waves: list[dict[str, Any]], mapped_tables: Iterable[str]
+) -> tuple[int, int] | None:
+    """Wave 1's tables and views no later wave moves, split by the migration map (#1642):
+    (map rows that do not migrate, tables and views the map does not list). The two add
+    up to wave 1's "the other N stay", and the first is the map's rows other than its
+    "N migrate". None when :func:`wave_one_moved_by_later_waves` is."""
+    if wave_one_moved_by_later_waves(waves) is None:
+        return None
+    first = next(w for w in waves if w.get("homogeneity") is not None)
+    moving, _, _ = _migrating_wave_tables(waves)
+    staying = {str(t) for t in first.get("tables") or [] if t} - moving
+    mapped = {str(t) for t in mapped_tables}
+    return len(staying & mapped), len(staying - mapped)
+
+
 def _map_engine(row: Mapping[str, Any]) -> str:
     """The engine a ``table_mappings`` row counts under: its owner (#212), or, for a
     row with no owner line or no owner, its recommended engine."""
@@ -2818,6 +2834,52 @@ def _owner_target(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def same_label_places(labels: list[str]) -> list[int | None]:
+    """Each label's 1-based place among the entries that share it, or None for a label
+    only one entry has: how a pointer names one of several same-label risks (#1642)."""
+    seen: dict[str, int] = {}
+    places: list[int | None] = []
+    for label in labels:
+        seen[label] = seen.get(label, 0) + 1
+        places.append(seen[label])
+    return [
+        None if labels.count(label) == 1 else p for label, p in zip(labels, places, strict=True)
+    ]
+
+
+def non_owner_read_tables_by_wave(
+    lines: Iterable[Mapping[str, Any]], wave_of_engine: Mapping[str, int]
+) -> dict[int | None, list[str]]:
+    """The tables an engine reads without owning them, per wave (#1642): each owner line
+    with an ``also_read_by`` engine (:func:`table_owner_line`) goes to the later of its
+    owner's and readers' waves, the wave whose gate brings in the copy, so each table is
+    counted once. A table none of whose engines is in a wave is under None. The one
+    computation behind ``table_owner_lines.also_read_table_count`` (the waves added up)
+    and the kept-in-sync risk's per-wave tables (ADR-032)."""
+    out: dict[int | None, list[str]] = {}
+    for line in lines:
+        readers = [str(e) for e in line.get("also_read_by") or [] if e]
+        if not readers or not line.get("table"):
+            continue
+        engines = [str(line.get("owner") or ""), *readers]
+        known = [wave_of_engine[e] for e in engines if e in wave_of_engine]
+        out.setdefault(max(known) if known else None, []).append(str(line["table"]))
+    return {
+        w: sorted(t) for w, t in sorted(out.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))
+    }
+
+
+def _engine_waves(waves: Iterable[Mapping[str, Any]] | None) -> dict[str, int]:
+    """engine id -> the first numbered wave that brings it in."""
+    out: dict[str, int] = {}
+    for w in waves or []:
+        n = w.get("wave") if isinstance(w, Mapping) else None
+        if isinstance(n, int) and not isinstance(n, bool) and n >= 1:
+            for e in w.get("engines") or []:
+                out.setdefault(str(e), n)
+    return out
+
+
 def table_ownership_facts(
     report: Mapping[str, Any], waves: Iterable[Mapping[str, Any]] | None = None
 ) -> dict[str, Any] | None:
@@ -2849,7 +2911,12 @@ def table_ownership_facts(
         "table_count": len(tables),
         "owned_table_counts": dict(sorted(owned.items(), key=lambda kv: (-kv[1], kv[0]))),
         "no_owner_table_count": sum(1 for r in tables if not r["owner"]),
-        "also_read_table_count": sum(1 for r in tables if r["also_read_by"]),
+        "also_read_table_count": sum(
+            len(t)
+            for t in non_owner_read_tables_by_wave(
+                tables, _engine_waves(waves if waves is not None else report.get("migration_waves"))
+            ).values()
+        ),
         "cached_table_count": sum(1 for r in tables if r["cached_by"]),
         "cache_engines": sorted({str(r["cached_by"]) for r in tables if r["cached_by"]}),
         "table_lines": tables,

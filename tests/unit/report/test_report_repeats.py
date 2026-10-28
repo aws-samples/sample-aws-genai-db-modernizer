@@ -24,12 +24,14 @@ from src.report.architecture import KEPT_IN_SYNC_NOTE, KEPT_IN_SYNC_SOURCES_NOTE
 from src.report.engine_choices import pending_choices_md
 from src.report.engineering_report import (
     MAP_SPLIT_DEFINED_ABOVE,
+    RESOLVED_REASON_REPEAT_WORDS,
     _app_layer_notes_md,
     _unsupported_pattern_md,
 )
 from src.report.escaping import md_cell, md_text
 from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md
+from src.report.risks import resolved_risk_label
 from src.shared.report_facts import query_group_facts
 from tests.report_concision import repeated_paragraphs, repeated_statements, section
 
@@ -421,11 +423,17 @@ def test_with_every_group_listed_the_heading_has_one_count(report: dict[str, Any
     assert "run only on" not in section(md, "Query groups")
 
 
-def test_resolved_risks_sharing_a_reason_state_it_once(md: str, saved) -> None:
+def test_resolved_risks_sharing_a_long_reason_state_it_once_and_name_the_first(
+    md: str, saved
+) -> None:
+    """A reason too long to repeat (the report never repeats a sentence of
+    ``_ONCE_MIN_WORDS`` words) is stated once, under the first risk that has it; the
+    others name that risk instead of "the risk above" (the discourse judge read the
+    bare pointer as a machine fragment)."""
     resolved = section(md, "Resolved by the assignment")
     reason = "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there"
+    assert len(reason.split()) > RESOLVED_REASON_REPEAT_WORDS
     assert resolved.count(f"Resolved because {md_text(reason)}.") == 1
-    assert resolved.count("  - Resolved for the same reason as the risk above.") == 2
     entries = [ln for ln in resolved.splitlines() if ln.startswith("- ")]
     assert len(entries) == report_facts(copy.deepcopy(saved))["resolved_risk_count"] == 5
     # The three sharing the reason are listed together, the first naming it.
@@ -435,11 +443,31 @@ def test_resolved_risks_sharing_a_reason_state_it_once(md: str, saved) -> None:
         if ln.startswith("  - Resolved because the Aurora MySQL")
     )
     following = resolved.splitlines()[first:]
-    assert [ln for ln in following if ln.startswith("  - Resolved")][:3] == [
-        f"  - Resolved because {md_text(reason)}.",
-        "  - Resolved for the same reason as the risk above.",
-        "  - Resolved for the same reason as the risk above.",
-    ]
+    pointers = [ln for ln in following if ln.startswith("  - Resolved")][1:3]
+    # The three share one label too: the pointer names the first of them (the review on
+    # #1644: a label alone could name two risks).
+    labels = [resolved_risk_label(r) for r in saved["risk_assessment"]["resolved_risks"]]
+    assert labels.count("Aurora MySQL → DynamoDB") > 1
+    assert (
+        pointers
+        == ["  - Resolved for the same reason as the first Aurora MySQL → DynamoDB risk above."] * 2
+    )
+    assert "same reason as the risk above" not in resolved
+
+
+def test_resolved_risks_sharing_a_short_reason_each_state_it(saved) -> None:
+    """A reason of up to ``RESOLVED_REASON_REPEAT_WORDS`` words is stated by every risk
+    it resolves, so each line reads on its own and no long sentence repeats."""
+    report = copy.deepcopy(saved)
+    short = "the queries run as SQL on Aurora MySQL"
+    assert len(short.split()) <= RESOLVED_REASON_REPEAT_WORDS
+    for r in report["risk_assessment"]["resolved_risks"]:
+        r["reason"] = short
+    md = render_engineering_report_md(report)
+    resolved = section(md, "Resolved by the assignment")
+    assert resolved.count(f"Resolved because {md_text(short)}.") == 5
+    assert "same reason as" not in resolved
+    assert repeated_statements(md) == []
 
 
 # --- pending engine choices ------------------------------------------------------
@@ -532,3 +560,68 @@ def test_a_note_that_differs_is_kept_in_both_trade_offs(report: dict[str, Any]) 
     body = section(render_engineering_report_md(report), "Migration trade-offs")
     assert body.count("a lookup on it shows a write only after the service") == 2
     assert "Stated " not in body
+
+
+def test_a_pointer_names_which_of_two_same_label_risks_it_means(saved) -> None:
+    """Two groups of resolved risks with one label: the second group's pointer names the
+    second risk with that label, not "the ... risk above" (the review on #1644)."""
+    report = copy.deepcopy(saved)
+    resolved = report["risk_assessment"]["resolved_risks"]
+    same = [r for r in resolved if resolved_risk_label(r) == "Aurora MySQL → DynamoDB"]
+    assert len(same) >= 3
+    long_a = " ".join(["the first long reason that the assignment states"] * 3)
+    long_b = " ".join(["the second long reason that the assignment states"] * 3)
+    same[0]["reason"] = long_a
+    for r in same[1:]:
+        r["reason"] = long_b
+    md = section(render_engineering_report_md(report), "Resolved by the assignment")
+    assert "same reason as the second Aurora MySQL → DynamoDB risk above." in md
+
+
+_TRIGGER_NOTES = {
+    "moves the logic": (
+        "The trigger writes an audit row on every insert. Move that write into the "
+        "application's order service before cutover, and drop the trigger."
+    ),
+    "no change": (
+        "Carry the trigger function over with the schema and verify it after cutover; no "
+        "application change is needed."
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_TRIGGER_NOTES))
+def test_the_trigger_risk_and_its_design_note_read_side_by_side(saved, kind: str) -> None:
+    """The re-review on #1644: the risk for a trigger that carries over to wave 1's
+    engine (same engine family) must not contradict the design's note next to it, which
+    can recommend moving the logic or no change. The engineering report shows the note
+    in full and a risk that defers to it, stating neither outcome."""
+    from src.agents.referee.migration_risks import build_migration_risks
+
+    report = copy.deepcopy(saved)
+    note = {
+        "feature": "trigger",
+        "source_object": "wp_trg_audit",
+        "recommendation": _TRIGGER_NOTES[kind],
+    }
+    report["schema_designs"]["aurora_mysql"]["app_layer_notes"] = [note]
+    built = build_migration_risks(
+        migration_waves=report["migration_waves"],
+        query_assignments=[],
+        source_queries=[],
+        schema_designs={"aurora_mysql": {"app_layer_notes": [note]}},
+        trigger_tables={"wp_trg_audit": "wordpress.wp_posts"},
+        source_engine="mysql",
+    )
+    app = next(r for r in built if r["rule"] == "design.app_layer")
+    risks = report["risk_assessment"]["risks"]
+    old = next(i for i, r in enumerate(risks) if r.get("rule") == "design.app_layer")
+    risks[old] = {**app, "risk_id": risks[old]["risk_id"]}
+    md = render_engineering_report_md(report)
+    assert md_text(_TRIGGER_NOTES[kind]) in md  # the note, in full
+    line = next(ln for ln in md.splitlines() if f"**{risks[old]['risk_id']}**" in ln)
+    assert "carries over to Aurora MySQL" in line
+    assert "the schema design" in line and "note for each says what application work" in line
+    risk_text = line + " " + md_text(app["mitigation"])
+    for claim in ("does not change", "no application change", "needs application code"):
+        assert claim not in risk_text, claim

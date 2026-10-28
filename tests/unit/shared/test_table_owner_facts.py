@@ -23,6 +23,7 @@ import pytest
 
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
+from src.shared.migration_risk_rules import wave_of_engine
 from src.shared.report_facts import (
     OWNER_BY_MOST_QUERIES,
     OWNER_BY_RETAINED,
@@ -30,6 +31,7 @@ from src.shared.report_facts import (
     OWNER_BY_WRITES,
     assignment_table_usage,
     compute_report_facts,
+    non_owner_read_tables_by_wave,
     table_owner_fields,
     table_owner_line,
 )
@@ -336,3 +338,57 @@ def test_an_old_report_with_less_to_go_on_still_gets_an_owner_for_every_row(miss
     rows = report_facts(report)["table_owner_lines"]["table_lines"]
     assert len(rows) == len(report["table_mappings"])
     assert all(r["owner"] and r["owner"] != "elasticache" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# #1642: the tables read off their owner, per wave, computed once
+# ---------------------------------------------------------------------------
+
+
+def _owner_row(table: str, owner: str, *readers: str) -> dict[str, Any]:
+    return {"table": table, "owner": owner, "also_read_by": list(readers)}
+
+
+def test_each_table_read_off_its_owner_is_in_the_later_of_its_engines_waves() -> None:
+    """A two-migrating-wave plan: Aurora (wave 1), DynamoDB (2), DocumentDB (3). A copy
+    goes to the wave that brings in the later of its owner and readers, so each table
+    is counted once, and the waves add up to the plan's count."""
+    waves = {"aurora_mysql": 1, "dynamodb": 2, "documentdb": 3}
+    lines = [
+        _owner_row("db.a", "dynamodb", "aurora_mysql"),  # wave 2
+        _owner_row("db.b", "aurora_mysql", "dynamodb"),  # wave 2
+        _owner_row("db.c", "dynamodb", "documentdb", "aurora_mysql"),  # wave 3, once
+        _owner_row("db.d", "aurora_mysql"),  # no other reader: no copy
+        _owner_row("db.e", "aurora_mysql", "opensearch"),  # reader in no wave: owner's wave 1
+    ]
+    by_wave = non_owner_read_tables_by_wave(lines, waves)
+    assert by_wave == {1: ["db.e"], 2: ["db.a", "db.b"], 3: ["db.c"]}
+    assert sum(len(t) for t in by_wave.values()) == 4
+
+
+def test_the_also_read_count_is_the_per_wave_tables_added_up() -> None:
+    mappings = table_owner_fields(
+        [
+            {"source_table": "db.a", "recommended_database": "dynamodb", "confidence_score": 1},
+            {"source_table": "db.b", "recommended_database": "aurora_mysql", "confidence_score": 1},
+        ],
+        {
+            "db.a": {"writes": {"dynamodb": 1}, "queries": {"dynamodb": 1, "aurora_mysql": 2}},
+            "db.b": {"writes": {}, "queries": {"aurora_mysql": 1, "dynamodb": 1}},
+        },
+        owners={"db.a": "dynamodb", "db.b": "aurora_mysql"},
+    )
+    report = _report(mappings)
+    facts = compute_report_facts(report)
+    owners = facts["table_owner_lines"]
+    per_wave = non_owner_read_tables_by_wave(
+        owners["table_lines"], wave_of_engine(report.get("migration_waves") or [])
+    )
+    assert owners["also_read_table_count"] == sum(len(t) for t in per_wave.values()) == 2
+
+
+def test_same_label_places_number_only_the_labels_several_entries_share() -> None:
+    from src.shared.report_facts import same_label_places
+
+    assert same_label_places(["a", "b", "a", "c", "a"]) == [1, None, 2, None, 3]
+    assert same_label_places([]) == []

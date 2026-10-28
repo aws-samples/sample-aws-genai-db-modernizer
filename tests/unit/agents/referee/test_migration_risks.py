@@ -160,7 +160,10 @@ def test_tables_no_captured_query_writes_are_a_low_one_time_copy() -> None:
     assert risk["severity"] == "LOW"
     assert risk["affected_tables"] == ["db.c"]
     assert risk["query_ids"] == ["r1"]
-    assert "1 table is read here and written by no captured query" in risk["description"]
+    assert risk["description"] == (
+        "[dynamodb] Wave 3: 1 table is read on an engine that does not own it and written "
+        "by no captured query, so a one-time copy serves it."
+    )
     assert "copy the read-only tables once" in risk["mitigation"]
 
 
@@ -174,7 +177,158 @@ def test_a_one_time_copy_folds_into_the_waves_cdc_risk() -> None:
     risk = _one(risks, "sync.wave")
     assert risk["severity"] == "MEDIUM"
     assert risk["affected_tables"] == ["db.a", "db.c"]
-    assert "1 more table is read here and written by no captured query" in risk["description"]
+    assert risk["description"] == (
+        "[dynamodb] Wave 3: 2 queries read 2 tables on an engine that does not own them. "
+        "1 of them reads a copy of 1 table that CDC keeps in sync from DynamoDB across 1 "
+        "engine pair, so a read there can miss a recent write. The other table is written "
+        "by no captured query, so a one-time copy serves it."
+    )
+    assert risk["query_ids"] == ["r1", "r2"]
+
+
+def test_the_sync_risk_counts_both_directions_of_the_waves_copies() -> None:
+    """The discourse judge read "a copy of 81 tables" plus "37 more tables" against the
+    wave's 70 dual-read and 64 kept-in-sync tables: the 81 counted written tables both
+    ways, the 37 only the unwritten ones the wave reads from another owner, so the 16
+    unwritten tables the wave owns and Aurora reads were in no count. Both directions
+    count, and the total is the tables an engine reads without owning them."""
+    risks = _build(
+        # DynamoDB owns db.a (never written) and db.b (written, replicated to Aurora);
+        # db.c is Aurora's, never written, read by DynamoDB.
+        migration_waves=[WAVE_1, WAVE_2, _wave_3(KEPT, ["db.a", "db.b", "db.c"])],
+        query_assignments=[
+            _qa("r1", DDB, ["db.c"]),
+            _qa("r2", AURORA, ["db.a"]),
+            _qa("r3", AURORA, ["db.b"]),
+            _qa("o1", DDB, ["db.a"]),
+        ],
+        source_queries=[_q(q, "SELECT", []) for q in ("r1", "r2", "r3", "o1")],
+        table_sources=[_source("db.b", DDB, {AURORA: ["r3"]})],
+    )
+    risk = _one(risks, "sync.wave")
+    assert risk["severity"] == "MEDIUM"
+    assert risk["affected_tables"] == ["db.a", "db.b", "db.c"]
+    # The reads of a copy are the evidence; the owner's own read of db.a is not.
+    assert risk["query_ids"] == ["r1", "r2", "r3"]
+    # The text's query count is the risk's evidence count (the judge read "435 reads"
+    # against 531 query ids): all of them first, then the ones on a CDC copy.
+    assert risk["description"] == (
+        "[dynamodb] Wave 3: 3 queries read 3 tables on an engine that does not own them. "
+        "1 of them reads a copy of 1 table that CDC keeps in sync from DynamoDB across "
+        "1 engine pair, so a read there can miss a recent write. The other 2 tables are "
+        "written by no captured query, so a one-time copy serves them."
+    )
+    assert len(risk["query_ids"]) == 3
+
+
+def test_a_table_a_later_wave_reads_counts_in_that_waves_risk_only() -> None:
+    """A table wave 2's engine owns that wave 3's engine reads is wave 3's copy (it is in
+    wave 3's kept-in-sync list), never counted again in wave 2."""
+    wave_2 = {
+        "wave": 2,
+        "engines": [DDB],
+        "moves_from": [AURORA],
+        "tables": ["db.a"],
+        "table_count": 1,
+        "table_owners": [],
+    }
+    wave_3 = {
+        "wave": 3,
+        "engines": [DOC],
+        "moves_from": [AURORA],
+        "tables": ["db.a"],
+        "table_count": 1,
+        "table_owners": [{"table": "db.a", "owner": DDB, "sync": "CDC"}],
+    }
+    risks = _build(
+        migration_waves=[WAVE_1, wave_2, wave_3],
+        query_assignments=[_qa("o1", DDB, ["db.a"]), _qa("r1", DOC, ["db.a"])],
+        source_queries=[_q("o1", "SELECT", []), _q("r1", "SELECT", [])],
+        table_sources=[],
+    )
+    risk = _one(risks, "sync.wave")
+    assert risk["wave"] == 3 and risk["affected_tables"] == ["db.a"]
+    assert risk["description"] == (
+        "[documentdb] Wave 3: 1 table is read on an engine that does not own it and "
+        "written by no captured query, so a one-time copy serves it."
+    )
+
+
+def _lines(*rows: tuple[str, str, list[str]]) -> list[dict[str, Any]]:
+    return [{"table": t, "owner": o, "also_read_by": r} for t, o, r in rows]
+
+
+def test_with_owner_lines_each_waves_risk_counts_the_shared_per_wave_tables() -> None:
+    """The review on #1644: the risk's total was its own derivation next to
+    ``also_read_table_count``. Given the owner lines, the risk reads the one per-wave
+    computation (``non_owner_read_tables_by_wave``), and with two migrating waves each
+    names its share of the plan's total."""
+    wave_2 = {
+        "wave": 2,
+        "engines": [DDB],
+        "moves_from": [AURORA],
+        "tables": ["db.a", "db.b", "db.c"],
+        "table_count": 3,
+        "table_owners": [{"table": "db.b", "owner": AURORA, "sync": "CDC"}],
+    }
+    wave_3 = {
+        "wave": 3,
+        "engines": [DOC],
+        "moves_from": [AURORA],
+        "tables": ["db.c"],
+        "table_count": 1,
+        "table_owners": [{"table": "db.c", "owner": DDB, "sync": "CDC"}],
+    }
+    lines = _lines(
+        ("db.a", DDB, [AURORA]),  # never written: one-time copy, wave 2
+        ("db.b", AURORA, [DDB]),  # written on Aurora: CDC, wave 2
+        ("db.c", DDB, [DOC]),  # never written: one-time copy, wave 3
+        ("db.d", AURORA, []),  # no other reader
+    )
+    qas = [
+        _qa("r1", AURORA, ["db.a"]),
+        _qa("w1", AURORA, ["db.b"]),
+        _qa("r2", DDB, ["db.b"]),
+        _qa("r3", DOC, ["db.c"]),
+    ]
+    risks = _build(
+        migration_waves=[WAVE_1, wave_2, wave_3],
+        query_assignments=qas,
+        source_queries=[_q(q["query_id"], "SELECT", []) for q in qas],
+        table_sources=[_source("db.b", AURORA, {DDB: ["r2"]})],
+        copy_lines=lines,
+    )
+    sync = sorted((r for r in risks if r["rule"] == "sync.wave"), key=lambda r: r["wave"])
+    assert [(r["wave"], r["affected_tables"]) for r in sync] == [
+        (2, ["db.a", "db.b"]),
+        (3, ["db.c"]),
+    ]
+    assert sync[0]["query_ids"] == ["r1", "r2"]
+    assert sync[0]["description"] == (
+        "[dynamodb] Wave 2: 2 queries read 2 tables on an engine that does not own them. "
+        "1 of them reads a copy of 1 table that CDC keeps in sync from Aurora MySQL across "
+        "1 engine pair, so a read there can miss a recent write. The other table is written "
+        "by no captured query, so a one-time copy serves it. Across the plan, 3 tables are "
+        "read on an engine that does not own them; this wave's gate brings in 2."
+    )
+    assert sync[1]["description"].endswith(
+        "Across the plan, 3 tables are read on an engine that does not own them; this "
+        "wave's gate brings in 1."
+    )
+
+
+def test_a_wave_whose_copied_tables_all_resolve_to_nothing_raises_no_sync_risk() -> None:
+    """A line whose table is not a collected one (it normalises away) leaves its wave
+    with nothing to say: no risk, never an empty one (the e2e customer-pick run)."""
+    risks = _build(
+        migration_waves=WAVES,
+        query_assignments=[_qa("r1", AURORA, ["db.ghost"])],
+        source_queries=[_q("r1", "SELECT", [])],
+        table_sources=[],
+        copy_lines=_lines(("db.ghost", DDB, [AURORA])),
+        normalise=lambda tables: {t for t in tables if t != "db.ghost"},
+    )
+    assert "sync.wave" not in _rules(risks)
 
 
 def test_an_older_assignment_reads_the_waves_kept_tables() -> None:
@@ -190,7 +344,10 @@ def test_an_older_assignment_reads_the_waves_kept_tables() -> None:
     risk = _one(written, "sync.wave")
     assert risk["severity"] == "MEDIUM"
     assert "1 table the wave uses stays owned outside it" in risk["description"]
-    assert "1 more table is read here" in risk["description"]
+    assert (
+        "1 more table is read on an engine that does not own it and written by no captured "
+        "query" in risk["description"]
+    )
     read_only = _build(
         migration_waves=[WAVE_1, WAVE_2, wave],
         query_assignments=[_qa("r1", DDB, ["db.a", "db.c"])],
@@ -456,9 +613,109 @@ def test_an_engine_that_owns_queries_is_left_to_the_per_engine_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_app_layer_note_is_medium_and_names_its_object_and_table() -> None:
+CROSS_WAVE_1 = {**WAVE_1, "homogeneity": "cross_engine", "moves_from": ["sqlserver"]}
+
+
+# Two realistic notes for one trigger: a designer can say either.
+NOTE_MOVES_LOGIC = (
+    "The trigger writes an audit row on every insert. Move that write into the "
+    "application's order service before cutover, and drop the trigger."
+)
+NOTE_NO_CHANGE = (
+    "Carry the trigger function over with the schema and verify it after cutover; no "
+    "application change is needed."
+)
+
+
+def _trigger_risk(recommendation: str) -> dict[str, Any]:
     risks = _build(
         migration_waves=WAVES,
+        schema_designs={
+            AURORA: {
+                "app_layer_notes": [
+                    {
+                        "feature": "trigger",
+                        "source_object": "t_after_insert",
+                        "recommendation": recommendation,
+                    }
+                ]
+            }
+        },
+        trigger_tables={"t_after_insert": "db.a"},
+    )
+    return _one(risks, "design.app_layer")
+
+
+@pytest.mark.parametrize("recommendation", [NOTE_MOVES_LOGIC, NOTE_NO_CHANGE])
+def test_a_trigger_on_the_source_compatible_engine_defers_to_the_design_note(
+    recommendation: str,
+) -> None:
+    """The discourse judge read RISK-009 ("needs application code") against a note that
+    said no application change; the re-review on #1644 read the next wording ("the
+    application does not change") against a note that moves the logic. On wave 1's
+    engine for a homogeneous source the risk says the trigger carries over, that this
+    rests on the engine family alone, and leaves the application work to the note:
+    LOW, compatible with either note."""
+    risk = _trigger_risk(recommendation)
+    assert risk["severity"] == "LOW"
+    assert risk["affected_tables"] == ["db.a"] and risk["wave"] == 1
+    assert risk["description"] == (
+        "[aurora_mysql] 1 source object carries over to Aurora MySQL with the schema "
+        "(t_after_insert): 1 trigger. This rests on Aurora MySQL being the source's engine "
+        "family; the collector reports no feature compatibility, so the schema design's "
+        "note for each says what application work it needs."
+    )
+    assert risk["mitigation"] == (
+        "Before the Wave 1 gate, test each one on Aurora MySQL against the source's "
+        "behaviour and do the application work the schema design's note for it names."
+    )
+    text = f"{risk['description']} {risk['mitigation']}"
+    for claim in ("does not change", "no application change", "needs application code"):
+        assert claim not in text, claim
+
+
+def test_a_feature_the_engine_family_does_not_carry_still_needs_application_code() -> None:
+    """An extension (or any feature outside triggers and routines) keeps the application
+    code wording, and with a trigger on the same engine both are stated, MEDIUM."""
+    risks = _build(
+        migration_waves=WAVES,
+        schema_designs={
+            AURORA: {
+                "app_layer_notes": [
+                    {
+                        "feature": "trigger",
+                        "source_object": "t_after_insert",
+                        "recommendation": NOTE_NO_CHANGE,
+                    },
+                    {"feature": "extension", "source_object": "pg_x", "recommendation": "y"},
+                ]
+            }
+        },
+        trigger_tables={"t_after_insert": "db.a"},
+    )
+    risk = _one(risks, "design.app_layer")
+    assert risk["severity"] == "MEDIUM"
+    assert risk["description"] == (
+        "[aurora_mysql] 1 source object needs application code on Aurora MySQL: 1 extension. "
+        "The schema carries it over without the database logic. 1 source object carries "
+        "over to Aurora MySQL with the schema (t_after_insert): 1 trigger. This rests on "
+        "Aurora MySQL being the source's engine family; the collector reports no feature "
+        "compatibility, so the schema design's note for each says what application work "
+        "it needs."
+    )
+    assert risk["mitigation"] == (
+        "Move the logic of the extension into the application before the Wave 1 gate, and "
+        "test the trigger on Aurora MySQL against the source's behaviour and do the "
+        "application work its note names, as the schema design's note for each says."
+    )
+
+
+@pytest.mark.passes_on_main  # guards main's behaviour the change keeps
+def test_an_app_layer_note_is_medium_and_names_its_object_and_table() -> None:
+    """A cross-engine wave 1 converts the source's logic: a trigger there is application
+    code, MEDIUM, as before."""
+    risks = _build(
+        migration_waves=[CROSS_WAVE_1, WAVE_2],
         schema_designs={
             AURORA: {
                 "app_layer_notes": [
@@ -519,11 +776,12 @@ def test_a_partition_not_at_risk_raises_nothing() -> None:
     assert _build(migration_waves=WAVES, schema_designs=designs) == []
 
 
+@pytest.mark.passes_on_main  # guards main's behaviour the change keeps
 def test_a_model_written_object_name_stays_out_of_the_text() -> None:
     """Only a collected trigger is named: the executive report strips the
     collected names, never a name the model wrote."""
     risks = _build(
-        migration_waves=WAVES,
+        migration_waves=[CROSS_WAVE_1, WAVE_2],
         schema_designs={
             AURORA: {"app_layer_notes": [{"feature": "trigger", "source_object": "made_up"}]}
         },
@@ -697,6 +955,37 @@ class TestRedesignRisk:
         ]
         bare = {**_redesign("r2", DDB, keys=()), "class_after_redesign": None, "evidence": []}
         assert not _one(self._risks([bare]), "design.redesign").get("details")
+
+    def test_keys_that_change_the_read_the_same_way_are_one_detail(self) -> None:
+        """The discourse judge counted one line eight times in a redesign risk: one per
+        key, each "read as key-scoped 1:N read instead of ad hoc filter". Keys with no
+        evidence of their own that change a read the same way are one line; a query with
+        evidence keeps its own."""
+        qids = ["r1", "r2", "r3"]
+        risks = _build(
+            migration_waves=[WAVE_1, WAVE_2, _wave_3([], ["db.c"])],
+            query_assignments=[_qa(q, DDB, ["db.c"]) for q in qids],
+            source_queries=[_q(q, "SELECT", ["db.c"]) for q in qids],
+            redesign_requirements=[
+                _redesign("r1", DDB, keys=("c.name",)),
+                _redesign("r2", DDB, keys=("b.user_id", "c.name")),
+                _redesign("r3", DDB, keys=("c.email",), lifted=["frequent-full-scan"]),
+            ],
+        )
+        risk = _one(risks, "design.redesign")
+        assert risk["details"] == [
+            "A key on c.email: read as key-scoped 1:N read instead of ad hoc filter. "
+            "A key on c.email anchors the rows it reads.",
+            "Keys on b.user_id and c.name: each read as key-scoped 1:N read instead of "
+            "ad hoc filter.",
+        ]
+
+    @pytest.mark.passes_on_main
+    def test_one_key_with_no_evidence_keeps_its_own_line(self) -> None:
+        risk = _one(self._risks([_redesign("r1", DDB, keys=("c.name",))]), "design.redesign")
+        assert risk["details"] == [
+            "A key on c.name: read as key-scoped 1:N read instead of ad hoc filter."
+        ]
 
     def test_a_requirement_the_engines_plan_does_not_rely_on_raises_no_gate(self) -> None:
         index_only = {**_redesign("r1", DDB), "routing_depends": False}

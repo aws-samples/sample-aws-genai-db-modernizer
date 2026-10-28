@@ -120,13 +120,28 @@ def test_the_sync_risk_agrees_with_the_wave_and_source_facts(run: PipelineResult
     sources = report["facts"]["table_sources"]
     assert {t["table"] for t in sources["replicated_tables"]} <= synced, run.db
     replicas = re.search(
-        r"a copy of (\d+) tables? that CDC", " ".join(r["description"] for r in sync)
+        r"a copy of (\d+) (?:tables?|of them) that CDC", " ".join(r["description"] for r in sync)
     )
     assert replicas and int(replicas.group(1)) == sources["replicated_table_count"], run.db
     for wave in report["facts"]["waves"]:
         if wave["migrating"]:
             kept = {o["table"] for o in wave["kept_in_sync"]}
             assert kept <= synced, (run.db, wave["wave"], kept - synced)
+
+
+def test_each_sync_risk_states_its_own_evidence_counts(run: PipelineResult) -> None:
+    """On every deterministic sample (no schema design, so no ``table_owner_lines`` to
+    compare with), a sync risk's stated query and table totals are its own evidence."""
+    sync = [r for r in _new(_report(run)) if r["rule"] == "sync.wave"]
+    assert sync, run.db
+    for r in sync:
+        total = re.search(
+            r"(\d+) queries read (\d+) tables on an engine that does not own them\.",
+            r["description"],
+        )
+        if total:
+            assert int(total.group(1)) == len(r["query_ids"]), (run.db, r["risk_id"])
+            assert int(total.group(2)) == len(r["affected_tables"]), (run.db, r["risk_id"])
 
 
 # One engine pair of a close-call risk: "Aurora MySQL keeps 14 close calls and 5 ties over
@@ -180,6 +195,48 @@ def test_every_deliverable_shows_the_same_risks(run: PipelineResult) -> None:
 @pytest.fixture(scope="module")
 def designed(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
     return run_designed_wordpress(tmp_path_factory.mktemp("risks-designed"), "risks-desi")
+
+
+def test_the_sync_risk_counts_every_table_read_off_its_owner(designed: PipelineResult) -> None:
+    """Both directions of a migrating engine's copies (the discourse judge read "81"
+    plus "37 more" tables against the gate's 70 dual-read and 64 kept-in-sync ones): a
+    table a migrating engine owns that another engine reads, or one it reads that another
+    engine owns, is in its wave's sync risk, as a CDC copy or a one-time copy, and the
+    risk's own total is the tables it lists."""
+    report = _report(designed)
+    sync = [r for r in _new(report) if r["rule"] == "sync.wave"]
+    synced = {t for r in sync for t in r["affected_tables"]}
+    migrating = {e for w in report["facts"]["waves"] if w["migrating"] for e in w["engines"]}
+    lines = report["facts"]["table_owner_lines"]["table_lines"]
+    read_off_owner = {
+        line["table"]
+        for line in lines
+        if line["also_read_by"] and (migrating & {line["owner"], *line["also_read_by"]})
+    }
+    assert read_off_owner and read_off_owner <= synced, sorted(read_off_owner - synced)
+    # The designed job's risk has CDC copies and one-time copies: it states their total,
+    # and the total is the tables it lists.
+    totals = [
+        (
+            r,
+            re.search(
+                r"(\d+) queries read (\d+) tables on an engine that does not own them\.",
+                r["description"],
+            ),
+        )
+        for r in sync
+    ]
+    assert any(m for _, m in totals), [r["description"] for r in sync]
+    # The review on #1644: the risk's tables and the facts' count are one computation
+    # (``non_owner_read_tables_by_wave``), so the waves' tables add up to it.
+    owners = report["facts"]["table_owner_lines"]
+    assert sum(len(r["affected_tables"]) for r in sync) == owners["also_read_table_count"]
+    for r, m in totals:
+        if m:
+            # Both counts are the risk's own evidence (the judge read "435 reads" against
+            # 531 query ids).
+            assert int(m.group(1)) == len(r["query_ids"]), r["risk_id"]
+            assert int(m.group(2)) == len(r["affected_tables"]), r["risk_id"]
 
 
 def test_the_designed_job_adds_the_design_risks(designed: PipelineResult) -> None:
@@ -305,7 +362,10 @@ OLD_1_41 = REPO / "tests/unit/report/fixtures/wordpress_1_41_flagged_report.json
 NOT_BACKFILLED = frozenset({"design.redesign"})
 # #1410 reworded the close-call risk (close calls and settled ties counted apart); the
 # 1.41 report keeps the text its synthesis wrote, so that text is compared by its figures.
-REWORDED = frozenset({"routing.close_calls"})
+# #1642 reworded the sync risk (one-time copies counted both ways, with the total first);
+# the stored text is compared by its CDC figures, and its one-time copies, counted one
+# way only, are at most the new count.
+REWORDED = frozenset({"routing.close_calls", "sync.wave"})
 
 
 def _as_stored(risk: dict[str, Any]) -> dict[str, Any]:
@@ -321,6 +381,23 @@ def _close_call_figures(text: str) -> tuple[int, int]:
     new = re.search(r"(\d+) queries were decided by less than \d+ points, and (\d+) more", text)
     assert new, text
     return int(new.group(1)) + int(new.group(2)), int(new.group(2))
+
+
+def _sync_figures(text: str) -> tuple[int, int, int]:
+    """(reads on a CDC copy, CDC-copied tables, one-time copies) in a sync risk, worded
+    any way it has been ("52 reads run on a copy of 13 tables", "52 of them read a copy
+    of 13 tables")."""
+    cdc = re.search(
+        r"(\d+) (?:reads? runs? on|of them reads?) a copy of (\d+) (?:tables?|of them) that CDC",
+        text,
+    )
+    assert cdc, text
+    once = re.search(
+        r"(\d+) more tables? (?:is|are) read|The other (\d+)(?: tables)? are|The other table",
+        text,
+    )
+    copies = 0 if not once else int(once.group(1) or once.group(2) or 1)
+    return int(cdc.group(1)), int(cdc.group(2)), copies
 
 
 def test_a_report_from_before_the_rule_renders_the_same_risks(
@@ -358,8 +435,11 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     ]
     assert [_as_stored(r) for r in backfilled] == [_as_stored(r) for r in fresh_risks]
     for b, f in zip(backfilled, fresh_risks, strict=True):
-        if b.get("rule") in REWORDED:
+        if b.get("rule") == "routing.close_calls":
             assert _close_call_figures(b["description"]) == _close_call_figures(f["description"])
+        if b.get("rule") == "sync.wave":
+            stored, fresh = _sync_figures(b["description"]), _sync_figures(f["description"])
+            assert stored[:2] == fresh[:2] and stored[2] <= fresh[2], (stored, fresh)
     assert [r["risk_id"] for r in backfilled] == [
         f"RISK-{i:03d}" for i in range(1, len(backfilled) + 1)
     ]

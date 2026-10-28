@@ -232,10 +232,48 @@ def test_a_gate_list_shown_nowhere_else_is_printed_whole(report) -> None:
     assert gate == f"- Gate before the next wave: {md_text(wave['gate'])}"
 
 
+def _gate_with_list(report, n: int, mapped: bool) -> str:
+    wave, _ = _wave3(report)
+    items = [f"wordpress.wp_g{i:02d}" for i in range(n)]
+    wave["gate_parts"] = [{"text": f"Check. {n} tables", "items": items}, {"text": " stay."}]
+    wave["gate"] = f"Check. {n} tables ({', '.join(items)}) stay."
+    if mapped:
+        report["facts"]["table_owner_lines"] = {
+            "table_lines": [
+                {"table": t, "owner": "dynamodb", "also_read_by": ["aurora_mysql"]} for t in items
+            ]
+        }
+    return _gate(_wave(render_engineering_report_md(report), 3))
+
+
+def test_a_long_gate_list_the_migration_map_names_is_capped(report) -> None:
+    """The discourse judge counted the wave 2 gate's 70 names as a repeat: every one of
+    them is a Migration map row (owner and readers). The gate names the first few and
+    counts the rest, and points at the map, so no table is lost."""
+    gate = _gate_with_list(report, 8, mapped=True)
+    shown = ", ".join(md_text(f"wordpress.wp_g{i:02d}") for i in range(5))
+    assert (
+        f"8 tables \\({shown} and 3 more; the Migration map above lists each with its owner and readers\\) stay."
+        in gate
+    )
+    assert md_text("wordpress.wp_g07") not in gate
+
+
+@pytest.mark.passes_on_main  # the negative cases: a short list, or one no map lists
+def test_a_short_or_unmapped_gate_list_is_printed_whole(report) -> None:
+    assert md_text("wordpress.wp_g04") in _gate_with_list(copy.deepcopy(report), 5, mapped=True)
+    assert md_text("wordpress.wp_g07") in _gate_with_list(copy.deepcopy(report), 8, mapped=False)
+
+
 def test_the_replicated_tables_are_referred_to_only_when_listed_in_full(report) -> None:
     report["facts"]["table_sources"]["more_replicated_count"] = 1
     gate = _gate(_wave(render_engineering_report_md(report), 3))
     assert "Sources of truth and replicas" not in gate
+    # #1642: the 13 are Migration map rows, so the gate names 5 and points at the map.
+    assert "and 8 more; the Migration map above lists each with its owner and readers" in gate
+    report["facts"].pop("table_owner_lines", None)
+    report["table_mappings"] = []
+    gate = _gate(_wave(render_engineering_report_md(report), 3))
     assert md_text("wordpress.wp_woocommerce_order_items") in gate
 
 

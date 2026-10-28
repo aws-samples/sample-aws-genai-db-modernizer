@@ -149,7 +149,9 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 ),
                 "gate": (
                     "Schema and data parity validated against the source database before "
-                    "cutover; decommission the legacy source once replication lag is zero."
+                    f"cutover. Once replication to {display_engine(retained_engine)} has "
+                    "caught up, decommission the source database: later waves move from "
+                    f"{display_engine(retained_engine)}, not from it."
                 ),
             }
         )
