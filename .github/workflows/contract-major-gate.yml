@@ -1,0 +1,53 @@
+name: Contract MAJOR gate
+
+# Fails when a PR moves the assess() contract MAJOR (request or result) without a
+# a maintainer's approval: the "Contract Major Approved" label on it when the check
+# runs (#1648). The logic and its tests: ci/contract_major_gate.py,
+# tests/unit/ci/test_contract_major_gate.py. Labels are read from the API with a
+# read-only token, not from the event payload, so a rerun sees the current labels.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+  # For GitHub's merge queue: a required check must report on the merge group too.
+  # The script finds the PR from the queue's ref and checks only its own commits.
+  merge_group:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+# Only the newest run per PR counts, so a quick label then unlabel can't leave an
+# older result as the latest one.
+concurrency:
+  group: contract-major-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-major-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A PR's checkout is its merge into the base: HEAD^1 is the base's tip. A
+          # merge group needs full history: the queue rebases the entry's commits, and
+          # the script reads the revision before them.
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '2' }}
+          persist-credentials: false
+      - name: Check the assess() contract MAJOR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              python3 ci/contract_major_gate.py --base HEAD^1 --head HEAD --pr "$PR_NUMBER" ;;
+            merge_group)
+              python3 ci/contract_major_gate.py --base "$MERGE_GROUP_BASE" --head HEAD \
+                --merge-group-ref "$MERGE_GROUP_REF" ;;
+            *)
+              echo "::error::unexpected event $EVENT"; exit 2 ;;
+          esac

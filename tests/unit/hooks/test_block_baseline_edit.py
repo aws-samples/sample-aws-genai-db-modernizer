@@ -77,3 +77,16 @@ def test_a_file_in_a_protected_directory_is_blocked(prefix: str, run_hook) -> No
     res = run_hook("block_baseline_edit.py", edit(str(REPO_ROOT / prefix / "v1" / "a.toml")))
     assert res.blocked and PROTECTED_DIRS[prefix] in res.stderr
     assert (REPO_ROOT / prefix).is_dir()
+
+
+@pytest.mark.parametrize(
+    "name", ["wordpress_analysis.json", "wordpress_reality_check.json", "trailgear_analysis.json"]
+)
+def test_saved_assess_results_are_never_regenerated(name: str, run_hook) -> None:
+    """#1648: the saved 1.3 results are a record every later release reads back."""
+    path = REPO_ROOT / "tests/fixtures/assess_results_v1_3" / name
+    assert path.is_file()
+    res = run_hook("block_baseline_edit.py", edit(str(path), "Write"))
+    assert res.blocked
+    assert "historical record" in res.stderr and "never regenerate it (#1648)" in res.stderr
+    assert "--write" not in res.stderr

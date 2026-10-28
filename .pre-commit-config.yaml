@@ -76,8 +76,10 @@ repos:
         # (#1084): answer keys listing and keyed by the same query ids.
         # tests/fixtures/assess_cut_v1_3_trailgear_support.json (#1633): a saved
         # cut of the synthetic trailgear sample, whose statements carry the
-        # parser's 16-hex text hashes. All excluded here rather than scanned at all.
-        exclude: (^package-lock\.json$|^tests/fixtures/assess_cut_v1_3_trailgear_support\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/contract/assess_released_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
+        # parser's 16-hex text hashes. tests/fixtures/assess_results_v1_3/*.json
+        # (#1648): saved assess() results of the synthetic wordpress and trailgear
+        # samples, with the same query ids. All excluded here rather than scanned at all.
+        exclude: (^package-lock\.json$|^tests/fixtures/assess_cut_v1_3_trailgear_support\.json$|^tests/fixtures/assess_results_v1_3/[a-z_]+\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/contract/assess_released_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
 
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves
