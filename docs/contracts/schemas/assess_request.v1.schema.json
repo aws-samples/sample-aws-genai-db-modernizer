@@ -75,9 +75,34 @@
       "title": "AssessmentOptions",
       "type": "object"
     },
+    "UnplacedStatement": {
+      "additionalProperties": false,
+      "description": "A statement a cut could not place: it reads no table of the collection, so it\nbelongs to no cut's tables. Since 1.3.",
+      "properties": {
+        "query_id": {
+          "title": "Query Id",
+          "type": "string"
+        },
+        "reason": {
+          "description": "no_tables_read: it reads no table (a procedure call, a sequence read, a function call, a session command); tables_not_collected: it reads only tables the collection does not hold (system catalogs, an unlisted materialized view)",
+          "enum": [
+            "no_tables_read",
+            "tables_not_collected"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query_id",
+        "reason"
+      ],
+      "title": "UnplacedStatement",
+      "type": "object"
+    },
     "WorkloadScope": {
       "additionalProperties": false,
-      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.",
+      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.\n\n``cut_collection`` (#1633) writes one for each cut: the tables kept, the statement\nparts in ``rewritten_query_ids``, the foreign keys it cut in ``dropped_foreign_keys``\nand, since 1.3, the statements it could not place in ``unplaced_statements``.",
       "properties": {
         "tables": {
           "items": {
@@ -107,11 +132,20 @@
           "type": "array"
         },
         "dropped_foreign_keys": {
+          "description": "Foreign keys the cut workload left out. Since 1.3, cut_collection writes one object per foreign key between a kept table and a dropped one: constraint_name, table_id (the table that holds the key) and referenced_table_id. Any other object is echoed as given",
           "items": {
             "additionalProperties": true,
             "type": "object"
           },
           "title": "Dropped Foreign Keys",
+          "type": "array"
+        },
+        "unplaced_statements": {
+          "description": "Since 1.3. The statements the cut left out because they read no table of the collection (none of them belongs to any cut's tables), each with its reason, unless the caller gave a part for it. Not echoed in a result written before 1.3",
+          "items": {
+            "$ref": "#/$defs/UnplacedStatement"
+          },
+          "title": "Unplaced Statements",
           "type": "array"
         }
       },
@@ -143,7 +177,7 @@
     },
     "collection": {
       "additionalProperties": true,
-      "description": "A raw collection: the unmodified output of the collection scripts (statement text, execution statistics and the schema). A collector output (contract 3.x) is accepted too, but every derived fact is read again from each statement's text by the library's parser; derived fields it carries are ignored.",
+      "description": "A raw collection: the unmodified output of the collection scripts (statement text, execution statistics and the schema), or a cut's collection (cut_collection). A collector output (any version the library reads) is accepted too, but every derived fact is read again from each statement's text by the library's parser; derived fields it carries are ignored.",
       "title": "Collection",
       "type": "object"
     },

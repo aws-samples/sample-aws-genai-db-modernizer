@@ -60,13 +60,16 @@ ADDED_IN_1_2: dict[str, tuple[str, ...]] = {
 #: The contract versions before 1.2: a result of one is read exactly as it was.
 BEFORE_1_2: frozenset[str] = frozenset({"1.0", "1.1"})
 
-#: The fields contract 1.3 added, by model (#1632): the average of the row counts of each
-#: foreign key's two tables, a row count's basis and a statement's parse status. Optional in the published schema, as 1.2's are, so an
+#: The fields contract 1.3 added, by model: the average of the row counts of each
+#: foreign key's two tables, a row count's basis and a statement's parse status (#1632),
+#: the statement a statement part was cut from and the statements a cut could not place
+#: (``cut_collection``, #1633). Optional in the published schema, as 1.2's are, so an
 #: earlier document still loads.
 ADDED_IN_1_3: dict[str, tuple[str, ...]] = {
     "TableForeignKey": ("avg_children_per_parent", "basis"),
     "TableFacts": ("row_count_basis",),
-    "StatementResult": ("parse_status",),
+    "StatementResult": ("parse_status", "from_query_id"),
+    "WorkloadScope": ("unplaced_statements",),
 }
 
 #: The contract versions before 1.3: a result of one is written without 1.3's fields.
@@ -286,8 +289,36 @@ class AssessmentOptions(_Strict):
         return self
 
 
+#: Why a cut could not place a statement (``UnplacedStatement.reason``): it reads no table
+#: (``no_tables_read``: a procedure call, a sequence read, a function call, a session
+#: command), or only tables the collection does not hold (``tables_not_collected``: system
+#: catalogs, an unlisted materialized view). Adding a value is a MINOR change.
+UnplacedReason = Literal["no_tables_read", "tables_not_collected"]
+
+
+class UnplacedStatement(_Strict):
+    """A statement a cut could not place: it reads no table of the collection, so it
+    belongs to no cut's tables. Since 1.3."""
+
+    query_id: str
+    reason: UnplacedReason = Field(
+        ...,
+        description=(
+            "no_tables_read: it reads no table (a procedure call, a sequence read, a "
+            "function call, a session command); tables_not_collected: it reads only tables "
+            "the collection does not hold (system catalogs, an unlisted materialized view)"
+        ),
+    )
+
+
 class WorkloadScope(_Strict):
-    """Informational: what a cut workload left out. Echoed back unchanged; no rule reads it."""
+    """Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.
+
+    ``cut_collection`` (#1633) writes one for each cut: the tables kept, the statement
+    parts in ``rewritten_query_ids``, the foreign keys it cut in ``dropped_foreign_keys``
+    and, since 1.3, the statements it could not place in ``unplaced_statements``."""
+
+    model_config = _added_in_1_3("WorkloadScope")
 
     tables: list[str] = Field(default_factory=list)
     derived_from: str | None = None
@@ -295,7 +326,23 @@ class WorkloadScope(_Strict):
         default_factory=list,
         description="Statements the caller rewrote; marked rewritten_by_caller in the result.",
     )
-    dropped_foreign_keys: list[dict[str, Any]] = Field(default_factory=list)
+    dropped_foreign_keys: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Foreign keys the cut workload left out. Since 1.3, cut_collection writes one "
+            "object per foreign key between a kept table and a dropped one: "
+            "constraint_name, table_id (the table that holds the key) and "
+            "referenced_table_id. Any other object is echoed as given"
+        ),
+    )
+    unplaced_statements: list[UnplacedStatement] = Field(
+        default_factory=list,
+        description=(
+            "Since 1.3. The statements the cut left out because they read no table of the "
+            "collection (none of them belongs to any cut's tables), each with its reason, "
+            "unless the caller gave a part for it. Not echoed in a result written before 1.3"
+        ),
+    )
 
 
 class AssessmentRequest(_Strict):
@@ -321,10 +368,10 @@ class AssessmentRequest(_Strict):
         ...,
         description=(
             "A raw collection: the unmodified output of the collection scripts "
-            "(statement text, execution statistics and the schema). A collector output "
-            "(contract 3.x) is accepted too, but every derived fact is read again from "
-            "each statement's text by the library's parser; derived fields it carries "
-            "are ignored."
+            "(statement text, execution statistics and the schema), or a cut's collection "
+            "(cut_collection). A collector output (any version the library reads) is accepted too, but "
+            "every derived fact is read again from each statement's text by the "
+            "library's parser; derived fields it carries are ignored."
         ),
     )
     options: AssessmentOptions = Field(default_factory=AssessmentOptions)
@@ -942,6 +989,14 @@ class StatementResult(_WrittenBefore13):
             "`fit` has one, with the same `fit`), or the gate that left it unscored"
         ),
     )
+    from_query_id: str | None = Field(
+        None,
+        description=(
+            "Since 1.3. Set on a statement part (a caller's rewrite of a statement that "
+            "crossed a cut, built by cut_collection): the query_id of the statement it was "
+            "cut from, read from the part's id. None for every other statement"
+        ),
+    )
 
 
 class Group(_Strict):
@@ -1232,6 +1287,21 @@ class Artifacts(BaseModel):
     )
 
 
+class _NotCompared:
+    """A value a result holds for the library's own use, outside the result's value: it
+    is never serialised, and any two (or one and None) compare equal."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        return other is None or isinstance(other, _NotCompared)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
 class AssessmentResult(_Strict):
     """One assessment's result: where each statement runs, which statements move
     together and which engine owns each table, and, for a designed result, each
@@ -1287,6 +1357,23 @@ class AssessmentResult(_Strict):
         ),
     )
     artifacts: Artifacts | None = None
+
+    # The collector output the run read, kept for ``cut_collection`` (#1633). Never
+    # written as JSON and never compared: two results that differ only here are equal.
+    _cut_source: _NotCompared | None = PrivateAttr(None)
+
+    def keep_cut_source(self, collector_output: dict[str, Any]) -> None:
+        """Keep the run's collector output, for ``cut_collection`` (library use)."""
+        self._cut_source = _NotCompared(collector_output)
+
+    def cut_source(self) -> dict[str, Any] | None:
+        """The run's collector output: the one kept by ``assess()``, else the one in
+        ``artifacts`` (a result read from JSON, with ``include_artifacts=True``)."""
+        if self._cut_source is not None:
+            kept: dict[str, Any] = self._cut_source.value
+            return kept
+        carried = getattr(self.artifacts, "collector_output", None) if self.artifacts else None
+        return carried if isinstance(carried, dict) else None
 
     @model_serializer(mode="wrap")
     def _as_its_version(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
@@ -1401,6 +1488,9 @@ def _drop_fields_added_in_1_3(data: dict[str, Any]) -> None:
     """A result written for 1.0, 1.1 or 1.2, as that version writes it: without the
     fields 1.3 added (:data:`ADDED_IN_1_3`), so reading one and writing it back gives the
     same document. (A 1.0 or 1.1 result then loses ``table_facts`` with 1.2's fields.)"""
+    if isinstance(data.get("scope"), dict):
+        for name in ADDED_IN_1_3["WorkloadScope"]:
+            data["scope"].pop(name, None)
     summary = data.get("summary")
     facts = summary.get("table_facts") if isinstance(summary, dict) else None
     for statement in data.get("statements") or []:

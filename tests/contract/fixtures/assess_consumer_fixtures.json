@@ -187,7 +187,10 @@
         "tables": ["wordpress.wp_postmeta", "wordpress.wp_posts"],
         "derived_from": "wordpress full collection",
         "rewritten_query_ids": ["126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"],
-        "dropped_foreign_keys": [{"table": "wordpress.wp_postmeta", "column": "post_id"}]
+        "dropped_foreign_keys": [{"table": "wordpress.wp_postmeta", "column": "post_id"}],
+        "unplaced_statements": [
+          {"query_id": "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e", "reason": "no_tables_read"}
+        ]
       },
       "guards": [
         "options.target_engines",
@@ -197,6 +200,9 @@
         "scope.derived_from",
         "scope.rewritten_query_ids",
         "scope.dropped_foreign_keys",
+        "scope.unplaced_statements",
+        "scope.unplaced_statements[].query_id",
+        "scope.unplaced_statements[].reason",
         "summary.statement_count",
         "summary.statements_per_engine{}",
         "summary.unservable_count",
@@ -331,6 +337,7 @@
       "scope": null,
       "guards": [
         "statements[].query_text",
+        "statements[].from_query_id",
         "statements[].matched_anti_patterns",
         "statements[].matched_anti_patterns[].id",
         "statements[].matched_anti_patterns[].name",

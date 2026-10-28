@@ -1,0 +1,2761 @@
+{
+ "collection": {
+  "contract_version": "4.1",
+  "database_schema": {
+   "procedures": [
+    {
+     "definition": null,
+     "execution_stats": null,
+     "language": "TSQL",
+     "parameters": null,
+     "procedure_id": "usp_PlaceOrder",
+     "procedure_name": "usp_PlaceOrder",
+     "procedure_type": "PROCEDURE",
+     "referenced_tables": null,
+     "return_type": null,
+     "schema_name": null
+    },
+    {
+     "definition": null,
+     "execution_stats": null,
+     "language": "TSQL",
+     "parameters": null,
+     "procedure_id": "usp_CancelOrder",
+     "procedure_name": "usp_CancelOrder",
+     "procedure_type": "PROCEDURE",
+     "referenced_tables": null,
+     "return_type": null,
+     "schema_name": null
+    },
+    {
+     "definition": null,
+     "execution_stats": null,
+     "language": "TSQL",
+     "parameters": null,
+     "procedure_id": "usp_RecalculateLoyaltyTier",
+     "procedure_name": "usp_RecalculateLoyaltyTier",
+     "procedure_type": "PROCEDURE",
+     "referenced_tables": null,
+     "return_type": null,
+     "schema_name": null
+    },
+    {
+     "definition": null,
+     "execution_stats": null,
+     "language": "TSQL",
+     "parameters": null,
+     "procedure_id": "usp_ReserveStock",
+     "procedure_name": "usp_ReserveStock",
+     "procedure_type": "PROCEDURE",
+     "referenced_tables": null,
+     "return_type": null,
+     "schema_name": null
+    },
+    {
+     "definition": null,
+     "execution_stats": null,
+     "language": "TSQL",
+     "parameters": null,
+     "procedure_id": "ufn_EffectivePrice",
+     "procedure_name": "ufn_EffectivePrice",
+     "procedure_type": "FUNCTION",
+     "referenced_tables": null,
+     "return_type": null,
+     "schema_name": null
+    }
+   ],
+   "tables": [
+    {
+     "collation": null,
+     "columns": [
+      {
+       "cardinality": null,
+       "column_name": "ArticleID",
+       "data_type": "int",
+       "default_value": null,
+       "is_auto_increment": true,
+       "max_length": 4,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 10,
+       "numeric_scale": 0,
+       "ordinal_position": 1
+      },
+      {
+       "cardinality": null,
+       "column_name": "Title",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 200,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 2
+      },
+      {
+       "cardinality": null,
+       "column_name": "Body",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": null,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 3
+      },
+      {
+       "cardinality": null,
+       "column_name": "Tags",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 400,
+       "normalized_data_type": "string",
+       "nullable": true,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 4
+      },
+      {
+       "cardinality": null,
+       "column_name": "PublishedDate",
+       "data_type": "datetime2",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": null,
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 5
+      }
+     ],
+     "foreign_keys": null,
+     "indexes": [
+      {
+       "columns": [
+        "ArticleID"
+       ],
+       "index_name": "PK_KnowledgeArticle",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": true,
+       "predicate": null
+      }
+     ],
+     "primary_key": [
+      "ArticleID"
+     ],
+     "row_count": 4100,
+     "schema_name": "dbo",
+     "size_mb": 5.460000000000001,
+     "storage_engine": null,
+     "table_id": "trailgear.KnowledgeArticle",
+     "table_name": "KnowledgeArticle"
+    },
+    {
+     "collation": null,
+     "columns": [
+      {
+       "cardinality": null,
+       "column_name": "TicketID",
+       "data_type": "int",
+       "default_value": null,
+       "is_auto_increment": true,
+       "max_length": 4,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 10,
+       "numeric_scale": 0,
+       "ordinal_position": 1
+      },
+      {
+       "cardinality": null,
+       "column_name": "CustomerID",
+       "data_type": "int",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 4,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 10,
+       "numeric_scale": 0,
+       "ordinal_position": 2
+      },
+      {
+       "cardinality": null,
+       "column_name": "SalesOrderID",
+       "data_type": "bigint",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": "integer",
+       "nullable": true,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 3
+      },
+      {
+       "cardinality": null,
+       "column_name": "Subject",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 200,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 4
+      },
+      {
+       "cardinality": null,
+       "column_name": "Status",
+       "data_type": "varchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 16,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 5
+      },
+      {
+       "cardinality": null,
+       "column_name": "Priority",
+       "data_type": "tinyint",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 1,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 6
+      },
+      {
+       "cardinality": null,
+       "column_name": "OpenedDate",
+       "data_type": "datetime2",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": null,
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 7
+      },
+      {
+       "cardinality": null,
+       "column_name": "ClosedDate",
+       "data_type": "datetime2",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": null,
+       "nullable": true,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 8
+      }
+     ],
+     "foreign_keys": [],
+     "indexes": [
+      {
+       "columns": [
+        "TicketID"
+       ],
+       "index_name": "PK_Ticket",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": true,
+       "predicate": null
+      },
+      {
+       "columns": [
+        "Status"
+       ],
+       "index_name": "IX_Ticket_Status",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": false,
+       "predicate": null
+      }
+     ],
+     "primary_key": [
+      "TicketID"
+     ],
+     "row_count": 288000,
+     "schema_name": "dbo",
+     "size_mb": 107.56,
+     "storage_engine": null,
+     "table_id": "trailgear.Ticket",
+     "table_name": "Ticket"
+    },
+    {
+     "collation": null,
+     "columns": [
+      {
+       "cardinality": null,
+       "column_name": "MessageID",
+       "data_type": "bigint",
+       "default_value": null,
+       "is_auto_increment": true,
+       "max_length": 8,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 1
+      },
+      {
+       "cardinality": null,
+       "column_name": "TicketID",
+       "data_type": "int",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 4,
+       "normalized_data_type": "integer",
+       "nullable": false,
+       "numeric_precision": 10,
+       "numeric_scale": 0,
+       "ordinal_position": 2
+      },
+      {
+       "cardinality": null,
+       "column_name": "ReplyToMessageID",
+       "data_type": "bigint",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": "integer",
+       "nullable": true,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 3
+      },
+      {
+       "cardinality": null,
+       "column_name": "Author",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 80,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 4
+      },
+      {
+       "cardinality": null,
+       "column_name": "Body",
+       "data_type": "nvarchar",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": null,
+       "normalized_data_type": "string",
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 5
+      },
+      {
+       "cardinality": null,
+       "column_name": "SentDate",
+       "data_type": "datetime2",
+       "default_value": null,
+       "is_auto_increment": false,
+       "max_length": 8,
+       "normalized_data_type": null,
+       "nullable": false,
+       "numeric_precision": 0,
+       "numeric_scale": 0,
+       "ordinal_position": 6
+      }
+     ],
+     "foreign_keys": [
+      {
+       "columns": [
+        "TicketID"
+       ],
+       "constraint_name": "FK_TicketMessage_Ticket",
+       "on_delete": "NO ACTION",
+       "on_update": "NO ACTION",
+       "referenced_columns": [
+        "TicketID"
+       ],
+       "referenced_table": "Ticket"
+      },
+      {
+       "columns": [
+        "ReplyToMessageID"
+       ],
+       "constraint_name": "FK_TicketMessage_ReplyTo",
+       "on_delete": "NO ACTION",
+       "on_update": "NO ACTION",
+       "referenced_columns": [
+        "MessageID"
+       ],
+       "referenced_table": "TicketMessage"
+      }
+     ],
+     "indexes": [
+      {
+       "columns": [
+        "MessageID"
+       ],
+       "index_name": "PK_TicketMessage",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": true,
+       "predicate": null
+      },
+      {
+       "columns": [
+        "TicketID"
+       ],
+       "index_name": "IX_TicketMessage_TicketID",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": false,
+       "predicate": null
+      },
+      {
+       "columns": [
+        "ReplyToMessageID"
+       ],
+       "index_name": "IX_TicketMessage_ReplyTo",
+       "index_type": "btree",
+       "is_primary": false,
+       "is_unique": false,
+       "predicate": null
+      }
+     ],
+     "primary_key": [
+      "MessageID"
+     ],
+     "row_count": 1350000,
+     "schema_name": "dbo",
+     "size_mb": 1181.93,
+     "storage_engine": null,
+     "table_id": "trailgear.TicketMessage",
+     "table_name": "TicketMessage"
+    }
+   ],
+   "triggers": [],
+   "views": [
+    {
+     "column_list": null,
+     "definition": "CREATE VIEW [dbo].[vw_ActiveProduct] AS SELECT p.[ProductID], p.[Sku], p.[Name], b.[Name] AS [BrandName] FROM [Product] p JOIN [Brand] b ON b.[BrandID] = p.[BrandID] WHERE p.[IsActive] = 1",
+     "is_updatable": false,
+     "referenced_tables": null,
+     "schema_name": null,
+     "view_id": "vw_ActiveProduct",
+     "view_name": "vw_ActiveProduct"
+    }
+   ]
+  },
+  "job_id": "cutfixture",
+  "metadata": {
+   "collection_duration_seconds": 0.0,
+   "collection_timestamp": "2026-10-28T01:24:10.010632Z",
+   "collector_version": "1.0.0",
+   "engines_in_use": [],
+   "source_database": {
+    "database_name": "trailgear",
+    "database_size_gb": 27.0,
+    "deployment_type": null,
+    "engine": "sqlserver",
+    "hostname": "offline",
+    "rds_instance_metadata": null,
+    "version": "15.0.4322.2"
+   }
+  },
+  "metrics": {
+   "performance_metrics": {
+    "active_connections_avg": null,
+    "active_connections_max": null,
+    "avg_query_time_ms": 356.22603157894736,
+    "connection_pool_usage_percent": null,
+    "network_throughput_mbps_avg": null,
+    "p50_query_time_ms": 2.151,
+    "p95_query_time_ms": null,
+    "p99_query_time_ms": null,
+    "queries_per_second": 182.77672453703704,
+    "read_iops_avg": null,
+    "transactions_per_second": null,
+    "write_iops_avg": null
+   },
+   "rds_cloudwatch_metrics": null,
+   "source_host": {
+    "buffer_cache_hit_ratio_pct": 99.551608,
+    "buffer_cache_read_requests": 918442310,
+    "buffer_cache_reads_from_disk": 4118224,
+    "committed_memory_gb": 41.27,
+    "cpu_count": 8,
+    "physical_memory_gb": 64.0
+   }
+  },
+  "queries": {
+   "collection_end_time": null,
+   "collection_start_time": null,
+   "query_log_source": "dmv_query_stats",
+   "query_patterns": [
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.16581018518518517,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 238.864,
+     "execution_time_ms_max": 3236.78,
+     "execution_time_ms_min": 102.15,
+     "execution_time_ms_p50": 238.864,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T00:38:12.617000",
+     "frequency_per_hour": 596.9166666666666,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T04:34:17.704000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "has_where": true,
+         "limit": "10",
+         "order_by": [
+          {
+           "name": "publisheddate"
+          }
+         ],
+         "other_filters": 1,
+         "returned": [
+          {
+           "name": "articleid"
+          },
+          {
+           "name": "title"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "knowledgearticle",
+           "table": {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          }
+         ],
+         "text_search": true,
+         "text_search_kinds": [
+          "leading_wildcard"
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "ArticleID",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Title",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Body",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "PublishedDate",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "order_by": true,
+       "parsed_by": "sqlglot",
+       "row_limit": true,
+       "top_n": true,
+       "wildcard_leading": true,
+       "wildcard_likes": [
+        {
+         "column": "body",
+         "use": {
+          "name": "Body",
+          "scopes": [
+           [
+            {
+             "name": "KnowledgeArticle",
+             "quoted": true
+            }
+           ]
+          ]
+         },
+         "word_search": true
+        }
+       ]
+      },
+      "text_sha256": "e696bb9dc3e68fd7",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0xE696BB9DC3E68FD7",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT TOP (10) [ArticleID], [Title] FROM [KnowledgeArticle] WHERE [Body] LIKE '%' + @Term + '%' ORDER BY [PublishedDate] DESC",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 10.0,
+     "rows_examined_avg": 2042.2736981711573,
+     "rows_returned_avg": 10.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.49,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.KnowledgeArticle"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 3421965.664,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.0019560185185185184,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 1884.635,
+     "execution_time_ms_max": 34566.83,
+     "execution_time_ms_min": 725.731,
+     "execution_time_ms_p50": 1884.635,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T05:42:38.241000",
+     "frequency_per_hour": 7.041666666666667,
+     "full_table_scans": 0,
+     "has_aggregations": true,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T03:18:54.172000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "aggregate": true,
+         "aggregate_kinds": [
+          "avg",
+          "count(*)"
+         ],
+         "group_by": true,
+         "group_by_items": [
+          "priority"
+         ],
+         "has_where": true,
+         "other_filters": 1,
+         "returned": [
+          {
+           "name": "priority",
+           "qualifier": "t"
+          },
+          {
+           "name": "openeddate",
+           "qualifier": "t"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "t",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "aggregate_function_count": 2,
+       "columns": [
+        {
+         "name": "Priority",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "OpenedDate",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "group_by": true,
+       "has_aggregation": true,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "9384be0d7308e52a",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x9384BE0D7308E52A",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT t.[Priority], COUNT(*) AS [Open], AVG(DATEDIFF(hour, t.[OpenedDate], SYSUTCDATETIME())) AS [AgeHours] FROM [Ticket] t WHERE t.[Status] <> N'CLOSED' GROUP BY t.[Priority]",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 25.0,
+     "rows_examined_avg": 4486.19526627219,
+     "rows_returned_avg": 25.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.56,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 318503.315,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.9493402777777777,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 3.216,
+     "execution_time_ms_max": 50.234,
+     "execution_time_ms_min": 1.495,
+     "execution_time_ms_p50": 3.216,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T01:48:41.703000",
+     "frequency_per_hour": 3417.625,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": true,
+     "has_subqueries": true,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 1,
+     "last_seen": "2026-10-13T04:18:04.508000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "returned": [
+          {
+           "name": "messageid"
+          },
+          {
+           "name": "author"
+          },
+          {
+           "name": "depth"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "thread",
+           "table": {
+            "name": "Thread",
+            "quoted": true
+           }
+          }
+         ]
+        },
+        {
+         "equalities": [
+          {
+           "name": "messageid"
+          }
+         ],
+         "has_where": true,
+         "returned": [
+          {
+           "name": "messageid"
+          },
+          {
+           "name": "replytomessageid"
+          },
+          {
+           "name": "author"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "ticketmessage",
+           "table": {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          }
+         ]
+        },
+        {
+         "joins": [
+          [
+           {
+            "name": "replytomessageid",
+            "qualifier": "m"
+           },
+           {
+            "name": "messageid",
+            "qualifier": "t"
+           }
+          ]
+         ],
+         "returned": [
+          {
+           "name": "messageid",
+           "qualifier": "m"
+          },
+          {
+           "name": "replytomessageid",
+           "qualifier": "m"
+          },
+          {
+           "name": "author",
+           "qualifier": "m"
+          },
+          {
+           "name": "depth",
+           "qualifier": "t"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "m",
+           "table": {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          },
+          {
+           "alias": "t",
+           "table": {
+            "name": "Thread",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "MessageID",
+         "scopes": [
+          []
+         ]
+        },
+        {
+         "name": "Author",
+         "scopes": [
+          []
+         ]
+        },
+        {
+         "name": "Depth",
+         "scopes": [
+          []
+         ]
+        },
+        {
+         "name": "MessageID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ],
+          []
+         ]
+        },
+        {
+         "name": "ReplyToMessageID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ],
+          []
+         ]
+        },
+        {
+         "name": "Author",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ],
+          []
+         ]
+        },
+        {
+         "name": "MessageID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "ReplyToMessageID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Author",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Depth"
+        },
+        {
+         "name": "MessageID"
+        }
+       ],
+       "dialect": "tsql",
+       "has_joins": true,
+       "has_subquery": true,
+       "join_count": 1,
+       "parsed_by": "sqlglot",
+       "recursive_cte": true
+      },
+      "text_sha256": "8533dced4bce003a",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x8533DCED4BCE003A",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "WITH [Thread] AS (SELECT [MessageID], [ReplyToMessageID], [Author], 0 AS [Depth] FROM [TicketMessage] WHERE [MessageID] = @MessageID UNION ALL SELECT m.[MessageID], m.[ReplyToMessageID], m.[Author], t.[Depth] + 1 FROM [TicketMessage] m JOIN [Thread] t ON m.[ReplyToMessageID] = t.[MessageID]) SELECT [MessageID], [Author], [Depth] FROM [Thread] OPTION (MAXRECURSION 16)",
+     "query_type": "OTHER",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 6.0,
+     "rows_examined_avg": 26.012862245955404,
+     "rows_returned_avg": 6.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 23.07,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.TicketMessage"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 263785.968,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.009942129629629629,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 110.35,
+     "execution_time_ms_max": 1550.686,
+     "execution_time_ms_min": 33.043,
+     "execution_time_ms_p50": 110.35,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T02:07:38.600000",
+     "frequency_per_hour": 35.791666666666664,
+     "full_table_scans": 0,
+     "has_aggregations": true,
+     "has_joins": true,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 1,
+     "last_seen": "2026-10-13T02:28:56.953000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "aggregate": true,
+         "aggregate_kinds": [
+          "count(*)"
+         ],
+         "count_only": true,
+         "equalities": [
+          {
+           "name": "status",
+           "qualifier": "t"
+          }
+         ],
+         "group_by": true,
+         "group_by_items": [
+          "author"
+         ],
+         "has_where": true,
+         "joins": [
+          [
+           {
+            "name": "ticketid",
+            "qualifier": "t"
+           },
+           {
+            "name": "ticketid",
+            "qualifier": "m"
+           }
+          ]
+         ],
+         "returned": [
+          {
+           "name": "author",
+           "qualifier": "m"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "m",
+           "table": {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          },
+          {
+           "alias": "t",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "aggregate_function_count": 1,
+       "columns": [
+        {
+         "name": "Author",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "group_by": true,
+       "has_aggregation": true,
+       "has_joins": true,
+       "join_count": 1,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "2f5f5c962a1da875",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x2F5F5C962A1DA875",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT m.[Author], COUNT(*) AS [Replies] FROM [TicketMessage] m JOIN [Ticket] t ON t.[TicketID] = m.[TicketID] WHERE t.[Status] = N'OPEN' GROUP BY m.[Author]",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 30.0,
+     "rows_examined_avg": 3056.8533178114085,
+     "rows_returned_avg": 30.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.98,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.TicketMessage",
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 94790.65,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.13885416666666667,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 5.85,
+     "execution_time_ms_max": 131.126,
+     "execution_time_ms_min": 1.563,
+     "execution_time_ms_p50": 5.85,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T05:31:41.612000",
+     "frequency_per_hour": 499.875,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T05:24:40.150000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "customerid"
+          }
+         ],
+         "has_where": true,
+         "order_by": [
+          {
+           "name": "openeddate"
+          }
+         ],
+         "returned": [
+          {
+           "name": "ticketid"
+          },
+          {
+           "name": "subject"
+          },
+          {
+           "name": "status"
+          },
+          {
+           "name": "openeddate"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "ticket",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Subject",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "OpenedDate",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "CustomerID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "order_by": true,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "bbd5dc4aa525028e",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0xBBD5DC4AA525028E",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT [TicketID], [Subject], [Status], [OpenedDate] FROM [Ticket] WHERE [CustomerID] = @CustomerID ORDER BY [OpenedDate] DESC",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 20.0,
+     "rows_examined_avg": 65.26765024589481,
+     "rows_returned_avg": 20.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 30.64,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 70182.45,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.08695601851851852,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 8.141,
+     "execution_time_ms_max": 54.551,
+     "execution_time_ms_min": 3.508,
+     "execution_time_ms_p50": 8.141,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T03:54:55.419000",
+     "frequency_per_hour": 313.0416666666667,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T03:00:34.533000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "status",
+           "qualifier": "t"
+          }
+         ],
+         "has_where": true,
+         "order_by": [
+          {
+           "name": "priority",
+           "qualifier": "t"
+          },
+          {
+           "name": "openeddate",
+           "qualifier": "t"
+          }
+         ],
+         "returned": [
+          {
+           "name": "ticketid",
+           "qualifier": "t"
+          },
+          {
+           "name": "subject",
+           "qualifier": "t"
+          },
+          {
+           "name": "priority",
+           "qualifier": "t"
+          },
+          {
+           "name": "customerid",
+           "qualifier": "t"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "t",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Subject",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Priority",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "CustomerID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "OpenedDate",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "order_by": true,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "2f229c0acbabd6e9",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "part-6b3994aa4f707fe3-0x31648DAA008826FB",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT t.[TicketID], t.[Subject], t.[Priority], t.[CustomerID] FROM [Ticket] t WHERE t.[Status] = @Status ORDER BY t.[Priority] DESC, t.[OpenedDate]",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 20.0,
+     "rows_examined_avg": 108.11952615466525,
+     "rows_returned_avg": 20.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 18.5,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 61163.333,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.27524305555555556,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 2.421,
+     "execution_time_ms_max": 16.119,
+     "execution_time_ms_min": 0.689,
+     "execution_time_ms_p50": 2.421,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T00:05:07.285000",
+     "frequency_per_hour": 990.875,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": true,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 1,
+     "last_seen": "2026-10-13T02:10:35.695000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "ticketid",
+           "qualifier": "t"
+          }
+         ],
+         "has_where": true,
+         "joins": [
+          [
+           {
+            "name": "ticketid",
+            "qualifier": "m"
+           },
+           {
+            "name": "ticketid",
+            "qualifier": "t"
+           }
+          ]
+         ],
+         "returned": [
+          {
+           "name": "ticketid",
+           "qualifier": "t"
+          },
+          {
+           "name": "subject",
+           "qualifier": "t"
+          },
+          {
+           "name": "author",
+           "qualifier": "m"
+          },
+          {
+           "name": "body",
+           "qualifier": "m"
+          },
+          {
+           "name": "sentdate",
+           "qualifier": "m"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "t",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          },
+          {
+           "alias": "m",
+           "table": {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Subject",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Author",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Body",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "SentDate",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "has_joins": true,
+       "join_count": 1,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "90135b217561bd91",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x90135B217561BD91",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT t.[TicketID], t.[Subject], m.[Author], m.[Body], m.[SentDate] FROM [Ticket] t JOIN [TicketMessage] m ON m.[TicketID] = t.[TicketID] WHERE t.[TicketID] = @TicketID",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 8.0,
+     "rows_examined_avg": 30.843951053361927,
+     "rows_returned_avg": 8.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 25.94,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket",
+      "trailgear.TicketMessage"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 57573.801,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.0571875,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 10.403,
+     "execution_time_ms_max": 219.29,
+     "execution_time_ms_min": 3.263,
+     "execution_time_ms_p50": 10.403,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T03:26:02.258000",
+     "frequency_per_hour": 205.875,
+     "full_table_scans": 0,
+     "has_aggregations": true,
+     "has_joins": true,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 1,
+     "last_seen": "2026-10-13T04:29:24.452000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "aggregate": true,
+         "aggregate_kinds": [
+          "count"
+         ],
+         "count_only": true,
+         "equalities": [
+          {
+           "name": "customerid",
+           "qualifier": "t"
+          }
+         ],
+         "group_by": true,
+         "group_by_items": [
+          "ticketid"
+         ],
+         "has_where": true,
+         "joins": [
+          [
+           {
+            "name": "ticketid",
+            "qualifier": "m"
+           },
+           {
+            "name": "ticketid",
+            "qualifier": "t"
+           }
+          ]
+         ],
+         "returned": [
+          {
+           "name": "ticketid",
+           "qualifier": "t"
+          },
+          {
+           "name": "messageid",
+           "qualifier": "m"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "t",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          },
+          {
+           "alias": "m",
+           "table": {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "aggregate_function_count": 1,
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "MessageID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "CustomerID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "group_by": true,
+       "has_aggregation": true,
+       "has_joins": true,
+       "join_count": 1,
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "d34f972e18b8d979",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0xD34F972E18B8D979",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT t.[TicketID], COUNT(m.[MessageID]) AS [Messages] FROM [Ticket] t JOIN [TicketMessage] m ON m.[TicketID] = t.[TicketID] WHERE t.[CustomerID] = @CustomerID GROUP BY t.[TicketID]",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 5.0,
+     "rows_examined_avg": 26.397287998380893,
+     "rows_returned_avg": 5.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 18.94,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket",
+      "trailgear.TicketMessage"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 51401.223,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.19215277777777778,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 1.317,
+     "execution_time_ms_max": 24.384,
+     "execution_time_ms_min": 0.606,
+     "execution_time_ms_p50": 1.317,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T04:12:14.611000",
+     "frequency_per_hour": 691.75,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T02:00:32.108000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "inserts_values": true,
+       "kind": "insert",
+       "parsed_by": "sqlglot"
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "append_targets": [
+        "ticketmessage"
+       ],
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Author",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Body",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "SentDate",
+         "scopes": [
+          [
+           {
+            "name": "TicketMessage",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "parsed_by": "sqlglot",
+       "write_targets": [
+        "ticketmessage"
+       ]
+      },
+      "text_sha256": "03c29a33a3001282",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x03C29A33A3001282",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "INSERT INTO [TicketMessage] ([TicketID], [Author], [Body], [SentDate]) VALUES (@TicketID, @Author, @Body, SYSUTCDATETIME())",
+     "query_type": "INSERT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 0.0,
+     "rows_examined_avg": 2.0,
+     "rows_returned_avg": 0.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.0,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.TicketMessage"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 21864.834,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.33675925925925926,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 0.618,
+     "execution_time_ms_max": 10.627,
+     "execution_time_ms_min": 0.2,
+     "execution_time_ms_p50": 0.618,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T00:54:16.678000",
+     "frequency_per_hour": 1212.3333333333333,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T04:36:06.032000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "ticketid"
+          }
+         ],
+         "has_where": true,
+         "returned": [
+          {
+           "name": "ticketid"
+          },
+          {
+           "name": "subject"
+          },
+          {
+           "name": "status"
+          },
+          {
+           "name": "priority"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "ticket",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Subject",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Priority",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "f8af8b072429ca7f",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0xF8AF8B072429CA7F",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT [TicketID], [Subject], [Status], [Priority] FROM [Ticket] WHERE [TicketID] = @TicketID",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 1.0,
+     "rows_examined_avg": 3.4958069837778387,
+     "rows_returned_avg": 1.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 28.61,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 17981.328,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.06883101851851851,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 1.836,
+     "execution_time_ms_max": 53.346,
+     "execution_time_ms_min": 0.669,
+     "execution_time_ms_p50": 1.836,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T03:19:00.638000",
+     "frequency_per_hour": 247.79166666666666,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T01:26:23.273000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "inserts_values": true,
+       "kind": "insert",
+       "parsed_by": "sqlglot"
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "append_targets": [
+        "ticket"
+       ],
+       "columns": [
+        {
+         "name": "CustomerID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "SalesOrderID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Subject",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Priority",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "OpenedDate",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "parsed_by": "sqlglot",
+       "write_targets": [
+        "ticket"
+       ]
+      },
+      "text_sha256": "73f8029840afb793",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x73F8029840AFB793",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "INSERT INTO [Ticket] ([CustomerID], [SalesOrderID], [Subject], [Status], [Priority], [OpenedDate]) VALUES (@CustomerID, @SalesOrderID, @Subject, N'OPEN', @Priority, SYSUTCDATETIME())",
+     "query_type": "INSERT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 0.0,
+     "rows_examined_avg": 2.0,
+     "rows_returned_avg": 0.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.0,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 10918.692,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.2116898148148148,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 0.547,
+     "execution_time_ms_max": 3.461,
+     "execution_time_ms_min": 0.166,
+     "execution_time_ms_p50": 0.547,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T00:24:07.088000",
+     "frequency_per_hour": 762.0833333333334,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T05:03:31.804000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "kind": "select",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "articleid"
+          }
+         ],
+         "has_where": true,
+         "returned": [
+          {
+           "name": "articleid"
+          },
+          {
+           "name": "title"
+          },
+          {
+           "name": "body"
+          },
+          {
+           "name": "tags"
+          }
+         ],
+         "sources": [
+          {
+           "alias": "knowledgearticle",
+           "table": {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "ArticleID",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Title",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Body",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "Tags",
+         "scopes": [
+          [
+           {
+            "name": "KnowledgeArticle",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "parsed_by": "sqlglot"
+      },
+      "text_sha256": "22a806ce21ac0776",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0x22A806CE21AC0776",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "SELECT [ArticleID], [Title], [Body], [Tags] FROM [KnowledgeArticle] WHERE [ArticleID] = @ArticleID",
+     "query_type": "SELECT",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 1.0,
+     "rows_examined_avg": 4.838436303991252,
+     "rows_returned_avg": 1.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 20.67,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.KnowledgeArticle"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 10004.63,
+     "wait_events": null,
+     "warnings": 0
+    },
+    {
+     "avg_cpu_time_ms": null,
+     "avg_logical_reads": null,
+     "avg_physical_reads": null,
+     "cache_hit_ratio_pct": null,
+     "calls_per_second": 0.03111111111111111,
+     "db_load_contribution_percent": null,
+     "errors": 0,
+     "execution_time_ms_avg": 1.251,
+     "execution_time_ms_max": 32.371,
+     "execution_time_ms_min": 0.596,
+     "execution_time_ms_p50": 1.251,
+     "execution_time_ms_p95": null,
+     "execution_time_ms_p99": null,
+     "filter_columns": null,
+     "first_seen": "2026-10-12T01:22:21.244000",
+     "frequency_per_hour": 112.0,
+     "full_table_scans": 0,
+     "has_aggregations": false,
+     "has_joins": false,
+     "has_subqueries": false,
+     "has_text_search": null,
+     "has_time_range_filter": null,
+     "io_read_time_ms": null,
+     "io_write_time_ms": null,
+     "join_count": 0,
+     "last_seen": "2026-10-13T03:11:59.467000",
+     "lock_time_ms": 0.0,
+     "lock_time_pct": 0.0,
+     "parsed_facts": {
+      "access": {
+       "assigned_columns": [
+        "status",
+        "closeddate"
+       ],
+       "kind": "update",
+       "parsed_by": "sqlglot",
+       "scopes": [
+        {
+         "equalities": [
+          {
+           "name": "ticketid"
+          }
+         ],
+         "has_where": true,
+         "sources": [
+          {
+           "alias": "ticket",
+           "table": {
+            "name": "Ticket",
+            "quoted": true
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "source_engine": "sqlserver",
+      "sql": {
+       "columns": [
+        {
+         "name": "Status",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "ClosedDate",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        },
+        {
+         "name": "TicketID",
+         "scopes": [
+          [
+           {
+            "name": "Ticket",
+            "quoted": true
+           }
+          ]
+         ]
+        }
+       ],
+       "dialect": "tsql",
+       "parsed_by": "sqlglot",
+       "write_targets": [
+        "ticket"
+       ]
+      },
+      "text_sha256": "ca34070c2b7e419e",
+      "version": "4a1ca7514ba028b2"
+     },
+     "queries_with_bad_index": 0,
+     "queries_without_index": 0,
+     "query_id": "0xCA34070C2B7E419E",
+     "query_tags": [],
+     "query_tags_dropped": 0,
+     "query_text": "UPDATE [Ticket] SET [Status] = N'CLOSED', [ClosedDate] = SYSUTCDATETIME() WHERE [TicketID] = @TicketID",
+     "query_type": "UPDATE",
+     "range_scans": 0,
+     "read_write_ratio_pct": null,
+     "rows_affected_avg": 0.0,
+     "rows_examined_avg": 2.0,
+     "rows_returned_avg": 0.0,
+     "rows_returned_p95": null,
+     "scan_efficiency_pct": 0.0,
+     "shared_blks_hit": null,
+     "shared_blks_read": null,
+     "sort_columns": null,
+     "tables_accessed": [
+      "trailgear.Ticket"
+     ],
+     "temp_blocks_read": null,
+     "temp_blocks_written": null,
+     "text_search_type": null,
+     "total_time_ms": 3362.688,
+     "wait_events": null,
+     "warnings": 0
+    }
+   ],
+   "total_queries_analyzed": 13
+  }
+ },
+ "contract_version": "1.3",
+ "library_version": "0.4.0b3.dev14+ge2a1bd728",
+ "query_ids": [
+  "0xE696BB9DC3E68FD7",
+  "0x9384BE0D7308E52A",
+  "0x8533DCED4BCE003A",
+  "0x2F5F5C962A1DA875",
+  "0xBBD5DC4AA525028E",
+  "part-6b3994aa4f707fe3-0x31648DAA008826FB",
+  "0x90135B217561BD91",
+  "0xD34F972E18B8D979",
+  "0x03C29A33A3001282",
+  "0xF8AF8B072429CA7F",
+  "0x73F8029840AFB793",
+  "0x22A806CE21AC0776",
+  "0xCA34070C2B7E419E"
+ ],
+ "scope": {
+  "derived_from": null,
+  "dropped_foreign_keys": [
+   {
+    "constraint_name": "FK_Ticket_Customer",
+    "referenced_table_id": "trailgear.Customer",
+    "table_id": "trailgear.Ticket"
+   }
+  ],
+  "rewritten_query_ids": [
+   "part-6b3994aa4f707fe3-0x31648DAA008826FB"
+  ],
+  "tables": [
+   "trailgear.KnowledgeArticle",
+   "trailgear.Ticket",
+   "trailgear.TicketMessage"
+  ],
+  "unplaced_statements": [
+   {
+    "query_id": "0xF4CBAAB59A417F55",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0xA227D4C4883C8A81",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0xB656697AF8467E3D",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0xA5625CDD8366F8B1",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0xE8316B5EB310DD77",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0x8BBAEC4CCECE4C82",
+    "reason": "no_tables_read"
+   },
+   {
+    "query_id": "0xBCD2639091D097D5",
+    "reason": "no_tables_read"
+   }
+  ]
+ },
+ "table_ids": [
+  "trailgear.KnowledgeArticle",
+  "trailgear.Ticket",
+  "trailgear.TicketMessage"
+ ]
+}

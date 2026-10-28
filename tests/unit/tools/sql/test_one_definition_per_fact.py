@@ -97,6 +97,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "the one query_type rule: a statement's first verb after its leading comments (#1178)"
     ),
     "src/tools/database/ddl_parser.py": "DDL, not a workload query",
+    "src/assessment/cut.py": (
+        "cut_collection's check that a caller's part is in the source dialect (#1633): it "
+        "refuses other dialects' syntax and decides no query fact"
+    ),
     "src/tools/sql/redact.py": (
         "the literal redaction of collected text (#1625): it rewrites values and decides "
         "no query fact"

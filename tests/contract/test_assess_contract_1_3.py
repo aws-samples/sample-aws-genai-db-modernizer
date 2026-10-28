@@ -32,11 +32,11 @@ FIXTURES = REPO / "tests" / "fixtures"
 #: The foreign key fields 1.3 added (``ADDED_IN_1_3``), named here so the file reads on
 #: any version's code.
 NEW_FIELDS = ("avg_children_per_parent", "basis")
-#: Every field 1.3 added, by model.
+#: Every field 1.3 added, by model (the scope's is checked in test_assess_cut_collection).
 ADDED = {
     "TableForeignKey": NEW_FIELDS,
     "TableFacts": ("row_count_basis",),
-    "StatementResult": ("parse_status",),
+    "StatementResult": ("parse_status", "from_query_id"),
 }
 
 #: The published result schema each earlier version shipped (1.2: main before #1632).
@@ -407,7 +407,10 @@ def test_the_fields_carry_no_verdict() -> None:
 def test_the_models_name_the_same_1_3_fields() -> None:
     from src.assessment import models
 
-    assert getattr(models, "ADDED_IN_1_3", None) == ADDED
+    assert getattr(models, "ADDED_IN_1_3", None) == {
+        **ADDED,
+        "WorkloadScope": ("unplaced_statements",),
+    }
 
 
 # --------------------------------------------------------------------------- unknown is null
