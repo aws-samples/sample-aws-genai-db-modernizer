@@ -290,11 +290,11 @@
             }
           ],
           "default": null,
-          "description": "Since 1.2. full: every statement it held moved off from_engine; partial: some stayed (`queries_retained`). None only in a result written before 1.2",
+          "description": "full: every statement it held moved off from_engine; partial: some stayed (`queries_retained`). The library always writes it",
           "title": "Action"
         },
         "queries_retained": {
-          "description": "Since 1.2. A partial consolidation's statements that stayed on from_engine, by query id; empty for a full one",
+          "description": "A partial consolidation's statements that stayed on from_engine, by query id; empty for a full one",
           "items": {
             "type": "string"
           },
@@ -306,7 +306,9 @@
         "from_engine",
         "to_engine",
         "query_count",
-        "reason"
+        "reason",
+        "action",
+        "queries_retained"
       ],
       "title": "Consolidation",
       "type": "object"
@@ -700,11 +702,11 @@
             }
           ],
           "default": null,
-          "description": "Since 1.2. How the design shares the table among its source tables; None when the design does not say",
+          "description": "How the design shares the table among its source tables; None when the design does not say",
           "title": "Aggregate Pattern"
         },
         "entities": {
-          "description": "Since 1.2. An item collection's entity types, each with its key templates; empty for any other table",
+          "description": "An item collection's entity types, each with its key templates; empty for any other table",
           "items": {
             "$ref": "#/$defs/DynamoDBEntity"
           },
@@ -718,7 +720,9 @@
         "partition_key",
         "sort_key",
         "gsis",
-        "query_ids"
+        "query_ids",
+        "aggregate_pattern",
+        "entities"
       ],
       "title": "DynamoDBTable",
       "type": "object"
@@ -836,7 +840,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.2. The statements `unique_queries` counts, by query id, in the reality check's order: its first-pass unique-value set for the engine. None when the reality check did not assess it",
+          "description": "The statements `unique_queries` counts, by query id, in the reality check's order: its first-pass unique-value set for the engine. None when the reality check did not assess it",
           "title": "Unique Query Ids"
         }
       },
@@ -847,7 +851,8 @@
         "consolidated_into",
         "unique_queries",
         "avg_delta",
-        "reason"
+        "reason",
+        "unique_query_ids"
       ],
       "title": "EngineLine",
       "type": "object"
@@ -1502,7 +1507,7 @@
             }
           ],
           "default": null,
-          "description": "Its execution count over the day the collection covers, per second. Since 1.3 None when a raw collection gives no execution count, and 0.0 for a count of 0 (a 1.2 result shows one call a day, 1/86400, for both); a collector output carries its own figure",
+          "description": "Its execution count over the day the collection covers, per second. None when a raw collection gives no execution count, and 0.0 for a count of 0; a collector output carries its own figure",
           "title": "Calls Per Second"
         },
         "rewritten_by_caller": {
@@ -1664,7 +1669,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.2. The statement text the parser read: when rows sharing a digest merged, the costliest variant's. Collection text: escape it when rendering. Since 1.3 None when the collection gives the row no text (a 1.2 result shows an empty string)",
+          "description": "The statement text the parser read: when rows sharing a digest merged, the costliest variant's. Collection text: escape it when rendering. None when the collection gives the row no text",
           "title": "Query Text"
         },
         "parse_status": {
@@ -1681,11 +1686,11 @@
             }
           ],
           "default": null,
-          "description": "Since 1.3. How its facts (`query_type`, `join_count`, `tables`) were read: parsed (the SQL parser read the statement) or fallback (the parser could not, so they are a pattern-based estimate). None when the collection gives no statement text",
+          "description": "How its facts (`query_type`, `join_count`, `tables`) were read: parsed (the SQL parser read the statement) or fallback (the parser could not, so they are a pattern-based estimate). None when the collection gives no statement text",
           "title": "Parse Status"
         },
         "matched_anti_patterns": {
-          "description": "Since 1.2. The penalised anti-patterns found on it against any analysed engine, each once, by id; each engine's points are in `fit_breakdown`",
+          "description": "The penalised anti-patterns found on it against any analysed engine, each once, by id; each engine's points are in `fit_breakdown`",
           "items": {
             "$ref": "#/$defs/AntiPatternRef"
           },
@@ -1696,7 +1701,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/FitBreakdown"
           },
-          "description": "Since 1.2. Per engine the scorer saw: how it reached `fit` (every engine in `fit` has one, with the same `fit`), or the gate that left it unscored",
+          "description": "Per engine the scorer saw: how it reached `fit` (every engine in `fit` has one, with the same `fit`), or the gate that left it unscored",
           "title": "Fit Breakdown",
           "type": "object"
         },
@@ -1710,7 +1715,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.3. Set on a statement part (a caller's rewrite of a statement that crossed a cut, built by cut_collection): the query_id of the statement it was cut from, read from the part's id. None for every other statement",
+          "description": "Set on a statement part (a caller's rewrite of a statement that crossed a cut, built by cut_collection): the query_id of the statement it was cut from, read from the part's id. None for every other statement",
           "title": "From Query Id"
         }
       },
@@ -1733,7 +1738,12 @@
         "matched_patterns",
         "tied_engines",
         "reason_text",
-        "post_schema_terminal"
+        "post_schema_terminal",
+        "query_text",
+        "parse_status",
+        "matched_anti_patterns",
+        "fit_breakdown",
+        "from_query_id"
       ],
       "title": "StatementResult",
       "type": "object"
@@ -1861,7 +1871,7 @@
           "title": "Design Note"
         },
         "table_facts": {
-          "description": "Since 1.2. One entry per collected source table, by table_id, from 'analysis' on: its row count, size, columns, primary key and foreign keys",
+          "description": "One entry per collected source table, by table_id, from 'analysis' on: its row count, size, columns, primary key and foreign keys",
           "items": {
             "$ref": "#/$defs/TableFacts"
           },
@@ -1883,7 +1893,8 @@
         "consolidations",
         "tables",
         "designed_engines",
-        "design_note"
+        "design_note",
+        "table_facts"
       ],
       "title": "Summary",
       "type": "object"
@@ -1911,7 +1922,7 @@
             }
           ],
           "default": null,
-          "description": "Whether it allows NULL; None when unknown. Since 1.3 also None when a raw collection gives no `is_nullable`, NULL or a value no collection script writes (a 1.2 result shows true for a missing value, false for the others); a collector output carries the collector's value",
+          "description": "Whether it allows NULL; None when unknown, which includes a raw collection that gives no `is_nullable`, NULL or a value no collection script writes; a collector output carries the collector's value",
           "title": "Nullable"
         }
       },
@@ -1943,7 +1954,7 @@
             }
           ],
           "default": null,
-          "description": "Rows, as the source's catalogue records them. Since 1.3 None when the collection has no count for the table, so 0 is an empty table; a 1.2 result shows an unknown count as 0",
+          "description": "Rows, as the source's catalogue records them. None when the collection has no count for the table, so 0 is an empty table",
           "title": "Row Count"
         },
         "row_count_basis": {
@@ -1960,7 +1971,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.3. How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL Server sys.partitions.rows). None when `row_count` is None or the collection does not say",
+          "description": "How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL Server sys.partitions.rows). None when `row_count` is None or the collection does not say",
           "title": "Row Count Basis"
         },
         "size_mb": {
@@ -1974,7 +1985,7 @@
             }
           ],
           "default": null,
-          "description": "Size in megabytes, data and indexes, as collected. Since 1.3 None when the collection reports no size for the table; a 1.2 result shows it as 0",
+          "description": "Size in megabytes, data and indexes, as collected. None when the collection reports no size for the table",
           "title": "Size Mb"
         },
         "columns": {
@@ -2005,6 +2016,7 @@
       "required": [
         "table_id",
         "row_count",
+        "row_count_basis",
         "size_mb",
         "columns",
         "primary_key",
@@ -2015,7 +2027,7 @@
     },
     "TableForeignKey": {
       "additionalProperties": false,
-      "description": "One foreign key constraint of a source table (its columns in constraint order).\n\nSince 1.3 it carries the average of its two tables' row counts, read from the\ncollection with no model call. These are statistics, not a design decision: an\naverage cannot show whether a child set is bounded. For any data model, the\nrecommended path is run_through=\"schema_design\".",
+      "description": "One foreign key constraint of a source table (its columns in constraint order).\n\nIt carries the average of its two tables' row counts, read from the\ncollection with no model call. These are statistics, not a design decision: an\naverage cannot show whether a child set is bounded. For any data model, the\nrecommended path is run_through=\"schema_design\".",
       "properties": {
         "constraint_name": {
           "title": "Constraint Name",
@@ -2060,7 +2072,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.3. The table's row count divided by the referenced table's, unrounded: rows of this table per row of `referenced_table`, on average. None when `referenced_table` is None, either table's `row_count` is None (unknown), or the referenced table has 0 rows; 0 only when both counts are known. These are statistics, not a design decision: an average cannot show whether a child set is bounded. For any data model, the recommended path is run_through=\"schema_design\".",
+          "description": "The table's row count divided by the referenced table's, unrounded: rows of this table per row of `referenced_table`, on average. None when `referenced_table` is None, either table's `row_count` is None (unknown), or the referenced table has 0 rows; 0 only when both counts are known. These are statistics, not a design decision: an average cannot show whether a child set is bounded. For any data model, the recommended path is run_through=\"schema_design\".",
           "title": "Avg Children Per Parent"
         },
         "basis": {
@@ -2077,7 +2089,7 @@
             }
           ],
           "default": null,
-          "description": "Since 1.3. Where `avg_children_per_parent` comes from: the source catalogue's row counts, as the collection read them; catalogue_exact when both tables' `row_count_basis` is exact, catalogue_estimate otherwise. None when the average is None",
+          "description": "Where `avg_children_per_parent` comes from: the source catalogue's row counts, as the collection read them; catalogue_exact when both tables' `row_count_basis` is exact, catalogue_estimate otherwise. None when the average is None",
           "title": "Basis"
         }
       },
@@ -2085,7 +2097,9 @@
         "constraint_name",
         "columns",
         "referenced_table",
-        "referenced_columns"
+        "referenced_columns",
+        "avg_children_per_parent",
+        "basis"
       ],
       "title": "TableForeignKey",
       "type": "object"
@@ -2179,7 +2193,7 @@
     },
     "UnplacedStatement": {
       "additionalProperties": false,
-      "description": "A statement a cut could not place: it reads no table of the collection, so it\nbelongs to no cut's tables. Since 1.3.",
+      "description": "A statement a cut could not place: it reads no table of the collection, so it\nbelongs to no cut's tables.",
       "properties": {
         "query_id": {
           "title": "Query Id",
@@ -2204,7 +2218,7 @@
     },
     "WorkloadScope": {
       "additionalProperties": false,
-      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.\n\n``cut_collection`` (#1633) writes one for each cut: the tables kept, the statement\nparts in ``rewritten_query_ids``, the foreign keys it cut in ``dropped_foreign_keys``\nand, since 1.3, the statements it could not place in ``unplaced_statements``.",
+      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.\n\n``cut_collection`` (#1633) writes one for each cut: the tables kept, the statement\nparts in ``rewritten_query_ids``, the foreign keys it cut in ``dropped_foreign_keys``\nand the statements it could not place in ``unplaced_statements``.",
       "properties": {
         "tables": {
           "items": {
@@ -2234,7 +2248,7 @@
           "type": "array"
         },
         "dropped_foreign_keys": {
-          "description": "Foreign keys the cut workload left out. Since 1.3, cut_collection writes one object per foreign key between a kept table and a dropped one: constraint_name, table_id (the table that holds the key) and referenced_table_id. Any other object is echoed as given",
+          "description": "Foreign keys the cut workload left out. cut_collection writes one object per foreign key between a kept table and a dropped one: constraint_name, table_id (the table that holds the key) and referenced_table_id. Any other object is echoed as given",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -2243,7 +2257,7 @@
           "type": "array"
         },
         "unplaced_statements": {
-          "description": "Since 1.3. The statements the cut left out because they read no table of the collection (none of them belongs to any cut's tables), each with its reason, unless the caller gave a part for it. Not echoed in a result written before 1.3",
+          "description": "The statements the cut left out because they read no table of the collection (none of them belongs to any cut's tables), each with its reason, unless the caller gave a part for it",
           "items": {
             "$ref": "#/$defs/UnplacedStatement"
           },
@@ -2255,7 +2269,8 @@
         "tables",
         "derived_from",
         "rewritten_query_ids",
-        "dropped_foreign_keys"
+        "dropped_foreign_keys",
+        "unplaced_statements"
       ],
       "title": "WorkloadScope",
       "type": "object"
@@ -2265,14 +2280,9 @@
   "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
+      "const": "1.3",
       "default": "1.3",
-      "description": "The contract version the result was written for: the request's contract_version (CONTRACT_VERSION when the request names none), written as that version writes it; any 1.x is read",
-      "enum": [
-        "1.0",
-        "1.1",
-        "1.2",
-        "1.3"
-      ],
+      "description": "The contract version the result is written for: 1.3, the only version this release reads and writes. A result naming a retired version (1.0, 1.1 or 1.2) is refused with RetiredContractVersionError",
       "title": "Contract Version",
       "type": "string"
     },
@@ -2369,7 +2379,7 @@
         }
       ],
       "default": null,
-      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines, in that order, each copied from the engine's schema design; checked from contract 1.1 on (a 1.0 result has no OpenSearch entry and is read as 1.0 read it)",
+      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines, in that order, each copied from the engine's schema design",
       "title": "Designs"
     },
     "artifacts": {

@@ -1,4 +1,5 @@
-"""Contract 1.2 of the public ``assess()`` result (#1603), as a library caller reads it.
+"""The fields contract 1.2 added to the public ``assess()`` result (#1603), as a library
+caller reads them in contract 1.3 (the only version this release supports).
 
 - ``statements[].fit_breakdown`` explains every score in ``statements[].fit``: recomputed
   here from its own fields with the rule docs/contracts/assess.md states, it gives the
@@ -7,9 +8,10 @@
 - the ``query_id`` rule per source engine: a row's ``digest`` (SQL Server's
   ``query_hash`` as the collection script writes it), else the first 16 hex characters
   of SHA-256 of the text, and rows sharing a digest are one statement, whose
-  ``query_text`` is the costliest variant's;
-- results written for contract 1.0 and 1.1 still validate against the published schema,
-  load, and write back unchanged; the 1.2 rules do not apply to them.
+  ``query_text`` is the costliest variant's.
+
+Results and requests for the retired 1.0, 1.1 and 1.2 are refused:
+test_assess_retired_versions.py.
 """
 
 from __future__ import annotations
@@ -22,24 +24,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from scripts import render_contract_schemas as rcs
 from src.assessment import AssessmentResult, assess, load_collection
-from src.assessment.models import ADDED_IN_1_2
 
 REPO = Path(__file__).resolve().parents[2]
 SAMPLES = ("wordpress", "discourse", "trailgear")
-FIXTURES = REPO / "tests" / "fixtures"
-
-#: Results written by earlier versions' code: 1.0 (#1513's fixture) and 1.1 (main's code
-#: before #1603, the wordpress sample with its statements cut to three).
-EARLIER_RESULTS = {
-    "1.0": FIXTURES / "assess_result_v1_0_opensearch_without_entry.json",
-    "1.1": FIXTURES / "assess_result_v1_1_reality_check.json",
-    "1.1-designed": FIXTURES / "assess_result_v1_1_designed.json",
-}
 
 
 @cache
@@ -53,12 +43,6 @@ def _result_json(sample: str, run_through: str) -> str:
 
 def _result(sample: str, run_through: str) -> dict[str, Any]:
     loaded: dict[str, Any] = json.loads(_result_json(sample, run_through))
-    return loaded
-
-
-@cache
-def _schema() -> dict[str, Any]:
-    loaded: dict[str, Any] = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
     return loaded
 
 
@@ -130,7 +114,8 @@ def test_the_samples_reach_every_method_and_both_gate_kinds() -> None:
     assert penalties["intrinsic"] and penalties["fixable"]
 
 
-def test_a_breakdown_that_disagrees_with_fit_is_refused_from_1_2_on() -> None:
+@pytest.mark.passes_on_main
+def test_a_breakdown_that_disagrees_with_fit_is_refused() -> None:
     document = _result("wordpress", "reality_check")
     statement = next(s for s in document["statements"] if s["fit"])
     engine = sorted(statement["fit"])[0]
@@ -140,9 +125,6 @@ def test_a_breakdown_that_disagrees_with_fit_is_refused_from_1_2_on() -> None:
     del statement["fit_breakdown"][engine]
     with pytest.raises(ValidationError, match="missing"):
         AssessmentResult.model_validate(document)
-    # The same document marked 1.1 is read as 1.1 read it: no breakdown rule.
-    document["contract_version"] = "1.1"
-    AssessmentResult.model_validate(document)
 
 
 # --------------------------------------------------------------------------- query_id
@@ -245,50 +227,17 @@ def test_oracle_literal_variants_merge_under_the_costliest_digest() -> None:
     assert by_id["sqlid_c"].query_text == "SELECT * FROM customers WHERE id = :1"
 
 
-# --------------------------------------------------------------------------- earlier versions
-
-
-@pytest.mark.parametrize("version", sorted(EARLIER_RESULTS))
-def test_an_earlier_result_validates_loads_and_writes_back_unchanged(version: str) -> None:
-    text = EARLIER_RESULTS[version].read_text(encoding="utf-8")
-    document = json.loads(text)
-    assert document["contract_version"] == version.split("-")[0]
-    Draft202012Validator(_schema()).validate(document)
-    loaded = AssessmentResult.model_validate_json(text)
-    assert json.loads(loaded.model_dump_json()) == document
-    # None of the 1.2 fields is written back for it, not even empty.
-    dumped = json.loads(loaded.model_dump_json())
-    for statement in dumped["statements"]:
-        assert not set(ADDED_IN_1_2["StatementResult"]) & set(statement)
-    assert not set(ADDED_IN_1_2["Summary"]) & set(dumped["summary"])
-
-
-@pytest.mark.passes_on_main
-def test_a_1_2_result_validates_against_the_schema_that_reads_1_1() -> None:
-    """One schema file reads every 1.x: the 1.2 fields are optional in it, so a 1.1
-    result validates, and a result of 1.2 or later with every field validates too."""
-    from src.assessment import CONTRACT_VERSION
-
-    document = _result("trailgear", "reality_check")
-    assert document["contract_version"] == CONTRACT_VERSION
-    Draft202012Validator(_schema()).validate(document)
-    older = copy.deepcopy(document)
-    older["contract_version"] = "1.1"
-    loaded = AssessmentResult.model_validate(older)
-    assert "fit_breakdown" not in json.loads(loaded.model_dump_json())["statements"][0]
-
-
 @pytest.mark.passes_on_main
 def test_the_documented_sample_breakdown_recomputes() -> None:
-    """The sample result in docs/contracts/assess.md is a valid result of 1.2 or later
-    (the latest) whose fit breakdowns recompute to its fit by the documented rule."""
+    """The sample result in docs/contracts/assess.md is a valid 1.3 result whose fit
+    breakdowns recompute to its fit by the documented rule."""
     import re
 
     text = (REPO / "docs" / "contracts" / "assess.md").read_text(encoding="utf-8")
     match = re.search(r"^### Sample result\n\n```json\n(.*?)\n```", text, re.M | re.S)
     assert match
     document = json.loads(match.group(1))
-    assert document["contract_version"] not in ("1.0", "1.1")
+    assert document["contract_version"] == "1.3"
     AssessmentResult.model_validate(document)
     for statement in document["statements"]:
         assert statement["fit_breakdown"]
@@ -296,97 +245,9 @@ def test_the_documented_sample_breakdown_recomputes() -> None:
             assert recomputed_fit(entry) == statement["fit"][engine] == entry["fit"]
 
 
-# --------------------------------------------------------------------------- the request's version
-
-#: The published result schema of each earlier version, as main shipped it: 1.1 before
-#: #1603, 1.0 before #1513 (``git show <commit>:docs/contracts/schemas/...``).
-EARLIER_SCHEMAS = {
-    "1.0": FIXTURES / "assess_result_v1_0.schema.json",
-    "1.1": FIXTURES / "assess_result_v1_1.schema.json",
-}
-
-
-def _pinned(
-    version: str | None, run_through: str, engines: list[str] | None = None, db: str = "wordpress"
-) -> str:
-    from tests.assess_models import models_patched
-
-    request: dict[str, Any] = {
-        "database_name": db,
-        "collection": load_collection(REPO / "docs" / "examples" / "wordpress" / "wordpress.zip"),
-        "options": {
-            "run_through": run_through,
-            "deterministic": run_through == "reality_check",
-            "target_engines": engines,
-        },
-    }
-    if version is not None:
-        request["contract_version"] = version
-    with models_patched():
-        return assess(request).model_dump_json()
-
-
-def _has_a_1_2_field(document: dict[str, Any]) -> bool:
-    summary = document["summary"]
-    rows = [
-        (summary, "Summary"),
-        *((e, "EngineLine") for e in summary["engines"]),
-        *((c, "Consolidation") for c in summary["consolidations"]),
-        *((s, "StatementResult") for s in document["statements"]),
-        *(
-            (t, "DynamoDBTable")
-            for d in document["designs"] or []
-            if d["engine"] == "dynamodb"
-            for t in d["tables"]
-        ),
-    ]
-    return any(set(ADDED_IN_1_2[model]) & set(row) for row, model in rows)
-
-
-@pytest.mark.parametrize(
-    ("version", "run_through", "engines"),
-    [
-        ("1.1", "reality_check", None),
-        ("1.1", "schema_design", None),
-        ("1.1", "schema_design", ["dynamodb", "opensearch"]),
-        ("1.0", "reality_check", None),
-        ("1.0", "schema_design", None),
-        ("1.0", "schema_design", ["dynamodb", "opensearch"]),
-    ],
-)
-def test_a_request_pinned_to_an_earlier_version_gets_that_versions_result(
-    version: str, run_through: str, engines: list[str] | None
-) -> None:
-    """The result follows the request's contract_version (maintainer decision on #1603):
-    a 1.1 (or 1.0) request's result is written as that version wrote it, with no 1.2
-    field, and validates against the schema file that version shipped."""
-    text = _pinned(version, run_through, engines)
-    document = json.loads(text)
-    assert document["contract_version"] == version
-    assert not _has_a_1_2_field(document)
-    schema = json.loads(EARLIER_SCHEMAS[version].read_text(encoding="utf-8"))
-    assert schema["x-contract-version"] == version
-    Draft202012Validator(schema).validate(document)
-    # It reads back as the same document.
-    assert AssessmentResult.model_validate_json(text).model_dump_json() == text
-    if run_through == "schema_design":
-        engines_designed = [d["engine"] for d in document["designs"]]
-        assert ("opensearch" in engines_designed) == (version == "1.1" and engines is not None)
-
-
 @pytest.mark.passes_on_main
-def test_a_1_2_request_gets_the_1_2_fields() -> None:
-    """A 1.2 request gets every 1.2 field (a request with no version gets the latest:
-    test_assess_contract_1_3.py)."""
-    document = json.loads(_pinned("1.2", "reality_check"))
-    assert document["contract_version"] == "1.2"
-    assert _has_a_1_2_field(document)
-    assert all("fit_breakdown" in s for s in document["statements"])
-    Draft202012Validator(_schema()).validate(document)
-
-
 def test_an_engine_with_no_score_has_only_its_gate() -> None:
-    """From 1.2 on, an entry for an engine with no `fit` holds its gate and nothing else:
+    """An entry for an engine with no `fit` holds its gate and nothing else:
     an ungated, unscored entry, or a gate with a score, is refused."""
     document = _result("trailgear", "reality_check")
     statement = next(

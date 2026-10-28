@@ -355,6 +355,36 @@ def test_a_tag_the_public_contract_was_not_recorded_for_gets_a_note(tmp_path: Pa
     assert rn.changelog_between(repo, "v1.0.0", "HEAD") == []
 
 
+def test_a_ref_before_1_3_reads_the_historical_public_snapshot(tmp_path: Path) -> None:
+    """#1641: the public contract's released snapshot moved to its own file from contract
+    1.3 on; a release before that one is read from the historical file, so the first 1.3
+    release still lists its version move."""
+    repo = tmp_path / "repo"
+    historical = repo / rn.HISTORICAL_PUBLIC_CONTRACT_SNAPSHOT
+    current = repo / rn.PUBLIC_CONTRACT_SNAPSHOT
+    historical.parent.mkdir(parents=True)
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "dev@example.com")
+    _git(repo, "config", "user.name", "Dev")
+    entry = {"schema_hash": "h", "fields": {}}
+    key = "assessment.AssessmentResult"
+    historical.write_text(
+        json.dumps({"released": "v1.0.0", "contracts": {key: {**entry, "version": "1.1"}}})
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: record v1.0.0")
+    _git(repo, "tag", "v1.0.0")
+    current.write_text(
+        json.dumps({"released": "v1.1.0", "contracts": {key: {**entry, "version": "1.3"}}})
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: record v1.1.0")
+    _git(repo, "tag", "v1.1.0")
+    [line] = rn.changelog_between(repo, "v1.0.0", "v1.1.0")
+    assert f"`{key}`" in line and "1.1" in line and "1.3" in line, line
+    assert "added" not in line
+
+
 def test_main_refuses_an_unknown_ref(tmp_path: Path) -> None:
     _git(tmp_path, "init", "-q")
     with pytest.raises(SystemExit):

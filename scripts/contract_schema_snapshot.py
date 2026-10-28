@@ -66,10 +66,13 @@ The public ``assess()`` contract (``src/assessment/models.py``, #1184) is versio
 own and promised to callers, so it is compared with the shape the last release shipped
 rather than with main: ``build_public_snapshot()`` records ``PUBLIC_CONTRACTS`` with the
 same ``field_summary()``, and ``evaluate_against_released()`` applies the same
-classification against ``tests/contract/assess_released_snapshot.json`` (a breaking
+classification against ``tests/contract/assess_released_since_1_3.json`` (a breaking
 change needs a MAJOR move of ``CONTRACT_VERSION``; once a release is recorded, an additive
 one needs a MINOR move). The release step records the shipped shape with
-``--write-released <tag>``.
+``--write-released <tag>``. That baseline starts at contract 1.3, the only version this
+release supports (#1641); ``tests/contract/assess_released_snapshot.json`` is the frozen
+record of the last release recorded before 1.3 (v0.4.0-beta.1's contract 1.1; v0.4.0-beta.2
+shipped 1.2, but its shape was never recorded), kept and never re-recorded.
 
 Regenerate the committed snapshot deliberately, review it like the routing
 snapshot (``git diff`` on the file -- it is ``indent=2``, one field change
@@ -105,7 +108,14 @@ REPO = Path(__file__).resolve().parent.parent
 CONTRACTS_DIR = REPO / "src" / "contracts"
 SNAPSHOT_PATH = REPO / "tests" / "contract" / "schema_snapshot.json"
 REGENERATE_COMMAND = "uv run python scripts/contract_schema_snapshot.py --write"
-RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_snapshot.json"
+#: The public contract's released shape from contract 1.3 on (#1641): what the release
+#: step records (``--write-released``) and every guard compares with. ``"released": null``
+#: until the first release that ships 1.3 records its tag.
+RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_since_1_3.json"
+#: The last release recorded before 1.3 (v0.4.0-beta.1's contract 1.1; v0.4.0-beta.2's
+#: 1.2 was never recorded): the historical record, kept as it was and never re-recorded.
+#: Its versions are retired.
+HISTORICAL_RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_snapshot.json"
 WRITE_RELEASED_COMMAND = "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
 
 #: The public contract's models (key -> ``module:Class``), compared with the shape the
@@ -761,7 +771,7 @@ def evaluate_against_released(released: Mapping[str, Any], actual: dict[str, Any
     """Every public-contract change since the last release that its version does not
     cover (#1184).
 
-    ``released`` is ``tests/contract/assess_released_snapshot.json``: ``{"released": tag
+    ``released`` is ``tests/contract/assess_released_since_1_3.json``: ``{"released": tag
     or None, "contracts": {key: entry}}``. A change ``diff_fields`` classifies as MAJOR
     (a field removed or renamed, a type changed, an enum value removed or changed, a
     field made required) needs the MAJOR number to rise. Once a release is recorded
@@ -864,7 +874,8 @@ def released_document(tag: str | None, repo: Path = REPO) -> dict[str, Any]:
         )
     return {
         "about": (
-            "The public assess() contract's shape at the last release (#1184). Compared by "
+            "The public assess() contract's shape at the last release, from contract 1.3 "
+            "on (#1184, #1641). Compared by "
             "tests/contract/test_assess_released_contract.py and, against the base branch's "
             "copy, by scripts/resolve_contract_versions.py --check --against. Recorded by the "
             "release step, never by hand: " + WRITE_RELEASED_COMMAND
@@ -967,7 +978,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="TAG",
         help=(
             "record the public assess() contract's shape at release TAG (read from the tag) "
-            "in tests/contract/assess_released_snapshot.json (the release step)"
+            f"in {RELEASED_SNAPSHOT_PATH.relative_to(REPO).as_posix()} (the release step)"
         ),
     )
     parser.add_argument("--print-public", action="store_true", help=argparse.SUPPRESS)

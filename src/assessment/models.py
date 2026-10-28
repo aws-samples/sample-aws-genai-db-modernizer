@@ -20,16 +20,15 @@ validates them; the result carries them as plain strings.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     PrivateAttr,
-    SerializerFunctionWrapHandler,
+    ValidationError,
     field_validator,
-    model_serializer,
     model_validator,
 )
 
@@ -39,57 +38,44 @@ from src.shared.target_databases import normalize_target_databases
 #: The version of this public surface (not of any internal contract).
 CONTRACT_VERSION: Literal["1.3"] = "1.3"
 
-#: The ``contract_version`` values of this MAJOR the models read: a request or a result
-#: written for an earlier MINOR version still validates. 1.1 added the OpenSearch entry
-#: of the design block (#1513); 1.2 the fields of :data:`ADDED_IN_1_2` (#1603); 1.3 the
-#: fields of :data:`ADDED_IN_1_3` (#1632).
-ContractVersion = Literal["1.0", "1.1", "1.2", "1.3"]
+#: The ``contract_version`` values the models read and write: 1.3 only. Any other value
+#: is refused; the retired ones (:data:`RETIRED_CONTRACT_VERSIONS`) with
+#: :class:`RetiredContractVersionError`.
+ContractVersion = Literal["1.3"]
 
-#: The fields contract 1.2 added, by model (#1603). Each has a default, so a 1.0 or 1.1
-#: document (which has none of them) still loads, and the published result schema lists
-#: them as optional for the same reason, although the library always writes them. A
-#: 1.2 result is checked by the rules that start with 1.2 (``AssessmentResult``).
-ADDED_IN_1_2: dict[str, tuple[str, ...]] = {
-    "StatementResult": ("query_text", "matched_anti_patterns", "fit_breakdown"),
-    "Summary": ("table_facts",),
-    "EngineLine": ("unique_query_ids",),
-    "Consolidation": ("action", "queries_retained"),
-    "DynamoDBTable": ("aggregate_pattern", "entities"),
-}
+#: The contract versions this release refuses by name (#1641): 1.0, 1.1 and 1.2 were
+#: initial development versions during the beta, removed in :data:`RETIRED_IN`.
+RETIRED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2")
 
-#: The contract versions before 1.2: a result of one is read exactly as it was.
-BEFORE_1_2: frozenset[str] = frozenset({"1.0", "1.1"})
+#: The release that removed :data:`RETIRED_CONTRACT_VERSIONS`.
+RETIRED_IN = "v0.4.0-beta.3"
 
-#: The fields contract 1.3 added, by model: the average of the row counts of each
-#: foreign key's two tables, a row count's basis and a statement's parse status (#1632),
-#: the statement a statement part was cut from and the statements a cut could not place
-#: (``cut_collection``, #1633). Optional in the published schema, as 1.2's are, so an
-#: earlier document still loads.
-ADDED_IN_1_3: dict[str, tuple[str, ...]] = {
-    "TableForeignKey": ("avg_children_per_parent", "basis"),
-    "TableFacts": ("row_count_basis",),
-    "StatementResult": ("parse_status", "from_query_id"),
-    "WorkloadScope": ("unplaced_statements",),
-}
 
-#: The contract versions before 1.3: a result of one is written without 1.3's fields.
-BEFORE_1_3: frozenset[str] = frozenset({"1.0", "1.1", "1.2"})
+class RetiredContractVersionError(ValueError):
+    """A request or a result names a retired contract version (1.0, 1.1 or 1.2).
 
-#: The engines with an entry in the design block, by the contract version that defines
-#: them: a result of that version has an entry for each of its designed engines in the
-#: set, in ``summary.designed_engines`` order. A ``1.0`` result is not checked: it is
-#: read exactly as contract 1.0 read it (it can, for one, list ``opensearch`` as designed
-#: with no entry).
-DESIGN_ENTRY_ENGINES: dict[str, frozenset[str]] = {
-    "1.1": frozenset(
-        {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
-    ),
-}
-#: The engines whose design entry contract 1.1 added: a 1.0 result is written without them.
-DESIGN_ENGINES_ADDED_IN_1_1: frozenset[str] = frozenset({"opensearch"})
-# 1.2 and 1.3 added no design engine.
-DESIGN_ENTRY_ENGINES["1.2"] = DESIGN_ENTRY_ENGINES["1.1"]
-DESIGN_ENTRY_ENGINES["1.3"] = DESIGN_ENTRY_ENGINES["1.1"]
+    This release supports contract 1.3 only: the earlier versions were beta development
+    versions, removed in v0.4.0-beta.3. Pin ``contract_version`` "1.3" (or send none);
+    docs/contracts/assess.md's "Removed: 1.0, 1.1 and 1.2" says how to migrate. An
+    unknown version is refused as any invalid field is (``pydantic.ValidationError``)."""
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+        super().__init__(
+            f"contract_version {version!r} is no longer supported: this release supports "
+            f'contract {CONTRACT_VERSION} only (pin contract_version "{CONTRACT_VERSION}", '
+            "or send none). Versions "
+            f"{', '.join(RETIRED_CONTRACT_VERSIONS[:-1])} and {RETIRED_CONTRACT_VERSIONS[-1]} "
+            f"were beta development versions, removed in {RETIRED_IN}; to migrate, see "
+            "docs/contracts/assess.md, 'Removed: 1.0, 1.1 and 1.2'."
+        )
+
+
+#: The engines with an entry in the design block: a result has an entry for each of its
+#: designed engines in the set, in ``summary.designed_engines`` order.
+DESIGN_ENTRY_ENGINES: frozenset[str] = frozenset(
+    {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
+)
 
 RunThrough = Literal["analysis", "reality_check", "schema_design", "synthesis"]
 
@@ -187,33 +173,90 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
-def _added_in_1_2(model: str) -> ConfigDict:
-    """``_Strict``'s config, with the fields 1.2 added to ``model`` (:data:`ADDED_IN_1_2`)
-    left out of the schema's ``required``: an earlier version's document has none."""
-    return _optional_in_schema(ADDED_IN_1_2[model])
+if TYPE_CHECKING:  # its name, for the type checker only
+    from pydantic._internal._model_construction import ModelMetaclass as _ModelMetaclass
+else:
+    #: The metaclass pydantic gives every model.
+    _ModelMetaclass = type(BaseModel)
 
 
-def _added_in_1_3(model: str) -> ConfigDict:
-    """As :func:`_added_in_1_2`, for the fields 1.3 added (:data:`ADDED_IN_1_3`)."""
-    return _optional_in_schema(ADDED_IN_1_3[model])
+class _RefusesRetiredVersions(_ModelMetaclass):
+    """Building a model (``Model(...)``) raises :class:`RetiredContractVersionError` for
+    a retired version. It wraps the call rather than ``__init__``: a custom ``__init__``
+    makes pydantic run ``model_validate`` through it, which drops its ``context``."""
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().__call__(*args, **kwargs)
+        except ValidationError as exc:
+            _raise_if_retired(exc)
+            raise
 
 
-def _added_in_1_2_and_1_3(model: str) -> ConfigDict:
-    """As :func:`_added_in_1_2`, for a model both 1.2 and 1.3 added fields to."""
-    return _optional_in_schema(ADDED_IN_1_2[model] + ADDED_IN_1_3[model])
+class _VersionChecked(_Strict, metaclass=_RefusesRetiredVersions):
+    """A document with a ``contract_version``: one naming a retired version is refused.
+
+    Building it (``Model(...)``) and ``model_validate``, ``model_validate_json`` and
+    ``model_validate_strings`` raise :class:`RetiredContractVersionError` itself. Any
+    other path pydantic validates by (a ``TypeAdapter``, a model holding this one) raises
+    a ``pydantic.ValidationError`` whose ``contract_version`` error carries the same
+    message, with the error itself in its ``ctx``."""
+
+    @field_validator("contract_version", mode="before", check_fields=False)
+    @classmethod
+    def _refuse_a_retired_version(cls, value: Any) -> Any:
+        if isinstance(value, str) and value in RETIRED_CONTRACT_VERSIONS:
+            raise RetiredContractVersionError(value)
+        return value
+
+    @classmethod
+    def model_validate(cls, obj: Any, *args: Any, **kwargs: Any) -> Self:
+        try:
+            return super().model_validate(obj, *args, **kwargs)
+        except ValidationError as exc:
+            _raise_if_retired(exc)
+            raise
+
+    @classmethod
+    def model_validate_json(cls, json_data: Any, *args: Any, **kwargs: Any) -> Self:
+        try:
+            return super().model_validate_json(json_data, *args, **kwargs)
+        except ValidationError as exc:
+            _raise_if_retired(exc)
+            raise
+
+    @classmethod
+    def model_validate_strings(cls, obj: Any, *args: Any, **kwargs: Any) -> Self:
+        try:
+            return super().model_validate_strings(obj, *args, **kwargs)
+        except ValidationError as exc:
+            _raise_if_retired(exc)
+            raise
 
 
-def _optional_in_schema(added: tuple[str, ...]) -> ConfigDict:
-    """``_Strict``'s config, with ``added`` left out of the schema's ``required``."""
+def _raise_if_retired(exc: ValidationError) -> None:
+    """Raise the :class:`RetiredContractVersionError` that ``exc`` wraps, if any: the one
+    the ``contract_version`` validator raised for a retired version."""
+    for error in exc.errors():
+        raised = (error.get("ctx") or {}).get("error")
+        if error.get("loc") == ("contract_version",) and isinstance(
+            raised, RetiredContractVersionError
+        ):
+            raise raised from exc
 
-    def optional(schema: dict[str, Any]) -> None:
-        required = [name for name in schema.get("required", []) if name not in added]
-        if required:
-            schema["required"] = required
-        else:
-            schema.pop("required", None)
 
-    return ConfigDict(**_Strict.model_config, json_schema_extra=optional)
+def check_contract_version(version: Any) -> None:
+    """Refuse a ``contract_version`` other than :data:`CONTRACT_VERSION`, for a request
+    that skipped validation (``model_construct``, ``model_copy(update=...)``, a field set
+    after it was built): :class:`RetiredContractVersionError` for a retired one, else a
+    ``ValueError``."""
+    if isinstance(version, str) and version in RETIRED_CONTRACT_VERSIONS:
+        raise RetiredContractVersionError(version)
+    if version != CONTRACT_VERSION:
+        raise ValueError(
+            f"contract_version {version!r} is not supported: this release supports "
+            f"contract {CONTRACT_VERSION} only"
+        )
 
 
 # --------------------------------------------------------------------------- request
@@ -298,7 +341,7 @@ UnplacedReason = Literal["no_tables_read", "tables_not_collected"]
 
 class UnplacedStatement(_Strict):
     """A statement a cut could not place: it reads no table of the collection, so it
-    belongs to no cut's tables. Since 1.3."""
+    belongs to no cut's tables."""
 
     query_id: str
     reason: UnplacedReason = Field(
@@ -316,9 +359,7 @@ class WorkloadScope(_Strict):
 
     ``cut_collection`` (#1633) writes one for each cut: the tables kept, the statement
     parts in ``rewritten_query_ids``, the foreign keys it cut in ``dropped_foreign_keys``
-    and, since 1.3, the statements it could not place in ``unplaced_statements``."""
-
-    model_config = _added_in_1_3("WorkloadScope")
+    and the statements it could not place in ``unplaced_statements``."""
 
     tables: list[str] = Field(default_factory=list)
     derived_from: str | None = None
@@ -329,7 +370,7 @@ class WorkloadScope(_Strict):
     dropped_foreign_keys: list[dict[str, Any]] = Field(
         default_factory=list,
         description=(
-            "Foreign keys the cut workload left out. Since 1.3, cut_collection writes one "
+            "Foreign keys the cut workload left out. cut_collection writes one "
             "object per foreign key between a kept table and a dropped one: "
             "constraint_name, table_id (the table that holds the key) and "
             "referenced_table_id. Any other object is echoed as given"
@@ -338,21 +379,22 @@ class WorkloadScope(_Strict):
     unplaced_statements: list[UnplacedStatement] = Field(
         default_factory=list,
         description=(
-            "Since 1.3. The statements the cut left out because they read no table of the "
+            "The statements the cut left out because they read no table of the "
             "collection (none of them belongs to any cut's tables), each with its reason, "
-            "unless the caller gave a part for it. Not echoed in a result written before 1.3"
+            "unless the caller gave a part for it"
         ),
     )
 
 
-class AssessmentRequest(_Strict):
+class AssessmentRequest(_VersionChecked):
     """One assessment: a database's raw collection and the options to run it with."""
 
     contract_version: ContractVersion = Field(
         CONTRACT_VERSION,
         description=(
-            "The contract version the caller builds on; any 1.x is read, and the result is "
-            "written for the same version. Pin it: with none, the latest"
+            "The contract version the caller builds on: 1.3, the only version this "
+            "release reads (with none, 1.3). The retired 1.0, 1.1 and 1.2 are refused with "
+            "RetiredContractVersionError; any other value is refused as invalid"
         ),
     )
     database_name: str = Field(
@@ -403,8 +445,6 @@ class RelationalEngine(_Strict):
 class EngineLine(_Strict):
     """One analysed engine, as the run left it."""
 
-    model_config = _added_in_1_2("EngineLine")
-
     engine: str
     role: EngineRole
     statement_count: int = Field(
@@ -444,7 +484,7 @@ class EngineLine(_Strict):
     unique_query_ids: list[str] | None = Field(
         None,
         description=(
-            "Since 1.2. The statements `unique_queries` counts, by query id, in the "
+            "The statements `unique_queries` counts, by query id, in the "
             "reality check's order: its first-pass unique-value set for the engine. "
             "None when the reality check did not assess it"
         ),
@@ -455,8 +495,6 @@ class Consolidation(_Strict):
     """One reality-check consolidation: statements moved off an engine that added no
     unique value."""
 
-    model_config = _added_in_1_2("Consolidation")
-
     from_engine: str
     to_engine: str
     query_count: int = Field(..., ge=0, description="Statements it moved")
@@ -464,14 +502,14 @@ class Consolidation(_Strict):
     action: ConsolidationAction | None = Field(
         None,
         description=(
-            "Since 1.2. full: every statement it held moved off from_engine; partial: "
-            "some stayed (`queries_retained`). None only in a result written before 1.2"
+            "full: every statement it held moved off from_engine; partial: "
+            "some stayed (`queries_retained`). The library always writes it"
         ),
     )
     queries_retained: list[str] = Field(
         default_factory=list,
         description=(
-            "Since 1.2. A partial consolidation's statements that stayed on from_engine, "
+            "A partial consolidation's statements that stayed on from_engine, "
             "by query id; empty for a full one"
         ),
     )
@@ -512,23 +550,7 @@ class TableLine(_Strict):
     )
 
 
-class _WrittenBefore13(_Strict):
-    """A model whose 1.3 result writes None for a value the collection does not know,
-    where 1.0 to 1.2 wrote the collector's default for it (0, 1 call a day, True, an
-    empty string; #1632). The library records those earlier values when it builds the
-    result, so a result pinned to 1.0-1.2 is written as before; a document read from
-    JSON records none, so it is written back as it was read."""
-
-    _written_before_1_3: dict[str, Any] = PrivateAttr(default_factory=dict)
-
-    def set_written_before_1_3(self, values: dict[str, Any]) -> None:
-        self._written_before_1_3 = dict(values)
-
-    def written_before_1_3(self) -> dict[str, Any]:
-        return dict(self._written_before_1_3)
-
-
-class TableColumn(_WrittenBefore13):
+class TableColumn(_Strict):
     """One column of a source table, as the collection describes it."""
 
     name: str
@@ -536,10 +558,9 @@ class TableColumn(_WrittenBefore13):
     nullable: bool | None = Field(
         None,
         description=(
-            "Whether it allows NULL; None when unknown. Since 1.3 also None when a raw "
-            "collection gives no `is_nullable`, NULL or a value no collection script writes "
-            "(a 1.2 result shows true for a missing value, false for the others); a "
-            "collector output carries the collector's value"
+            "Whether it allows NULL; None when unknown, which includes a raw "
+            "collection that gives no `is_nullable`, NULL or a value no collection script "
+            "writes; a collector output carries the collector's value"
         ),
     )
 
@@ -561,12 +582,10 @@ FOREIGN_KEY_ROWS_NOTE = (
 class TableForeignKey(_Strict):
     """One foreign key constraint of a source table (its columns in constraint order).
 
-    Since 1.3 it carries the average of its two tables' row counts, read from the
+    It carries the average of its two tables' row counts, read from the
     collection with no model call. These are statistics, not a design decision: an
     average cannot show whether a child set is bounded. For any data model, the
     recommended path is run_through="schema_design"."""
-
-    model_config = _added_in_1_3("TableForeignKey")
 
     constraint_name: str
     columns: list[str] = Field(default_factory=list, description="The referencing columns")
@@ -585,7 +604,7 @@ class TableForeignKey(_Strict):
         None,
         ge=0,
         description=(
-            "Since 1.3. The table's row count divided by the referenced table's, unrounded: "
+            "The table's row count divided by the referenced table's, unrounded: "
             "rows of this table per row of `referenced_table`, on average. None when "
             "`referenced_table` is None, either table's `row_count` is None (unknown), or "
             "the referenced table has 0 rows; 0 only when both counts are known. "
@@ -595,7 +614,7 @@ class TableForeignKey(_Strict):
     basis: ForeignKeyRowsBasis | None = Field(
         None,
         description=(
-            "Since 1.3. Where `avg_children_per_parent` comes from: the source catalogue's "
+            "Where `avg_children_per_parent` comes from: the source catalogue's "
             "row counts, as the collection read them; catalogue_exact when both tables' "
             "`row_count_basis` is exact, catalogue_estimate otherwise. None when the average "
             "is None"
@@ -610,10 +629,8 @@ class TableForeignKey(_Strict):
 RowCountBasis = Literal["exact", "estimate"]
 
 
-class TableFacts(_WrittenBefore13):
+class TableFacts(_Strict):
     """One collected source table's facts, as the library read them from the collection."""
-
-    model_config = _added_in_1_3("TableFacts")
 
     table_id: str = Field(
         ..., description="The source table, as `statements[].tables` and `summary.tables` name it"
@@ -622,15 +639,14 @@ class TableFacts(_WrittenBefore13):
         None,
         ge=0,
         description=(
-            "Rows, as the source's catalogue records them. Since 1.3 None when the "
-            "collection has no count for the table, so 0 is an empty table; a 1.2 result "
-            "shows an unknown count as 0"
+            "Rows, as the source's catalogue records them. None when the "
+            "collection has no count for the table, so 0 is an empty table"
         ),
     )
     row_count_basis: RowCountBasis | None = Field(
         None,
         description=(
-            "Since 1.3. How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) "
+            "How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) "
             "or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL "
             "Server sys.partitions.rows). None when `row_count` is None or the collection "
             "does not say"
@@ -640,8 +656,8 @@ class TableFacts(_WrittenBefore13):
         None,
         ge=0,
         description=(
-            "Size in megabytes, data and indexes, as collected. Since 1.3 None when the "
-            "collection reports no size for the table; a 1.2 result shows it as 0"
+            "Size in megabytes, data and indexes, as collected. None when the "
+            "collection reports no size for the table"
         ),
     )
     columns: list[TableColumn] = Field(
@@ -656,8 +672,6 @@ class TableFacts(_WrittenBefore13):
 
 
 class Summary(_Strict):
-    model_config = _added_in_1_2("Summary")
-
     run_through_reached: RunThrough
     source_engine: str = Field(
         ..., description="The source database engine, as the collection states it"
@@ -728,7 +742,7 @@ class Summary(_Strict):
     table_facts: list[TableFacts] = Field(
         default_factory=list,
         description=(
-            "Since 1.2. One entry per collected source table, by table_id, from "
+            "One entry per collected source table, by table_id, from "
             "'analysis' on: its row count, size, columns, primary key and foreign keys"
         ),
     )
@@ -879,9 +893,7 @@ class FitBreakdown(_Strict):
     )
 
 
-class StatementResult(_WrittenBefore13):
-    model_config = _added_in_1_2_and_1_3("StatementResult")
-
+class StatementResult(_Strict):
     query_id: str
     query_tags: list[str] = Field(
         default_factory=list, description="Leading or trailing comment tags; never read by routing"
@@ -895,10 +907,9 @@ class StatementResult(_WrittenBefore13):
         None,
         ge=0,
         description=(
-            "Its execution count over the day the collection covers, per second. Since 1.3 "
-            "None when a raw collection gives no execution count, and 0.0 for a count of 0 "
-            "(a 1.2 result shows one call a day, 1/86400, for both); a collector output "
-            "carries its own figure"
+            "Its execution count over the day the collection covers, per second. None "
+            "when a raw collection gives no execution count, and 0.0 for a count of 0; a "
+            "collector output carries its own figure"
         ),
     )
     rewritten_by_caller: bool = False
@@ -960,16 +971,15 @@ class StatementResult(_WrittenBefore13):
     query_text: str | None = Field(
         None,
         description=(
-            "Since 1.2. The statement text the parser read: when rows sharing a digest "
+            "The statement text the parser read: when rows sharing a digest "
             "merged, the costliest variant's. Collection text: escape it when rendering. "
-            "Since 1.3 None when the collection gives the row no text (a 1.2 result shows "
-            "an empty string)"
+            "None when the collection gives the row no text"
         ),
     )
     parse_status: ParseStatus | None = Field(
         None,
         description=(
-            "Since 1.3. How its facts (`query_type`, `join_count`, `tables`) were read: "
+            "How its facts (`query_type`, `join_count`, `tables`) were read: "
             "parsed (the SQL parser read the statement) or fallback (the parser could not, "
             "so they are a pattern-based estimate). None when the collection gives no "
             "statement text"
@@ -978,21 +988,21 @@ class StatementResult(_WrittenBefore13):
     matched_anti_patterns: list[AntiPatternRef] = Field(
         default_factory=list,
         description=(
-            "Since 1.2. The penalised anti-patterns found on it against any analysed "
+            "The penalised anti-patterns found on it against any analysed "
             "engine, each once, by id; each engine's points are in `fit_breakdown`"
         ),
     )
     fit_breakdown: dict[str, FitBreakdown] = Field(
         default_factory=dict,
         description=(
-            "Since 1.2. Per engine the scorer saw: how it reached `fit` (every engine in "
+            "Per engine the scorer saw: how it reached `fit` (every engine in "
             "`fit` has one, with the same `fit`), or the gate that left it unscored"
         ),
     )
     from_query_id: str | None = Field(
         None,
         description=(
-            "Since 1.3. Set on a statement part (a caller's rewrite of a statement that "
+            "Set on a statement part (a caller's rewrite of a statement that "
             "crossed a cut, built by cut_collection): the query_id of the statement it was "
             "cut from, read from the part's id. None for every other statement"
         ),
@@ -1074,8 +1084,6 @@ class DynamoDBEntity(_Strict):
 class DynamoDBTable(_Strict):
     """One target table."""
 
-    model_config = _added_in_1_2("DynamoDBTable")
-
     name: str
     source_tables: list[str] = Field(
         default_factory=list, description="The source tables it holds, as the design names them"
@@ -1091,15 +1099,15 @@ class DynamoDBTable(_Strict):
         Field(
             None,
             description=(
-                "Since 1.2. How the design shares the table among its source tables; None when "
-                "the design does not say"
+                "How the design shares the table among its source tables; None when the "
+                "design does not say"
             ),
         )
     )
     entities: list[DynamoDBEntity] = Field(
         default_factory=list,
         description=(
-            "Since 1.2. An item collection's entity types, each with its key templates; "
+            "An item collection's entity types, each with its key templates; "
             "empty for any other table"
         ),
     )
@@ -1302,7 +1310,7 @@ class _NotCompared:
     __hash__ = None  # type: ignore[assignment]
 
 
-class AssessmentResult(_Strict):
+class AssessmentResult(_VersionChecked):
     """One assessment's result: where each statement runs, which statements move
     together and which engine owns each table, and, for a designed result, each
     designed engine's data model (``designs``).
@@ -1324,9 +1332,9 @@ class AssessmentResult(_Strict):
     contract_version: ContractVersion = Field(
         CONTRACT_VERSION,
         description=(
-            "The contract version the result was written for: the request's "
-            "contract_version (CONTRACT_VERSION when the request names none), written as "
-            "that version writes it; any 1.x is read"
+            "The contract version the result is written for: 1.3, the only version "
+            "this release reads and writes. A result naming a retired version (1.0, 1.1 "
+            "or 1.2) is refused with RetiredContractVersionError"
         ),
     )
     label: ResultLabel = Field(
@@ -1352,8 +1360,7 @@ class AssessmentResult(_Strict):
         description=(
             "Set only when label is 'designed' (None otherwise): one entry per engine in "
             "summary.designed_engines, in that order, each copied from the engine's "
-            "schema design; checked from contract 1.1 on (a 1.0 result has no OpenSearch "
-            "entry and is read as 1.0 read it)"
+            "schema design"
         ),
     )
     artifacts: Artifacts | None = None
@@ -1375,24 +1382,6 @@ class AssessmentResult(_Strict):
         carried = getattr(self.artifacts, "collector_output", None) if self.artifacts else None
         return carried if isinstance(carried, dict) else None
 
-    @model_serializer(mode="wrap")
-    def _as_its_version(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
-        # No return annotation: the published schema stays the fields' own.
-        data = handler(self)
-        if self.contract_version in BEFORE_1_3 and isinstance(data, dict):
-            _drop_fields_added_in_1_3(data)
-            _restore_values_before_1_3(data, self)
-        if self.contract_version in BEFORE_1_2 and isinstance(data, dict):
-            _drop_fields_added_in_1_2(data)
-            if self.contract_version == "1.0" and isinstance(data.get("designs"), list):
-                # 1.0 had no entry for the engines 1.1 added (OpenSearch, #1513).
-                data["designs"] = [
-                    d
-                    for d in data["designs"]
-                    if not (isinstance(d, dict) and d.get("engine") in DESIGN_ENGINES_ADDED_IN_1_1)
-                ]
-        return data
-
     @model_validator(mode="after")
     def _label_matches_the_phase(self) -> AssessmentResult:
         reached = self.summary.run_through_reached
@@ -1409,25 +1398,23 @@ class AssessmentResult(_Strict):
             )
         if (self.designs is not None) != (self.label == "designed"):
             raise ValueError("designs is set exactly when label is 'designed'")
-        if self.contract_version not in BEFORE_1_2:
-            for statement in self.statements:
-                _check_fit_breakdown(statement)
-        # 1.0 results keep exactly 1.0's checks; the entry rule starts with 1.1.
-        if self.designs is not None and self.contract_version != "1.0":
-            with_entry = DESIGN_ENTRY_ENGINES[self.contract_version]
-            expected_engines = [e for e in self.summary.designed_engines if e in with_entry]
+        for statement in self.statements:
+            _check_fit_breakdown(statement)
+        if self.designs is not None:
+            expected_engines = [
+                e for e in self.summary.designed_engines if e in DESIGN_ENTRY_ENGINES
+            ]
             listed = [d.engine for d in self.designs]
             if listed != expected_engines:
                 raise ValueError(
-                    f"designs must have one entry per designed engine with an entry in "
-                    f"contract {self.contract_version}, in summary.designed_engines order: "
-                    f"expected {expected_engines}, got {listed}"
+                    f"designs must have one entry per designed engine with an entry, in "
+                    f"summary.designed_engines order: expected {expected_engines}, got {listed}"
                 )
         return self
 
 
 def _check_fit_breakdown(statement: StatementResult) -> None:
-    """From contract 1.2 on: every engine in ``fit`` has an ungated breakdown with the same
+    """Every engine in ``fit`` has an ungated breakdown with the same
     ``fit``; every other entry is a gate only (no score, nothing else set), for an engine
     with no ``fit`` that ``excluded`` lists."""
     for engine, score in statement.fit.items():
@@ -1460,70 +1447,3 @@ def _check_fit_breakdown(statement: StatementResult) -> None:
                 f"statement {statement.query_id}: {engine!r} is gated in fit_breakdown, so "
                 "its entry must hold only the gate, and excluded must list it"
             )
-
-
-def _drop_fields_added_in_1_2(data: dict[str, Any]) -> None:
-    """A result written for 1.0 or 1.1, as that version writes it: without the fields
-    1.2 added (:data:`ADDED_IN_1_2`), so reading one and writing it back gives the same
-    document."""
-
-    def drop(items: Any, model: str) -> None:
-        for item in items if isinstance(items, list) else [items]:
-            if isinstance(item, dict):
-                for name in ADDED_IN_1_2[model]:
-                    item.pop(name, None)
-
-    summary = data.get("summary")
-    drop(summary, "Summary")
-    if isinstance(summary, dict):
-        drop(summary.get("engines"), "EngineLine")
-        drop(summary.get("consolidations"), "Consolidation")
-    drop(data.get("statements"), "StatementResult")
-    for design in data.get("designs") or []:
-        if isinstance(design, dict) and design.get("engine") == "dynamodb":
-            drop(design.get("tables"), "DynamoDBTable")
-
-
-def _drop_fields_added_in_1_3(data: dict[str, Any]) -> None:
-    """A result written for 1.0, 1.1 or 1.2, as that version writes it: without the
-    fields 1.3 added (:data:`ADDED_IN_1_3`), so reading one and writing it back gives the
-    same document. (A 1.0 or 1.1 result then loses ``table_facts`` with 1.2's fields.)"""
-    if isinstance(data.get("scope"), dict):
-        for name in ADDED_IN_1_3["WorkloadScope"]:
-            data["scope"].pop(name, None)
-    summary = data.get("summary")
-    facts = summary.get("table_facts") if isinstance(summary, dict) else None
-    for statement in data.get("statements") or []:
-        if isinstance(statement, dict):
-            for name in ADDED_IN_1_3["StatementResult"]:
-                statement.pop(name, None)
-    for table in facts if isinstance(facts, list) else []:
-        if isinstance(table, dict):
-            for name in ADDED_IN_1_3["TableFacts"]:
-                table.pop(name, None)
-        keys = table.get("foreign_keys") if isinstance(table, dict) else None
-        for fk in keys if isinstance(keys, list) else []:
-            if isinstance(fk, dict):
-                for name in ADDED_IN_1_3["TableForeignKey"]:
-                    fk.pop(name, None)
-
-
-def _restore_values_before_1_3(data: dict[str, Any], result: AssessmentResult) -> None:
-    """A result written for 1.0 to 1.2: each value 1.3 writes as None because the
-    collection does not know it, as that version wrote it
-    (:class:`_WrittenBefore13`)."""
-
-    def restore(written: Any, models: list[Any]) -> list[tuple[dict[str, Any], Any]]:
-        if not isinstance(written, list) or len(written) != len(models):
-            return []
-        pairs = [(item, model) for item, model in zip(written, models, strict=True)]
-        for item, model in pairs:
-            if isinstance(item, dict):
-                item.update(model.written_before_1_3())
-        return [(item, model) for item, model in pairs if isinstance(item, dict)]
-
-    summary = data.get("summary")
-    if isinstance(summary, dict):
-        for item, model in restore(summary.get("table_facts"), result.summary.table_facts):
-            restore(item.get("columns"), model.columns)
-    restore(data.get("statements"), result.statements)

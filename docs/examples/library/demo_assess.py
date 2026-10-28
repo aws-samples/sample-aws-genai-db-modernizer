@@ -150,7 +150,7 @@ def show_analysis(sample: str, collection: dict[str, Any], engines: list[str] | 
     line(f"statement {qid(statement.query_id)} ({statement.query_type}): fit {fit}")
     same = first.model_dump_json() == again.model_dump_json()
     line(f"A repeat run gives a byte-identical result: {'yes' if same else 'NO'}")
-    # Contract 1.2: the text the parser read, and how the scorer reached its best score.
+    # The text the parser read, and how the scorer reached its best score.
     line(f"query_text: {short(statement.query_text, 80)}")
     found = ", ".join(
         f"{p.id} ({'intrinsic' if p.intrinsic else 'fixable'})"
@@ -223,7 +223,7 @@ def show_placement(result: AssessmentResult) -> None:
             ]
         )
         line(f"  {table.table_id}: {table.owner} ({table.owner_basis}){extra}")
-    # Contract 1.2: every collected table's facts, from "analysis" on.
+    # Every collected table's facts, from "analysis" on.
     facts = summary.table_facts
     line(
         f"table facts: {count(len(facts), 'table')}, "

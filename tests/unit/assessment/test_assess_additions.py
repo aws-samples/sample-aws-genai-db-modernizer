@@ -375,14 +375,12 @@ def test_a_label_that_does_not_match_the_phase_is_refused(run_through: str, wron
 @pytest.mark.passes_on_main
 def test_designed_only_with_a_schema_design() -> None:
     dumped = assessed("wordpress", "reality_check").model_dump(mode="json")
-    # The 1.0 payload this test has always checked: a 1.0 result keeps 1.0's checks,
-    # with no one-entry-per-designed-engine rule (that starts with 1.1, #1513).
-    dumped["contract_version"] = "1.0"
+    entry = {"engine": "dynamodb", "validation_passed": True, "tables": []}
     for phase in ("schema_design", "synthesis"):
         dumped["summary"]["run_through_reached"] = phase
         dumped["summary"]["designed_engines"] = ["dynamodb"]
         dumped["label"] = "designed"
-        dumped["designs"] = []  # a designed result carries the design block (#1493)
+        dumped["designs"] = [entry]  # a designed result carries the design block (#1493)
         assert AssessmentResult.model_validate(dumped).label == "designed"
         dumped["label"] = "recommendation"
         with pytest.raises(ValidationError, match="label must be 'designed'"):

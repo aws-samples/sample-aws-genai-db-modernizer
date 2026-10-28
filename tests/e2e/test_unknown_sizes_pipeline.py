@@ -95,7 +95,7 @@ def test_every_engines_analysis_finishes(unknown_run: PipelineResult) -> None:
             assert any("no collected size" in a for a in assumptions), engine
 
 
-@pytest.mark.parametrize("version", [None, "1.2"])
+@pytest.mark.parametrize("version", [None, "1.3"])
 @pytest.mark.parametrize("run_through", ["analysis", "reality_check"])
 def test_assess_finishes_with_every_engine_in_scope(
     collection_file: Path, run_through: str, version: str | None
@@ -115,10 +115,6 @@ def test_assess_finishes_with_every_engine_in_scope(
     result = assess(request)
     assert result.statements
     facts = json.loads(result.model_dump_json())["summary"]["table_facts"]
-    if version == "1.2":
-        # Contract 1.2 states a count and a size the source does not have as 0.
-        unknown = [f for f in facts if f["size_mb"] == 0 and f["row_count"] == 0]
-    else:
-        # From 1.3 (#1632) both are null.
-        unknown = [f for f in facts if f["size_mb"] is None and f["row_count"] is None]
+    # A count and a size the source does not have are null (#1632).
+    unknown = [f for f in facts if f["size_mb"] is None and f["row_count"] is None]
     assert len(unknown) >= NO_SIZE

@@ -19,7 +19,7 @@ from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter, ValidationError
 
 from scripts import render_contract_schemas as rcs
-from src.assessment import AssessmentResult, assess
+from src.assessment import AssessmentResult, RetiredContractVersionError, assess
 from src.assessment.models import (
     AuroraDesign,
     DocumentDBDesign,
@@ -30,7 +30,7 @@ from src.assessment.models import (
 from src.assessment.result_builder import RunState, _design_lines, build_designs
 from src.storage.local_store import LocalArtifactStore
 from tests.assess_models import FAKE_GSI, models_patched
-from tests.unit.assessment.conftest import REPO, assessed, collection
+from tests.unit.assessment.conftest import assessed, collection
 
 DB = "wordpress"
 OPENSEARCH_SCOPE = ("dynamodb", "opensearch")
@@ -539,37 +539,13 @@ def test_a_partial_opensearch_design_reads_its_missing_fields_as_empty() -> None
     assert adapter.validate_python([as_json])[0] == design
 
 
-# --------------------------------------------------------------------------- older results
-
-#: A designed result written by the code before the OpenSearch entry (#1513): a
-#: wordpress run with the engine scope OpenSearch, model phases patched, its
-#: ``statements`` cut to the first three. OpenSearch is in ``summary.designed_engines``
-#: with no ``designs`` entry, as that code wrote it.
-PRE_OPENSEARCH_RESULT = (
-    REPO / "tests" / "fixtures" / "assess_result_v1_0_opensearch_without_entry.json"
-)
-
-
-@pytest.mark.passes_on_main
-def test_a_result_written_before_the_opensearch_entry_still_loads() -> None:
-    text = PRE_OPENSEARCH_RESULT.read_text(encoding="utf-8")
-    document = json.loads(text)
-    assert document["summary"]["designed_engines"] == ["opensearch"]
-    assert document["designs"] == []
-    schema = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
-    Draft202012Validator(schema).validate(document)
-    loaded = AssessmentResult.model_validate_json(text)
-    assert loaded.label == "designed" and loaded.designs == []
-    assert json.loads(loaded.model_dump_json()) == document
-
-
 # --------------------------------------------------------------------------- the entry guard
 
 
 @pytest.mark.passes_on_main
 def test_a_designed_engine_with_an_entry_in_its_version_cannot_lose_it() -> None:
-    """A result of the current version (1.1 on) lists one entry per designed engine, in
-    order: dropping the OpenSearch entry, or any other, or reordering them, is refused."""
+    """A result lists one entry per designed engine, in order: dropping the OpenSearch
+    entry, or any other, or reordering them, is refused."""
     from src.assessment.models import CONTRACT_VERSION
 
     result, _ = designed("design04", OPENSEARCH_SCOPE)
@@ -587,22 +563,8 @@ def test_a_designed_engine_with_an_entry_in_its_version_cannot_lose_it() -> None
             AssessmentResult.model_validate(changed)
 
 
-def test_a_1_0_result_is_not_checked_for_one_entry_per_engine() -> None:
-    """Contract 1.0 had no OpenSearch entry and no entry rule, so a 1.0 result keeps
-    exactly 1.0's checks: one with OpenSearch designed and no entry is valid, and so is
-    one with an engine's entry missing; marked 1.1, the same result is refused."""
-    document = json.loads(PRE_OPENSEARCH_RESULT.read_text(encoding="utf-8"))
-    assert document["contract_version"] == "1.0"
-    AssessmentResult.model_validate(document)
-    document["summary"]["designed_engines"] = ["opensearch", "elasticache"]
-    AssessmentResult.model_validate(document)
-    document["contract_version"] = "1.1"
-    with pytest.raises(ValidationError, match="one entry per designed engine"):
-        AssessmentResult.model_validate(document)
-
-
-#: The shapes contract 1.0 accepts for a designed result with three designed engines
-#: and that 1.1 refuses: no entry at all, one dropped, reordered, one repeated.
+#: The shapes the entry rule refuses for a designed result with three designed engines:
+#: no entry at all, one dropped, reordered, one repeated.
 _ENTRY_SHAPES = {
     "empty": lambda designs: [],
     "dropped": lambda designs: designs[1:],
@@ -613,7 +575,7 @@ _ENTRY_SHAPES = {
 
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize("shape", sorted(_ENTRY_SHAPES))
-def test_the_entry_rule_applies_from_1_1_and_1_0_keeps_its_checks(shape: str) -> None:
+def test_the_entry_rule_refuses_every_other_shape(shape: str) -> None:
     from src.assessment.models import CONTRACT_VERSION
 
     result, _ = designed()
@@ -623,23 +585,23 @@ def test_the_entry_rule_applies_from_1_1_and_1_0_keeps_its_checks(shape: str) ->
     document["designs"] = _ENTRY_SHAPES[shape](document["designs"])
     with pytest.raises(ValidationError, match="one entry per designed engine"):
         AssessmentResult.model_validate(document)
+    # Contract 1.0, which had no entry rule, is retired (#1641): no shape escapes the rule.
     document["contract_version"] = "1.0"
-    assert AssessmentResult.model_validate(document).designs is not None
+    with pytest.raises(RetiredContractVersionError):
+        AssessmentResult.model_validate(document)
 
 
 def test_every_engine_with_an_entry_has_a_reader_and_a_model() -> None:
-    """build_designs cannot skip an engine silently: the engines the current contract
-    version gives an entry, the readers and the modelled entries are the same set, and
+    """build_designs cannot skip an engine silently: the engines the contract gives an
+    entry, the readers and the modelled entries are the same set, and
     it holds every active catalog engine."""
     from typing import get_args
 
-    from src.assessment.models import CONTRACT_VERSION, DESIGN_ENTRY_ENGINES, ContractVersion
+    from src.assessment.models import DESIGN_ENTRY_ENGINES
     from src.assessment.result_builder import _DESIGN_READERS
     from src.shared.catalog.engines import ACTIVE, engine_ids
 
     union = get_args(get_args(EngineDesign)[0])
     modelled = {e for m in union for e in get_args(m.model_fields["engine"].annotation)}
-    assert set(_DESIGN_READERS) == modelled == DESIGN_ENTRY_ENGINES[CONTRACT_VERSION]
+    assert set(_DESIGN_READERS) == modelled == DESIGN_ENTRY_ENGINES
     assert engine_ids(status=ACTIVE) <= set(_DESIGN_READERS)
-    # Every version the models read but 1.0 (which is not checked) names its engines.
-    assert set(DESIGN_ENTRY_ENGINES) == set(get_args(ContractVersion)) - {"1.0"}

@@ -45,6 +45,7 @@ from src.assessment import (
     PartParseError,
     PartTableNotInStatementError,
     PartTableOutsideCutError,
+    RetiredContractVersionError,
     StatementPart,
     UnknownStatementError,
     UnknownTableError,
@@ -60,12 +61,6 @@ FIXTURES = REPO / "tests" / "fixtures"
 #: (Ticket, TicketMessage, KnowledgeArticle) with one part of the crossing statement
 #: 0x31648DAA008826FB, as ``CollectionCut.model_dump(mode="json")`` wrote it.
 SAVED_CUT = FIXTURES / "assess_cut_v1_3_trailgear_support.json"
-
-EARLIER_SCHEMAS = {
-    "1.0": FIXTURES / "assess_result_v1_0.schema.json",
-    "1.1": FIXTURES / "assess_result_v1_1.schema.json",
-    "1.2": FIXTURES / "assess_result_v1_2.schema.json",
-}
 
 ORDERS = [
     "trailgear.SalesOrder",
@@ -742,20 +737,24 @@ def test_no_statement_of_a_whole_collection_has_a_from_query_id() -> None:
 
 
 @pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
-def test_a_request_pinned_before_1_3_gets_no_from_query_id(version: str) -> None:
+def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
+    """A cut's request names 1.3 or nothing: 1.0 to 1.2 are retired (#1641)."""
     cut = cut_collection(
         _whole(),
         table_ids=ORDERS,
         parts=[{"from_query_id": TOP_PRODUCTS, "query_text": ORDERS_PART}],
     )
-    text = _assess_cut(cut, "analysis", version).model_dump_json()
+    with pytest.raises(RetiredContractVersionError, match="supports contract 1.3 only"):
+        _assess_cut(cut, "analysis", version)
+    text = _assess_cut(cut, "analysis", "1.3").model_dump_json()
     document = json.loads(text)
-    assert document["contract_version"] == version
-    assert not any("from_query_id" in s for s in document["statements"])
-    assert "unplaced_statements" not in document["scope"]
+    assert document["contract_version"] == "1.3"
     (part_id,) = cut.scope.rewritten_query_ids
+    assert [s["from_query_id"] for s in document["statements"] if s["rewritten_by_caller"]] == [
+        TOP_PRODUCTS
+    ]
     assert [s["query_id"] for s in document["statements"] if s["rewritten_by_caller"]] == [part_id]
-    Draft202012Validator(json.loads(EARLIER_SCHEMAS[version].read_text("utf-8"))).validate(document)
+    assert "unplaced_statements" in document["scope"]
     assert AssessmentResult.model_validate_json(text).model_dump_json() == text
 
 
@@ -763,10 +762,11 @@ def test_the_published_schemas_carry_the_1_3_additions() -> None:
     result = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
     statement = result["$defs"]["StatementResult"]
     assert "from_query_id" in statement["properties"]
-    assert "from_query_id" not in statement.get("required", [])
+    # The result schema describes 1.3 only: the library always writes both.
+    assert "from_query_id" in statement["required"]
     scope_def = result["$defs"]["WorkloadScope"]
     assert "unplaced_statements" in scope_def["properties"]
-    assert "unplaced_statements" not in scope_def.get("required", [])
+    assert "unplaced_statements" in scope_def["required"]
     request = json.loads(rcs.schema_path("assess_request").read_text("utf-8"))
     scope = request["$defs"]["WorkloadScope"]["properties"]["dropped_foreign_keys"]
     assert "referenced_table_id" in scope["description"]

@@ -15,7 +15,8 @@ release saying so. This script writes the section the release attaches, for the 
   change (a contract whose version moved, was added or was removed, with the field
   changes ``scripts/contract_schema_snapshot.py`` classifies), read from the internal
   contracts' snapshot (``tests/contract/schema_snapshot.json``) and the public
-  ``assess()`` contract's released snapshot (``tests/contract/assess_released_snapshot.json``).
+  ``assess()`` contract's released snapshot (``tests/contract/assess_released_since_1_3.json``,
+  or at a ref before contract 1.3, ``tests/contract/assess_released_snapshot.json``).
 
 It reads committed files at two refs and runs no pipeline, so it needs only git and the
 repository's history (the release workflow checks out with full history).
@@ -55,7 +56,10 @@ from src.report.escaping import md_cell  # noqa: E402
 
 ROUTING_SNAPSHOT = "tests/e2e/baselines/routing_snapshot.json"
 CONTRACT_SNAPSHOT = "tests/contract/schema_snapshot.json"
-PUBLIC_CONTRACT_SNAPSHOT = "tests/contract/assess_released_snapshot.json"
+PUBLIC_CONTRACT_SNAPSHOT = "tests/contract/assess_released_since_1_3.json"
+#: The public contract's released snapshot before contract 1.3 (#1641), read at a ref
+#: that has no ``PUBLIC_CONTRACT_SNAPSHOT`` yet.
+HISTORICAL_PUBLIC_CONTRACT_SNAPSHOT = "tests/contract/assess_released_snapshot.json"
 RULE_DIR = "src/catalog"
 ATTACHMENT = "release-changes.md"
 
@@ -337,12 +341,20 @@ def changelog_between(repo: Path, since: str, until: str) -> list[str]:
     contracts = contract_changes(
         _json_at(repo, since, CONTRACT_SNAPSHOT), _json_at(repo, until, CONTRACT_SNAPSHOT)
     )
-    released = _json_at(repo, until, PUBLIC_CONTRACT_SNAPSHOT)
+    released = _public_snapshot_at(repo, until)
     public = contract_changes(
-        _json_at(repo, since, PUBLIC_CONTRACT_SNAPSHOT).get("contracts", {}),
+        _public_snapshot_at(repo, since).get("contracts", {}),
         released.get("contracts", {}),
     )
     return rule_changes(changed, subjects) + contracts + public + _unrecorded(repo, until, released)
+
+
+def _public_snapshot_at(repo: Path, ref: str) -> dict[str, Any]:
+    """The public contract's released snapshot at ``ref``: the one from contract 1.3 on,
+    else (a ref before #1641) the one before it."""
+    return _json_at(repo, ref, PUBLIC_CONTRACT_SNAPSHOT) or _json_at(
+        repo, ref, HISTORICAL_PUBLIC_CONTRACT_SNAPSHOT
+    )
 
 
 def _unrecorded(repo: Path, until: str, released: Mapping[str, Any]) -> list[str]:
