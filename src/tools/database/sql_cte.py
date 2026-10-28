@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from src.shared.sql_spans import replace_strings_and_comments
+
 _WITH_RE = re.compile(r"\bWITH\b(\s+RECURSIVE\b)?", re.I)
 _NAME_RE = re.compile(r'\s*(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\w+))')
 _AS_RE = re.compile(r"\s*AS\b(?:\s+NOT\b)?(?:\s+MATERIALIZED\b)?\s*\(", re.I)
@@ -24,12 +26,16 @@ _OPEN_RE = re.compile(r"\s*\(")
 _COMMA_RE = re.compile(r"\s*,")
 _UNION_RE = re.compile(r"\bUNION\b", re.I)
 _REF_RE = re.compile(r'(?<![\w@])(?:FROM|JOIN)\s+(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\w+))')
-_MASK_RE = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.S)
 
 
-def _mask(sql: str) -> str:
-    """Blank string literals and comments, keeping every offset unchanged."""
-    return _MASK_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), sql)
+def _blank(span: str) -> str:
+    return re.sub(r"[^\n]", " ", span)
+
+
+def _mask(sql: str, source_engine: str = "") -> str:
+    """Blank string literals and comments, keeping every offset unchanged. They are
+    read in the source engine's forms and string settings (``sql_spans``, #1482)."""
+    return replace_strings_and_comments(sql, source_engine, string=_blank, comment=_blank)
 
 
 def _skip_parens(sql: str, pos: int) -> int:
@@ -102,9 +108,10 @@ def _visible_ctes(sql: str) -> list[tuple[str, int, int]]:
     return found
 
 
-def drop_cte_references(sql: str) -> str:
-    """Return ``sql`` with ``FROM``/``JOIN`` references to CTE names blanked out."""
-    masked = _mask(sql)
+def drop_cte_references(sql: str, source_engine: str = "") -> str:
+    """Return ``sql`` with ``FROM``/``JOIN`` references to CTE names blanked out,
+    strings and comments read in ``source_engine``'s forms."""
+    masked = _mask(sql, source_engine)
     ctes = _visible_ctes(masked)
     if not ctes:
         return sql

@@ -67,7 +67,13 @@ import re
 from dataclasses import dataclass
 
 from src.shared.sql_comments import block_comment_end, block_comments_nest
-from src.shared.sql_spans import comments_literals_and_identifiers_for, scan_grammar_for, spans
+from src.shared.sql_spans import (
+    SpanSettings,
+    active_span_settings,
+    comments_literals_and_identifiers_for,
+    scan_grammar_for,
+    spans,
+)
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -114,7 +120,9 @@ _MYSQL_FAMILY_DIALECTS = frozenset({"mysql", "mariadb"})
 _EXECUTABLE_OPEN_RE = re.compile(r"/\*M?!")
 
 
-def without_comments_after_terminator(text: str, source_engine: str | None) -> str:
+def without_comments_after_terminator(
+    text: str, source_engine: str | None, settings: SpanSettings | None = None
+) -> str:
     """``text`` cut after its last statement-ending ``;`` when only comments follow it.
 
     ``MERGE ...; /*a='b'*/`` becomes ``MERGE ...;``: a parser reads the comment as one
@@ -126,11 +134,12 @@ def without_comments_after_terminator(text: str, source_engine: str | None) -> s
     statement, a MySQL ``/*! ... */`` executable comment, an unterminated ``/*`` or
     quote) leaves the text unchanged, and so does text with no ``;``, or none followed
     by a comment. A ``--`` (or MySQL ``#``) comment with no newline runs to the end.
+    ``settings`` are the source's string settings (``sql_spans.SpanSettings``, #1482).
     """
     if ";" not in text:
         return text
     engine = (source_engine or "").strip().lower()
-    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS)
+    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS, settings=settings)
     if scan.unterminated_quote or scan.unterminated_comment:
         return text
     mask, comments = scan.mask, scan.comment_mask
@@ -150,7 +159,9 @@ def without_comments_after_terminator(text: str, source_engine: str | None) -> s
     return text[:last]
 
 
-def without_comments_between_statements(text: str, source_engine: str | None) -> str:
+def without_comments_between_statements(
+    text: str, source_engine: str | None, settings: SpanSettings | None = None
+) -> str:
     """``text`` without the comments that stand alone after a statement-ending ``;``.
 
     ``SELECT 1; /* x */ SELECT 2`` becomes ``SELECT 1; SELECT 2`` and
@@ -164,11 +175,12 @@ def without_comments_between_statements(text: str, source_engine: str | None) ->
     comment (``/*! ... */``), which is code. Text with an unterminated quote or
     comment is returned unchanged.
     """
-    text = without_comments_after_terminator(text, source_engine)
+    settings = settings or active_span_settings()
+    text = without_comments_after_terminator(text, source_engine, settings)
     if ";" not in text:
         return text
     engine = (source_engine or "").strip().lower()
-    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS)
+    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS, settings=settings)
     if scan.unterminated_quote or scan.unterminated_comment:
         return text
     comments = scan.comment_mask
@@ -222,7 +234,9 @@ class _Scan:
     unterminated_comment: bool
 
 
-def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
+def _scan(
+    text: str, dialect: str, brackets: bool = False, settings: SpanSettings | None = None
+) -> _Scan:
     """Single pass over ``text`` tracking quoted/comment spans and parens.
 
     ``mask[i]`` is True wherever character ``i`` sits inside a string
@@ -246,9 +260,13 @@ def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
     ``/* ... */`` or quote counts as a truncation signal.
 
     ``brackets`` also reads a SQL Server ``[name]`` as quoted (off by default, so the
-    other callers' masks stay as they were).
+    other callers' masks stay as they were). ``settings`` are the source's string
+    settings (#1482): ``NO_BACKSLASH_ESCAPES`` gives a MySQL ``\\`` no meaning, and
+    PostgreSQL's ``standard_conforming_strings = off`` makes it an escape in ``'...'``;
+    by default the collection's (``sql_spans.active_span_settings``). MySQL's ``--``
+    opens a comment only before a space or a control character.
     """
-    grammar = scan_grammar_for(dialect, brackets)
+    grammar = scan_grammar_for(dialect, brackets, settings)
     n = len(text)
     mask = [False] * n
     comment_mask = [False] * n
@@ -293,12 +311,15 @@ def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
     )
 
 
-def quoted_mask(text: str, dialect: str, *, brackets: bool = False) -> list[bool]:
+def quoted_mask(
+    text: str, dialect: str, *, brackets: bool = False, settings: SpanSettings | None = None
+) -> list[bool]:
     """Per character of ``text``: True inside a string literal, a quoted
     identifier or a comment (the same scan the rules below use), so a caller
     can rewrite SQL syntax without touching quoted content. ``brackets`` also
-    reads a SQL Server ``[name]`` as quoted (``]]`` escaping a ``]``)."""
-    return _scan(text, dialect, brackets=brackets).mask
+    reads a SQL Server ``[name]`` as quoted (``]]`` escaping a ``]``); ``settings`` are
+    the source's string settings (:func:`_scan`)."""
+    return _scan(text, dialect, brackets=brackets, settings=settings).mask
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +519,9 @@ def _apply_rule(
 # ---------------------------------------------------------------------------
 
 
-def normalize_digest_text(query_text: str, dialect: str) -> NormalizedQuery:
+def normalize_digest_text(
+    query_text: str, dialect: str, settings: SpanSettings | None = None
+) -> NormalizedQuery:
     """Normalize one piece of collector digest/query text.
 
     Args:
@@ -511,12 +534,14 @@ def normalize_digest_text(query_text: str, dialect: str) -> NormalizedQuery:
             ``src/contracts/collector_input.py``). Only the MySQL family
             gets the substitution rules; every other dialect is returned
             unchanged aside from truncation detection.
+        settings: The source's string settings (``sql_spans.SpanSettings``, #1482),
+            by default the collection's.
 
     Returns:
         A :class:`NormalizedQuery` with the normalized text, a
         ``truncated`` flag, and the substitutions applied.
     """
-    scan = _scan(query_text, dialect)
+    scan = _scan(query_text, dialect, settings=settings)
     truncated = _is_truncated(query_text, scan)
     incomplete = _ends_incomplete(query_text, scan)
 
@@ -565,7 +590,7 @@ def _mask_numbers(code: str) -> str:
     return _LITERAL_OR_ORDERING_RE.sub(repl, code).upper()
 
 
-def literal_shape(query_text: str, dialect: str) -> str:
+def literal_shape(query_text: str, dialect: str, settings: SpanSettings | None = None) -> str:
     """The statement with every literal value masked, so literal variants share one text.
 
     String literals (in the dialect's own forms, via :mod:`src.shared.sql_spans`: doubled
@@ -579,9 +604,9 @@ def literal_shape(query_text: str, dialect: str) -> str:
 
     Oracle's ``SQL_ID`` hashes the exact text, so it cannot do this; its
     ``FORCE_MATCHING_SIGNATURE`` does it in the database, and this is the same step for a
-    collection made without it.
+    collection made without it. ``settings`` are the source's string settings (#1482).
     """
-    grammar = scan_grammar_for(dialect)
+    grammar = scan_grammar_for(dialect, settings=settings)
     out: list[str] = []
     last = 0
 
@@ -618,7 +643,9 @@ def _follows_in_keyword(code: str, paren: int) -> bool:
     return before[-2:].upper() == "IN" and not _is_word_char(before[-3:-2] or " ")
 
 
-def open_in_list_start(shape: str, dialect: str) -> int | None:
+def open_in_list_start(
+    shape: str, dialect: str, settings: SpanSettings | None = None
+) -> int | None:
     """Where the outermost ``IN (`` list left open at the end of ``shape`` begins, or None.
 
     A statement cut inside an ``IN`` list (``... id IN (?, ?, ?``) cannot collapse that list
@@ -627,7 +654,7 @@ def open_in_list_start(shape: str, dialect: str) -> int | None:
     dialect's own spans (:mod:`src.shared.sql_spans`), so a parenthesis inside one is no
     parenthesis. The index is that of the list's opening parenthesis.
     """
-    grammar = comments_literals_and_identifiers_for(dialect)
+    grammar = comments_literals_and_identifiers_for(dialect, settings)
     chars = list(shape)
     for start, end, _opener in spans(shape, grammar):
         chars[start:end] = "_" * (end - start)
@@ -641,8 +668,10 @@ def open_in_list_start(shape: str, dialect: str) -> int | None:
     return next((start for start in stack if start is not None), None)
 
 
-def literal_shape_digest(query_text: str, dialect: str) -> str:
+def literal_shape_digest(
+    query_text: str, dialect: str, settings: SpanSettings | None = None
+) -> str:
     """A short stable digest of :func:`literal_shape`: equal for literal variants."""
     import hashlib
 
-    return hashlib.sha256(literal_shape(query_text, dialect).encode()).hexdigest()[:16]
+    return hashlib.sha256(literal_shape(query_text, dialect, settings).encode()).hexdigest()[:16]

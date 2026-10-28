@@ -65,18 +65,23 @@ import threading
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Self, TypeVar, overload
 
 from src.shared.sql_comments import strip_leading_comments
 from src.shared.sql_spans import (
-    POSTGRES_LITERALS_AND_COMMENTS,
+    SpanSettings,
+    active_span_settings,
     code_text,
     comments_literals_and_identifiers_for,
     keyword_text,
+    literals_and_comments_for,
     opens_routine_body,
     span_dialect,
+    span_settings_of,
     spans,
     sub_spans,
+    use_span_settings,
+    with_span_settings,
 )
 from src.shared.unsupported_pattern import is_dedup_only_group_by, strip_comments_and_literals
 from src.tools.sql.facade import AccessFacts, ColumnUse, SqlFacts, TableRef, query_readings
@@ -688,7 +693,8 @@ def _postgres_code_reading(text: str, in_body: bool = False) -> str:
     last = 0
     if in_body:
         text = _BODY_VERB_RE.sub(" delete from ", text)
-    for start, end, opener in spans(text, POSTGRES_LITERALS_AND_COMMENTS):
+    # The active settings: ``standard_conforming_strings = off`` reads ``\\`` as an escape.
+    for start, end, opener in spans(text, literals_and_comments_for("postgresql")):
         kept = text[last:start]
         out.append(kept)
         tail = (tail + kept)[-_TAIL:]
@@ -735,6 +741,27 @@ def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     return any(kw in lower_text for kw in keywords)
 
 
+_T = TypeVar("_T")
+
+
+class _fact(cached_property[_T]):  # noqa: N801 -- used as a decorator, like cached_property
+    """A :class:`QueryFacts` fact: computed once, the first time it is read, with the
+    source settings the object was made for (``sql_spans.SpanSettings``, #1482), whatever
+    settings are active when it is read."""
+
+    @overload
+    def __get__(self, instance: None, owner: type[Any] | None = None) -> Self: ...
+
+    @overload
+    def __get__(self, instance: object, owner: type[Any] | None = None) -> _T: ...
+
+    def __get__(self, instance: object, owner: type[Any] | None = None) -> Any:
+        if instance is None:
+            return self
+        with with_span_settings(instance._settings):  # type: ignore[attr-defined]
+            return super().__get__(instance, owner)
+
+
 class QueryFacts:
     """The text facts of one query (see the module docstring).
 
@@ -744,27 +771,31 @@ class QueryFacts:
     subquery shape) never runs in the steps that don't read it (#895 review).
     """
 
-    def __init__(self, text: str, source_engine: str = "") -> None:
+    def __init__(
+        self, text: str, source_engine: str = "", settings: SpanSettings | None = None
+    ) -> None:
         self._text = text
         self._source_engine = source_engine
+        # The source's string settings every fact is read with (#1482).
+        self._settings = active_span_settings() if settings is None else settings
         self._timestamp_kept: tuple[ColumnTypes | None, TimestampColumnReading] | None = None
 
-    @cached_property
+    @_fact
     def _lower(self) -> str:
         return self._text.lower()
 
-    @cached_property
+    @_fact
     def _code(self) -> str:
         """The text as the source engine runs it (``sql_spans.code_text``, #1415): comments
         blanked, each string literal a ``?``, quoted identifiers kept. The text facts read
         this, so a keyword inside a literal or a comment is never SQL."""
         return code_text(self._text, self._source_engine)
 
-    @cached_property
+    @_fact
     def _code_lower(self) -> str:
         return self._code.lower()
 
-    @cached_property
+    @_fact
     def _keywords(self) -> str:
         """:attr:`_code` with each quoted identifier a neutral name
         (``sql_spans.keyword_text``, #1478): the facts that look for a keyword read this,
@@ -773,30 +804,30 @@ class QueryFacts:
         read :attr:`_code`; a quoted function name before ``(`` is kept as the call."""
         return keyword_text(self._text, self._source_engine)
 
-    @cached_property
+    @_fact
     def _bare(self) -> str:
         """:attr:`_code` with each one-word quoted identifier bare (``"status"`` reads
         ``status``, #1547): the facts whose pattern expects a bare name next to a keyword
         read this, so the same clause reads with a quoted name."""
         return code_text(self._text, self._source_engine, unquote=True)
 
-    @cached_property
+    @_fact
     def _bare_keywords(self) -> str:
         """:attr:`_keywords` with each neutral name bare (``RETURNING "id"`` reads
         ``RETURNING quoted_name``, #1547): for the keyword facts that expect a bare name."""
         return keyword_text(self._text, self._source_engine, unquote=True)
 
-    @cached_property
+    @_fact
     def _keywords_lower(self) -> str:
         return self._keywords.lower()
 
     # -- Parsed facts (the facade's ``SqlFacts``, #893) ------------------------
 
-    @cached_property
+    @_fact
     def _readings(self) -> tuple[SqlFacts, AccessFacts]:
         """The facade's readings of the text in the source engine's dialect: the ones the
         collector stored for it (:func:`remember_collected_facts`, #934), else one parse."""
-        stored = _STORED_READINGS.get((self._text, self._source_engine))
+        stored = _STORED_READINGS.get((self._text, self._source_engine, self._settings))
         if stored is not None:
             readings = readings_from_stored(stored, self._text, self._source_engine)
             if readings is not None:
@@ -808,39 +839,39 @@ class QueryFacts:
         same reading as the parsed facts."""
         return self._access
 
-    @cached_property
+    @_fact
     def _parsed(self) -> SqlFacts:
         return self._readings[0]
 
-    @cached_property
+    @_fact
     def _access(self) -> AccessFacts:
         return self._readings[1]
 
     def _has(self, *hints: str) -> bool:
         return any(hint in self._lower for hint in hints)
 
-    @cached_property
+    @_fact
     def group_by(self) -> bool:
         """A ``GROUP BY`` clause (``SqlFacts.group_by``)."""
         return self._has("group") and self._parsed.group_by
 
-    @cached_property
+    @_fact
     def grouping_sets(self) -> bool:
         """Several groupings of one row set (``SqlFacts.grouping_sets``, #968)."""
         return self._has("grouping", "rollup", "cube") and self._parsed.grouping_sets
 
-    @cached_property
+    @_fact
     def aggregate_function_count(self) -> int:
         """How many aggregate function calls (``SqlFacts.aggregate_function_count``)."""
         if not self._may_aggregate:
             return 0
         return self._parsed.aggregate_function_count
 
-    @cached_property
+    @_fact
     def _may_aggregate(self) -> bool:
         return self._has(*_AGGREGATE_WORD_HINTS) or bool(_FUNCTION_CALL_HINT_RE.search(self._text))
 
-    @cached_property
+    @_fact
     def aggregation(self) -> bool:
         """A ``GROUP BY`` or an aggregate function, windowed or not: exactly the facade's
         ``has_aggregation``, the collector's ``has_aggregations``. A ranking or offset
@@ -848,61 +879,61 @@ class QueryFacts:
         """
         return self.group_by or self.aggregate_function_count > 0
 
-    @cached_property
+    @_fact
     def join_count(self) -> int:
         """Joins to another row source (``SqlFacts.join_count``, the collector's
         ``join_count``): ``FROM a, b`` is one join, a table function is none.
         """
         return self._parsed.join_count if self._has(*_JOIN_HINTS) else 0
 
-    @cached_property
+    @_fact
     def leading_wildcard_like(self) -> bool:
         """A ``LIKE``/``ILIKE`` whose pattern starts with ``%`` (``SqlFacts.wildcard_leading``)."""
         return self._has("like") and self._parsed.wildcard_leading
 
-    @cached_property
+    @_fact
     def wildcard_likes(self) -> tuple[WildcardLike, ...]:
         """Each leading-wildcard ``LIKE``, with the column it tests and whether it is a
         word search (``SqlFacts.wildcard_likes``, #493)."""
         return self._parsed.wildcard_likes if self._has("like") else ()
 
-    @cached_property
+    @_fact
     def like_parameter(self) -> bool:
         """A ``LIKE``/``ILIKE`` whose whole pattern is a bind parameter
         (``SqlFacts.like_parameter``): a MySQL digest's ``LIKE ?``.
         """
         return self._has("like") and self._parsed.like_parameter
 
-    @cached_property
+    @_fact
     def fulltext_search(self) -> bool:
         """A full-text match: ``MATCH ... AGAINST``, ``@@`` or a ``tsvector``/``tsquery``
         function, ``CONTAINS``/``FREETEXT`` (``SqlFacts.fulltext_search``).
         """
         return self._has(*_FULLTEXT_HINTS) and self._parsed.fulltext_search
 
-    @cached_property
+    @_fact
     def pattern_match(self) -> bool:
         """A regular-expression or ``SIMILAR TO`` match (``SqlFacts.pattern_match``)."""
         return self._has(*_PATTERN_MATCH_HINTS) and self._parsed.pattern_match
 
-    @cached_property
+    @_fact
     def prefix_regex(self) -> bool:
         """Every regular expression is a case-sensitive ``^``-anchored literal, the shape
         an index can serve (``SqlFacts.prefix_regex``, #982)."""
         return self.pattern_match and self._parsed.prefix_regex
 
-    @cached_property
+    @_fact
     def regex_matches(self) -> tuple[RegexMatch, ...]:
         """Each regular-expression or ``SIMILAR TO`` match, with the column it tests
         (``SqlFacts.regex_matches``, #1098); empty on the regex fallback."""
         return self._parsed.regex_matches if self.pattern_match else ()
 
-    @cached_property
+    @_fact
     def similarity_match(self) -> bool:
         """A trigram similarity function (``SqlFacts.similarity_match``)."""
         return self._has("similarity") and self._parsed.similarity_match
 
-    @cached_property
+    @_fact
     def text_search(self) -> bool:
         """A text search: a leading-wildcard or parameterised ``LIKE``, a full-text,
         regular-expression or similarity match. A prefix ``LIKE 'abc%'`` is a range,
@@ -933,48 +964,48 @@ class QueryFacts:
             return "like_wildcard"
         return None
 
-    @cached_property
+    @_fact
     def window_function(self) -> bool:
         """A function with an ``OVER`` clause (``SqlFacts.window_function``)."""
         return self._has("over") and self._parsed.window_function
 
-    @cached_property
+    @_fact
     def ranking_window_function(self) -> bool:
         """``ROW_NUMBER``/``RANK``/``DENSE_RANK`` over a window
         (``SqlFacts.ranking_window_function``).
         """
         return self._has("over") and self._parsed.ranking_window_function
 
-    @cached_property
+    @_fact
     def offset_window_function(self) -> bool:
         """``LAG``/``LEAD``/``NTILE`` over a window (``SqlFacts.offset_window_function``)."""
         return self._has("over") and self._parsed.offset_window_function
 
-    @cached_property
+    @_fact
     def windowed_aggregate(self) -> bool:
         """An aggregate over a window, ``SUM(...) OVER`` (``SqlFacts.windowed_aggregate``)."""
         return self._has("over") and self._parsed.windowed_aggregate
 
-    @cached_property
+    @_fact
     def recursive_cte(self) -> bool:
         """``WITH RECURSIVE``, or a CTE whose body has a ``UNION`` and reads itself
         (``SqlFacts.recursive_cte``; SQL Server and Oracle have no ``RECURSIVE``).
         """
         return self._has("with") and self._parsed.recursive_cte
 
-    @cached_property
+    @_fact
     def order_by(self) -> bool:
         """An ``ORDER BY`` that sorts a query's rows, not a window's (``SqlFacts.order_by``)."""
         return self._has("order") and self._parsed.order_by
 
-    @cached_property
+    @_fact
     def row_limit(self) -> bool:
         """A row limit: ``LIMIT``, ``TOP``, ``FETCH FIRST``/``NEXT`` (``SqlFacts.row_limit``);
         a ``credit_limit`` column is not one.
         """
         return self._has(*_ROW_LIMIT_HINTS) and self._parsed.row_limit
 
-    @cached_property
+    @_fact
     def top_n(self) -> bool:
         """A top-N read: one query with both an ``ORDER BY`` and a row limit
         (``SqlFacts.top_n``; ``TOP`` with no ``ORDER BY`` is not one).
@@ -1001,11 +1032,12 @@ class QueryFacts:
         ):
             reading = _NO_TIMESTAMP_BY_NAME if column_types is None else _NO_TIMESTAMP
         else:
-            reading = read_timestamp_column(self._parsed.columns, column_types)
+            with with_span_settings(self._settings):
+                reading = read_timestamp_column(self._parsed.columns, column_types)
         self._timestamp_kept = (column_types, reading)
         return reading
 
-    @cached_property
+    @_fact
     def append_targets(self) -> tuple[str, ...]:
         """The :attr:`write_targets` the statement only appends rows to, lower-cased
         bare names: each ``INSERT`` target, a data-modifying CTE's included, whatever the
@@ -1017,14 +1049,14 @@ class QueryFacts:
             return ()
         return self._parsed.append_targets
 
-    @cached_property
+    @_fact
     def multi_table_write(self) -> bool:
         """An UPDATE or DELETE whose rows come from a join with another table, in any
         dialect (``SqlFacts.multi_table_write``).
         """
         return self._has("update", "delete") and self._parsed.multi_table_write
 
-    @cached_property
+    @_fact
     def write_targets(self) -> tuple[str, ...]:
         """The tables the statement writes, lower-cased bare names: every ``INSERT``,
         ``REPLACE``, ``UPDATE``, ``DELETE``, ``MERGE`` and ``TRUNCATE`` target, never a
@@ -1040,14 +1072,14 @@ class QueryFacts:
             )
         return targets
 
-    @cached_property
+    @_fact
     def json_access(self) -> bool:
         """The query reads or builds JSON: a JSON function or operator, a cast to
         ``json``/``jsonb``, a JSON containment (``SqlFacts.json_access``).
         """
         return self._has(*_JSON_HINTS) and self._parsed.json_access
 
-    @cached_property
+    @_fact
     def range_predicate(self) -> bool:
         """A range on a column: ``<``, ``<=``, ``>``, ``>=``, ``BETWEEN`` or a prefix
         ``LIKE 'abc%'``, as a top-level ``AND`` term of a ``WHERE`` or ``JOIN`` condition
@@ -1062,21 +1094,21 @@ class QueryFacts:
 
     # -- Text facts ------------------------------------------------------------
 
-    @cached_property
+    @_fact
     def found_rows(self) -> bool:
         """MySQL's ``SQL_CALC_FOUND_ROWS`` modifier or a ``FOUND_ROWS()`` call (the row
         count of the previous query).
         """
         return bool(_FOUND_ROWS_RE.search(self._keywords))
 
-    @cached_property
+    @_fact
     def dedup_only_group_by(self) -> bool:
         """The ``GROUP BY`` only de-duplicates rows
         (``unsupported_pattern.is_dedup_only_group_by``, #336).
         """
         return self.group_by and is_dedup_only_group_by(self._text, self._source_engine)
 
-    @cached_property
+    @_fact
     def computed_join_key(self) -> bool:
         """Some ``JOIN ... ON`` condition compares a function call with a column
         (``lower(g.name) = u.username_lower``, either side); a function compared with a
@@ -1084,31 +1116,31 @@ class QueryFacts:
         """
         return _has_computed_join_key(self._keywords)
 
-    @cached_property
+    @_fact
     def write_with_subquery(self) -> bool:
         """``INSERT``/``UPDATE``/``DELETE`` followed later by ``SELECT``."""
         write = _WRITE_WORD_RE.search(self._keywords)
         return write is not None and SELECT_WORD_RE.search(self._keywords, write.end()) is not None
 
-    @cached_property
+    @_fact
     def exists_or_in_subquery(self) -> bool:
         """``EXISTS (``, ``NOT EXISTS (`` or ``IN (SELECT``."""
         return bool(
             EXISTS_CONDITION_RE.search(self._keywords) or _IN_SUBQUERY_RE.search(self._keywords)
         )
 
-    @cached_property
+    @_fact
     def in_list(self) -> bool:
         """An ``IN (`` list: ``regex_facts.IN_LIST_RE``, the one definition the key
         predicate and the transaction shape read too (#1010)."""
         return bool(IN_LIST_RE.search(self._keywords))
 
-    @cached_property
+    @_fact
     def duplicate_key_upsert(self) -> bool:
         """``on duplicate key`` or ``replace into``."""
         return _contains_any(self._keywords_lower, DUPLICATE_KEY_KEYWORDS)
 
-    @cached_property
+    @_fact
     def upsert(self) -> bool:
         """An upsert, in any dialect: PostgreSQL's ``ON CONFLICT``, MySQL's ``ON DUPLICATE
         KEY UPDATE`` or ``REPLACE INTO``, never inside a comment, a string literal or a quoted
@@ -1122,7 +1154,7 @@ class QueryFacts:
         )
         return bool(_UPSERT_RE.search(text))
 
-    @cached_property
+    @_fact
     def string_aggregate_call(self) -> bool:
         """``GROUP_CONCAT(``, ``STRING_AGG(`` or ``LISTAGG(`` outside comments and
         string literals."""
@@ -1130,7 +1162,7 @@ class QueryFacts:
             _STRING_AGGREGATE_RE.search(scan_sql(self._text, self._source_engine))
         )
 
-    @cached_property
+    @_fact
     def stored_routine_keyword(self) -> bool:
         """A :data:`STORED_ROUTINE_KEYWORDS` substring (``call ``, ``delimiter``, ``create
         procedure``, ``create function``), or, for a SQL Server source, a statement that
@@ -1142,12 +1174,12 @@ class QueryFacts:
             return False
         return any(_TSQL_EXEC_RE.match(t) for t in _leading_comment_readings(self._text))
 
-    @cached_property
+    @_fact
     def array_operation(self) -> bool:
         """``ANY(ARRAY``, ``array_agg(``, ``unnest(``, ``ARRAY[`` or ``@> ARRAY``."""
         return bool(_ARRAY_OPERATION_RE.search(self._keywords))
 
-    @cached_property
+    @_fact
     def lateral_join(self) -> bool:
         """``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``, outside comments and string
         literals (the class score reads it too since #985, so a word in a value is not one);
@@ -1164,92 +1196,92 @@ class QueryFacts:
         grammar = comments_literals_and_identifiers_for(self._source_engine)
         return bool(_TSQL_APPLY_RE.search(sub_spans(self._text, grammar, lambda _span: " ")))
 
-    @cached_property
+    @_fact
     def on_conflict_or_returning(self) -> bool:
         """``ON CONFLICT``, or ``RETURNING <column>`` not preceded by ``AS``."""
         return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._bare_keywords))
 
-    @cached_property
+    @_fact
     def negation_word(self) -> bool:
         """``NOT IN``, ``NOT EXISTS``, ``<>`` or ``!=`` between word characters."""
         return bool(_NEGATION_WORD_RE.search(self._keywords))
 
-    @cached_property
+    @_fact
     def correlated_subquery_shape(self) -> bool:
         """``( SELECT ... WHERE ... a.b = c.d``."""
         return _has_correlated_subquery_shape(self._bare_keywords)
 
-    @cached_property
+    @_fact
     def time_function_keyword(self) -> bool:
         """``date_trunc``, ``date(``, ``hour(`` or ``extract(``."""
         return _contains_any(self._keywords_lower, TIME_AGG_KEYWORDS)
 
-    @cached_property
+    @_fact
     def geospatial_keyword(self) -> bool:
         """A :data:`GEOSPATIAL_KEYWORDS` substring (``st_distance``, ..., ``latitude``,
         ``geometry``).
         """
         return _contains_any(self._code_lower, GEOSPATIAL_KEYWORDS)
 
-    @cached_property
+    @_fact
     def min_max_call(self) -> bool:
         """A ``MAX(`` or ``MIN(`` call."""
         return bool(_MIN_MAX_CALL_RE.search(self._keywords_lower))
 
-    @cached_property
+    @_fact
     def status_equals_value(self) -> bool:
         """``status = ?`` / ``status = '...`` / ``status = "...``."""
         return bool(_STATUS_EQUALS_VALUE_RE.search(self._bare.lower()))
 
-    @cached_property
+    @_fact
     def is_null(self) -> bool:
         """``IS NULL``."""
         return bool(_IS_NULL_RE.search(self._keywords_lower))
 
-    @cached_property
+    @_fact
     def count_star_or_one(self) -> bool:
         """``COUNT(*)`` or ``COUNT(1)``."""
         return bool(_COUNT_STAR_OR_ONE_RE.search(self._keywords_lower))
 
-    @cached_property
+    @_fact
     def _scanned(self) -> str:
         return scan_sql(self._text, self._source_engine)
 
-    @cached_property
+    @_fact
     def _scanned_lower(self) -> str:
         return self._scanned.lower()
 
-    @cached_property
+    @_fact
     def search_depth(self) -> bool:
         """Real search depth (#326): relevance ranking or fuzzy matching, or a search
         predicate with a ``GROUP BY`` facet, read with string literals blanked.
         """
         return _has_search_depth(self._keywords, self.group_by)
 
-    @cached_property
+    @_fact
     def merge_statement(self) -> bool:
         """A ``MERGE [TOP (n)] [INTO] <target> ... USING`` statement, read on
         :func:`scan_sql`'s output.
         """
         return "merge" in self._scanned_lower and bool(_MERGE_RE.search(self._scanned))
 
-    @cached_property
+    @_fact
     def _where_split(self) -> list[str]:
         return _WHERE_RE.split(self._keywords, maxsplit=1)
 
-    @cached_property
+    @_fact
     def where_word(self) -> bool:
         """A ``WHERE`` word anywhere in the code (not in a comment or a string literal)."""
         return len(self._where_split) == 2
 
-    @cached_property
+    @_fact
     def keyed_after_where(self) -> bool:
         """An equality (``=`` not after ``<``/``>``/``!``) or an ``IN (`` after the first
         ``WHERE``.
         """
         return len(self._where_split) == 2 and bool(_KEYED_RE.search(self._where_split[1]))
 
-    @cached_property
+    @_fact
     def write_statement_text(self) -> bool:
         """After the leading comments (read both nested and first-close, #825), a DML
         keyword anywhere (``INSERT INTO``, ``UPDATE x SET``, ``DELETE FROM``,
@@ -1272,7 +1304,7 @@ class QueryFacts:
             for reading in readings
         )
 
-    @cached_property
+    @_fact
     def session_key(self) -> bool:
         """A session/token statement (#663): a session word (``session``, ``token``,
         ``sess_id``, ``session_id``, ``csrf``), or a two-part PascalCase/camelCase session
@@ -1584,34 +1616,56 @@ def _has_computed_join_key(text: str) -> bool:
 # raised past that by ``MODERNIZER_MAX_UPLOAD_QUERIES`` only recomputes what
 # its readers ask for, since each fact is lazy.
 @lru_cache(maxsize=65536)
-def _query_facts(text: str, source_engine: str) -> QueryFacts:
-    return QueryFacts(text, source_engine)
+def _query_facts(text: str, source_engine: str, settings: SpanSettings) -> QueryFacts:
+    return QueryFacts(text, source_engine, settings)
 
 
-def query_facts(query_text: str | None, source_engine: str | None = None) -> QueryFacts:
+def query_facts(
+    query_text: str | None,
+    source_engine: str | None = None,
+    settings: SpanSettings | None = None,
+) -> QueryFacts:
     """The facts of ``query_text`` (``None`` reads as empty text), one object per
-    text and source engine: computed facts are kept for every later reader. The
-    source engine (the collector's ``metadata.source_database.engine``) picks the
-    dialect the parsed facts are read in; none reads them in sqlglot's generic one.
+    text, source engine and source settings: computed facts are kept for every later
+    reader. The source engine (the collector's ``metadata.source_database.engine``) picks
+    the dialect the parsed facts are read in; none reads them in sqlglot's generic one.
+    ``settings`` are the source's string settings (#1482), by default the collection's
+    (the ones :func:`remember_collected_facts` made active).
     """
-    return _query_facts(query_text or "", (source_engine or "").strip().lower())
+    return _query_facts(
+        query_text or "",
+        (source_engine or "").strip().lower(),
+        active_span_settings() if settings is None else settings,
+    )
 
 
 # The readings each collected query pattern carries (``parsed_facts``, #934), by query
 # text and source engine, for the QueryFacts that reads that text. Bounded like the
 # QueryFacts cache: past the bound, the oldest are forgotten and parsed when read.
-_STORED_READINGS: dict[tuple[str, str], Mapping] = {}
+# Keyed on the source settings too (#1482): two collections of one process (API jobs)
+# with the same text but other settings read it apart.
+_STORED_READINGS: dict[tuple[str, str, SpanSettings], Mapping] = {}
 _STORED_READINGS_MAX = 65536
 _STORED_READINGS_LOCK = threading.Lock()
 
 
-def remember_stored_facts(query_text: str, source_engine: str | None, stored: object) -> None:
+def remember_stored_facts(
+    query_text: str,
+    source_engine: str | None,
+    stored: object,
+    settings: SpanSettings | None = None,
+) -> None:
     """Use ``stored`` (a query pattern's ``parsed_facts``) as the reading of ``query_text``
-    read for ``source_engine``. Facts it can't vouch for (another version, engine or
-    text) are ignored when read, and the text is parsed instead."""
+    read for ``source_engine`` with ``settings`` (by default the active ones, #1482).
+    Facts it can't vouch for (another version, engine or text) are ignored when read,
+    and the text is parsed instead."""
     if not isinstance(stored, Mapping) or not query_text:
         return
-    key = (query_text, (source_engine or "").strip().lower())
+    key = (
+        query_text,
+        (source_engine or "").strip().lower(),
+        active_span_settings() if settings is None else settings,
+    )
     with _STORED_READINGS_LOCK:  # the analyses load the collection in parallel threads
         _STORED_READINGS.pop(key, None)
         _STORED_READINGS[key] = stored
@@ -1622,7 +1676,13 @@ def remember_stored_facts(query_text: str, source_engine: str | None, stored: ob
 def remember_collected_facts(collector_output: Mapping | None) -> None:
     """Use every query pattern's stored facts (``parsed_facts``, #934) as the reading of
     its text, so the steps that read the collection's query facts parse none of the
-    queries the collector already parsed. A step calls it when it loads the collection."""
+    queries the collector already parsed. A step calls it when it loads the collection.
+
+    It also makes the collection's source settings (``metadata.source_database.settings``,
+    #1482) the active ones (``sql_spans.use_span_settings``), so every later scan in the
+    step reads a string the way the source does; a collection without them reads each
+    engine's defaults."""
+    use_span_settings(span_settings_of(collector_output))
     engine = source_engine_of(collector_output)
     queries = (collector_output or {}).get("queries") or {}
     patterns = queries.get("query_patterns") if isinstance(queries, Mapping) else queries

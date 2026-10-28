@@ -71,7 +71,7 @@ _ALLOWED: dict[tuple[str, str, str], str] = {
     ): "the MariaDB flavour of a source already recorded as MySQL; never sets the engine",
     (
         "src/agents/collector/postgres_collector.py",
-        "_collect_live",
+        "_collect_live_stages",
         "engine_substring",
     ): "shortens a live PostgreSQL server's own banner to its version number",
     (

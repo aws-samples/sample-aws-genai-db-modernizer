@@ -1,6 +1,13 @@
 {
   "_comment": "Leading-comment cases shared by src/shared/sql_comments.py and src/ui/src/utils/sqlComments.js (#814), so the two scanners keep one comment rule. Options use the Python keyword names.",
   "leading": [
+    {"text": "--x\nSELECT 1", "options": {"mysql_dashes": true}, "expected": "--x\nSELECT 1"},
+    {"text": "--x\nSELECT 1", "options": {}, "expected": "SELECT 1"},
+    {"text": "-- x\nSELECT 1", "options": {"mysql_dashes": true}, "expected": "SELECT 1"},
+    {"text": "--\tx\nSELECT 1", "options": {"mysql_dashes": true}, "expected": "SELECT 1"},
+    {"text": "--\nSELECT 1", "options": {"mysql_dashes": true}, "expected": "SELECT 1"},
+    {"text": "--\u0001x\nSELECT 1", "options": {"mysql_dashes": true}, "expected": "SELECT 1"},
+    {"text": "/* a */--1\nSELECT 1", "options": {"mysql_dashes": true, "hash_comments": true}, "expected": "--1\nSELECT 1"},
     {"text": "SELECT 1", "options": {}, "expected": "SELECT 1"},
     {"text": "/* a */ SELECT 1", "options": {}, "expected": " SELECT 1"},
     {"text": "  /* a */ /* b */SELECT 1", "options": {}, "expected": "SELECT 1"},

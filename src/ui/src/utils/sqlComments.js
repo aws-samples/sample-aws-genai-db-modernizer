@@ -9,7 +9,8 @@
  * left to right, with `indexOf` to skip each comment body.
  *
  * A `--` line comment (and `#` with `hashComments`, MySQL) counts only with its
- * newline. A block comment ends at its first `*\/`, unless `nested` is set: then
+ * newline. With `mysqlDashes` (MySQL, MariaDB, #1482) `--` opens one only before a
+ * space or a control character (or the end of the text): `5--1` is arithmetic. A block comment ends at its first `*\/`, unless `nested` is set: then
  * each `/*` inside opens one more level, as PostgreSQL and SQL Server read them.
  * An unterminated block comment is not a comment.
  */
@@ -49,6 +50,17 @@ function isSpace(ch) {
   return PY_SPACE.has(ch);
 }
 
+function dashesAt(text, i, mysqlDashes) {
+  if (!text.startsWith('--', i)) {
+    return false;
+  }
+  if (!mysqlDashes || i + 2 >= text.length) {
+    return true;
+  }
+  const after = text.charCodeAt(i + 2);
+  return after <= 0x20 || after === 0x7f;
+}
+
 function skipSpace(text, start) {
   let i = start;
   while (i < text.length && isSpace(text[i])) {
@@ -64,14 +76,14 @@ function skipSpace(text, start) {
  */
 export function stripLeadingComments(
   text,
-  { hashComments = false, stripFollowingSpace = false, nested = false } = {},
+  { hashComments = false, stripFollowingSpace = false, nested = false, mysqlDashes = false } = {},
 ) {
   const source = String(text ?? '');
   let i = 0;
   let cut = 0;
   for (;;) {
     i = skipSpace(source, i);
-    if (source.startsWith('--', i) || (hashComments && source.startsWith('#', i))) {
+    if (dashesAt(source, i, mysqlDashes) || (hashComments && source.startsWith('#', i))) {
       const newline = source.indexOf('\n', i);
       if (newline < 0) {
         break;

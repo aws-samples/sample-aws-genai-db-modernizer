@@ -18,6 +18,7 @@ function jsOptions(options) {
     hashComments: Boolean(options.hash_comments),
     stripFollowingSpace: Boolean(options.strip_following_space),
     nested: Boolean(options.nested),
+    mysqlDashes: Boolean(options.mysql_dashes),
   };
 }
 

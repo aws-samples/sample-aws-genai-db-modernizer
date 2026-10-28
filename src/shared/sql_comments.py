@@ -8,7 +8,9 @@ split. These helpers scan the text once, left to right, with ``str.find`` to
 skip each comment body, so each character is looked at a bounded number of
 times and time grows linearly with the text's length.
 
-A ``--`` line comment runs to the end of its line. A ``/* ... */`` block ends at
+A ``--`` line comment runs to the end of its line; with ``mysql_dashes`` (MySQL and
+MariaDB, #1482) only when a space or a control character (or the end of the text)
+follows the dashes, so ``5--1`` is arithmetic. A ``/* ... */`` block ends at
 its first ``*/``, unless ``nested`` is set: PostgreSQL and SQL Server nest block
 comments, so ``/* a /* b */ c */`` is one comment there, while MySQL and Oracle
 end it at the first ``*/`` (:func:`block_comments_nest` says which a source
@@ -62,6 +64,17 @@ _COMMENT_OR_QUOTE_START_RE = re.compile(r"['/#-]")
 _TRAILING_SCAN_START_RE = re.compile(r"""['"`/#;-]""")
 
 
+def _dashes_at(text: str, i: int, mysql_dashes: bool) -> bool:
+    """Whether a ``--`` line comment opens at ``i``: with ``mysql_dashes``, MySQL's rule
+    (a space, a control character or the end of the text after the dashes)."""
+    if not text.startswith("--", i):
+        return False
+    if not mysql_dashes or i + 2 >= len(text):
+        return True
+    after = ord(text[i + 2])
+    return after <= 0x20 or after == 0x7F
+
+
 def block_comments_nest(dialect: str | None) -> bool:
     """Whether block comments nest in the source ``dialect`` (PostgreSQL, SQL Server)."""
     return (dialect or "").strip().lower() in _NESTING_DIALECTS
@@ -90,7 +103,7 @@ def block_comment_end(text: str, start: int, nested: bool) -> int:
 
 
 def _leading_comment_run(
-    text: str, hash_comments: bool, nested: bool, mysql_executable: bool
+    text: str, hash_comments: bool, nested: bool, mysql_executable: bool, mysql_dashes: bool
 ) -> tuple[int, list[tuple[int, int]]]:
     """Where the comments ``text`` opens with end, and each one's body.
 
@@ -106,7 +119,7 @@ def _leading_comment_run(
     while True:
         while i < n and text[i].isspace():
             i += 1
-        line = 2 if text.startswith("--", i) else 0
+        line = 2 if _dashes_at(text, i, mysql_dashes) else 0
         if not line and hash_comments and text.startswith("#", i):
             line = 1
         if line:
@@ -135,6 +148,7 @@ def strip_leading_comments(
     strip_following_space: bool = False,
     nested: bool = False,
     mysql_executable: bool = False,
+    mysql_dashes: bool = False,
 ) -> str:
     """``text`` without the comments it opens with.
 
@@ -145,10 +159,11 @@ def strip_leading_comments(
     removes the whitespace after the last comment; without it that whitespace
     is kept. ``nested`` reads block comments the PostgreSQL/SQL Server way.
     ``mysql_executable`` stops at a MySQL executable comment (``/*! ... */``),
-    which is code (see :func:`unwrap_executable_comment`). Text that opens with
-    no comment is returned unchanged.
+    which is code (see :func:`unwrap_executable_comment`). ``mysql_dashes`` reads
+    ``--`` the MySQL way (a comment only before a space or a control character).
+    Text that opens with no comment is returned unchanged.
     """
-    cut, _ = _leading_comment_run(text, hash_comments, nested, mysql_executable)
+    cut, _ = _leading_comment_run(text, hash_comments, nested, mysql_executable, mysql_dashes)
     if cut == 0:
         return text
     rest = text[cut:]
@@ -161,6 +176,7 @@ def leading_comments(
     hash_comments: bool = False,
     nested: bool = False,
     mysql_executable: bool = False,
+    mysql_dashes: bool = False,
 ) -> list[str]:
     """The text of each comment ``text`` opens with, in order, markers removed.
 
@@ -169,18 +185,19 @@ def leading_comments(
     callers trim). A nested block's inner markers are part of its text. A
     comment after the first code character is not leading, so it is not listed.
     """
-    _, bodies = _leading_comment_run(text, hash_comments, nested, mysql_executable)
+    _, bodies = _leading_comment_run(text, hash_comments, nested, mysql_executable, mysql_dashes)
     return [text[start:end] for start, end in bodies]
 
 
-def strip_trailing_comments(text: str, *, nested: bool = False) -> str:
+def strip_trailing_comments(text: str, *, nested: bool = False, mysql_dashes: bool = False) -> str:
     """``text`` without the comments it ends with.
 
     Removes every trailing ``-- ...`` line comment and ``/* ... */`` block, and
     the whitespace around them, so ``SELECT 1 /* a */ -- b`` becomes
     ``SELECT 1``. A comment in the middle of the statement is kept. ``nested``
-    reads block comments the PostgreSQL/SQL Server way. Text that ends with no
-    comment is returned unchanged, trailing whitespace included.
+    reads block comments the PostgreSQL/SQL Server way, ``mysql_dashes`` ``--`` the
+    MySQL way. Text that ends with no comment is returned unchanged, trailing
+    whitespace included.
     """
     n = len(text)
     i = code_end = 0
@@ -192,7 +209,7 @@ def strip_trailing_comments(text: str, *, nested: bool = False) -> str:
     # the scan linear.
     any_close_left = True
     while i < n:
-        if text.startswith("--", i):
+        if _dashes_at(text, i, mysql_dashes):
             newline = text.find("\n", i)
             i = n if newline < 0 else newline
             comment_after_code = True
@@ -212,16 +229,18 @@ def strip_trailing_comments(text: str, *, nested: bool = False) -> str:
     return text[:code_end] if comment_after_code else text
 
 
-def _quote_end(text: str, start: int, backslash: bool) -> int:
+def _quote_end(text: str, start: int, backslash_quotes: str) -> int:
     """The index just past the quoted literal or name opened at ``start``, or the
-    text's length when it is unterminated. A doubled quote is an escaped quote;
-    ``backslash`` also reads ``\\x`` as an escape (MySQL string literals)."""
+    text's length when it is unterminated. A doubled quote is an escaped quote; in a
+    quote of ``backslash_quotes`` a ``\\x`` is an escape too (MySQL's strings, or
+    PostgreSQL's with ``standard_conforming_strings = off``)."""
     quote = text[start]
+    backslash = quote in backslash_quotes
     i = start + 1
     n = len(text)
     while i < n:
         ch = text[i]
-        if backslash and ch == "\\" and quote != "`":
+        if backslash and ch == "\\":
             i += 2
         elif ch == quote:
             if text.startswith(quote, i + 1):
@@ -239,6 +258,8 @@ def trailing_comments(
     hash_comments: bool = False,
     nested: bool = False,
     mysql_executable: bool = False,
+    mysql_dashes: bool = False,
+    backslash_quotes: str | None = None,
 ) -> list[str]:
     """The text of each comment ``text`` ends with, in order, markers removed.
 
@@ -250,8 +271,14 @@ def trailing_comments(
     a statement that is only comments (those are leading). As for leading comments,
     a line comment counts only with its newline, and an unterminated ``/*`` is code.
     The options are those of :func:`strip_leading_comments`: ``mysql_executable``
-    reads ``/*! ... */`` as code. One forward pass, linear in the text's length.
+    reads ``/*! ... */`` as code, ``mysql_dashes`` reads ``--`` the MySQL way.
+    ``backslash_quotes`` are the quotes a ``\\`` escapes in (the source's string
+    settings, ``sql_spans.backslash_quotes``, #1482); by default ``'`` and ``"`` with
+    ``hash_comments`` (MySQL's defaults) and none otherwise. One forward pass, linear in
+    the text's length.
     """
+    if backslash_quotes is None:
+        backslash_quotes = "'\"" if hash_comments else ""
     n = len(text)
     i = 0
     pending: list[tuple[int, int]] = []
@@ -262,9 +289,9 @@ def trailing_comments(
         if ch.isspace() or ch == ";":
             i += 1
         elif ch in "'\"`":
-            i = _quote_end(text, i, backslash=hash_comments)
+            i = _quote_end(text, i, backslash_quotes)
             pending, seen_code = [], True
-        elif text.startswith("--", i) or (hash_comments and ch == "#"):
+        elif _dashes_at(text, i, mysql_dashes) or (hash_comments and ch == "#"):
             marker = 2 if ch == "-" else 1
             newline = text.find("\n", i)
             if newline < 0:
@@ -319,7 +346,14 @@ def unwrap_executable_comment(text: str) -> str:
     return text[marker.end() : close] + rest
 
 
-def strip_comments(text: str, *, nested: bool = False, hash_comments: bool = False) -> str:
+def strip_comments(
+    text: str,
+    *,
+    nested: bool = False,
+    hash_comments: bool = False,
+    mysql_dashes: bool = False,
+    backslash: bool = False,
+) -> str:
     """``text`` with every comment replaced by one space, wherever it is.
 
     A single-quoted string literal (``''`` escapes a quote) is data, so a
@@ -327,8 +361,10 @@ def strip_comments(text: str, *, nested: bool = False, hash_comments: bool = Fal
     ``--`` comment runs to its newline (the newline is kept), and so does a
     ``#`` comment with ``hash_comments`` (MySQL; elsewhere ``#`` is an
     operator or part of a name). ``nested`` reads block comments the
-    PostgreSQL/SQL Server way. An unterminated block comment is not a comment,
-    and an unterminated literal runs to the end of the text.
+    PostgreSQL/SQL Server way, ``mysql_dashes`` ``--`` the MySQL way. With
+    ``backslash`` a ``\\`` escapes the next character in a literal (the source's string
+    settings, #1482). An unterminated block comment is not a comment, and an
+    unterminated literal runs to the end of the text.
     """
     n = len(text)
     out: list[str] = []
@@ -336,7 +372,9 @@ def strip_comments(text: str, *, nested: bool = False, hash_comments: bool = Fal
     any_close_left = True  # as in strip_trailing_comments
     while i < n:
         ch = text[i]
-        if ch == "'":
+        if ch == "'" and backslash:
+            i = _quote_end(text, i, "'")
+        elif ch == "'":
             close = i
             while True:
                 close = text.find("'", close + 1)
@@ -344,7 +382,7 @@ def strip_comments(text: str, *, nested: bool = False, hash_comments: bool = Fal
                     break
                 close += 1  # an escaped '' quote: keep looking
             i = n if close < 0 else close + 1
-        elif text.startswith("--", i) or (hash_comments and ch == "#"):
+        elif _dashes_at(text, i, mysql_dashes) or (hash_comments and ch == "#"):
             newline = text.find("\n", i)
             end = n if newline < 0 else newline
             out.append(text[start:i])

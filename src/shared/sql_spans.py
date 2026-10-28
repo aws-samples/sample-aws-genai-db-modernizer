@@ -26,6 +26,17 @@ Oracle                  no     no      no          no      no      no
 none known              no     no      yes         no      no      no
 ======================  =====  ======  ==========  ======  ======  =========
 
+The table holds each engine's default settings, which a source can change (#1482); the
+grammar takes the source's own as :class:`SpanSettings`, read from the collection
+(:func:`span_settings_of`): MySQL and MariaDB with ``NO_BACKSLASH_ESCAPES`` in their
+``sql_mode`` read ``\\`` as an ordinary character, and PostgreSQL with
+``standard_conforming_strings = off`` reads it as an escape in a plain ``'...'`` string
+too. With no settings given, a scan reads the settings of the collection being read
+(:func:`use_span_settings`), and with none of those each engine's defaults, as before.
+
+MySQL and MariaDB read ``--`` as a comment only when a space or a control character (or
+the end of the text) follows it: ``5--1`` is ``5 - -1``. That needs no setting.
+
 Oracle also reads its alternative quoting, ``q'[...]'`` (and the national ``nq'[...]'``):
 the opener carries a delimiter, ``[ ( { <`` close with their mirror and any other
 printable character with itself, and the string ends at the closing delimiter followed by
@@ -64,7 +75,9 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_left
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import cache, lru_cache, partial
 
@@ -78,19 +91,28 @@ __all__ = [
     "MYSQL_LITERALS_AND_COMMENTS",
     "POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS",
     "POSTGRES_LITERALS_AND_COMMENTS",
+    "DEFAULT_SPAN_SETTINGS",
     "QUOTED_IDENTIFIERS",
     "ROUTINE_BODY_OPENER_RE",
     "Grammar",
+    "SpanSettings",
+    "active_span_settings",
+    "backslash_quotes",
     "code_text",
     "comments_literals_and_identifiers_for",
     "keyword_text",
     "literals_and_comments_for",
     "opens_routine_body",
     "quoted_span_end",
+    "replace_strings_and_comments",
     "scan_grammar_for",
     "span_dialect",
+    "span_settings",
+    "span_settings_of",
     "spans",
     "sub_spans",
+    "use_span_settings",
+    "with_span_settings",
 ]
 
 _STOPS = {
@@ -191,6 +213,105 @@ def span_dialect(source_engine: str | None) -> str:
     return _DIALECTS.get((source_engine or "").strip().lower(), "")
 
 
+@dataclass(frozen=True)
+class SpanSettings:
+    """The source settings that change how a string is read (#1482). The defaults are
+    each engine's own, so ``SpanSettings()`` reads every dialect as before.
+
+    ``no_backslash_escapes``: MySQL's or MariaDB's ``sql_mode`` holds
+    ``NO_BACKSLASH_ESCAPES``, so ``\\`` is an ordinary character in a string.
+    ``standard_conforming_strings``: PostgreSQL's setting; ``False`` (``off``) makes
+    ``\\`` an escape in a plain ``'...'`` string as well as in ``E'...'``.
+    ``ansi_quotes``: MySQL's or MariaDB's ``sql_mode`` holds ``ANSI_QUOTES`` (or
+    ``ANSI``), so ``"..."`` quotes a name, not a string. Each is read only for its own
+    dialect. Redaction never trusts the settings to mask less (``redact``).
+    """
+
+    no_backslash_escapes: bool = False
+    standard_conforming_strings: bool = True
+    ansi_quotes: bool = False
+
+
+DEFAULT_SPAN_SETTINGS = SpanSettings()
+
+# The settings of the collection being read, for a scan given none (:func:`use_span_settings`).
+_ACTIVE: ContextVar[SpanSettings] = ContextVar("span_settings", default=DEFAULT_SPAN_SETTINGS)
+
+
+def active_span_settings() -> SpanSettings:
+    """The settings a scan given none reads: the collection's (:func:`use_span_settings`),
+    else each engine's defaults."""
+    return _ACTIVE.get()
+
+
+def use_span_settings(settings: SpanSettings | None) -> None:
+    """Read every later scan in this context (thread, task) with ``settings``, ``None``
+    being each engine's defaults. A step calls it when it loads a collection
+    (``query_facts.remember_collected_facts``), so a scan reads the source's settings."""
+    _ACTIVE.set(settings or DEFAULT_SPAN_SETTINGS)
+
+
+@contextmanager
+def with_span_settings(settings: SpanSettings | None) -> Iterator[SpanSettings]:
+    """Read every scan inside the block with ``settings`` (``None``: the ones already
+    active), then restore the settings that were active before it."""
+    token = _ACTIVE.set(_settings(settings))
+    try:
+        yield _ACTIVE.get()
+    finally:
+        _ACTIVE.reset(token)
+
+
+def _settings(settings: SpanSettings | None) -> SpanSettings:
+    return _ACTIVE.get() if settings is None else settings
+
+
+def _setting_on(value: object) -> bool | None:
+    """A boolean setting as a server reports it (``on``, ``off``, ``1``, ``true``), or
+    ``None`` when it is not one."""
+    if isinstance(value, bool):
+        return value
+    text = str(value if value is not None else "").strip().lower()
+    if text in ("on", "true", "1", "yes"):
+        return True
+    if text in ("off", "false", "0", "no"):
+        return False
+    return None
+
+
+def span_settings(source_engine: str | None, settings: Mapping[str, object] | None) -> SpanSettings:
+    """The span settings of a source's reported settings (``sql_mode`` for MySQL and
+    MariaDB, ``standard_conforming_strings`` for PostgreSQL): each one missing or not
+    understood is the engine's default, and another dialect's is not read."""
+    if not isinstance(settings, Mapping):
+        return DEFAULT_SPAN_SETTINGS
+    dialect = span_dialect(source_engine)
+    if dialect == "mysql":
+        modes = {m.strip().upper() for m in str(settings.get("sql_mode") or "").split(",")}
+        return SpanSettings(
+            no_backslash_escapes="NO_BACKSLASH_ESCAPES" in modes,
+            ansi_quotes=bool(modes & {"ANSI_QUOTES", "ANSI"}),
+        )
+    if dialect == "postgresql":
+        on = _setting_on(settings.get("standard_conforming_strings"))
+        return SpanSettings(standard_conforming_strings=on is not False)
+    return DEFAULT_SPAN_SETTINGS
+
+
+def span_settings_of(collector_output: Mapping | None) -> SpanSettings:
+    """The span settings of a collection: its ``metadata.source_database.settings``
+    read for its source engine. A collection without them (any written before #1482)
+    reads each engine's defaults, as before."""
+    metadata = (
+        (collector_output or {}).get("metadata") if isinstance(collector_output, Mapping) else None
+    )
+    source = metadata.get("source_database") if isinstance(metadata, Mapping) else None
+    if not isinstance(source, Mapping):
+        return DEFAULT_SPAN_SETTINGS
+    engine = source.get("engine")
+    return span_settings(str(getattr(engine, "value", engine) or ""), source.get("settings"))
+
+
 def _line_end(text: str, start: int) -> int:
     newline = text.find("\n", start)
     return len(text) if newline < 0 else newline
@@ -201,7 +322,7 @@ class _Forms:
     """How one reading of a dialect ends its spans (hashable, so a grammar is cached)."""
 
     nests: bool  # a block comment nests
-    backslash: bool  # ``\\`` escapes in a ``'...'`` or ``"..."`` string
+    backslash: frozenset[str]  # the quotes (``'``, ``"``) a ``\\`` escapes in
     bracket_escape: bool  # ``]]`` is a ``]`` inside ``[...]``
 
 
@@ -228,7 +349,7 @@ def _span_end(forms: _Forms, identifiers: bool, text: str, start: int, opener: s
         delimiter = opener[-1]
         found = text.find(_Q_CLOSERS.get(delimiter, delimiter) + "'", start + len(opener))
         return found + 2 if found >= 0 else -1
-    backslash = forms.backslash
+    backslash = opener in forms.backslash
     if opener == '"' and identifiers:
         backslash = False
     return quoted_span_end(text, start, opener, backslash)
@@ -239,11 +360,44 @@ def is_alternative_quote(opener: str) -> bool:
     return len(opener) >= 3 and opener[-2] == "'"
 
 
+# MySQL and MariaDB read ``--`` as a comment only before a space or a control character
+# (or the end of the text, which their lexer reads as one): ``5--1`` is arithmetic.
+_MYSQL_LINE_COMMENT = r"--(?=[\x00-\x20\x7f]|\Z)"
+
+
+def _line_comment(dialect: str) -> str:
+    return _MYSQL_LINE_COMMENT if dialect == "mysql" else "--"
+
+
+def _backslash_quotes(dialect: str, settings: SpanSettings) -> frozenset[str]:
+    """The quotes a ``\\`` escapes in, in ``dialect`` read with ``settings``."""
+    if dialect == "":
+        return frozenset({"'", '"'})
+    if dialect == "mysql" and not settings.no_backslash_escapes:
+        # With ANSI_QUOTES a ``"..."`` is a name, where a backslash escapes nothing.
+        return frozenset({"'"} if settings.ansi_quotes else {"'", '"'})
+    if dialect == "postgresql" and not settings.standard_conforming_strings:
+        return frozenset({"'"})
+    return frozenset()
+
+
+def backslash_quotes(source_engine: str | None, settings: SpanSettings | None = None) -> str:
+    """The quotes (``'``, ``"``) a ``\\`` escapes in, for a known source engine read with
+    ``settings`` (by default the active ones): MySQL's and MariaDB's two unless
+    ``NO_BACKSLASH_ESCAPES``, PostgreSQL's ``'`` with ``standard_conforming_strings = off``,
+    none otherwise (an unknown engine included). For the scanners outside this module
+    (``sql_comments``), so they read a string as the grammar does (#1482)."""
+    dialect = span_dialect(source_engine)
+    if not dialect:
+        return ""
+    return "".join(sorted(_backslash_quotes(dialect, _settings(settings))))
+
+
 @cache
-def _grammar(dialect: str, identifiers: bool) -> Grammar:
+def _grammar(dialect: str, identifiers: bool, settings: SpanSettings) -> Grammar:
     """The span grammar of a span ``dialect``; with ``identifiers``, ``"..."``,
     `` `...` `` and ``[...]`` identifiers in every dialect too."""
-    parts = [r"/\*", "--"]
+    parts = [r"/\*", _line_comment(dialect)]
     if dialect == "mysql":
         parts.append("#")
     if dialect == "oracle":
@@ -259,11 +413,11 @@ def _grammar(dialect: str, identifiers: bool) -> Grammar:
     if dialect == "postgresql":
         parts.append(_DOLLAR_OPENER)
     named = {"`", "["}
-    if identifiers or dialect != "mysql":
+    if identifiers or dialect != "mysql" or settings.ansi_quotes:
         named.add('"')
     forms = _Forms(
         nests=block_comments_nest(dialect),
-        backslash=dialect in ("mysql", ""),
+        backslash=_backslash_quotes(dialect, settings),
         bracket_escape=dialect == "sqlserver",
     )
     return Grammar(
@@ -273,21 +427,28 @@ def _grammar(dialect: str, identifiers: bool) -> Grammar:
     )
 
 
-@cache
-def scan_grammar_for(source_engine: str | None, brackets: bool = False) -> Grammar:
+def scan_grammar_for(
+    source_engine: str | None, brackets: bool = False, settings: SpanSettings | None = None
+) -> Grammar:
     """The grammar of ``normalize``'s digest scan, which masks every quoted span.
 
     It reads the same forms as :func:`literals_and_comments_for` with the digest
     scan's own settings: a backtick quotes in every dialect, ``\\`` escapes only in
-    MySQL and MariaDB (never in an unknown dialect), ``[...]`` is a name only with
-    ``brackets`` (and ``]]`` escapes a ``]``), a dollar quote opens in every dialect but
-    MySQL's, and a block comment nests as :func:`block_comments_nest` says for the raw
-    engine name (``aurora_postgresql`` included).
+    MySQL and MariaDB (never in an unknown dialect) unless ``settings`` say otherwise
+    (``NO_BACKSLASH_ESCAPES``, PostgreSQL's ``standard_conforming_strings = off``),
+    ``[...]`` is a name only with ``brackets`` (and ``]]`` escapes a ``]``), a dollar
+    quote opens in every dialect but MySQL's, and a block comment nests as
+    :func:`block_comments_nest` says for the raw engine name (``aurora_postgresql``
+    included). ``settings`` default to the collection's (:func:`active_span_settings`).
     """
-    engine = (source_engine or "").strip().lower()
+    return _scan_grammar((source_engine or "").strip().lower(), brackets, _settings(settings))
+
+
+@cache
+def _scan_grammar(engine: str, brackets: bool, settings: SpanSettings) -> Grammar:
     dialect = span_dialect(engine)
     mysql = dialect == "mysql"
-    parts = [r"/\*", "--"]
+    parts = [r"/\*", _line_comment(dialect)]
     if mysql:
         parts.append("#")
     if dialect == "oracle":
@@ -297,34 +458,48 @@ def scan_grammar_for(source_engine: str | None, brackets: bool = False) -> Gramm
     parts.append(r"['\"`\[]" if brackets else "['\"`]")
     if not mysql:
         parts.append(_DOLLAR_OPENER)
-    forms = _Forms(nests=block_comments_nest(engine), backslash=mysql, bracket_escape=True)
+    backslash = _backslash_quotes(dialect, settings) if dialect else frozenset()
+    forms = _Forms(nests=block_comments_nest(engine), backslash=backslash, bracket_escape=True)
     return Grammar(
         re.compile("|".join(parts)),
         partial(_span_end, forms, False),
-        frozenset({"`", "[", '"'} if not mysql else {"`", "["}),
+        frozenset({"`", "[", '"'} if not mysql or settings.ansi_quotes else {"`", "["}),
     )
 
 
-def literals_and_comments_for(source_engine: str | None) -> Grammar:
+def literals_and_comments_for(
+    source_engine: str | None, settings: SpanSettings | None = None
+) -> Grammar:
     """The comment and literal grammar of a source engine (``metadata.source_database.engine``),
     with its own quoted identifiers (MySQL backticks, SQL Server brackets); see the module
-    docstring for each dialect's forms. None known reads the forms the old regexes read."""
-    return _grammar(span_dialect(source_engine), False)
+    docstring for each dialect's forms. None known reads the forms the old regexes read.
+    ``settings`` are the source's (#1482), by default the collection's
+    (:func:`active_span_settings`)."""
+    return _grammar(span_dialect(source_engine), False, _settings(settings))
 
 
-def comments_literals_and_identifiers_for(source_engine: str | None) -> Grammar:
+def comments_literals_and_identifiers_for(
+    source_engine: str | None, settings: SpanSettings | None = None
+) -> Grammar:
     """The one-scan comment, literal and quoted-identifier grammar of a source engine:
     :func:`literals_and_comments_for`'s, with ``"..."``, `` `...` `` and ``[...]``
     identifiers whatever the dialect."""
-    return _grammar(span_dialect(source_engine), True)
+    return _grammar(span_dialect(source_engine), True, _settings(settings))
 
 
-LITERALS_AND_COMMENTS = literals_and_comments_for(None)
-MYSQL_LITERALS_AND_COMMENTS = literals_and_comments_for("mysql")
-POSTGRES_LITERALS_AND_COMMENTS = literals_and_comments_for("postgresql")
-COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for(None)
-MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for("mysql")
-POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for("postgresql")
+# Each engine's default settings, whatever the collection's.
+LITERALS_AND_COMMENTS = literals_and_comments_for(None, DEFAULT_SPAN_SETTINGS)
+MYSQL_LITERALS_AND_COMMENTS = literals_and_comments_for("mysql", DEFAULT_SPAN_SETTINGS)
+POSTGRES_LITERALS_AND_COMMENTS = literals_and_comments_for("postgresql", DEFAULT_SPAN_SETTINGS)
+COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for(
+    None, DEFAULT_SPAN_SETTINGS
+)
+MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for(
+    "mysql", DEFAULT_SPAN_SETTINGS
+)
+POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for(
+    "postgresql", DEFAULT_SPAN_SETTINGS
+)
 
 
 def _end_quoted_identifiers(text: str, start: int, opener: str) -> int:
@@ -370,6 +545,36 @@ def sub_spans(text: str, grammar: Grammar, repl: Callable[[str], str]) -> str:
     return "".join(out)
 
 
+def replace_strings_and_comments(
+    text: str,
+    source_engine: str | None,
+    *,
+    string: Callable[[str], str],
+    comment: Callable[[str], str],
+    settings: SpanSettings | None = None,
+) -> str:
+    """``text`` with each string literal written ``string(span)`` and each comment
+    ``comment(span)``, read in the source engine's forms and settings
+    (:func:`literals_and_comments_for`); quoted identifiers are kept. For a scan that
+    blanks literals and comments by its own rule, so it reads them as the grammar does
+    (#1482)."""
+    grammar = literals_and_comments_for(source_engine, settings)
+    out: list[str] = []
+    last = 0
+    for start, end, opener in spans(text, grammar):
+        out.append(text[last:start])
+        span = text[start:end]
+        if opener in ("--", "#", "/*"):
+            out.append(comment(span))
+        elif opener in grammar.identifiers:
+            out.append(span)
+        else:
+            out.append(string(span))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
 # A PostgreSQL ``DO $$ ... $$`` block (with an optional ``LANGUAGE x``), or the ``AS $$ ... $$``
 # body of a ``CREATE FUNCTION`` / ``CREATE PROCEDURE``, is code that runs, not a string
 # literal (#1144, #1416). Matched on the code before the dollar quote.
@@ -395,7 +600,13 @@ def _quoted(opener: str, name: str) -> str:
     return f"{opener}{name}{_CLOSERS.get(opener, opener)}"
 
 
-def keyword_text(text: str, source_engine: str | None, *, unquote: bool = False) -> str:
+def keyword_text(
+    text: str,
+    source_engine: str | None,
+    *,
+    unquote: bool = False,
+    settings: SpanSettings | None = None,
+) -> str:
     """:func:`code_text` with each quoted identifier's name :data:`NEUTRAL_NAME`, in its
     quotes (``"where"`` reads ``"quoted_name"``, #1478).
 
@@ -408,7 +619,9 @@ def keyword_text(text: str, source_engine: str | None, *, unquote: bool = False)
     With ``unquote``, each neutral name is written bare (``RETURNING "id"`` reads
     ``RETURNING quoted_name``), for a fact whose pattern expects a bare name (#1547).
     """
-    return code_text(text, source_engine, neutral_name=NEUTRAL_NAME, unquote=unquote)
+    return code_text(
+        text, source_engine, neutral_name=NEUTRAL_NAME, unquote=unquote, settings=settings
+    )
 
 
 def code_text(
@@ -417,6 +630,7 @@ def code_text(
     *,
     neutral_name: str | None = None,
     unquote: bool = False,
+    settings: SpanSettings | None = None,
 ) -> str:
     """``text`` as the source engine runs it (#1415): each comment a space, each string
     literal a ``?`` placeholder, each quoted identifier as written.
@@ -439,9 +653,13 @@ def code_text(
     written without its quotes (``"status"`` reads ``status``, ``"a"."b"`` reads ``a.b``,
     #1547), for a fact whose pattern expects a bare name next to a keyword; a name that
     is not one word (``"my status"``) keeps its quotes.
+
+    ``settings`` are the source's string settings (:class:`SpanSettings`, #1482), by
+    default the collection's.
     """
     text = text or ""
-    grammar = literals_and_comments_for(source_engine)
+    settings = _settings(settings)
+    grammar = literals_and_comments_for(source_engine, settings)
     out: list[str] = []
     last = 0
     for start, end, opener in spans(text, grammar):
@@ -470,7 +688,15 @@ def code_text(
         ):
             body = text[start + len(opener) : end - len(opener)]
             out.append(
-                f" {code_text(body, source_engine, neutral_name=neutral_name, unquote=unquote)} "
+                " "
+                + code_text(
+                    body,
+                    source_engine,
+                    neutral_name=neutral_name,
+                    unquote=unquote,
+                    settings=settings,
+                )
+                + " "
             )
         else:
             out.append("?")

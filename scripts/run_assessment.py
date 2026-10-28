@@ -467,13 +467,17 @@ def phase_analysis(
 ) -> dict:
     _banner(f"ANALYSIS ({len(selected_engines)} engines in parallel)")
     from src.agents.analysis.handler import run_analysis
+    from src.shared.progress import in_context
 
     _log("analysis", f"Engines: {selected_engines} (llm_mode={llm_mode})")
     results = {}
     if len(selected_engines) > 1:
         with ThreadPoolExecutor(max_workers=len(selected_engines)) as pool:
             futures = {
-                pool.submit(run_analysis, job_id, db, engine, store, llm_mode=llm_mode): engine
+                # The caller's context, per call (#1482), as the orchestrator's pools.
+                pool.submit(
+                    in_context(run_analysis), job_id, db, engine, store, llm_mode=llm_mode
+                ): engine
                 for engine in selected_engines
             }
             for future in as_completed(futures):

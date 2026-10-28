@@ -194,3 +194,14 @@ class _CollectWorkerModelRefusals:
 def pytest_configure(config):
     if config.pluginmanager.hasplugin("xdist"):
         config.pluginmanager.register(_CollectWorkerModelRefusals(), "collect-worker-refusals")
+
+
+@pytest.fixture(autouse=True)
+def _engine_default_span_settings():
+    """Each test starts with each engine's default string settings (#1482): a step that
+    loads a collection makes its source settings active for the rest of the thread
+    (``sql_spans.use_span_settings``), which must not carry into the next test."""
+    from src.shared.sql_spans import DEFAULT_SPAN_SETTINGS, with_span_settings
+
+    with with_span_settings(DEFAULT_SPAN_SETTINGS):
+        yield

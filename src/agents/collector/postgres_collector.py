@@ -26,6 +26,7 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _normalize_index_type,
     _parse_ddl_raw,
+    source_settings,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
@@ -50,6 +51,7 @@ from src.contracts.collector_output import (
 )
 from src.shared.contract_versioning import load_contract
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
+from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
@@ -130,6 +132,14 @@ def _init_checkpoint_store(inp: CollectorInput) -> CheckpointStore | NoopCheckpo
 
 
 def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
+    """The live collection, read with the source's string settings (#1482): the ones the
+    metadata stage reads become the active ones for the stages after it (the query and
+    definition text each one redacts), and end with the collection."""
+    with with_span_settings(None):
+        return _collect_live_stages(inp, ckpt)
+
+
+def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     start = time.monotonic()
     cred_mgr = _build_cred_mgr(inp)
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
@@ -152,8 +162,10 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         lambda: {
             "version": db.get_version(),
             "db_size_gb": db.get_database_size_gb(),
+            "settings": db.get_settings(),
         },
     )
+    use_span_settings(span_settings("postgresql", meta_raw.get("settings")))
 
     # Stage 2: schema
     schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
@@ -213,6 +225,7 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 database_size_gb=meta_raw["db_size_gb"],
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,
+                settings=source_settings(meta_raw.get("settings")),
             ),
         ),
         database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),

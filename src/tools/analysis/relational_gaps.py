@@ -48,6 +48,7 @@ from src.shared.catalog.gaps import (
     gap_rules,
     parse_version_line,
 )
+from src.shared.sql_spans import span_dialect, span_settings, with_span_settings
 from src.tools.sql.facade import SqlTokens, sql_tokens
 from src.tools.sql.normalize import quoted_mask
 
@@ -299,9 +300,19 @@ def _text(
     engine: str,
     quotes: bool,
     tables: tuple[str, ...] = (),
+    sql_mode: object = None,
 ) -> _Text:
-    openers = _quote_openers(sql, engine) if quotes else frozenset()
-    return _Text(kind, text_id, sql_tokens(sql, engine), tables, openers)
+    """One text, tokenized. A MySQL routine or trigger body is read with the
+    ``sql_mode`` it was created with (``SQL_MODE`` in information_schema, #1482), which
+    the server parses it under; any other text with the collection's settings."""
+    own = (
+        span_settings(engine, {"sql_mode": sql_mode})
+        if isinstance(sql_mode, str) and span_dialect(engine) == "mysql"
+        else None
+    )
+    with with_span_settings(own):
+        openers = _quote_openers(sql, engine) if quotes else frozenset()
+        return _Text(kind, text_id, sql_tokens(sql, engine), tables, openers)
 
 
 def _texts(collector: Mapping[str, Any], engine: str, quotes: bool = False) -> list[_Text]:
@@ -323,14 +334,27 @@ def _texts(collector: Mapping[str, Any], engine: str, quotes: bool = False) -> l
         if isinstance(p, Mapping) and p.get("procedure_id") and p.get("definition"):
             out.append(
                 _text(
-                    _routine_kind(p), str(p["procedure_id"]), str(p["definition"]), engine, quotes
+                    _routine_kind(p),
+                    str(p["procedure_id"]),
+                    str(p["definition"]),
+                    engine,
+                    quotes,
+                    sql_mode=p.get("sql_mode"),
                 )
             )
     for t in _as_list(schema.get("triggers")):
         if isinstance(t, Mapping) and t.get("trigger_id") and t.get("definition"):
             tables = _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
             out.append(
-                _text("trigger", str(t["trigger_id"]), str(t["definition"]), engine, quotes, tables)
+                _text(
+                    "trigger",
+                    str(t["trigger_id"]),
+                    str(t["definition"]),
+                    engine,
+                    quotes,
+                    tables,
+                    sql_mode=t.get("sql_mode"),
+                )
             )
     return out
 

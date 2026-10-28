@@ -16,6 +16,7 @@ query to show it reaches none of them.
 
 from __future__ import annotations
 
+from src.shared.sql_spans import span_settings_of, use_span_settings
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_tags import without_query_tags
 
@@ -34,8 +35,16 @@ def read_collector_for_models(
 
     ``missing_ok`` returns ``{}`` when the job has no collector output; otherwise the
     store's own error is raised, as is a contract version error on read.
+
+    The collection's source settings (``metadata.source_database.settings``, #1482)
+    become the active ones in the caller's context (``sql_spans.use_span_settings``), as
+    ``query_facts.remember_collected_facts`` makes them, so the step that loads it reads
+    its strings the way the source does.
     """
     key = collector_output_key(database_name, job_id)
     if missing_ok and not store.exists(key):
+        use_span_settings(None)  # no collection: each engine's defaults, not the last one's
         return {}
-    return without_query_tags(store.read_json(key))
+    collector = without_query_tags(store.read_json(key))
+    use_span_settings(span_settings_of(collector))
+    return collector

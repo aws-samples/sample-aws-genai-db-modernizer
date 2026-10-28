@@ -22,13 +22,17 @@ SET SESSION group_concat_max_len = 1048576;
 -- We build each section as a JSON fragment, then combine at the end.
 
 -- ===================== 1. Metadata =====================
+-- settings.sql_mode: the server's default sql_mode, which the application's sessions
+-- start with. With NO_BACKSLASH_ESCAPES a backslash has no meaning in a string, and
+-- the collected statements are read that way (#1482).
 SELECT JSON_OBJECT(
   'version', VERSION(),
   'database_name', @db,
   'database_size_gb', (
     SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 4)
     FROM information_schema.tables WHERE table_schema = @db
-  )
+  ),
+  'settings', JSON_OBJECT('sql_mode', @@GLOBAL.sql_mode)
 ) INTO @metadata;
 
 -- ===================== 2. Tables =====================
@@ -132,12 +136,14 @@ SELECT JSON_ARRAYAGG(v_obj) INTO @views FROM (
 ) AS v;
 
 -- ===================== 8. Procedures & Functions =====================
+-- sql_mode: the mode each body was created with, which MySQL parses it under (#1482).
 SELECT JSON_ARRAYAGG(p_obj) INTO @procedures FROM (
   SELECT JSON_OBJECT(
     'routine_name', routine_name,
     'routine_type', routine_type,
     'return_type', data_type,
-    'definition', routine_definition
+    'definition', routine_definition,
+    'sql_mode', sql_mode
   ) AS p_obj
   FROM information_schema.routines
   WHERE routine_schema = @db
@@ -151,7 +157,8 @@ SELECT JSON_ARRAYAGG(tr_obj) INTO @triggers FROM (
     'event_type', event_manipulation,
     'table_name', event_object_table,
     'timing', action_timing,
-    'definition', action_statement
+    'definition', action_statement,
+    'sql_mode', sql_mode
   ) AS tr_obj
   FROM information_schema.triggers
   WHERE trigger_schema = @db

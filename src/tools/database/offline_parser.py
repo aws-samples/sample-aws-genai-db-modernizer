@@ -8,6 +8,7 @@ existing _build_tables, _build_queries, etc. work unchanged.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -18,11 +19,12 @@ from typing import TYPE_CHECKING
 import boto3
 
 from src.shared.sample_rows import without_sample_rows
-from src.shared.sql_spans import span_dialect
+from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
 from src.tools.database.collection_text import extract_json_object
 from src.tools.database.index_keys import add_index_key, expression_key_fields
 from src.tools.sql.query_type import statement_query_type
 from src.tools.sql.redact import (
+    raw_collection_settings,
     redact_collector_output,
     redact_definition,
     redact_literals,
@@ -141,6 +143,25 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
 
 
 def parse_offline_collection(
+    data: dict, shadow: TableShadow | None = None, *, database_name: str | None = None
+) -> dict:
+    """:func:`_parse_offline_collection`, with every statement and definition read with
+    the source settings the collection reports (``metadata.settings``: MySQL's
+    ``sql_mode``, PostgreSQL's ``standard_conforming_strings``, #1482): a string is read,
+    redacted and grouped the way the source reads it. A collection that reports none
+    is read with each engine's defaults."""
+    metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = {}
+    engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
+    with with_span_settings(raw_collection_settings(engine, metadata)):
+        return _parse_offline_collection(data, shadow, database_name=database_name)
+
+
+def _parse_offline_collection(
     data: dict, shadow: TableShadow | None = None, *, database_name: str | None = None
 ) -> dict:
     """
@@ -916,10 +937,14 @@ def rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
     never fills from a raw collection (``_UNDERIVED_QUERY_FIELDS``) is cleared.
     Every query text, tag and definition is redacted first
     (:func:`src.tools.sql.redact.redact_collector_output`, #1625), so the facts are
-    read from the text that is kept. The input is not changed.
+    read from the text that is kept, and every text is read with the collection's source
+    settings (``metadata.source_database.settings``, #1482). The input is not changed.
     """
-    import copy
+    with with_span_settings(span_settings_of(collector_output)):
+        return _rederive_query_facts(collector_output, source_engine)
 
+
+def _rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
     from src.tools.sql.query_tags import QueryTags
 
     out = copy.deepcopy(dict(redact_collector_output(collector_output)))

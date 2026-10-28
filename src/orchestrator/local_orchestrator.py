@@ -28,6 +28,7 @@ from src.contracts.phase_models import (
 )
 from src.orchestrator.base import Orchestrator, PhasePrerequisiteError, PhaseScope
 from src.shared.contract_versioning import load_contract
+from src.shared.progress import in_context
 from src.storage.artifact_store import ArtifactStore
 
 if TYPE_CHECKING:
@@ -270,7 +271,14 @@ class LocalOrchestrator(Orchestrator):
         with ThreadPoolExecutor(max_workers=len(engines)) as pool:
             futures = {
                 pool.submit(
-                    run_analysis, job_id, database_name, engine, self.store, llm_mode=self.llm_mode
+                    # The caller's context, per call (#1482): a worker's settings
+                    # (sql_spans.use_span_settings) end with its engine's run.
+                    in_context(run_analysis),
+                    job_id,
+                    database_name,
+                    engine,
+                    self.store,
+                    llm_mode=self.llm_mode,
                 ): engine
                 for engine in engines
             }
@@ -363,7 +371,7 @@ class LocalOrchestrator(Orchestrator):
         with ThreadPoolExecutor(max_workers=len(engines_to_run)) as pool:
             futures = {
                 pool.submit(
-                    run_schema_design,
+                    in_context(run_schema_design),
                     job_id,
                     database_name,
                     engine,

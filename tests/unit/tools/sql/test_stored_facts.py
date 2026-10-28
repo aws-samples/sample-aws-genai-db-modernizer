@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from src.contracts.collector_output import QueryPattern
+from src.shared.sql_spans import DEFAULT_SPAN_SETTINGS
 from src.tools.database.offline_parser import detect_source_engine, parse_offline_collection
 from src.tools.sql import facade
 from src.tools.sql import query_facts as query_facts_module
@@ -227,7 +228,7 @@ def test_a_reading_it_cannot_vouch_for_is_parsed_instead(change):
 
 def test_stored_facts_are_read_for_their_own_engine_only():
     remember_stored_facts(_TEXT, "postgresql", _stored())
-    assert query_facts_module._STORED_READINGS.get((_TEXT, "mysql")) is None
+    assert query_facts_module._STORED_READINGS.get((_TEXT, "mysql", DEFAULT_SPAN_SETTINGS)) is None
     assert readings_from_stored(_stored(), _TEXT, "PostgreSQL ") is not None  # as normalized
 
 
@@ -292,7 +293,9 @@ def test_remember_collected_facts_reads_the_contract_shape():
             "queries": {"query_patterns": [pattern, {"query_text": "SELECT 1"}, "junk"]},
         }
     )
-    assert set(query_facts_module._STORED_READINGS) == {(_TEXT, "postgresql")}
+    assert set(query_facts_module._STORED_READINGS) == {
+        (_TEXT, "postgresql", DEFAULT_SPAN_SETTINGS)
+    }
     remember_collected_facts(None)
     remember_collected_facts({"queries": None})
 
@@ -335,3 +338,17 @@ def test_the_pipeline_parses_each_collected_query_once(tmp_path, monkeypatch):
     run_assessment.phase_reality_check(store, job_id, db, "none")
 
     assert sorted(t[:60] for t in set(parsed) & texts) == []
+
+
+def test_stored_facts_are_kept_per_source_settings():
+    """Two collections of one process with the same text and other string settings
+    (#1482) keep their stored readings apart."""
+    from src.shared.sql_spans import SpanSettings, with_span_settings
+
+    strict = SpanSettings(no_backslash_escapes=True)
+    query_facts_module.remember_stored_facts(_TEXT, "mysql", {"a": 1}, strict)
+    assert (_TEXT, "mysql", strict) in query_facts_module._STORED_READINGS
+    assert (_TEXT, "mysql", DEFAULT_SPAN_SETTINGS) not in query_facts_module._STORED_READINGS
+    with with_span_settings(strict):
+        query_facts_module.remember_stored_facts(_TEXT, "postgresql", {"a": 1})
+    assert (_TEXT, "postgresql", strict) in query_facts_module._STORED_READINGS

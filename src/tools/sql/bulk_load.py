@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 
 from src.shared.sql_comments import block_comments_nest, strip_leading_comments
+from src.shared.sql_spans import span_dialect
 
 __all__ = ["bulk_load_table", "copy_table", "is_bulk_load"]
 
@@ -84,6 +85,7 @@ def _statement(sql: str, source_engine: str) -> str:
         hash_comments=True,
         strip_following_space=True,
         nested=block_comments_nest(source_engine),
+        mysql_dashes=span_dialect(source_engine) == "mysql",
     ).lstrip()
 
 

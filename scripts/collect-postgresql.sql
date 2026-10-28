@@ -21,11 +21,16 @@
 WITH
 
 -- ===================== 1. Metadata =====================
+-- settings.standard_conforming_strings: 'off' makes a backslash an escape in a plain
+-- '...' string, and the collected statements are read that way (#1482).
 metadata AS (
   SELECT json_build_object(
     'version', version(),
     'database_name', current_database(),
-    'database_size_gb', round(pg_database_size(current_database()) / 1024.0 / 1024.0 / 1024.0, 4)
+    'database_size_gb', round(pg_database_size(current_database()) / 1024.0 / 1024.0 / 1024.0, 4),
+    'settings', json_build_object(
+      'standard_conforming_strings', current_setting('standard_conforming_strings')
+    )
   ) AS data
 ),
 

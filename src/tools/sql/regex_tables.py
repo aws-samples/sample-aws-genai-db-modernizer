@@ -39,6 +39,7 @@ from __future__ import annotations
 import re
 
 from src.shared.sql_comments import block_comments_nest, strip_leading_comments
+from src.shared.sql_spans import span_dialect
 from src.tools.database.sql_cte import drop_cte_references
 from src.tools.sql.bulk_load import bulk_load_table, copy_table
 from src.tools.sql.maintenance import maintenance_tables
@@ -53,7 +54,10 @@ def is_merge_statement(query_text: str, source_engine: str = "") -> bool:
     #814), nested the way ``source_engine`` nests them (PostgreSQL, SQL Server).
     """
     text = strip_leading_comments(
-        query_text, strip_following_space=True, nested=block_comments_nest(source_engine)
+        query_text,
+        strip_following_space=True,
+        nested=block_comments_nest(source_engine),
+        mysql_dashes=span_dialect(source_engine) == "mysql",
     )
     if re.match(r"MERGE\b", text, re.I):
         return True
@@ -95,7 +99,7 @@ def regex_table_refs(query_text: str, source_engine: str = "") -> list[tuple[lis
     if is_merge:
         upsert_update += r"|\bTHEN\s+UPDATE\b"
     scanned_query = re.sub(upsert_update, " ", query_text, flags=re.I)
-    scanned_query = drop_cte_references(scanned_query)  # query-local names (#682)
+    scanned_query = drop_cte_references(scanned_query, source_engine)  # query-local names (#682)
     refs: list[tuple[list[str], str]] = []
     for m in table_re.finditer(scanned_query):
         table = m.group("table")
