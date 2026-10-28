@@ -1,0 +1,40 @@
+# Amazon Aurora PostgreSQL-Compatible Edition.
+id = "aurora_postgresql"
+display_name = "Aurora PostgreSQL"
+display_order = 5
+ui_picker_order = 9
+status = "active"
+role = "relational"
+system_of_record = true
+# The source engines whose own dialect this is: a homogeneous migration keeps them here (#921).
+source_engines = ["postgresql", "postgres"]
+# Complexity points for a table using 1, or 2 or more, of the SQL features whose pattern
+# entry is a complexity_feature: more Aurora features, a closer relational fit (#921).
+complexity_by_feature_count = [10, 15]
+# For a heterogeneous source (SQL Server, Oracle, DB2), an exact tie that no source
+# feature breaks goes to Aurora PostgreSQL: a maintainer rule, a named-engine preference
+# held as data (ADR-031 Decision 6 Amendment 1, 2026-10-14, #656; in the catalog since
+# #1081). Which engine each source feature favours is in routing.toml.
+exact_tie_preferred = true
+# The dialect's short name in reason text ("PostgreSQL preferred on a tie ...").
+short_name = "PostgreSQL"
+
+[colors]
+ui = "#c33d69"
+
+[pricing]
+base_monthly = 250
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# Priced on Aurora I/O-Optimized (#1196): no I/O charge per request, so no read or write
+# unit price; a query's traffic runs on the capacity its standing cost pays for (#494).
+# The ACU, storage and instance prices are the price table's (src/catalog/prices.toml).
+list_prices = "aurora_postgresql.io_optimized"
+
+# Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
+# (#1002); the first profile is the engine's default.
+[score_weights.default]
+pattern_match = 0.40
+complexity = 0.30
+performance = 0.20
+cost = 0.10

@@ -1,0 +1,13 @@
+# Gap rule sqlserver-types-behave-differently (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types.
+id = "sqlserver-types-behave-differently"
+feature = "Data types that change behaviour"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset, money becomes numeric(19,4), and bit becomes boolean (Aurora PostgreSQL) or BIT(1) (Aurora MySQL), so check the code that compares or formats them."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types"
+
+# Looks for: Column data types.
+[match]
+data_types = ["datetimeoffset", "money", "smallmoney", "bit"]

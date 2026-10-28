@@ -1,0 +1,8 @@
+# Carried writes (#1362, follow-up 2 of #1359): a write-group member that fits the group's
+# engine poorly, which routing keeps there with the table's other writes (ADR-031
+# Decision 1 Amendment 9). Never a routing input: the designer input and the risk
+# register read it. Fields: src/shared/catalog/write_intents.py.
+
+[thresholds.carried_write_fit_floor]
+value = 50
+why = "A write-group member whose own score on the group's engine is below this is carried there by its table's other writes, not by its own fit: the designer is told the statement's intent and the target-native way to serve it, and the risk register raises it (#1362). On the bundled samples every carried member below 50 scores 26 or less, so 30 would list the same 14 statements (#1359)."

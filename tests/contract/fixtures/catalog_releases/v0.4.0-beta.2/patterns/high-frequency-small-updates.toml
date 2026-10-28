@@ -1,0 +1,54 @@
+# Pattern high-frequency-small-updates. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "high-frequency-small-updates"
+name = "High-frequency small updates"
+detectors = []
+penalty = 0
+penalty_basis = "guidance_only"
+
+# Writes only: no parity anchor borrows from it and no access class lists it (#936).
+write_pattern = true
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: high-frequency UPDATE on single fields in large documents
+[engines.documentdb]
+kind = "anti_pattern"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-anti-03"
+severity = 0.4
+why = "Frequent updates to single fields of large documents. Catalog-only guidance with no detector: the documentation states no limit for it, so it costs nothing (Amazon DocumentDB Developer Guide, Best practices for Amazon DocumentDB)."
+guidance = "Extract frequently-updated fields into a separate small document/collection."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

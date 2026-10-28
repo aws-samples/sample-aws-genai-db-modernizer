@@ -1,0 +1,17 @@
+# Gap rule postgresql-arrays (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Arrays and Array Functions and Operators.
+id = "postgresql-arrays"
+feature = "Array columns and array expressions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL has no array type: array columns become a JSON array or a child table, and ARRAY[...], = ANY(array) and functions such as unnest and array_agg become JSON functions (JSON_TABLE, MEMBER OF, JSON_ARRAYAGG) or joins."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Arrays and Array Functions and Operators"
+
+# Looks for: Array column types, ARRAY constructors, ANY or ALL over a parameter, and the array functions.
+[match]
+# _int4 and integer[] are the two ways a collector names an array column type.
+data_types = ["array"]
+data_type_globs = ["_*", "*[[]]"]
+syntax = ["ARRAY [", "ANY ( $", "ALL ( $"]
+calls = ["ARRAY", "ARRAY_AGG", "UNNEST", "ARRAY_LENGTH", "ARRAY_POSITION", "ARRAY_POSITIONS", "ARRAY_REMOVE", "ARRAY_REPLACE", "ARRAY_APPEND", "ARRAY_PREPEND", "ARRAY_CAT", "ARRAY_TO_STRING", "STRING_TO_ARRAY", "ARRAY_UPPER", "ARRAY_LOWER", "ARRAY_DIMS", "ARRAY_FILL", "CARDINALITY", "GENERATE_SUBSCRIPTS"]

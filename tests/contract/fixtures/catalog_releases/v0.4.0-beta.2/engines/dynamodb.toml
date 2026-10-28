@@ -1,0 +1,39 @@
+# Amazon DynamoDB. Engine-wide facts only (ADR-031 Decision 8); fields: src/shared/catalog/engines.py.
+id = "dynamodb"
+display_name = "DynamoDB"
+display_order = 1
+ui_picker_order = 1
+status = "active"
+role = "key_value"
+system_of_record = true
+# A join query the reality check consolidates away from an engine that is neither DynamoDB
+# nor relational never lands here: it needs a denormalised design, which nothing proposes
+# yet (review of #375, finding B2; #1081).
+joins_need_denormalized_design = true
+
+[colors]
+ui = "#3184e8"
+
+[pricing]
+base_monthly = 0
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# On-demand (#1196): the request and storage prices are the price table's
+# (src/catalog/prices.toml). A read request unit reads up to 4 KB, a write request unit
+# writes up to 1 KB (aws.amazon.com/dynamodb/pricing/on-demand/).
+list_prices = "dynamodb.on_demand"
+read_unit_bytes = 4096
+write_unit_bytes = 1024
+# A Streams read request unit is one GetRecords call, which returns up to 1 MB (#1527,
+# aws.amazon.com/dynamodb/pricing/on-demand/).
+streams_read_unit_bytes = 1048576
+
+# Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
+# (#1002); the first profile is the engine's default.
+# The other three keep the 60/20/5 balance they had at a 15% cost weight, scaled by
+# 90/85 and rounded to whole percent.
+[score_weights.default]
+pattern_match = 0.64
+complexity = 0.21
+performance = 0.05
+cost = 0.10

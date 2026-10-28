@@ -1,0 +1,77 @@
+# Routing thresholds every engine shares (ADR-031 Decision 8, #921). A threshold that
+# applies to one engine alone lives in that engine's file ([thresholds.<name>]). Fields:
+# src/shared/catalog/routing.py.
+
+[thresholds.small_reference_table_max_rows]
+value = 10000
+why = "A table with at most this many collected rows is small reference data: read whole, it is the reference-read class (ADR-031 Decision 14 Amendment 7, #920), the limit DynamoDB's metadata-config-store reads, and a whole read of it is a scan a redesign removes, by caching or keeping it as one item collection (ADR-031 Decision 2 Amendment 13, #1231)."
+
+[thresholds.redesign_key_min_distinct]
+value = 100
+why = "A column needs at least this many collected distinct values before a redesign may assume a key on it from its statistics (ADR-031 Decision 2 Amendment 13, #1231): fewer values address a few large slices of the table, not entities, whatever their share of the rows."
+
+[thresholds.redesign_key_min_rows]
+value = 10000
+why = "Statistics overrule a category name or type (a status, a type) only on a table with at least this many collected rows (#1231): on a smaller table almost any distinct count clears the 1% low-cardinality share, so the count says nothing about whether the column addresses entities; the small reference-table limit, the same 10,000."
+
+[thresholds.target_engine_count]
+value = 2
+why = "The reality check tries to stay at or below this many target engines; a third must provide unique, irreplaceable capabilities (ADR-031 Decision 7)."
+
+[thresholds.unique_delta_threshold]
+value = 15
+why = "Points by which an engine must beat the best alternative for a query to count as unique to it; within this margin the query is redundant (reality check differentiation)."
+
+[thresholds.mandatory_engine_cost_floor]
+value = 100
+why = "Fixed monthly cost (USD) an engine kept by a signal override must reach before its workload share is questioned: DynamoDB ($0) and ElastiCache ($50) are cheap enough that a small share is not disproportionate (#167)."
+
+[thresholds.mandatory_engine_max_query_share]
+value = 0.05
+why = "Share of in-scope queries below which a mandatory engine's fixed cost counts as disproportionate to the workload it serves (#167)."
+
+[thresholds.cheaper_engine_min_saving_share]
+value = 0.40
+why = "An engine that scores the source-compatible engine's queries no better replaces it only when at least this much cheaper in standing cost, as a share of the source-compatible engine's cost, inclusive (maintainer decision on #600, ADR-031 Decision 13)."
+
+[thresholds.cheaper_engine_min_saving_monthly]
+value = 100.0
+why = "... and only when it also saves at least this much a month (USD), inclusive (maintainer decision on #600, ADR-031 Decision 13)."
+
+[thresholds.orphan_engine_threshold]
+value = 5
+why = "An engine left with this many queries or fewer (and no hard capability requirement) is a candidate for the reality check's sanity sweep redirect."
+
+[thresholds.aurora_choice_margin_ratio]
+value = 0.05
+why = "For a heterogeneous source, Aurora totals within this share of the larger one are close enough for source features to decide; on the reference samples both Aurora engines scored byte-identically (#381, ADR-031 Decision 6)."
+
+# The source features that tip a close or tied heterogeneous Aurora call (ADR-031
+# Decision 6, #381), each with the engine it favours (#1081). The choice counts the
+# features present on each side; a workload feature decides first, and the dialect one
+# only when no workload feature does. Every one favours Aurora PostgreSQL today; the
+# workload-feature step is still under review in #445.
+[heterogeneous_features.sequences]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "Sequences (CREATE SEQUENCE, NEXT VALUE FOR, NEXTVAL) map onto PostgreSQL sequences; MySQL has none and needs AUTO_INCREMENT or a table emulation (#381)."
+
+[heterogeneous_features.merge_statements]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "MERGE runs on PostgreSQL 15 and later; MySQL has no MERGE and needs INSERT ... ON DUPLICATE KEY UPDATE rewrites (#381)."
+
+[heterogeneous_features.json_usage]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "JSON columns and functions map onto PostgreSQL's jsonb with its indexes and operators more directly than onto MySQL's JSON type (#381; both engines store JSON, so this direction is under review in #445)."
+
+[heterogeneous_features.multiple_schemas]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "Several schemas in one database map onto PostgreSQL schemas; in MySQL a schema is a database, so they split into several (#381)."
+
+[heterogeneous_features.babelfish_compatible]
+favours = "aurora_postgresql"
+basis = "dialect"
+why = "Babelfish, the SQL Server wire-protocol and T-SQL compatibility layer, exists only for Aurora PostgreSQL; every SQL Server source reports it, so it decides only when no workload feature does (#381; maintainer decision recorded on #445)."

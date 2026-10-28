@@ -1,0 +1,28 @@
+# Write intent consistency-repair (#1362). Fields: src/shared/catalog/write_intents.py.
+id = "consistency-repair"
+name = "Consistency repair sweep"
+summary = "Re-aligns a value kept in step with another table wherever the two disagree."
+
+[engines.dynamodb]
+approach = "Enforce the rule at write time: the write that changes the source value also updates each copy, in the same UpdateItem when both are on one item or in a TransactWriteItems over the items (up to 100); collocate one-to-one entities in one item collection so the join disappears. For a wider fan-out, a DynamoDB Streams consumer on the source item updates the copies with a conditional UpdateItem; a sweep kept as a safety net is a scheduled batch job over a sparse GSI, one conditional UpdateItem per item."
+docs = "Amazon DynamoDB Developer Guide, Managing complex workflows with DynamoDB transactions; Change data capture for DynamoDB Streams"
+
+[engines.documentdb]
+approach = "Embed the value so there is one copy, or update the copies where the source changes, in a multi-document transaction or from a change stream consumer; a sweep kept as a safety net runs in batches over an index on the copied field."
+docs = "Amazon DocumentDB Developer Guide, Transactions; Using change streams with Amazon DocumentDB"
+
+[engines.elasticache]
+approach = "Rewrite or invalidate the cached copy where the source value changes (write-through), instead of sweeping."
+docs = "Amazon ElastiCache User Guide, section on caching strategies"
+
+[engines.opensearch]
+approach = "Re-index the documents that carry the copy from the source's change events, or look the value up at query time; never sweep the index."
+docs = "Amazon OpenSearch Service Developer Guide, Overview of Amazon OpenSearch Ingestion"
+
+[engines.aurora_postgresql]
+approach = "Keep the rule in one place: a constraint where it can express the rule, a trigger on the source table that updates the copy, or the rule enforced in the write path that changes the source value; a view can derive the value instead of storing a copy. The sweep stays only as a scheduled safety net."
+docs = "PostgreSQL documentation, Triggers; Constraints"
+
+[engines.aurora_mysql]
+approach = "Keep the rule in one place: a constraint where it can express the rule, a trigger on the source table that updates the copy, or the rule enforced in the write path that changes the source value; a view can derive the value instead of storing a copy. The sweep stays only as a scheduled safety net."
+docs = "MySQL 8.0 Reference Manual, Using Triggers; CHECK Constraints"

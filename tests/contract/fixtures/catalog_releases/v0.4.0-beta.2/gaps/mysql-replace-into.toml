@@ -1,0 +1,14 @@
+# Gap rule mysql-replace-into (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, REPLACE Statement; PostgreSQL documentation, INSERT (ON CONFLICT clause).
+id = "mysql-replace-into"
+feature = "REPLACE statements"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no REPLACE statement, so each becomes INSERT ... ON CONFLICT DO UPDATE, which updates the row in place: the delete triggers and cascades that REPLACE fires no longer run."
+docs = "MySQL 8.0 Reference Manual, REPLACE Statement; PostgreSQL documentation, INSERT (ON CONFLICT clause)"
+
+# Looks for: REPLACE used as a statement (not the REPLACE() string function, which never starts one).
+[match]
+statement_starts = ["REPLACE"]
+syntax = ["REPLACE INTO", "REPLACE LOW_PRIORITY", "REPLACE DELAYED"]

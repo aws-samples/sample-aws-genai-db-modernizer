@@ -1,0 +1,13 @@
+# Gap rule oracle-types-mapped (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, data type mappings.
+id = "oracle-types-mapped"
+feature = "Data types the conversion maps"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "informational"
+reason = "These types are converted to the target's matching type (for example NUMBER to numeric or a native integer, VARCHAR2 to varchar, CLOB to text): check precision and range in the conversion report."
+docs = "AWS Schema Conversion Tool User Guide, data type mappings"
+
+# Looks for: Column data types.
+[match]
+data_types = ["number", "varchar2", "nvarchar2", "clob", "nclob", "blob", "raw", "binary_float", "binary_double"]

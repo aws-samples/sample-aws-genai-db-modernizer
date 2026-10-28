@@ -1,0 +1,14 @@
+# Gap rule sqlserver-apply-and-openjson (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), JSON and XML.
+id = "sqlserver-apply-and-openjson"
+feature = "APPLY joins and OPENJSON or OPENXML"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "CROSS APPLY and OUTER APPLY become LATERAL joins, and OPENJSON and OPENXML become the target's JSON or XML table functions (jsonb_to_recordset or JSON_TABLE)."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), JSON and XML"
+
+# Looks for: The APPLY operators and the rowset functions.
+[match]
+syntax = ["CROSS APPLY", "OUTER APPLY"]
+calls = ["OPENJSON", "OPENXML"]

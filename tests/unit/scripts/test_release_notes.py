@@ -404,3 +404,110 @@ def test_main_prints_the_previous_tag(tmp_path: Path, capsys: pytest.CaptureFixt
     assert capsys.readouterr().out == "\n"
     with pytest.raises(SystemExit):
         rn.main(["--previous-tag", "v9.9.9", "--repo", str(tmp_path)])
+
+
+# --------------------------------------------------------------------------- catalog values (#1647)
+
+
+def test_catalog_value_changes_lists_each_moved_value_per_file() -> None:
+    before = {
+        "patterns/kv.toml": 'id = "kv"\npenalty = 0\n[engines.dynamodb]\nscore = 80\nwhy = "a"\n',
+        "engines/x.toml": 'id = "x"\nold = true\n',
+        "gaps/gone.toml": 'id = "gone"\n',
+        "routing.toml": "# a comment\nt = 1\n",
+    }
+    after = {
+        "patterns/kv.toml": 'id = "kv"\npenalty = 5\n[engines.dynamodb]\nscore = 80\nwhy = "b"\n',
+        "engines/x.toml": 'id = "x"\nnew = [1, 2]\n',
+        "gaps/gone.toml": None,
+        "gaps/new.toml": 'id = "new"\n',
+        "routing.toml": "# another comment\nt = 1\n",
+    }
+    before["gaps/new.toml"] = None
+    after["gaps/big.toml"] = 'id = "big"\nname = "b"\n'
+    before["gaps/big.toml"] = None
+    lines = rn.catalog_value_changes(before, after)
+    # Changed files first, with their values; an added or removed file is one line.
+    assert lines == [
+        "`engines/x.toml`: `new` added: `[1, 2]`; `old` removed (was `true`)",
+        '`patterns/kv.toml`: `engines.dynamodb.why` `"a"` -> `"b"`; `penalty` `0` -> `5`',
+        "`gaps/big.toml` added (2 values)",
+        "`gaps/new.toml` added (1 value)",
+        "`gaps/gone.toml` removed (1 value)",
+    ]
+    assert rn.catalog_summary(lines) == "5 files: 2 changed, 2 added, 1 removed"
+
+
+def test_catalog_value_changes_quotes_dotted_keys_and_cuts_long_values() -> None:
+    long = "x" * 200
+    [line] = rn.catalog_value_changes(
+        {"prices.toml": '[a.hourly]\n"db.r6g.large" = 0.26\n'},
+        {"prices.toml": f'[a.hourly]\n"db.r6g.large" = 0.27\nnote = "{long}"\n'},
+    )
+    assert '`a.hourly."db.r6g.large"` `0.26` -> `0.27`' in line
+    assert "…" in line and long not in line
+
+
+def test_catalog_value_changes_reports_a_type_change() -> None:
+    [line] = rn.catalog_value_changes({"r.toml": "t = 1\n"}, {"r.toml": "t = 1.0\n"})
+    assert line == "`r.toml`: `t` `1` -> `1.0`"
+
+
+def test_render_has_a_catalog_values_section() -> None:
+    text = rn.render("v1.0.0", "HEAD", [], [], catalog=["`r.toml`: `t` `1` -> `2`"])
+    assert "### Catalog values changed since v1.0.0" in text
+    assert "- `r.toml`: `t` `1` -> `2`" in text
+    assert "1 file: 1 changed, 0 added, 0 removed. Per file" in text
+    assert "No catalog values changed." in rn.render("v1.0.0", "HEAD", [], [])
+    lines = [f"`f{i}.toml`: `t` `1` -> `2`" for i in range(5)]
+    body = rn.render("v1.0.0", "HEAD", [], [], body=True, max_changelog=2, catalog=lines)
+    assert "`f1.toml`" in body and "`f2.toml`" not in body
+    assert "... and 3 more files in the attached release-changes.md." in body
+
+
+def test_main_lists_catalog_values_between_the_refs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    rule = repo / "src" / "catalog" / "patterns" / "kv.toml"
+    rule.parent.mkdir(parents=True)
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "dev@example.com")
+    _git(repo, "config", "user.name", "Dev")
+    rule.write_text("fit = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: first")
+    _git(repo, "tag", "v1.0.0")
+    rule.write_text("fit = 2\n")
+    _git(repo, "commit", "-q", "-am", "fix(routing): tune kv")
+    assert rn.catalog_values_between(repo, "v1.0.0", "HEAD") == [
+        "`patterns/kv.toml`: `fit` `1` -> `2`"
+    ]
+    out = tmp_path / "notes.md"
+    assert rn.main(["--since", "v1.0.0", "--repo", str(repo), "--output", str(out)]) == 0
+    assert "- `patterns/kv.toml`: `fit` `1` -> `2`" in out.read_text()
+
+
+def test_a_tag_the_catalog_format_was_not_recorded_for_gets_a_note(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    snapshot = repo / rn.CATALOG_FORMAT_SNAPSHOT
+    snapshot.parent.mkdir(parents=True)
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "dev@example.com")
+    _git(repo, "config", "user.name", "Dev")
+    snapshot.write_text(json.dumps({"released": None, "kinds": {}}))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: draft")
+    _git(repo, "tag", "v1.0.0")
+    [note] = rn.changelog_between(repo, "v1.0.0", "v1.0.0")
+    assert "catalog's format was not recorded for v1.0.0 (recorded: a draft)" in note
+    assert "catalog_format_snapshot.py --write-released v1.0.0" in note
+    assert rn.changelog_between(repo, "v1.0.0", "HEAD") == []
+
+
+def test_the_body_keeps_changed_files_ahead_of_added_ones_and_within_its_limit() -> None:
+    changed = [f"`f{i}.toml`: `t` `1` -> `2`" for i in range(3)]
+    added = [f"`gaps/g{i}.toml` added (9 values)" for i in range(200)]
+    body = rn.render("v1.0.0", "HEAD", [], [], body=True, catalog=changed + added)
+    assert "203 files: 3 changed, 200 added, 0 removed" in body
+    assert all(f"- `f{i}.toml`" in body for i in range(3))
+    assert "... and 163 more files in the attached release-changes.md." in body
+    assert len(body) < rn.BODY_LIMIT

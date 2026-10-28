@@ -1,0 +1,15 @@
+# Gap rule postgresql-full-text-search (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Full Text Search; MySQL 8.0 Reference Manual, Full-Text Search Functions.
+id = "postgresql-full-text-search"
+feature = "Full-text search (tsvector, tsquery)"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "tsvector columns, @@ matches and the ts functions become FULLTEXT indexes queried with MATCH ... AGAINST, which has no weights (setweight), ranking functions (ts_rank) or text search configurations of the same kind."
+docs = "PostgreSQL documentation, Full Text Search; MySQL 8.0 Reference Manual, Full-Text Search Functions"
+
+# Looks for: tsvector and tsquery columns, the @@ operator and the text search functions.
+[match]
+data_types = ["tsvector", "tsquery"]
+syntax = ["@ @"]
+calls = ["TO_TSVECTOR", "TO_TSQUERY", "PLAINTO_TSQUERY", "PHRASETO_TSQUERY", "WEBSEARCH_TO_TSQUERY", "TS_RANK", "TS_RANK_CD", "TS_HEADLINE", "SETWEIGHT", "TS_REWRITE", "TSVECTOR_UPDATE_TRIGGER"]

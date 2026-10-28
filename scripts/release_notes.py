@@ -17,6 +17,10 @@ release saying so. This script writes the section the release attaches, for the 
   contracts' snapshot (``tests/contract/schema_snapshot.json``) and the public
   ``assess()`` contract's released snapshot (``tests/contract/assess_released_since_1_3.json``,
   or at a ref before contract 1.3, ``tests/contract/assess_released_snapshot.json``).
+- **Catalog values**: per catalog file that changed, every value that moved, was added or
+  was removed (key paths as ``scripts/catalog_format_snapshot.py`` writes them), read from
+  the TOML files at both refs. The values are tuning, not a contract (#1647): callers see
+  what moved without diffing the files.
 
 It reads committed files at two refs and runs no pipeline, so it needs only git and the
 repository's history (the release workflow checks out with full history).
@@ -33,9 +37,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import re
 import subprocess  # nosec B404 -- runs git with fixed arguments, no shell
 import sys
+import tomllib
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -52,7 +59,7 @@ from scripts.contract_schema_snapshot import (  # noqa: E402
     diff_fields,
     overall_bump,
 )
-from src.report.escaping import md_cell  # noqa: E402
+from src.report.escaping import md_cell, md_code  # noqa: E402
 
 ROUTING_SNAPSHOT = "tests/e2e/baselines/routing_snapshot.json"
 CONTRACT_SNAPSHOT = "tests/contract/schema_snapshot.json"
@@ -60,6 +67,7 @@ PUBLIC_CONTRACT_SNAPSHOT = "tests/contract/assess_released_since_1_3.json"
 #: The public contract's released snapshot before contract 1.3 (#1641), read at a ref
 #: that has no ``PUBLIC_CONTRACT_SNAPSHOT`` yet.
 HISTORICAL_PUBLIC_CONTRACT_SNAPSHOT = "tests/contract/assess_released_snapshot.json"
+CATALOG_FORMAT_SNAPSHOT = "tests/contract/catalog_format_snapshot.json"
 RULE_DIR = "src/catalog"
 ATTACHMENT = "release-changes.md"
 
@@ -156,6 +164,85 @@ def rule_changes(
     return lines
 
 
+# --------------------------------------------------------------------------- catalog values
+
+#: A key TOML writes bare; any other key is quoted in a key path, as TOML quotes it.
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+#: The longest value a catalog change line spells out; a longer one is cut.
+VALUE_CHARS = 80
+
+
+def flatten_values(table: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Key path -> value for every non-table value in ``table`` (an array is one value)."""
+    out: dict[str, Any] = {}
+    for key, value in table.items():
+        name = key if _BARE_KEY.fullmatch(key) else json.dumps(key)
+        path = f"{prefix}.{name}" if prefix else name
+        if isinstance(value, dict):
+            out.update(flatten_values(value, path))
+        else:
+            out[path] = value
+    return out
+
+
+def _value_text(value: Any) -> str:
+    text = json.dumps(
+        value,
+        ensure_ascii=False,
+        default=lambda o: o.isoformat() if isinstance(o, dt.date | dt.time) else str(o),
+    )
+    return md_code(text if len(text) <= VALUE_CHARS else text[: VALUE_CHARS - 1] + "…")
+
+
+def catalog_value_changes(
+    before: Mapping[str, str | None], after: Mapping[str, str | None]
+) -> list[str]:
+    """One line per catalog file (path below ``src/catalog/`` -> its TOML text at each ref,
+    None where it does not exist): a changed file lists every value that moved, was added
+    or was removed; an added or removed file is one line with its value count. Changed
+    files come first, then added, then removed ones, each by name."""
+    changed: list[str] = []
+    added: list[str] = []
+    removed: list[str] = []
+    for name in sorted(set(before) | set(after)):
+        old_text, new_text = before.get(name), after.get(name)
+        old = flatten_values(tomllib.loads(old_text)) if old_text is not None else {}
+        new = flatten_values(tomllib.loads(new_text)) if new_text is not None else {}
+        head = f"`{md_code(name)}`"
+        if old_text is None or new_text is None:
+            count = len(new if old_text is None else old)
+            what = "added" if old_text is None else "removed"
+            (added if old_text is None else removed).append(
+                f"{head} {what} ({count} value{'' if count == 1 else 's'})"
+            )
+            continue
+        changes = []
+        for path in sorted(set(old) | set(new)):
+            key = f"`{md_code(path)}`"
+            if path not in new:
+                changes.append(f"{key} removed (was `{_value_text(old[path])}`)")
+            elif path not in old:
+                changes.append(f"{key} added: `{_value_text(new[path])}`")
+            elif old[path] != new[path] or type(old[path]) is not type(new[path]):
+                changes.append(f"{key} `{_value_text(old[path])}` -> `{_value_text(new[path])}`")
+        if changes:  # none: comments or layout only
+            changed.append(f"{head}: " + "; ".join(changes))
+    return changed + added + removed
+
+
+_FILE_LINE = re.compile(r"^`[^`]*` (added|removed) \(\d+ values?\)$")
+
+
+def catalog_summary(lines: Sequence[str]) -> str:
+    """``N files: C changed, A added, R removed`` for ``catalog_value_changes`` lines."""
+    kinds = Counter(m.group(1) if (m := _FILE_LINE.match(line)) else "changed" for line in lines)
+    total = len(lines)
+    return (
+        f"{total} file{'' if total == 1 else 's'}: {kinds['changed']} changed, "
+        f"{kinds['added']} added, {kinds['removed']} removed"
+    )
+
+
 # --------------------------------------------------------------------------- rendering
 
 #: The release body's caps (GitHub refuses a release body over 125,000 characters); the
@@ -218,6 +305,7 @@ def render(
     body: bool = False,
     max_rows: int = BODY_ROWS,
     max_changelog: int = BODY_CHANGELOG_LINES,
+    catalog: list[str] | None = None,
 ) -> str:
     """The Markdown section: engine changes first, then reason-code-only changes (each by
     sample, then query), then score-only drift, then the changelog lines.
@@ -272,6 +360,24 @@ def render(
             lines.extend(["", f"... and {len(changelog) - max_changelog} more lines {more}."])
     else:
         lines.extend(f"- {' '.join(line.split())}" for line in changelog)
+    catalog = catalog or []
+    lines.extend(["", f"### Catalog values changed since {since}", ""])
+    if not catalog:
+        lines.append("No catalog values changed.")
+    else:
+        lines.append(
+            f"{catalog_summary(catalog)}. Per file under `src/catalog/`: the values that moved "
+            "(a file added or removed is one line). The values are tuning that changes between "
+            "releases; the format stays backwards compatible within 0.x."
+        )
+        lines.append("")
+        listed = catalog[:max_changelog] if body else catalog
+        if body:
+            lines.extend(f"- {_shorten(line, BODY_LINE_CHARS)}" for line in listed)
+        else:
+            lines.extend(f"- {line}" for line in listed)
+        if len(listed) < len(catalog):
+            lines.extend(["", f"... and {len(catalog) - len(listed)} more files {more}."])
     text = "\n".join(lines) + "\n"
     if body and len(text) > BODY_LIMIT:
         tail = f"\n... cut to fit the release body; everything is {more}.\n"
@@ -327,13 +433,34 @@ def _json_at(repo: Path, ref: str, path: str) -> dict[str, Any]:
     return loaded
 
 
-def changelog_between(repo: Path, since: str, until: str) -> list[str]:
+def _changed_rule_files(repo: Path, since: str, until: str) -> list[tuple[str, str]]:
     status = _git(repo, "diff", "--name-status", "--no-renames", since, until, "--", RULE_DIR)
-    changed = [
+    return [
         (parts[0], parts[-1])
         for parts in (line.split("\t") for line in status.splitlines() if line.strip())
         if parts[-1].endswith(".toml")
     ]
+
+
+def _text_at(repo: Path, ref: str, path: str) -> str | None:
+    try:
+        return _git(repo, "show", f"{ref}:{path}")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def catalog_values_between(repo: Path, since: str, until: str) -> list[str]:
+    """``catalog_value_changes`` for the catalog files that differ between the refs."""
+    prefix = RULE_DIR + "/"
+    paths = [path for _, path in _changed_rule_files(repo, since, until)]
+    return catalog_value_changes(
+        {p.removeprefix(prefix): _text_at(repo, since, p) for p in paths},
+        {p.removeprefix(prefix): _text_at(repo, until, p) for p in paths},
+    )
+
+
+def changelog_between(repo: Path, since: str, until: str) -> list[str]:
+    changed = _changed_rule_files(repo, since, until)
     subjects = {
         path: _git(repo, "log", "--format=%s", f"{since}..{until}", "--", path).splitlines()
         for _, path in changed
@@ -346,7 +473,14 @@ def changelog_between(repo: Path, since: str, until: str) -> list[str]:
         _public_snapshot_at(repo, since).get("contracts", {}),
         released.get("contracts", {}),
     )
-    return rule_changes(changed, subjects) + contracts + public + _unrecorded(repo, until, released)
+    catalog_format = _json_at(repo, until, CATALOG_FORMAT_SNAPSHOT)
+    return (
+        rule_changes(changed, subjects)
+        + contracts
+        + public
+        + _unrecorded(repo, until, released)
+        + _unrecorded_catalog_format(repo, until, catalog_format)
+    )
 
 
 def _public_snapshot_at(repo: Path, ref: str) -> dict[str, Any]:
@@ -370,6 +504,20 @@ def _unrecorded(repo: Path, until: str, released: Mapping[str, Any]) -> list[str
         f"{recorded or 'none'}). Record the shape {until} shipped, read from the tag "
         f"itself, in a pull request to main: uv run python "
         f"scripts/contract_schema_snapshot.py --write-released {until}"
+    ]
+
+
+def _unrecorded_catalog_format(repo: Path, until: str, recorded: Mapping[str, Any]) -> list[str]:
+    """A note when ``until`` is a release tag the catalog format was not recorded for."""
+    if not recorded or not _git(repo, "tag", "--list", until).strip():
+        return []
+    if recorded.get("released") == until:
+        return []
+    return [
+        f"Note: the rule catalog's format was not recorded for {until} (recorded: "
+        f"{recorded.get('released') or 'a draft'}). Record the format {until} shipped, read "
+        f"from the tag itself, in a pull request to main: uv run python "
+        f"scripts/catalog_format_snapshot.py --write-released {until}"
     ]
 
 
@@ -409,6 +557,7 @@ def main(argv: list[str] | None = None) -> int:
         changelog_between(args.repo, args.since, args.until),
         body=args.body,
         max_rows=args.max_rows,
+        catalog=catalog_values_between(args.repo, args.since, args.until),
     )
     if args.output:
         args.output.write_text(text, encoding="utf-8")

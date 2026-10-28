@@ -1,0 +1,13 @@
+# Gap rule postgresql-builtin-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Functions and Operators.
+id = "postgresql-builtin-functions"
+feature = "PostgreSQL-only functions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "These functions have no MySQL function of the same name and behaviour, so each call is rewritten (for example string_agg to GROUP_CONCAT, bool_or to MAX over a boolean, random to RAND, split_part to SUBSTRING_INDEX, pg_advisory_lock to GET_LOCK, generate_series to a recursive CTE)."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Functions and Operators"
+
+# Looks for: Calls to PostgreSQL functions MySQL does not have.
+[match]
+calls = ["STRING_AGG", "BOOL_AND", "BOOL_OR", "EVERY", "GENERATE_SERIES", "SPLIT_PART", "STRPOS", "INITCAP", "TRANSLATE", "BTRIM", "CHR", "OVERLAY", "STARTS_WITH", "STRING_TO_TABLE", "QUOTE_IDENT", "QUOTE_LITERAL", "QUOTE_NULLABLE", "FORMAT", "TO_HEX", "ENCODE", "DECODE", "SHA224", "SHA256", "SHA384", "SHA512", "RANDOM", "SETSEED", "TRUNC", "DIV", "CBRT", "FACTORIAL", "GCD", "LCM", "WIDTH_BUCKET", "GEN_RANDOM_UUID", "UUID_GENERATE_V4", "PG_SLEEP", "PG_ADVISORY_LOCK", "PG_ADVISORY_XACT_LOCK", "PG_TRY_ADVISORY_LOCK", "PG_TRY_ADVISORY_XACT_LOCK", "PG_ADVISORY_UNLOCK", "PG_ADVISORY_UNLOCK_ALL", "TXID_CURRENT", "PG_CURRENT_XACT_ID"]

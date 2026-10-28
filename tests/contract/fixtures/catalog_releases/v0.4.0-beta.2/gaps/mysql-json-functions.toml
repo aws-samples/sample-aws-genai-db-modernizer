@@ -1,0 +1,14 @@
+# Gap rule mysql-json-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, JSON Functions; PostgreSQL documentation, JSON Functions and Operators.
+id = "mysql-json-functions"
+feature = "MySQL JSON functions and path operators"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "MySQL's JSON functions and its -> and ->> operators take JSON path strings ('$.key'), and PostgreSQL's jsonb operators take keys and text arrays, so each call becomes the jsonb operator or function (->, ->>, #>, @>, jsonb_set, jsonb_path_query)."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, JSON Functions; PostgreSQL documentation, JSON Functions and Operators"
+
+# Looks for: Calls to MySQL JSON functions, and the -> operator.
+[match]
+calls = ["JSON_EXTRACT", "JSON_UNQUOTE", "JSON_CONTAINS", "JSON_CONTAINS_PATH", "JSON_SET", "JSON_INSERT", "JSON_REPLACE", "JSON_REMOVE", "JSON_SEARCH", "JSON_KEYS", "JSON_LENGTH", "JSON_DEPTH", "JSON_TYPE", "JSON_VALID", "JSON_QUOTE", "JSON_MERGE", "JSON_MERGE_PATCH", "JSON_MERGE_PRESERVE", "JSON_ARRAY_APPEND", "JSON_ARRAY_INSERT", "JSON_OVERLAPS", "JSON_PRETTY", "JSON_STORAGE_SIZE"]
+syntax = ["- >"]

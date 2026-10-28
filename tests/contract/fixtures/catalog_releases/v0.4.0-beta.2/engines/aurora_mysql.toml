@@ -1,0 +1,35 @@
+# Amazon Aurora MySQL-Compatible Edition.
+id = "aurora_mysql"
+display_name = "Aurora MySQL"
+display_order = 6
+ui_picker_order = 8
+status = "active"
+role = "relational"
+system_of_record = true
+# The dialect's short name in reason text.
+short_name = "MySQL"
+# The source engines whose own dialect this is: a homogeneous migration keeps them here (#921).
+source_engines = ["mysql", "mariadb"]
+# Complexity points for a table using 1, or 2 or more, of the SQL features whose pattern
+# entry is a complexity_feature: more Aurora features, a closer relational fit (#921).
+complexity_by_feature_count = [10, 15]
+
+[colors]
+ui = "#9c5700"
+
+[pricing]
+base_monthly = 250
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# Priced on Aurora I/O-Optimized (#1196): no I/O charge per request, so no read or write
+# unit price; a query's traffic runs on the capacity its standing cost pays for (#494).
+# The ACU, storage and instance prices are the price table's (src/catalog/prices.toml).
+list_prices = "aurora_mysql.io_optimized"
+
+# Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
+# (#1002); the first profile is the engine's default.
+[score_weights.default]
+pattern_match = 0.40
+complexity = 0.30
+performance = 0.20
+cost = 0.10

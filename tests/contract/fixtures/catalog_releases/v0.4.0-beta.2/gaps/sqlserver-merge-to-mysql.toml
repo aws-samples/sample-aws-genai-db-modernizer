@@ -1,0 +1,15 @@
+# Gap rule sqlserver-merge-to-mysql (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement; AWS Schema Conversion Tool User Guide.
+id = "sqlserver-merge-to-mysql"
+feature = "MERGE statements on Aurora MySQL"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL has no MERGE statement, so each one becomes INSERT ... ON DUPLICATE KEY UPDATE plus a separate DELETE."
+docs = "MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement; AWS Schema Conversion Tool User Guide"
+
+# Looks for: The MERGE statement.
+[match]
+words = ["MERGE"]
+# Not T-SQL's MERGE JOIN or MERGE UNION hints (INNER MERGE JOIN, OPTION (MERGE JOIN)).
+unless_followed_by = ["JOIN", "UNION"]

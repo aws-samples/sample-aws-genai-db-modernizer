@@ -12,8 +12,10 @@ versions of the file:
 * the rendered rule catalog (``docs/architecture/rule-catalog.md`` and the UI's
   ``engineCatalog.generated.js``)
 
-Not covered: ``tests/contract/assess_released_since_1_3.json`` is recorded at a release
-(``scripts/contract_schema_snapshot.py --write-released <tag>``), never on a rebase.
+Not covered: ``tests/contract/assess_released_since_1_3.json`` and
+``tests/contract/catalog_format_snapshot.json`` are recorded at a release
+(``scripts/contract_schema_snapshot.py --write-released <tag>``,
+``scripts/catalog_format_snapshot.py --write-released <tag>``), never on a rebase.
 
 Usage::
 

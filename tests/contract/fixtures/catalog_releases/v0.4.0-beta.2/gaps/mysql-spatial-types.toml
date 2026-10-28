@@ -1,0 +1,14 @@
+# Gap rule mysql-spatial-types (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Spatial Data Types; Amazon Aurora User Guide, Managing spatial data with the PostGIS extension.
+id = "mysql-spatial-types"
+feature = "Spatial columns and indexes"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "Spatial columns and SPATIAL indexes move to the PostGIS extension on Aurora PostgreSQL (geometry columns with GiST indexes), where function names mostly match but SRID handling and axis order differ."
+docs = "MySQL 8.0 Reference Manual, Spatial Data Types; Amazon Aurora User Guide, Managing spatial data with the PostGIS extension"
+
+# Looks for: Spatial column types and SPATIAL indexes.
+[match]
+data_types = ["geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection"]
+index_types = ["spatial"]

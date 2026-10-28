@@ -1,0 +1,19 @@
+# Gap rule postgresql-regex-operators (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Pattern Matching; MySQL 8.0 Reference Manual, Regular Expressions.
+id = "postgresql-regex-operators"
+feature = "POSIX regular expressions (~, SIMILAR TO, regexp functions)"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "The ~, ~*, !~ and SIMILAR TO operators become REGEXP or REGEXP_LIKE() on MySQL's ICU regular expressions, regexp_matches and regexp_split_to_table have no MySQL function, and regexp_replace takes other arguments (MySQL replaces every match by default, PostgreSQL only the first without 'g')."
+docs = "PostgreSQL documentation, Pattern Matching; MySQL 8.0 Reference Manual, Regular Expressions"
+
+# Looks for: The ~ operator family between two operands, SIMILAR TO and the regexp functions.
+[match]
+# ~ between two operands only: not bitwise NOT (SELECT ~ a, which MySQL has too) and
+# not the ~~ LIKE operators.
+words = ["~"]
+unless_followed_by = ["~"]
+unless_preceded_by = ["~", "(", ",", "=", "<", ">", "+", "-", "*", "/", "%", "|", "&", "^", "SELECT", "WHERE", "AND", "OR", "NOT", "ON", "WHEN", "THEN", "ELSE", "BY", "HAVING", "SET", "RETURN", "VALUES"]
+syntax = ["SIMILAR TO"]
+calls = ["REGEXP_MATCHES", "REGEXP_MATCH", "REGEXP_SPLIT_TO_TABLE", "REGEXP_SPLIT_TO_ARRAY", "REGEXP_REPLACE", "REGEXP_COUNT"]
