@@ -1,0 +1,13 @@
+# Gap rule mysql-user-variables (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, User-Defined Variables; PostgreSQL documentation, System Administration Functions (current_setting).
+id = "mysql-user-variables"
+feature = "User variables (@name)"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no session user variables, so SET @x = ... and SELECT @x := ... become PL/pgSQL variables, a CTE or window function, or a custom setting read with current_setting()."
+docs = "MySQL 8.0 Reference Manual, User-Defined Variables; PostgreSQL documentation, System Administration Functions (current_setting)"
+
+# Looks for: Words starting with a single @.
+[match]
+word_prefixes = ["@"]

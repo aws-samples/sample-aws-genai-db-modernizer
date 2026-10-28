@@ -158,6 +158,16 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
         "`src/shared/catalog/engines.py`, `src/shared/catalog/patterns.py` and "
         "`src/shared/catalog/routing.py`.",
         "",
+        "**Compatibility.** The TOML format (file locations, table and key names, value "
+        "types, which keys are required) is backwards compatible within 0.x: a release may "
+        "add keys and files, but does not remove, rename or retype one without a documented "
+        "deprecation first (`tests/contract/catalog_format_snapshot.json`, #1647). Rule ids "
+        "(the engine, pattern, gap rule and write intent files, and named entries such as "
+        "thresholds and signals) are stable; retiring one needs a deprecation. The values on "
+        "this page (scores, penalties, prices, thresholds) are routing tuning and change "
+        "between releases; each release's notes list the values that moved. Read them from "
+        "the catalog files; do not hard-code them.",
+        "",
         "## Engines",
         "",
         "| Engine | Id | Status | Role | System of record |",

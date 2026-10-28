@@ -1,0 +1,13 @@
+# Gap rule sqlserver-babelfish-option (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora User Guide, Working with Babelfish for Aurora PostgreSQL.
+id = "sqlserver-babelfish-option"
+feature = "Babelfish for Aurora PostgreSQL"
+source_engines = ["sqlserver"]
+targets = ["aurora_postgresql"]
+impact = "informational"
+reason = "Babelfish for Aurora PostgreSQL accepts T-SQL and SQL Server's wire protocol (TDS), which can keep much of this code unchanged: check its list of supported features before planning a full conversion."
+docs = "Amazon Aurora User Guide, Working with Babelfish for Aurora PostgreSQL"
+
+# Looks for: Every SQL Server source moving to Aurora PostgreSQL.
+[match]
+always = true

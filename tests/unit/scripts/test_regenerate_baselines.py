@@ -41,7 +41,7 @@ class _Runner:
         return self.codes.get(argv[1], 0)
 
 
-@pytest.mark.passes_on_main
+@pytest.mark.passes_on_main  # only its exclusion list moved (#1647)
 def test_every_baseline_the_edit_hook_protects_is_regenerated_here() -> None:
     covered = {f for baseline in rb.BASELINES for f in baseline.files}
     protected = set(_hook_protected())
@@ -49,6 +49,7 @@ def test_every_baseline_the_edit_hook_protects_is_regenerated_here() -> None:
     # snapshot before 1.3 is the historical record, never re-recorded at all.
     protected.discard("tests/contract/assess_released_since_1_3.json")
     protected.discard("tests/contract/assess_released_snapshot.json")
+    protected.discard("tests/contract/catalog_format_snapshot.json")
     assert (
         protected <= covered
     ), f"not covered by regenerate_baselines.py: {sorted(protected - covered)}"

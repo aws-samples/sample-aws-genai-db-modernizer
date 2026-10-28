@@ -1,0 +1,13 @@
+# Gap rule oracle-sequences (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Sequences.
+id = "oracle-sequences"
+feature = "Oracle sequence reads"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "seq.NEXTVAL and seq.CURRVAL become nextval('seq') and currval('seq') on Aurora PostgreSQL, and AUTO_INCREMENT columns or a counter table on Aurora MySQL."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Sequences"
+
+# Looks for: NEXTVAL and CURRVAL after a sequence name.
+[match]
+syntax = [". NEXTVAL", ". CURRVAL"]

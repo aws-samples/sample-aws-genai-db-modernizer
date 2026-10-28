@@ -1,0 +1,63 @@
+# Pattern pagination. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "pagination"
+name = "Pagination"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "An index range scan with sort, skip and limit (find().sort().limit(), or a keyset filter on an indexed field) is native; DocumentDB's analysis does not report the pattern and it adds no cross-engine penalty. Class score (#728): 85, parity anchor: no engine-specific evidence yet; the same index range scan Aurora's pagination is rated at (pagination, 85), until a measurement replaces it (#936)."
+class_score = 85
+parity_anchor = "pagination"
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: OFFSET/LIMIT, cursor-based keyset pagination, COUNT(*) for total pages
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-08"
+score = 85
+why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly."
+concerns = [
+    "Deep OFFSET pagination (offset > 10000) degrades; prefer keyset pagination.",
+]
+
+# Detection signals: OFFSET/LIMIT, cursor-based keyset pagination, COUNT(*) for total pages
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-08"
+score = 85
+why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly."
+concerns = [
+    "Deep OFFSET pagination (offset > 10000) degrades; prefer keyset pagination.",
+]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

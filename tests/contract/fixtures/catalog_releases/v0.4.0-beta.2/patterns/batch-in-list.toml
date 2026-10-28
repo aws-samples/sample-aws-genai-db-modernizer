@@ -1,0 +1,61 @@
+# Pattern batch-in-list. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "batch-in-list"
+name = "Batch IN list"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: WHERE col IN (...) with multiple values
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-11"
+score = 70
+why = "Batch lookups using WHERE column IN (...) with multiple values: one index scan probes every listed value (PostgreSQL documentation, Indexes, a ScalarArrayOpExpr on a B-tree; MySQL Reference Manual, Range Optimization, equality ranges for IN lists), with no item limit, where DynamoDB's BatchGetItem takes at most 100 keys and 16 MB (Amazon DynamoDB API Reference, BatchGetItem). In the key-lookup class it raises no score: key-value-lookup rates the same read at 80."
+concerns = [
+    "Very large IN-lists (>1000 values) may benefit from temporary tables or joins.",
+]
+
+# Detection signals: WHERE col IN (...) with multiple values
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-11"
+score = 70
+why = "Batch lookups using WHERE column IN (...) with multiple values: one index scan probes every listed value (PostgreSQL documentation, Indexes, a ScalarArrayOpExpr on a B-tree; MySQL Reference Manual, Range Optimization, equality ranges for IN lists), with no item limit, where DynamoDB's BatchGetItem takes at most 100 keys and 16 MB (Amazon DynamoDB API Reference, BatchGetItem). In the key-lookup class it raises no score: key-value-lookup rates the same read at 80."
+concerns = [
+    "Very large IN-lists (>1000 values) may benefit from temporary tables or joins.",
+]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

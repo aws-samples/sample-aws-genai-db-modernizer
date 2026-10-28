@@ -1,0 +1,13 @@
+# Gap rule sqlserver-types-mapped (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, data type mappings.
+id = "sqlserver-types-mapped"
+feature = "Data types the conversion maps"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "informational"
+reason = "These types are converted to the target's matching type (for example nvarchar to varchar in UTF-8, datetime2 to timestamp, tinyint to smallint on Aurora PostgreSQL): check precision and range in the conversion report."
+docs = "AWS Schema Conversion Tool User Guide, data type mappings"
+
+# Looks for: Column data types.
+[match]
+data_types = ["datetime2", "datetime", "smalldatetime", "nvarchar", "nchar", "ntext", "text", "image", "tinyint", "varbinary", "uniqueidentifier", "xml"]

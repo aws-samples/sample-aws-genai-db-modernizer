@@ -1,0 +1,13 @@
+# Gap rule postgresql-concatenation-operator (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, String Functions and Operators; MySQL 8.0 Reference Manual, Server SQL Modes (PIPES_AS_CONCAT).
+id = "postgresql-concatenation-operator"
+feature = "|| string concatenation"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "|| concatenates in PostgreSQL but is a logical OR in MySQL's default SQL mode, so each becomes CONCAT() (or the session turns on PIPES_AS_CONCAT); note that CONCAT returns NULL for a NULL argument."
+docs = "PostgreSQL documentation, String Functions and Operators; MySQL 8.0 Reference Manual, Server SQL Modes (PIPES_AS_CONCAT)"
+
+# Looks for: The || operator.
+[match]
+syntax = ["| |"]

@@ -1,0 +1,13 @@
+# Gap rule mysql-on-duplicate-key-update (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, INSERT (ON CONFLICT clause).
+id = "mysql-on-duplicate-key-update"
+feature = "INSERT ... ON DUPLICATE KEY UPDATE"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "INSERT ... ON DUPLICATE KEY UPDATE becomes INSERT ... ON CONFLICT (key columns) DO UPDATE, which names the unique key it resolves and reads the new row as EXCLUDED instead of VALUES()."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, INSERT (ON CONFLICT clause)"
+
+# Looks for: The ON DUPLICATE KEY clause.
+[match]
+syntax = ["ON DUPLICATE KEY"]

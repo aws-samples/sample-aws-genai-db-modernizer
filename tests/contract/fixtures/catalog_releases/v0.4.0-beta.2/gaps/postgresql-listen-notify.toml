@@ -1,0 +1,14 @@
+# Gap rule postgresql-listen-notify (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, NOTIFY and LISTEN.
+id = "postgresql-listen-notify"
+feature = "LISTEN and NOTIFY"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no LISTEN or NOTIFY, so these notifications move to a message service (for example Amazon SNS or Amazon SQS) or to polling."
+docs = "PostgreSQL documentation, NOTIFY and LISTEN"
+
+# Looks for: Statements that start with LISTEN, NOTIFY or UNLISTEN, and pg_notify().
+[match]
+statement_starts = ["LISTEN", "NOTIFY", "UNLISTEN"]
+calls = ["PG_NOTIFY"]

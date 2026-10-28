@@ -1,0 +1,13 @@
+# Gap rule mysql-zero-dates (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, The DATE, DATETIME, and TIMESTAMP Types; PostgreSQL documentation, Date/Time Types.
+id = "mysql-zero-dates"
+feature = "Zero dates (0000-00-00)"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL rejects the zero date 0000-00-00, so these defaults change to NULL or a real date, the zero values already stored are converted during the load, and queries that compare against the zero date change with them."
+docs = "MySQL 8.0 Reference Manual, The DATE, DATETIME, and TIMESTAMP Types; PostgreSQL documentation, Date/Time Types"
+
+# Looks for: Column defaults that are a zero date.
+[match]
+default_values = ["0000-00-00*"]

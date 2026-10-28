@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.hooks.block_baseline_edit import PROTECTED
+from scripts.hooks.block_baseline_edit import PROTECTED, PROTECTED_DIRS
 from tests.unit.hooks.conftest import REPO_ROOT, edit
 
 
@@ -70,3 +70,10 @@ def test_value_set_snapshot_is_protected(tool: str, run_hook) -> None:
     res = run_hook("block_baseline_edit.py", edit(path, tool))
     assert res.blocked
     assert "uv run python scripts/contract_value_snapshot.py --write" in res.stderr
+
+
+@pytest.mark.parametrize("prefix", sorted(PROTECTED_DIRS))
+def test_a_file_in_a_protected_directory_is_blocked(prefix: str, run_hook) -> None:
+    res = run_hook("block_baseline_edit.py", edit(str(REPO_ROOT / prefix / "v1" / "a.toml")))
+    assert res.blocked and PROTECTED_DIRS[prefix] in res.stderr
+    assert (REPO_ROOT / prefix).is_dir()

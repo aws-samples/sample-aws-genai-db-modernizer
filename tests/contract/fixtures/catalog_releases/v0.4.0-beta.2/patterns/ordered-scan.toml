@@ -1,0 +1,56 @@
+# Pattern ordered-scan. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "ordered-scan"
+name = "Ordered scan"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+penalty = 20
+penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
+
+# Detection (#920, catalog PR B): a SELECT that pins no column to a value in any scope and
+# reads the first rows of an order (ORDER BY with a row limit, the top_n fact), at any call
+# rate. frequent-full-scan prices a frequent Scan; this prices the order a Scan cannot give.
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-05"
+severity = 0.5
+why = "The first rows of a whole table in some order (ORDER BY with a row limit and no key value). A DynamoDB Scan returns items in no particular order, so the first rows by any order need every item read and sorted by the application (Amazon DynamoDB Developer Guide, Scanning tables)."
+guidance = "Give the read a partition key value and keep the order as the sort key (a Query returns items in sort-key order), or keep this read on the relational engine."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

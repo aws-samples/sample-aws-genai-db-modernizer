@@ -1,0 +1,17 @@
+# Gap rule postgresql-timescaledb (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL.
+id = "postgresql-timescaledb"
+feature = "TimescaleDB functions"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "blocks_move"
+reason = "TimescaleDB is not among the extensions Aurora PostgreSQL offers, so hypertables and their functions must be replaced (for example with native partitioning and date_trunc or date_bin) before the move."
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: CREATE EXTENSION timescaledb, its installed C functions, or a call to one of its functions that is unqualified or qualified with its schema (never a user's same-named function).
+[match]
+extension = "timescaledb"
+# TimescaleDB's functions live in the schema it was created in (public by default) and
+# in its own internal schemas; a same-named function in another schema is a user's.
+extension_schemas = ["public", "_timescaledb_functions", "timescaledb_experimental", "timescaledb_information"]
+extension_calls = ["TIME_BUCKET", "CREATE_HYPERTABLE", "ADD_RETENTION_POLICY", "ADD_COMPRESSION_POLICY", "ADD_CONTINUOUS_AGGREGATE_POLICY"]

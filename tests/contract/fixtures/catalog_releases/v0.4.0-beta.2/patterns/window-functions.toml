@@ -1,0 +1,53 @@
+# Pattern window-functions. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "window-functions"
+name = "Window functions in a document pipeline"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 10
+penalty_basis = "bounded_limit"
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: a window function other than LAG, LEAD or NTILE alone (#968)
+[engines.documentdb]
+kind = "anti_pattern"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-anti-07"
+severity = 0.5
+why = "SQL window functions $setWindowFields serves (ROW_NUMBER, RANK, running totals): DocumentDB 8.0.2 or later on an instance-based cluster. LAG and LEAD ($shift) and NTILE (no bucketing window operator) run on no version, so they are a hard capability gap, not this entry (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
+guidance = "Use Computed Pattern (pre-calculated fields) or application-layer computation."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

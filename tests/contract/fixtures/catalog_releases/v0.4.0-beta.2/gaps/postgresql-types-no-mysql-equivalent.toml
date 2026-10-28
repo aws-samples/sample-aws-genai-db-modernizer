@@ -1,0 +1,14 @@
+# Gap rule postgresql-types-no-mysql-equivalent (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Network Address Types, Range Types and Geometric Types.
+id = "postgresql-types-no-mysql-equivalent"
+feature = "Data types with no MySQL equivalent"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no network address, interval, range, money, hstore, ltree, vector or geometric types of PostgreSQL's kind, so these columns become strings, numbers, JSON or separate columns, and the functions on them (host(), masklen(), range operators) are rewritten."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Network Address Types, Range Types and Geometric Types"
+
+# Looks for: Those column types, and calls to the network address functions.
+[match]
+data_types = ["inet", "cidr", "macaddr", "macaddr8", "interval", "money", "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange", "int4multirange", "int8multirange", "nummultirange", "tsmultirange", "tstzmultirange", "datemultirange", "hstore", "ltree", "vector", "halfvec", "sparsevec", "xml", "point", "line", "lseg", "box", "path", "polygon", "circle", "oid", "regclass", "pg_lsn", "txid_snapshot"]
+calls = ["HOST", "MASKLEN", "NETWORK", "FAMILY", "BROADCAST", "NETMASK", "HOSTMASK"]

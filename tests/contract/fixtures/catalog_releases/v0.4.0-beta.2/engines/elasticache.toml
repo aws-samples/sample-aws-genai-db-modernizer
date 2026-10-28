@@ -1,0 +1,33 @@
+# Amazon ElastiCache. A cache layer that fronts hot reads and owns no query (#296, #398);
+# whether a durable ElastiCache can be a system of record is tracked in #401.
+id = "elasticache"
+display_name = "ElastiCache"
+display_order = 4
+ui_picker_order = 4
+status = "active"
+role = "cache"
+system_of_record = false
+
+[colors]
+ui = "#d13212"
+
+[pricing]
+base_monthly = 50
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+# A cluster is billed by its nodes, not per request (#494): node-based Valkey, priced from
+# the price table (src/catalog/prices.toml, #1196).
+list_prices = "elasticache.valkey"
+
+# The cache overlay's floors (#296, #304, #921): which reads a cache layer fronts.
+[thresholds.hot_read_min_calls_per_second]
+value = 1.0
+why = "Hot-read floor, inclusive: below one call/s a cached entry is read a few times before the next miss pays the same cost as no cache (#296); on the reference samples every candidate is at least 1.26 calls/s or at most 0.95."
+
+[thresholds.max_rows_avg]
+value = 100.0
+why = "Largest average result (rows) a cached query may return: a cache holds bounded values (#296)."
+
+[thresholds.write_heavy_table_min_write_share]
+value = 0.5
+why = "A table whose writes are at least this share of its calls is write-heavy: its cache entries would be invalidated about as often as they are read (#296)."

@@ -1,0 +1,13 @@
+# Gap rule sqlserver-date-functions (#471). Fields: src/shared/catalog/gaps.py.
+# Source: SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time functions.
+id = "sqlserver-date-functions"
+feature = "T-SQL date and time functions"
+source_engines = ["sqlserver"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "T-SQL date functions have other names or argument orders on the target, and DATEDIFF exists on Aurora MySQL with a different meaning, so each call is converted."
+docs = "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time functions"
+
+# Looks for: Function calls in queries and routines.
+[match]
+calls = ["GETDATE", "GETUTCDATE", "SYSDATETIME", "SYSUTCDATETIME", "SYSDATETIMEOFFSET", "DATEADD", "DATEDIFF", "DATEDIFF_BIG", "DATEPART", "DATENAME", "EOMONTH", "DATEFROMPARTS"]

@@ -1,0 +1,14 @@
+# Gap rule postgresql-ilike (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Pattern Matching (LIKE); MySQL 8.0 Reference Manual, String Comparison Functions and Operators.
+id = "postgresql-ilike"
+feature = "ILIKE"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no ILIKE, so it becomes LIKE, which is already case-insensitive under a _ci collation, or LIKE on LOWER() of both sides under a case-sensitive one."
+docs = "PostgreSQL documentation, Pattern Matching (LIKE); MySQL 8.0 Reference Manual, String Comparison Functions and Operators"
+
+# Looks for: The ILIKE operator and its ~~* form.
+[match]
+words = ["ILIKE"]
+syntax = ["~ ~ *"]

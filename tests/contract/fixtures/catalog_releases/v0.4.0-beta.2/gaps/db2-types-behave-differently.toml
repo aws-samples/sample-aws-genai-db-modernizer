@@ -1,0 +1,13 @@
+# Gap rule db2-types-behave-differently (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW.
+id = "db2-types-behave-differently"
+feature = "Db2 data types that change behaviour"
+source_engines = ["db2"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "DECFLOAT and the double-byte GRAPHIC, VARGRAPHIC and DBCLOB types map to numeric and text types with other rounding and length rules, so check the code that computes with or measures them."
+docs = "AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW"
+
+# Looks for: Column data types.
+[match]
+data_types = ["decfloat", "graphic", "vargraphic", "dbclob"]

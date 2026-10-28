@@ -1,0 +1,58 @@
+# Pattern complex-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "complex-aggregation"
+name = "Complex aggregation"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "aggregations"
+# Penalty basis: no server-side aggregation, so the result needs pre-computed aggregates
+# or another store (complex_aggregation is the underscore spelling some analysis agents used).
+penalty = 30
+penalty_basis = "needs_redesign"
+removed_by_redesign = "rows"
+penalty_aliases = ["complex_aggregation"]
+
+# Detection signals: a GROUP BY, or an aggregate that is not over one key's rows of one table (#968)
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-02"
+severity = 0.7
+why = "GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join (one key's COUNT or SUM is a Query on that key, not this pattern). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query)."
+guidance = "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

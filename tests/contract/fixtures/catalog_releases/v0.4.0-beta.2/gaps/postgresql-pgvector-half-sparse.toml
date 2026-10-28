@@ -1,0 +1,13 @@
+# Gap rule postgresql-pgvector-half-sparse (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL (pgvector).
+id = "postgresql-pgvector-half-sparse"
+feature = "pgvector halfvec and sparsevec columns"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "informational"
+reason = "halfvec and sparsevec columns need pgvector 0.7.0 or later: pick an Aurora PostgreSQL minor version whose pgvector is at least that."
+docs = "Extension versions for Amazon Aurora PostgreSQL (pgvector)"
+
+# Looks for: Column data types.
+[match]
+data_types = ["halfvec", "sparsevec"]

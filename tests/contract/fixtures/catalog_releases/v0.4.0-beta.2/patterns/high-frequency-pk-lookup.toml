@@ -1,0 +1,63 @@
+# Pattern high-frequency-pk-lookup. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "high-frequency-pk-lookup"
+name = "High-frequency primary key lookup"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty basis: Aurora serves it natively; DynamoDB names it as its native access path.
+penalty = 20
+penalty_basis = "workload_fit"
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+# Detection signals: single-row SELECT by PK at > HIGH_FREQUENCY_PK_LOOKUP_CPS (30, aurora_common_pattern_catalog)
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-01"
+severity = 0.8
+why = "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora)."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern."
+guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
+guidance_names_engine = true
+
+# Detection signals: single-row SELECT by PK at > HIGH_FREQUENCY_PK_LOOKUP_CPS (30, aurora_common_pattern_catalog)
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-01"
+severity = 0.8
+why = "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora)."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern."
+guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
+guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

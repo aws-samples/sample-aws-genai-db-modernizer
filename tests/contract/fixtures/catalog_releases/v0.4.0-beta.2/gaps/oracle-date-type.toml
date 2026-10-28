@@ -1,0 +1,13 @@
+# Gap rule oracle-date-type (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time data types.
+id = "oracle-date-type"
+feature = "Oracle DATE columns"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "An Oracle DATE carries a time of day, so it maps to timestamp (Aurora PostgreSQL) or datetime (Aurora MySQL), not date, and date arithmetic in the code changes."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time data types"
+
+# Looks for: Column data types.
+[match]
+data_types = ["date"]

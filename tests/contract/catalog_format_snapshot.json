@@ -1,0 +1,3756 @@
+{
+  "about": "The rule catalog's TOML format (#1647): per file kind, its files and its key paths with their value types and whether every table they can appear in has them (a * segment is a map keyed by data). Compared by tests/contract/test_catalog_format_snapshot.py: removing, renaming or retyping a key, a required key missing from a file, making an optional key required, or removing a file or file kind fails; additions pass. released names the tag it was recorded at (null: a draft before the tag). Recorded by the release step, never by hand: uv run python scripts/catalog_format_snapshot.py --write-released <tag>",
+  "kinds": {
+    "access_classes": {
+      "files": [
+        "access_classes.toml"
+      ],
+      "keys": {
+        "classes": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "classes[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "classes[].id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].label": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].leaning": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "classes[].only_when.full-text-search": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.fuzzy-search": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.prefix-regex": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.range-query": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.regex-search": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.time-aggregation": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.wildcard-search": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].only_when.window-function": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].patterns": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "classes[].patterns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "classes[].why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "features": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "features[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "features[].fact": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "features[].pattern": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "features[].why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/access_classes.toml"
+    },
+    "aurora_versions": {
+      "files": [
+        "aurora_versions.toml"
+      ],
+      "keys": {
+        "engines": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.lines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_mysql.lines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_mysql.source_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_postgresql.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.lines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_postgresql.lines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_postgresql.source_engines[]": {
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/aurora_versions.toml"
+    },
+    "carried_writes": {
+      "files": [
+        "carried_writes.toml"
+      ],
+      "keys": {
+        "thresholds": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.carried_write_fit_floor": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.carried_write_fit_floor.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.carried_write_fit_floor.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/carried_writes.toml"
+    },
+    "engines": {
+      "files": [
+        "aurora.toml",
+        "aurora_mysql.toml",
+        "aurora_postgresql.toml",
+        "documentdb.toml",
+        "dynamodb.toml",
+        "elasticache.toml",
+        "keyspaces.toml",
+        "neptune.toml",
+        "opensearch.toml"
+      ],
+      "keys": {
+        "absorbs_only": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "absorbs_only.capabilities": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "absorbs_only.capabilities[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "absorbs_only.signals": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "absorbs_only.signals[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "colors": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "colors.ui": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "complexity_by_feature_count": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "complexity_by_feature_count[]": {
+          "types": [
+            "integer"
+          ]
+        },
+        "display_name": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "display_order": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "exact_tie_preferred": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "joins_need_denormalized_design": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "justification_floor": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "justification_floor.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "justification_floor.reason_code": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "justification_floor.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "override_needs_justification": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "pattern_only": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "pricing": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "pricing.base_monthly": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.estimate_instance_class": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "pricing.extra_engine_burden_monthly": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.list_prices": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "pricing.max_burden_per_unique_query": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.read_unit_bytes": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.reads_billed_on_cache_miss_only": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "pricing.streams_read_unit_bytes": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "pricing.write_unit_bytes": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "role": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "score_weights": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "score_weights.default": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "score_weights.default.complexity": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.default.cost": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.default.pattern_match": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.default.performance": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.search": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "score_weights.search.complexity": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.search.cost": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.search.pattern_match": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.search.performance": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.time_series": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "score_weights.time_series.complexity": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.time_series.cost": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.time_series.pattern_match": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "score_weights.time_series.performance": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "short_name": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "source_engines": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "source_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "status": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "system_of_record": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "thresholds": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.hot_read_min_calls_per_second": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.hot_read_min_calls_per_second.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.hot_read_min_calls_per_second.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.max_rows_avg": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.max_rows_avg.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.max_rows_avg.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.min_calls_per_second": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.min_calls_per_second.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.min_calls_per_second.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.min_corpus_rows_avg": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.min_corpus_rows_avg.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.min_corpus_rows_avg.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.native_override_min_calls_per_second": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.native_override_min_calls_per_second.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.native_override_min_calls_per_second.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.write_heavy_table_min_write_share": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.write_heavy_table_min_write_share.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.write_heavy_table_min_write_share.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "ui_picker_order": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "location": "src/catalog/engines/*.toml"
+    },
+    "gaps": {
+      "files": [
+        "db2-isolation-clause.toml",
+        "db2-special-registers.toml",
+        "db2-sql-pl-routines.toml",
+        "db2-types-behave-differently.toml",
+        "fetch-first-to-mysql.toml",
+        "mariadb-sequences.toml",
+        "mariadb-to-aurora-mysql.toml",
+        "mysql-auto-increment-columns.toml",
+        "mysql-builtin-functions.toml",
+        "mysql-case-insensitive-collations.toml",
+        "mysql-date-functions.toml",
+        "mysql-double-quoted-strings.toml",
+        "mysql-enum-and-set-types.toml",
+        "mysql-found-rows-to-postgresql.toml",
+        "mysql-fulltext-search.toml",
+        "mysql-functions-behave-differently.toml",
+        "mysql-implicit-type-conversion.toml",
+        "mysql-insert-ignore.toml",
+        "mysql-json-functions.toml",
+        "mysql-last-insert-id.toml",
+        "mysql-limit-offset-comma.toml",
+        "mysql-load-data-and-outfile.toml",
+        "mysql-mixed-case-identifiers.toml",
+        "mysql-newer-major-version.toml",
+        "mysql-non-innodb-storage-engine.toml",
+        "mysql-older-major-version.toml",
+        "mysql-on-duplicate-key-update.toml",
+        "mysql-only-operators.toml",
+        "mysql-query-cache-hint.toml",
+        "mysql-regexp-operators.toml",
+        "mysql-removed-functions.toml",
+        "mysql-replace-into.toml",
+        "mysql-select-modifiers-and-hints.toml",
+        "mysql-show-and-admin-statements.toml",
+        "mysql-spatial-types.toml",
+        "mysql-sql-calc-found-rows.toml",
+        "mysql-stored-routines-to-postgresql.toml",
+        "mysql-system-variables.toml",
+        "mysql-types-mapped-to-postgresql.toml",
+        "mysql-unsigned-integers.toml",
+        "mysql-user-variables.toml",
+        "mysql-utf8mb3-character-set.toml",
+        "mysql-zero-dates.toml",
+        "oracle-builtin-functions.toml",
+        "oracle-connect-by.toml",
+        "oracle-date-type.toml",
+        "oracle-empty-string-is-null.toml",
+        "oracle-outer-join-operator.toml",
+        "oracle-plsql-routines.toml",
+        "oracle-rownum-rowid.toml",
+        "oracle-sequences.toml",
+        "oracle-types-mapped.toml",
+        "oracle-types-no-equivalent.toml",
+        "postgresql-aggregate-filter-and-window-frames.toml",
+        "postgresql-arrays.toml",
+        "postgresql-builtin-functions.toml",
+        "postgresql-case-sensitive-comparison.toml",
+        "postgresql-cast-operator.toml",
+        "postgresql-citus.toml",
+        "postgresql-concatenation-operator.toml",
+        "postgresql-copy-statements.toml",
+        "postgresql-data-modifying-ctes.toml",
+        "postgresql-date-functions.toml",
+        "postgresql-distinct-on.toml",
+        "postgresql-double-quoted-identifiers.toml",
+        "postgresql-extensions-to-mysql.toml",
+        "postgresql-full-text-search.toml",
+        "postgresql-functions-behave-differently.toml",
+        "postgresql-ilike.toml",
+        "postgresql-index-methods.toml",
+        "postgresql-json-operators-and-functions.toml",
+        "postgresql-lateral-joins.toml",
+        "postgresql-listen-notify.toml",
+        "postgresql-materialized-views.toml",
+        "postgresql-merge-to-mysql.toml",
+        "postgresql-newer-major-version.toml",
+        "postgresql-older-major-version.toml",
+        "postgresql-on-conflict.toml",
+        "postgresql-only-clauses.toml",
+        "postgresql-partial-indexes.toml",
+        "postgresql-pgvector-half-sparse.toml",
+        "postgresql-plpgsql-routines-to-mysql.toml",
+        "postgresql-regex-operators.toml",
+        "postgresql-returning-clause.toml",
+        "postgresql-schemas-to-mysql.toml",
+        "postgresql-sequences-to-mysql.toml",
+        "postgresql-serial-columns-to-mysql.toml",
+        "postgresql-server-file-access.toml",
+        "postgresql-session-settings.toml",
+        "postgresql-system-catalog.toml",
+        "postgresql-timescaledb.toml",
+        "postgresql-types-mapped-to-mysql.toml",
+        "postgresql-types-no-mysql-equivalent.toml",
+        "postgresql-untrusted-language.toml",
+        "source-version-unknown.toml",
+        "sqlserver-apply-and-openjson.toml",
+        "sqlserver-babelfish-option.toml",
+        "sqlserver-builtin-functions.toml",
+        "sqlserver-case-insensitive-comparison.toml",
+        "sqlserver-date-functions.toml",
+        "sqlserver-identity-functions.toml",
+        "sqlserver-merge-to-mysql.toml",
+        "sqlserver-merge-to-postgresql.toml",
+        "sqlserver-table-and-query-hints.toml",
+        "sqlserver-top-clause.toml",
+        "sqlserver-tsql-routines.toml",
+        "sqlserver-types-behave-differently.toml",
+        "sqlserver-types-mapped.toml",
+        "sqlserver-types-no-equivalent.toml"
+      ],
+      "keys": {
+        "docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "feature": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "impact": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "match": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "match.always": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.auto_increment": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.calls": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.calls[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.collations": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.collations[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.data_type_globs": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.data_type_globs[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.data_types": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.data_types[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.default_values": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.default_values[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.extension": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "match.extension_calls": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.extension_calls[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.extension_schemas": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.extension_schemas[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.index_types": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.index_types[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.partial_indexes": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.quoted_with": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.quoted_with[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.routine_languages": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.routine_languages[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.routines": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.schemas_other_than": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.schemas_other_than[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.statement_endings": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.statement_endings[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.statement_starts": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.statement_starts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.storage_engines": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.storage_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.syntax": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.syntax[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.unless_followed_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.unless_followed_by[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.unless_preceded_by": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.unless_preceded_by[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.uppercase_names": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "match.version": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "match.word_prefixes": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.word_prefixes[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "match.words": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "match.words[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "reason": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "source_engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "source_engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "targets[]": {
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/gaps/*.toml"
+    },
+    "gates": {
+      "files": [
+        "gates.toml"
+      ],
+      "keys": {
+        "capabilities": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.aggregation": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.aggregation.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.aggregation.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.aggregation.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.aggregation.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.aggregation.triage_signals": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.aggregation.triage_signals[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.aggregation.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.complex_joins": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.complex_joins.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.complex_joins.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.complex_joins.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.complex_joins.triage_signals": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.complex_joins.triage_signals[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.complex_joins.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.computed_join": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.computed_join.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.computed_join.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.computed_join.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.computed_join.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.computed_join.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.multi_doc_acid": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.multi_doc_acid.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.multi_doc_acid.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.multi_doc_acid.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.multi_doc_acid.pattern_capability": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.multi_doc_acid.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.offset_window": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.offset_window.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.offset_window.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.offset_window.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.offset_window.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.offset_window.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.ranking_window": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.ranking_window.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.ranking_window.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.ranking_window.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.ranking_window.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.ranking_window.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.scan_engine": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.scan_engine.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.scan_engine.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.scan_engine.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.scan_engine.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.scan_engine.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.sql_admin": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.sql_admin.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.sql_admin.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.sql_admin.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.sql_admin.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.strong_consistency": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.strong_consistency.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.strong_consistency.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.strong_consistency.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.strong_consistency.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.text_pattern_match": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "capabilities.text_pattern_match.engines": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.text_pattern_match.engines[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.text_pattern_match.facts": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.text_pattern_match.facts[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.text_pattern_match.pattern_capability": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.text_pattern_match.triage_signals": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "capabilities.text_pattern_match.triage_signals[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "capabilities.text_pattern_match.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exclusions": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "exclusions[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "exclusions[].customer_message": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exclusions[].description": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exclusions[].engine": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exclusions[].fact": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exclusions[].min": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "exclusions[].rule_id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "waivers[]": {
+          "types": [
+            "table"
+          ]
+        },
+        "waivers[].capability": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers[].engine": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers[].fact": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers[].rule_id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers[].when": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "waivers[].why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/gates.toml"
+    },
+    "model_prices": {
+      "files": [
+        "model_prices.toml"
+      ],
+      "keys": {
+        "*": {
+          "types": [
+            "table"
+          ]
+        },
+        "*.*": {
+          "types": [
+            "table"
+          ]
+        },
+        "*.*.cache_read": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "*.*.cache_write": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "*.*.input": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "*.*.output": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "retrieved_on": {
+          "required": true,
+          "types": [
+            "date"
+          ]
+        },
+        "source": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/model_prices.toml"
+    },
+    "patterns": {
+      "files": [
+        "acid-transactions.toml",
+        "adjacency-list.toml",
+        "aggregation-analytics.toml",
+        "aggregation-pipeline.toml",
+        "array-operations.toml",
+        "audit-columns-only.toml",
+        "batch-in-list.toml",
+        "bounded-parent-child.toml",
+        "caching.toml",
+        "co-accessed-tables.toml",
+        "complex-aggregation.toml",
+        "complex-join.toml",
+        "correlated-subquery-joins.toml",
+        "correlated-subquery.toml",
+        "cte-recursive.toml",
+        "extended-reference.toml",
+        "faceted-analytics.toml",
+        "frequent-full-scan.toml",
+        "full-text-native.toml",
+        "full-text-search-candidate.toml",
+        "full-text-search.toml",
+        "fulltext-search.toml",
+        "fuzzy-search.toml",
+        "geospatial.toml",
+        "graph-traversal-hierarchy.toml",
+        "group-concat-pivot.toml",
+        "heavy-cross-collection-joins.toml",
+        "high-frequency-pk-lookup.toml",
+        "high-frequency-small-updates.toml",
+        "high-ingest.toml",
+        "high-volume-text-search.toml",
+        "json-document-query.toml",
+        "key-value-lookup.toml",
+        "large-result-sets.toml",
+        "lateral-join.toml",
+        "leaderboard.toml",
+        "low-frequency-read.toml",
+        "low-frequency-write.toml",
+        "many-to-many-junction.toml",
+        "metadata-config-store.toml",
+        "multi-index-joins.toml",
+        "multi-row-mutation.toml",
+        "multi-table-update.toml",
+        "negation-heavy-queries.toml",
+        "nested-document.toml",
+        "no-relational-need.toml",
+        "ordered-scan.toml",
+        "pagination.toml",
+        "prefix-regex.toml",
+        "range-query.toml",
+        "referential-integrity.toml",
+        "regex-search.toml",
+        "reporting-query.toml",
+        "secondary-attribute-filter.toml",
+        "session-store.toml",
+        "simple-cache-read.toml",
+        "simple-join.toml",
+        "single-access-pattern-table.toml",
+        "standard-crud.toml",
+        "stored-routine.toml",
+        "substring-match.toml",
+        "text_search.toml",
+        "time-aggregation.toml",
+        "time-range-query.toml",
+        "time-series-event-log.toml",
+        "time-series.toml",
+        "transactional-write.toml",
+        "unbounded-array-growth.toml",
+        "unbounded-result-set.toml",
+        "unbounded-time-series-ingest.toml",
+        "upsert-conflict.toml",
+        "upsert-duplicate-key.toml",
+        "variant-attributes.toml",
+        "wide-transaction.toml",
+        "wildcard-search.toml",
+        "window-function.toml",
+        "window-functions.toml",
+        "write-heavy-ingestion.toml",
+        "write-time-aggregation.toml"
+      ],
+      "keys": {
+        "capability": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "detectors": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "detectors[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.class_score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_mysql.complexity_feature": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_mysql.concerns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_mysql.concerns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.engine_hint": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.guidance_names_engine": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_mysql.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_mysql.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.aurora_mysql.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_mysql.table_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_mysql.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_postgresql.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.class_score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_postgresql.complexity_feature": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_postgresql.concerns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.aurora_postgresql.concerns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.engine_hint": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.guidance_names_engine": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_postgresql.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_postgresql.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.aurora_postgresql.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.aurora_postgresql.table_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.aurora_postgresql.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.documentdb.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.class_score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.documentdb.concerns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.documentdb.concerns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.parity_anchor": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.prefix_regex_index": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.documentdb.score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.documentdb.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.documentdb.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.documentdb.table_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.documentdb.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.dynamodb.bonus_group": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.complexity_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.dynamodb.concerns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.dynamodb.concerns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.dynamodb.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.dynamodb.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.dynamodb.table_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.dynamodb.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.elasticache.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.confidence": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.elasticache.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.elasticache.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.keyspaces": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.keyspaces.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.keyspaces.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.keyspaces.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.neptune": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.neptune.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.neptune.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.neptune.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.opensearch.bonus_group": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.catalog": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.catalog_id": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.class_score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.opensearch.concerns": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "engines.opensearch.concerns[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.guidance": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.parity_anchor": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.profile": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.score": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.opensearch.severity": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "engines.opensearch.supported": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "engines.opensearch.table_bonus": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "engines.opensearch.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "exempt_note": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "name": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "negligible_read_share": {
+          "required": false,
+          "types": [
+            "float"
+          ]
+        },
+        "penalty": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "penalty_aliases": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "penalty_aliases[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "penalty_basis": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "penalty_why": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "removed_by_redesign": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "scan_threshold": {
+          "required": false,
+          "types": [
+            "table"
+          ]
+        },
+        "scan_threshold.min_calls_per_second": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "scan_threshold.min_table_rows": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "scan_threshold.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "segment_weighting": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "triage_signal": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "write_pattern": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "location": "src/catalog/patterns/*.toml"
+    },
+    "prices": {
+      "files": [
+        "prices.toml"
+      ],
+      "keys": {
+        "aurora_mysql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_mysql.io_optimized": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_mysql.io_optimized.acu_price_per_hour": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.io_optimized.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_mysql.io_optimized.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.io_optimized.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.standard": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_mysql.standard.acu_price_per_hour": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.standard.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_mysql.standard.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.standard.read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.standard.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_mysql.standard.write_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_postgresql.io_optimized": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_postgresql.io_optimized.acu_price_per_hour": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.io_optimized.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_postgresql.io_optimized.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.io_optimized.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.standard": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_postgresql.standard.acu_price_per_hour": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.standard.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "aurora_postgresql.standard.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.standard.read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.standard.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "aurora_postgresql.standard.write_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.io_optimized": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.io_optimized.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.io_optimized.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.io_optimized.instance_memory_gib": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.io_optimized.instance_memory_gib.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.io_optimized.read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.io_optimized.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.io_optimized.write_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.standard": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.standard.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.standard.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.standard.instance_memory_gib": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "documentdb.standard.instance_memory_gib.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.standard.read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.standard.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "documentdb.standard.write_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "dynamodb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dynamodb.on_demand": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "dynamodb.on_demand.read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "dynamodb.on_demand.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "dynamodb.on_demand.streams_read_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "dynamodb.on_demand.write_unit_price_per_million": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.redis_oss": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.redis_oss.backup_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.redis_oss.cross_az_transfer_price_per_gb": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.redis_oss.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.redis_oss.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.redis_oss.instance_memory_gib": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.redis_oss.instance_memory_gib.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.valkey": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.valkey.backup_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.valkey.cross_az_transfer_price_per_gb": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.valkey.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.valkey.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "elasticache.valkey.instance_memory_gib": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "elasticache.valkey.instance_memory_gib.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "opensearch": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "opensearch.managed": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "opensearch.managed.instance_hourly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "opensearch.managed.instance_hourly.*": {
+          "types": [
+            "float"
+          ]
+        },
+        "opensearch.managed.storage_price_per_gb_month": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "published": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "published.*": {
+          "types": [
+            "date"
+          ]
+        },
+        "region": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "retrieved_on": {
+          "required": true,
+          "types": [
+            "date"
+          ]
+        }
+      },
+      "location": "src/catalog/prices.toml"
+    },
+    "routing": {
+      "files": [
+        "routing.toml"
+      ],
+      "keys": {
+        "heterogeneous_features": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.babelfish_compatible": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.babelfish_compatible.basis": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.babelfish_compatible.favours": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.babelfish_compatible.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.json_usage": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.json_usage.basis": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.json_usage.favours": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.json_usage.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.merge_statements": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.merge_statements.basis": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.merge_statements.favours": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.merge_statements.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.multiple_schemas": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.multiple_schemas.basis": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.multiple_schemas.favours": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.multiple_schemas.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.sequences": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "heterogeneous_features.sequences.basis": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.sequences.favours": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "heterogeneous_features.sequences.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.aurora_choice_margin_ratio": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.aurora_choice_margin_ratio.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.aurora_choice_margin_ratio.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_monthly": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_monthly.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_monthly.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_share": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_share.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.cheaper_engine_min_saving_share.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.mandatory_engine_cost_floor": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.mandatory_engine_cost_floor.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.mandatory_engine_cost_floor.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.mandatory_engine_max_query_share": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.mandatory_engine_max_query_share.value": {
+          "required": true,
+          "types": [
+            "float"
+          ]
+        },
+        "thresholds.mandatory_engine_max_query_share.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.orphan_engine_threshold": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.orphan_engine_threshold.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.orphan_engine_threshold.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.redesign_key_min_distinct": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.redesign_key_min_distinct.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.redesign_key_min_distinct.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.redesign_key_min_rows": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.redesign_key_min_rows.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.redesign_key_min_rows.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.small_reference_table_max_rows": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.small_reference_table_max_rows.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.small_reference_table_max_rows.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.target_engine_count": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.target_engine_count.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.target_engine_count.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "thresholds.unique_delta_threshold": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "thresholds.unique_delta_threshold.value": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "thresholds.unique_delta_threshold.why": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/routing.toml"
+    },
+    "triage_signals": {
+      "files": [
+        "triage_signals.toml"
+      ],
+      "keys": {
+        "signals": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.aggregations": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.aggregations.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.aggregations.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.complex_joins": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.complex_joins.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.complex_joins.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.eav_pattern": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.eav_pattern.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.eav_pattern.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.graph_traversal": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.graph_traversal.override_engine": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "signals.graph_traversal.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.high_fk_density": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.high_fk_density.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.high_fk_density.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.high_frequency_reads": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.high_frequency_reads.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.high_frequency_reads.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.json_columns": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.json_columns.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.json_columns.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.junction_tables": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.junction_tables.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.junction_tables.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.key_value_lookups": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.key_value_lookups.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.key_value_lookups.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.large_scans": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.large_scans.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.large_scans.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.leaderboard_pattern": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.leaderboard_pattern.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.leaderboard_pattern.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.low_frequency_reads": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.low_frequency_reads.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.low_frequency_reads.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.low_frequency_writes": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.low_frequency_writes.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.low_frequency_writes.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.metadata_config": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.metadata_config.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.metadata_config.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.range_queries": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.range_queries.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.range_queries.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.self_referential_fk": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.self_referential_fk.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.self_referential_fk.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.session_store": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.session_store.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.session_store.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.status_filters": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.status_filters.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.status_filters.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.subqueries": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.subqueries.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.subqueries.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.text_search": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.text_search.override_engine": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "signals.text_search.override_reason_code": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "signals.text_search.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.text_search.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.time_range_filters": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.time_range_filters.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.time_range_filters.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.time_series": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.time_series.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.time_series.targets[]": {
+          "types": [
+            "string"
+          ]
+        },
+        "signals.write_heavy": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "signals.write_heavy.targets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "signals.write_heavy.targets[]": {
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/triage_signals.toml"
+    },
+    "write_intents": {
+      "files": [
+        "bulk-status-flip.toml",
+        "consistency-repair.toml",
+        "duplicate-cleanup.toml",
+        "multi-reference-delete.toml",
+        "orphan-cleanup.toml",
+        "retention-delete.toml",
+        "set-based-write.toml"
+      ],
+      "keys": {
+        "engines": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_mysql.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_mysql.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.aurora_postgresql.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.aurora_postgresql.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.documentdb.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.documentdb.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.dynamodb.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.dynamodb.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.elasticache.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.elasticache.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch": {
+          "required": true,
+          "types": [
+            "table"
+          ]
+        },
+        "engines.opensearch.approach": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "engines.opensearch.docs": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "name": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "summary": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "location": "src/catalog/write_intents/*.toml"
+    }
+  },
+  "released": null
+}
