@@ -360,6 +360,40 @@ class VerificationError(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _revision_designer_inputs(
+    store: ArtifactStore, database_name: str, job_id: str, engine: str
+) -> tuple[dict, dict]:
+    """The collector and analysis a revision designer reads, narrowed as the first design's (#1524).
+
+    Scoped to ``engine`` in the assignment version downstream phases use
+    (``resolve_downstream_assignment_version``, the one ``_required_query_ids``
+    checks coverage against), through the same helpers the first design applies.
+    An engine with nothing assigned gets empty tables and queries, never the
+    whole collection. A job with no readable assignment (legacy) is unfiltered,
+    as the first design's legacy mode is. A revision is one call, like the
+    single-call design: it does not split into DynamoDB groups.
+    """
+    from src.agents.schema_design.handler import (
+        _design_analysis_output,
+        filter_analysis_for_assignment,
+        filter_collector_for_assignment,
+    )
+    from src.storage.assignment_versioning import (
+        read_assignment,
+        resolve_downstream_assignment_version,
+    )
+
+    full_collector = read_collector_for_models(store, database_name, job_id)
+    version = resolve_downstream_assignment_version(store, database_name, job_id)
+    assignment = read_assignment(store, database_name, job_id, version)
+    if not assignment:
+        analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
+        return full_collector, store.read_json(analysis_key)
+    collector = filter_collector_for_assignment(full_collector, assignment, engine)
+    analysis = _design_analysis_output(store, database_name, job_id, engine, version)
+    return collector, filter_analysis_for_assignment(analysis, full_collector, collector)
+
+
 def _dispatch_llm_redesign(
     job_id: str,
     database_name: str,
@@ -389,11 +423,7 @@ def _dispatch_llm_redesign(
     json.dump(context, context_tmp)
     context_tmp.close()
 
-    # Find collector and analysis paths from the store
-    analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
-
-    collector_data = read_collector_for_models(store, database_name, job_id)
-    analysis_data = store.read_json(analysis_key)
+    collector_data, analysis_data = _revision_designer_inputs(store, database_name, job_id, engine)
 
     collector_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     json.dump(collector_data, collector_tmp)
