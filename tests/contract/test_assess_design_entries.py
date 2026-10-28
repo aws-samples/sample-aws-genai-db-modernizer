@@ -3,9 +3,9 @@
 docs/contracts/assess-design-block.md defines an entry for each of the six engines the
 pipeline designs. Each one has a consumer fixture (``fixtures/assess_consumer_fixtures.json``)
 whose designed result carries it, and that result validates against the published JSON
-Schema and reads back through the models unchanged. The OpenSearch entry is an optional,
-additive part of contract ``1.0``: a consumer fixture's result without it validates as
-before. The runs are the consumer contract tests' own (model phases patched).
+Schema and reads back through the models unchanged. A designed result with no OpenSearch
+design has no OpenSearch entry, and validates. The runs are the consumer contract tests'
+own (model phases patched).
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ def test_a_result_with_the_opensearch_entry_validates() -> None:
 
 
 @pytest.mark.passes_on_main
-def test_a_v1_0_consumer_fixture_without_an_opensearch_entry_validates() -> None:
-    """The fixtures written for contract 1.0 before the entry carry no OpenSearch
-    design; their results validate against the schema with the entry in it."""
+def test_a_consumer_fixture_without_an_opensearch_design_validates() -> None:
+    """The fixtures that design no OpenSearch carry no OpenSearch entry; their results
+    validate against the schema with the entry in it."""
     for name in ("wordpress", "wordpress_documentdb"):
         document = _designed(name)
         assert document["designs"]

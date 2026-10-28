@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from src.assessment.models import AssessmentRequest, AssessmentResult
+from src.assessment.models import AssessmentRequest, AssessmentResult, check_contract_version
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
 from src.shared.progress import in_context, to_logger
@@ -223,6 +223,8 @@ def assess(
         if isinstance(request, AssessmentRequest)
         else AssessmentRequest.model_validate(request)
     )
+    # Before anything runs, also for a request that skipped validation (#1641).
+    check_contract_version(req.contract_version)
     job_id = validate_job_id(job_id) if job_id is not None else uuid.uuid4().hex[:8]
     run_through = req.options.run_through
 

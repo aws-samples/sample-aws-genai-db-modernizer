@@ -114,7 +114,7 @@ def test_a_gated_engine_on_the_ladder_keeps_the_ladders_gate(placed: Any) -> Non
 # --------------------------------------------------------------------------- table facts
 
 
-@pytest.mark.passes_on_main  # #1636: contracts up to 1.2 keep stating an unknown count as 0
+@pytest.mark.passes_on_main  # #1636: the model holds the collector's figures
 @pytest.mark.parametrize("sample", SAMPLES)
 def test_table_facts_are_the_collected_tables_at_every_phase(sample: str) -> None:
     _, state, _ = placed_run(sample)
@@ -126,11 +126,8 @@ def test_table_facts_are_the_collected_tables_at_every_phase(sample: str) -> Non
     fks = 0
     for facts in analysis:
         t = tables[facts.table_id]
-        # #1636: the model holds the collector's None for an unknown count (1.3, #1632);
-        # a result up to 1.2 writes it as 0.
+        # #1636: the model holds the collector's None for an unknown count (#1632).
         assert (facts.row_count, facts.size_mb) == (t["row_count"], t.get("size_mb"))
-        if t["row_count"] is None:
-            assert facts.written_before_1_3() == {"row_count": 0}
         assert facts.primary_key == list(t.get("primary_key") or [])
         positions = [c.get("ordinal_position") for c in t["columns"]]
         assert sorted(c.name for c in facts.columns) == sorted(

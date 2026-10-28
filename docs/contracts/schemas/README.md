@@ -9,13 +9,11 @@ This folder holds the JSON Schemas of the public library entry point `assess()` 
 
 ## Versions
 
-Each file is named after the MAJOR version of the contract it describes: `v1` covers every `contract_version` `1.x`. A MINOR version (a new optional field, a new enum value, a new engine in the result's `designs`) regenerates the same file; a MAJOR version adds a `v2` file next to it. Each file states the exact `contract_version` it was rendered from in `x-contract-version`, and the payloads carry it in `contract_version`. The current files are `1.3`; they also accept a `1.0`, `1.1` or `1.2` payload.
-
-An older file refuses every result of a newer MINOR version: the `1.0` file fixes `contract_version` to `"1.0"`, so it refuses every `1.1` result, with or without an OpenSearch entry, the `1.1` file refuses every `1.2` result and the `1.2` file every `1.3` result (their objects refuse fields they do not know). A caller pinned to an older file must move to the `1.3` file, which accepts `1.0`, `1.1`, `1.2` and `1.3` results. A result follows its request's `contract_version`, so **pin `contract_version` in every request**: a `"1.1"` request gets a `1.1` result, which validates against the `1.1` file, and a request with no version gets the latest ([assess.md, The result's version](../assess.md#the-results-version)). A MINOR version can also add a `designs` engine (`1.1` added `opensearch`), and `designs` is a closed `oneOf` on `engine`: read `designs` with a default branch on `engine` in your own code.
+Each file is named after the MAJOR version of the contract it describes: `v1` covers every `contract_version` `1.x`. A MINOR version (a new optional field, a new enum value, a new engine in the result's `designs`) regenerates the same file; a MAJOR version adds a `v2` file next to it. Each file states the exact `contract_version` it was rendered from in `x-contract-version`, and the payloads carry it in `contract_version`. The current files are `1.3`, and they describe `1.3` only: this release supports contract `1.3` only, so `contract_version` is the constant `"1.3"` in both. Versions `1.0`, `1.1` and `1.2` were beta development versions, removed in v0.4.0-beta.3: their payloads no longer validate against these files, and the library refuses them ([assess.md, Removed: 1.0, 1.1 and 1.2](../assess.md#removed-10-11-and-12)). A MINOR version can add a `designs` engine, and `designs` is a closed `oneOf` on `engine`: read `designs` with a default branch on `engine` in your own code.
 
 The schemas use JSON Schema draft 2020-12 (`$schema`). Each file's `$id` is its raw URL on this repository's `main` branch.
 
-In the result schema every field is required: the library always writes it, and a field with nothing to say is `null` or empty, never left out. The one exception is the fields contracts `1.2` and `1.3` added ([assess.md, From 1.1 to 1.2](../assess.md#from-11-to-12) and [From 1.2 to 1.3](../assess.md#from-12-to-13)): the schema lists them as optional, because an earlier version's result has none of them and must still validate. The library writes every one of them in a result of the version that added them or a later one, and writes an earlier version's result it read back without them. In the request schema only `database_name` and `collection` are required; the other fields have defaults.
+In the result schema every field is required: the library always writes it, and a field with nothing to say is `null` or empty, never left out. In the request schema only `database_name` and `collection` are required; the other fields have defaults.
 
 ## Validating a payload
 
@@ -35,8 +33,9 @@ From Python, the models themselves are the stricter check: `AssessmentRequest.mo
 - `options.run_through`: `"schema_design"` and `"synthesis"` need `deterministic: false` (the request schema states it too, with `if`/`then`); the library refuses them otherwise, with a message;
 - `database_name`: surrounding whitespace is stripped before the name is checked (the schema's `pattern` checks the name as sent);
 - `label` follows `summary.run_through_reached` (`analysis_only`, `recommendation`, `designed`); a `"schema_design"` or `"synthesis"` result with an empty `summary.designed_engines` is a `recommendation`;
-- from contract `1.1` on, `designs` has one entry per engine of `summary.designed_engines`, in that order;
-- from contract `1.2` on, every engine in a statement's `fit` has a `fit_breakdown` entry with no `gate` and the same `fit`, and an engine with a `gate` in `fit_breakdown` has no `fit` and is in `excluded`.
+- `contract_version`: a retired version (`"1.0"`, `"1.1"` or `"1.2"`) raises `RetiredContractVersionError` (a `ValueError`), which names the supported version; any other value but `"1.3"` is refused as an invalid field (`pydantic.ValidationError`);
+- `designs` has one entry per engine of `summary.designed_engines`, in that order;
+- every engine in a statement's `fit` has a `fit_breakdown` entry with no `gate` and the same `fit`, and an engine with a `gate` in `fit_breakdown` has no `fit` and is in `excluded`.
 
 ## Regenerating
 

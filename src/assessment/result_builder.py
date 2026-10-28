@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any, get_args
 
 from src.assessment.models import (
+    CONTRACT_VERSION,
     AntiPatternRef,
     Artifacts,
     AssessmentRequest,
@@ -595,11 +596,11 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
         fit, gated, breakdown = scored
         engine = placed.engine if placed else None
         calls, text = q.get("calls_per_second"), q.get("query_text")
-        # Since 1.3 (#1632): None for an unknown execution count, 0.0 for a real 0.
+        # None for an unknown execution count, 0.0 for a real 0 (#1632).
         known_calls = _known_calls(calls, counted, qid)
         known_text = text if text != "" else None
         parse_status = _parse_status(q, source_engine) if known_text is not None else None
-        result = StatementResult(
+        return StatementResult(
             query_id=qid,
             query_tags=[str(t) for t in q.get("query_tags") or []],
             query_type=q.get("query_type"),
@@ -627,17 +628,6 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
             fit_breakdown=breakdown,
             from_query_id=from_query_id_of(qid),
         )
-        result.set_written_before_1_3(
-            {
-                name: value
-                for name, value, now in (
-                    ("calls_per_second", calls, known_calls),
-                    ("query_text", text, known_text),
-                )
-                if now != value
-            }
-        )
-        return result
 
     def from_ladder(qid: str, history: list[Move], extra_gates: Collection[str] = ()) -> Scored:
         fit, gated = _ladder_fit(history)
@@ -927,26 +917,6 @@ def _referenced_table_id(
     return None
 
 
-def _row_count_through_1_2(table: Mapping[str, Any]) -> int | None:
-    """``summary.table_facts[].row_count`` as contracts 1.0 to 1.2 state it: the
-    collector's count, and 0 for one the source does not have (#1636: the collector
-    output keeps that as None, and the release notes state the limitation)."""
-    if "row_count" not in table:
-        return None
-    count = known_row_count(table)
-    return 0 if count is None else count
-
-
-def _size_through_1_2(table: Mapping[str, Any]) -> float | None:
-    """``summary.table_facts[].size_mb`` as contracts 1.0 to 1.2 state it: the collector's
-    size, and 0 for one the source does not report (an Oracle table with no segment
-    found, a DDL-only collection), as every collector wrote it before #1636."""
-    if "size_mb" not in table:
-        return None
-    size = table.get("size_mb")
-    return 0.0 if size is None else size
-
-
 def _count_or_none(value: Any) -> int | None:
     """A collected row count, or None for an unknown one: missing, NULL, or negative
     (PostgreSQL's ``reltuples`` is -1 for a table never analysed)."""
@@ -1026,24 +996,20 @@ def _table_column(
     t: Mapping[str, Any],
     collected: dict[tuple[str | None, str], Mapping[str, Any]] | None,
 ) -> TableColumn:
-    """One column's facts. Since 1.3 ``nullable`` is None when the collection does not
-    say: the collector reads a missing ``is_nullable`` as YES and NULL as NO."""
-    recorded = c.get("nullable")
-    nullable = recorded
+    """One column's facts. ``nullable`` is None when the collection does not say: the
+    collector reads a missing ``is_nullable`` as YES and NULL as NO."""
+    nullable = c.get("nullable")
     if collected is not None:
         raw = _raw_table(t, collected)
         rows = raw.get("_columns") if raw is not None else None
         found = rows.get(str(c["column_name"])) if isinstance(rows, dict) else None
         if found is None or _nullable_or_none(found.get("is_nullable")) is None:
             nullable = None
-    column = TableColumn(
+    return TableColumn(
         name=str(c["column_name"]),
         data_type=str(c.get("data_type") or ""),
         nullable=nullable,
     )
-    if nullable is None and recorded is not None:
-        column.set_written_before_1_3({"nullable": recorded})
-    return column
 
 
 def _children_per_parent(child_rows: int | None, parent_rows: int | None) -> float | None:
@@ -1072,11 +1038,11 @@ def build_table_facts(
     the facts the collector read from the collection, with each foreign key's
     referenced table resolved to its table id. Available from ``analysis`` on.
 
-    Since contract 1.3 (#1632) an unknown row count or size is None (the collector
-    output's own None, #1636), with the count's ``row_count_basis``, and each foreign
-    key carries the average of its two tables' row counts, per constraint: statistics
-    only, never a verdict. ``collection`` (the request's raw collection) says which
-    columns' nullability the collection gave. 1.0 to 1.2 results keep their values."""
+    An unknown row count or size is None (the collector output's own None, #1636, #1632),
+    with the count's ``row_count_basis``, and each foreign key carries the average of its
+    two tables' row counts, per constraint: statistics only, never a verdict.
+    ``collection`` (the request's raw collection) says which columns' nullability the
+    collection gave."""
     tables = [
         t
         for t in (state.collector.get("database_schema") or {}).get("tables") or []
@@ -1107,40 +1073,30 @@ def build_table_facts(
                 str(c["column_name"]),
             ),
         )
-        facts = TableFacts(
-            table_id=str(t["table_id"]),
-            row_count=child_rows,
-            row_count_basis=t.get("row_count_basis") if child_rows is not None else None,
-            size_mb=t.get("size_mb"),
-            columns=[_table_column(c, t, collected) for c in columns],
-            primary_key=_strs(t.get("primary_key")),
-            foreign_keys=[
-                TableForeignKey(
-                    constraint_name=str(fk.get("constraint_name") or ""),
-                    columns=_strs(fk.get("columns")),
-                    referenced_table=referenced,
-                    referenced_columns=_strs(fk.get("referenced_columns")),
-                    avg_children_per_parent=average,
-                    basis=_average_basis(average, t, parent_of(referenced)),
-                )
-                for fk in t.get("foreign_keys") or []
-                if isinstance(fk, Mapping)
-                for referenced in [_referenced_table_id(fk, t.get("schema_name"), tables)]
-                for average in [_children_per_parent(child_rows, rows_of(referenced))]
-            ],
+        out.append(
+            TableFacts(
+                table_id=str(t["table_id"]),
+                row_count=child_rows,
+                row_count_basis=t.get("row_count_basis") if child_rows is not None else None,
+                size_mb=t.get("size_mb"),
+                columns=[_table_column(c, t, collected) for c in columns],
+                primary_key=_strs(t.get("primary_key")),
+                foreign_keys=[
+                    TableForeignKey(
+                        constraint_name=str(fk.get("constraint_name") or ""),
+                        columns=_strs(fk.get("columns")),
+                        referenced_table=referenced,
+                        referenced_columns=_strs(fk.get("referenced_columns")),
+                        avg_children_per_parent=average,
+                        basis=_average_basis(average, t, parent_of(referenced)),
+                    )
+                    for fk in t.get("foreign_keys") or []
+                    if isinstance(fk, Mapping)
+                    for referenced in [_referenced_table_id(fk, t.get("schema_name"), tables)]
+                    for average in [_children_per_parent(child_rows, rows_of(referenced))]
+                ],
+            )
         )
-        # Contracts 1.0-1.2 state an unknown count or size as 0, as they always have.
-        facts.set_written_before_1_3(
-            {
-                name: before
-                for name, before, now in (
-                    ("row_count", _row_count_through_1_2(t), facts.row_count),
-                    ("size_mb", _size_through_1_2(t), facts.size_mb),
-                )
-                if before != now
-            }
-        )
-        out.append(facts)
     return out
 
 
@@ -1536,9 +1492,7 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
     summary = build_summary(state, statements, request.collection)
     label = result_label(state.run_through, summary.designed_engines)
     result = AssessmentResult(
-        # The version the caller wrote the request for (#1603): a 1.1 request's result is
-        # a 1.1 result, written as 1.1 writes it; with none, the latest.
-        contract_version=request.contract_version,
+        contract_version=CONTRACT_VERSION,
         label=label,  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),

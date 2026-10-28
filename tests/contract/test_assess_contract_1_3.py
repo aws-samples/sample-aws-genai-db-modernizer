@@ -6,8 +6,8 @@
   own counts on the SQL Server and PostgreSQL samples;
 - an unknown count (-1, NULL or none), an empty parent and an unresolved referenced
   table give ``null``, never an average computed from 0;
-- a request pinned to 1.0, 1.1 or 1.2 gets no 1.3 field and the result it got before
-  1.3; one that names no version gets 1.3.
+- a request for 1.3, or one that names no version, gets 1.3 (1.3 is the only version
+  this release supports; the retired ones are refused: test_assess_retired_versions.py).
 
 The fields are statistics, never a verdict: no field says how a data model should
 hold the two tables.
@@ -22,15 +22,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from jsonschema import Draft202012Validator, ValidationError
+from jsonschema import Draft202012Validator
 
 from scripts import render_contract_schemas as rcs
-from src.assessment import CONTRACT_VERSION, AssessmentResult, assess, load_collection
+from src.assessment import CONTRACT_VERSION, assess, load_collection
 
 REPO = Path(__file__).resolve().parents[2]
-FIXTURES = REPO / "tests" / "fixtures"
-#: The foreign key fields 1.3 added (``ADDED_IN_1_3``), named here so the file reads on
-#: any version's code.
+#: The foreign key fields 1.3 added.
 NEW_FIELDS = ("avg_children_per_parent", "basis")
 #: Every field 1.3 added, by model (the scope's is checked in test_assess_cut_collection).
 ADDED = {
@@ -38,16 +36,6 @@ ADDED = {
     "TableFacts": ("row_count_basis",),
     "StatementResult": ("parse_status", "from_query_id"),
 }
-
-#: The published result schema each earlier version shipped (1.2: main before #1632).
-EARLIER_SCHEMAS = {
-    "1.0": FIXTURES / "assess_result_v1_0.schema.json",
-    "1.1": FIXTURES / "assess_result_v1_1.schema.json",
-    "1.2": FIXTURES / "assess_result_v1_2.schema.json",
-}
-#: A 1.2 result written by main's code before #1632: the trailgear sample through
-#: "analysis", its statements cut to three (every table fact kept).
-RESULT_1_2 = FIXTURES / "assess_result_v1_2_analysis.json"
 
 
 @cache
@@ -300,7 +288,7 @@ def test_an_ambiguous_cross_schema_parent_gives_null() -> None:
     assert fk["basis"] is None
 
 
-# --------------------------------------------------------------------------- versions
+# --------------------------------------------------------------------------- the version
 
 
 def _rows(document: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
@@ -312,76 +300,20 @@ def _rows(document: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     ]
 
 
-def _has_a_1_3_field(document: dict[str, Any]) -> bool:
-    return any(set(ADDED[model]) & set(row) for row, model in _rows(document))
-
-
-def _as_1_2(document: dict[str, Any]) -> dict[str, Any]:
-    """A 1.3 document less the 1.3 fields, marked 1.2."""
-    stripped = copy.deepcopy(document)
-    stripped["contract_version"] = "1.2"
-    for row, model in _rows(stripped):
-        for name in ADDED[model]:
-            del row[name]
-    return stripped
-
-
-@pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
-def test_a_request_pinned_before_1_3_gets_no_1_3_field(version: str) -> None:
-    """A 1.0, 1.1 or 1.2 request's result has no 1.3 field, validates against the schema
-    file that version shipped, and reads back as the same document."""
-    text = _sample_json("trailgear", "analysis", version)
-    document = json.loads(text)
-    assert document["contract_version"] == version
-    assert not _has_a_1_3_field(document)
-    Draft202012Validator(json.loads(EARLIER_SCHEMAS[version].read_text("utf-8"))).validate(document)
-    assert AssessmentResult.model_validate_json(text).model_dump_json() == text
-    latest = json.loads(_sample_json("trailgear"))
-    assert _has_a_1_3_field(latest)
-    if version == "1.2":
-        # The 1.2 result is the latest one less the two fields, and nothing else.
-        assert document == _as_1_2(latest)
-
-
-def test_a_1_2_result_has_the_table_facts_main_wrote_before_1_3() -> None:
-    """Byte for byte, a 1.2 request's table facts are the ones main's code wrote before
-    #1632 for the same collection (``RESULT_1_2``)."""
-    before = json.loads(RESULT_1_2.read_text("utf-8"))
-    now = json.loads(_sample_json("trailgear", "analysis", "1.2"))
-    as_text = json.dumps  # one serializer for both sides
-    assert as_text(now["summary"]["table_facts"]) == as_text(before["summary"]["table_facts"])
-    assert _has_a_1_3_field(json.loads(_sample_json("trailgear")))
-
-
-def test_a_1_2_result_written_before_1_3_loads_and_writes_back_unchanged() -> None:
-    text = RESULT_1_2.read_text("utf-8")
-    document = json.loads(text)
-    assert document["contract_version"] == "1.2"
-    published = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
-    Draft202012Validator(published).validate(document)
-    Draft202012Validator(json.loads(EARLIER_SCHEMAS["1.2"].read_text("utf-8"))).validate(document)
-    assert json.loads(AssessmentResult.model_validate_json(text).model_dump_json()) == document
-    # Read as 1.3, the same document has the new fields, unknown.
-    document["contract_version"] = "1.3"
-    relabelled = json.loads(AssessmentResult.model_validate(document).model_dump_json())
-    fks = [fk for t in relabelled["summary"]["table_facts"] for fk in t["foreign_keys"]]
-    assert fks and all(fk["avg_children_per_parent"] is fk["basis"] is None for fk in fks)
+def _has_every_1_3_field(document: dict[str, Any]) -> bool:
+    rows = _rows(document)
+    return bool(rows) and all(set(ADDED[model]) <= set(row) for row, model in rows)
 
 
 @pytest.mark.parametrize("version", ["1.3", None])
 def test_a_1_3_request_or_one_with_no_version_gets_the_latest(version: str | None) -> None:
     document = json.loads(_sample_json("trailgear", "analysis", version))
     assert document["contract_version"] == CONTRACT_VERSION == "1.3"
-    assert _has_a_1_3_field(document)
+    assert _has_every_1_3_field(document)
     published = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
     assert published["x-contract-version"] == "1.3"
     Draft202012Validator(published).validate(document)
-    # The 1.2 schema file refuses it: it has fields 1.2 lacks.
-    document["contract_version"] = "1.2"
-    with pytest.raises(ValidationError, match="was unexpected"):
-        Draft202012Validator(json.loads(EARLIER_SCHEMAS["1.2"].read_text("utf-8"))).validate(
-            document
-        )
+    assert published["properties"]["contract_version"]["const"] == "1.3"
 
 
 def test_the_fields_carry_no_verdict() -> None:
@@ -404,15 +336,6 @@ def test_the_fields_carry_no_verdict() -> None:
     assert 'the recommended path is `run_through: "schema_design"`' in doc
 
 
-def test_the_models_name_the_same_1_3_fields() -> None:
-    from src.assessment import models
-
-    assert getattr(models, "ADDED_IN_1_3", None) == {
-        **ADDED,
-        "WorkloadScope": ("unplaced_statements",),
-    }
-
-
 # --------------------------------------------------------------------------- unknown is null
 
 
@@ -430,25 +353,23 @@ def _value(document: dict[str, Any], where: tuple[str, ...]) -> Any:
     return {st["query_id"]: st for st in document["statements"]}[digest][where[2]]
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
-    ("where", "before"),
+    "where",
     [
-        (("table", "trailgear.Customer", "row_count"), 0),  # -1
-        (("table", "trailgear.ProductCategory", "row_count"), 0),  # NULL
-        (("table", "trailgear.Brand", "row_count"), 0),  # missing
-        (("column", "trailgear.Brand", "Name"), True),  # missing: read as YES
-        (("column", "trailgear.Brand", "Country"), False),  # NULL: read as NO
-        (("column", "trailgear.Brand", "BrandID"), False),  # a value no script writes
-        (("statement", "0", "calls_per_second"), 1 / 86400),  # missing: one call a day
-        (("statement", "1", "calls_per_second"), 1 / 86400),  # NULL
-        (("statement", "-1", "query_text"), ""),  # empty text
+        ("table", "trailgear.Customer", "row_count"),  # -1
+        ("table", "trailgear.ProductCategory", "row_count"),  # NULL
+        ("table", "trailgear.Brand", "row_count"),  # missing
+        ("column", "trailgear.Brand", "Name"),  # missing (the collector reads YES)
+        ("column", "trailgear.Brand", "Country"),  # NULL (the collector reads NO)
+        ("column", "trailgear.Brand", "BrandID"),  # a value no script writes
+        ("statement", "0", "calls_per_second"),  # missing
+        ("statement", "1", "calls_per_second"),  # NULL
+        ("statement", "-1", "query_text"),  # empty text
     ],
 )
-def test_an_unknown_value_is_null_in_1_3_and_as_before_in_1_2(
-    where: tuple[str, ...], before: Any
-) -> None:
+def test_an_unknown_value_is_null(where: tuple[str, ...]) -> None:
     assert _value(json.loads(_edited_json()), where) is None
-    assert _value(json.loads(_edited_json("1.2")), where) == before
 
 
 @pytest.mark.passes_on_main
@@ -461,23 +382,11 @@ def test_an_unknown_value_is_null_in_1_3_and_as_before_in_1_2(
         (("statement", "2", "calls_per_second"), None),  # the row's own count a day
     ],
 )
-def test_a_known_value_is_the_same_in_1_3_and_1_2(where: tuple[str, ...], value: Any) -> None:
+def test_a_known_value_is_kept(where: tuple[str, ...], value: Any) -> None:
     if value is None:
         value = _edited_collection()["queries"][2]["execution_count"] / 86400
-    for version in (None, "1.2"):
-        got = _value(json.loads(_edited_json(version)), where)
-        assert got == pytest.approx(value) if isinstance(value, float) else got == value
-
-
-@pytest.mark.passes_on_main
-def test_the_1_2_result_of_the_edited_collection_is_the_latest_as_1_2_wrote_it() -> None:
-    """The edited collection's 1.2 result, with its 1.2 values restored, validates
-    against the 1.2 schema and reads back as the same document."""
-    text = _edited_json("1.2")
-    assert AssessmentResult.model_validate_json(text).model_dump_json() == text
-    Draft202012Validator(json.loads(EARLIER_SCHEMAS["1.2"].read_text("utf-8"))).validate(
-        json.loads(text)
-    )
+    got = _value(json.loads(_edited_json()), where)
+    assert got == pytest.approx(value) if isinstance(value, float) else got == value
 
 
 # --------------------------------------------------------------------------- other inputs
@@ -543,17 +452,17 @@ def _facts(*tables: dict[str, Any]) -> dict[str, Any]:
     return {f.table_id: f for f in build_table_facts(state)}
 
 
-def test_an_unknown_size_is_null_in_1_3_and_0_before() -> None:
+@pytest.mark.passes_on_main
+def test_an_unknown_size_is_null_and_a_known_0_is_0() -> None:
     facts = _facts(
         {"table_id": "db.a", "row_count": 5, "size_mb": None},
         {"table_id": "db.b", "row_count": 0, "size_mb": 0.0},
     )
     assert facts["db.a"].size_mb is None
-    assert facts["db.a"].written_before_1_3() == {"size_mb": 0.0}
     assert facts["db.b"].size_mb == 0.0 and facts["db.b"].row_count == 0
-    assert facts["db.b"].written_before_1_3() == {}
 
 
+@pytest.mark.passes_on_main
 def test_an_average_of_two_exact_counts_says_so() -> None:
     fk = {
         "constraint_name": "fk",
@@ -573,13 +482,13 @@ def test_an_average_of_two_exact_counts_says_so() -> None:
     assert (estimate.avg_children_per_parent, estimate.basis) == (2.0, "catalogue_estimate")
     assert (unknown.avg_children_per_parent, unknown.basis) == (None, None)
     assert facts["db.u"].row_count is None and facts["db.u"].row_count_basis is None
-    assert facts["db.u"].written_before_1_3() == {"row_count": 0}
     assert facts["db.p"].row_count_basis == "exact"
 
 
 # --------------------------------------------------------------------------- parse status
 
 
+@pytest.mark.passes_on_main
 def test_parse_status_marks_the_statements_the_parser_could_not_read() -> None:
     """trailgear: the parser reads 90 statements and falls back on 5 (4 that are no
     statement it knows, 1 command), as its stored readings record."""
@@ -587,8 +496,6 @@ def test_parse_status_marks_the_statements_the_parser_could_not_read() -> None:
 
     statements = json.loads(_sample_json("trailgear"))["statements"]
     assert Counter(st["parse_status"] for st in statements) == {"parsed": 90, "fallback": 5}
-    pinned = json.loads(_sample_json("trailgear", "analysis", "1.2"))["statements"]
-    assert not any("parse_status" in st for st in pinned)
 
 
 def test_a_statement_with_no_text_has_no_parse_status() -> None:
@@ -597,37 +504,31 @@ def test_a_statement_with_no_text_has_no_parse_status() -> None:
     assert text_less and all(st["parse_status"] is None for st in text_less)
 
 
-def test_a_table_with_no_size_runs_and_is_null_in_1_3() -> None:
+@pytest.mark.passes_on_main
+def test_a_table_with_no_size_runs_and_is_null() -> None:
     """The edited collection's Geo/Legacy Region and Retail Store tables give no data or
-    index size: the run completes, 1.3 writes their size as null and 1.2 as 0."""
+    index size: the run completes, and their size is null."""
     latest = {t["table_id"]: t for t in json.loads(_edited_json())["summary"]["table_facts"]}
-    pinned = {t["table_id"]: t for t in json.loads(_edited_json("1.2"))["summary"]["table_facts"]}
     for table_id in ("trailgear.Region", "trailgear.Store"):
         assert latest[table_id]["size_mb"] is None
-        assert pinned[table_id]["size_mb"] == 0.0
-    assert latest["trailgear.Brand"]["size_mb"] == pinned["trailgear.Brand"]["size_mb"] > 0
+    assert latest["trailgear.Brand"]["size_mb"] > 0
 
 
-def test_a_count_with_no_basis_is_null_in_1_3_and_absent_before() -> None:
+@pytest.mark.passes_on_main
+def test_a_count_with_no_basis_is_null() -> None:
     latest = {t["table_id"]: t for t in json.loads(_edited_json())["summary"]["table_facts"]}
-    pinned = {t["table_id"]: t for t in json.loads(_edited_json("1.2"))["summary"]["table_facts"]}
     assert "row_count_basis" in latest["trailgear.Customer"]
     assert latest["trailgear.Customer"]["row_count_basis"] is None  # no count, no basis
     assert latest["trailgear.Product"]["row_count_basis"] == "estimate"
-    assert "row_count_basis" not in pinned["trailgear.Customer"]
 
 
-def test_an_execution_count_of_0_is_0_calls_in_1_3_and_one_a_day_before() -> None:
-    """A real 0 is 0.0 on the stable surface from 1.3; the parser, and so routing, still
-    counts it as one call a day, which 1.2 shows."""
+@pytest.mark.passes_on_main
+def test_an_execution_count_of_0_is_0_calls() -> None:
+    """A real 0 is 0.0 on the stable surface; the parser, and so routing, still counts it
+    as one call a day."""
     digest = _edited_collection()["queries"][3]["digest"]
-
-    def calls(version: str | None) -> Any:
-        statements = json.loads(_edited_json(version))["statements"]
-        return {st["query_id"]: st for st in statements}[digest]["calls_per_second"]
-
-    assert calls(None) == 0.0
-    assert calls("1.2") == 1 / 86400
+    statements = json.loads(_edited_json())["statements"]
+    assert {st["query_id"]: st for st in statements}[digest]["calls_per_second"] == 0.0
 
 
 def test_a_collector_output_carries_the_collectors_nullable_and_calls() -> None:

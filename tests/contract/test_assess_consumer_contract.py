@@ -40,6 +40,7 @@ from jsonschema import Draft202012Validator
 
 from scripts import render_contract_schemas as rcs
 from src.assessment import (
+    CONTRACT_VERSION,
     SUPPORTED_RUN_THROUGH,
     AssessmentResult,
     RunThrough,
@@ -107,6 +108,7 @@ def _result_schema() -> dict[str, Any]:
 def _request(name: str, run_through: str, deterministic: bool) -> dict[str, Any]:
     fixture = FIXTURES[name]
     return {
+        "contract_version": fixture["contract_version"],
         "database_name": fixture["database_name"],
         "collection": load_collection(SAMPLES_DIR / fixture["sample"] / f"{fixture['sample']}.zip"),
         "options": {
@@ -330,6 +332,14 @@ def test_the_fixtures_cover_a_sql_server_source_and_an_engine_scope() -> None:
     scoped = [r for r in results.values() if r["options"]["target_engines"] is not None]
     assert scoped, "no fixture sets an engine scope"
     assert any(r["summary"]["unservable_count"] > 0 for r in scoped)
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("name", sorted(FIXTURES))
+def test_every_fixture_is_pinned_to_1_3_and_gets_1_3(name: str) -> None:
+    """The fixtures pin the only version this release supports (#1641)."""
+    assert FIXTURES[name]["contract_version"] == CONTRACT_VERSION == "1.3"
+    assert _run(name, "analysis", True)["contract_version"] == "1.3"
 
 
 @pytest.mark.passes_on_main

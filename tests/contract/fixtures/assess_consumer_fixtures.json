@@ -1,10 +1,11 @@
 {
-  "about": "Consumer contract fixtures for the public assess() result (#1184). tests/contract/test_assess_consumer_contract.py runs assess() on each fixture for every supported run_through and checks that every field the fixture guards is present with the type the published schema (docs/contracts/schemas/assess_result.v1.schema.json) gives it. Paths: '.' between fields, '[]' for every item of a list, '{}' for every value of a map, '[Variant]' for the items of a list of a discriminated union that are the result schema's $defs entry Variant (designs[DynamoDBDesign]). Every result field is guarded by at least one fixture, and every guarded path must reach at least one value across the fixture's runs.",
+  "about": "Consumer contract fixtures for the public assess() result (#1184). tests/contract/test_assess_consumer_contract.py runs assess() on each fixture, pinned to contract_version 1.3 (the only version this release supports), for every supported run_through and checks that every field the fixture guards is present with the type the published schema (docs/contracts/schemas/assess_result.v1.schema.json) gives it. Paths: '.' between fields, '[]' for every item of a list, '{}' for every value of a map, '[Variant]' for the items of a list of a discriminated union that are the result schema's $defs entry Variant (designs[DynamoDBDesign]). Every result field is guarded by at least one fixture, and every guarded path must reach at least one value across the fixture's runs.",
   "fixtures": {
     "wordpress": {
       "why": "MySQL source with no engine scope: the cache layer, reality-check consolidations, co-dependency and write groups",
       "sample": "wordpress",
       "database_name": "wordpress",
+      "contract_version": "1.3",
       "options": {},
       "scope": null,
       "guards": [
@@ -130,6 +131,7 @@
       "why": "SQL Server source (heterogeneous): the Aurora engine choice is made when statements are placed, so relational_engine is null at analysis",
       "sample": "trailgear",
       "database_name": "trailgear",
+      "contract_version": "1.3",
       "options": {},
       "scope": null,
       "guards": [
@@ -179,6 +181,7 @@
       "why": "An engine scope (target_engines, the library's name for the target_databases setting) that leaves statements unservable, a cut-workload scope echoed back, and the internal artifacts block",
       "sample": "wordpress",
       "database_name": "wordpress",
+      "contract_version": "1.3",
       "options": {
         "target_engines": ["elasticache", "dynamodb"],
         "include_artifacts": true
@@ -227,6 +230,7 @@
       "why": "An engine scope (Aurora MySQL and DocumentDB) that places statements on DocumentDB, so a designed result carries a DocumentDB design: collections, embed choices and indexes",
       "sample": "wordpress",
       "database_name": "wordpress",
+      "contract_version": "1.3",
       "options": {
         "target_engines": ["aurora_mysql", "documentdb"]
       },
@@ -264,6 +268,7 @@
       "why": "A design flags a statement in an engine scope with no other owner, so the post-schema routing leaves it on the flagging engine as terminal (no_kept_engine) and the result marks it; the test designer flags it for this database name only (tests/assess_models.py, FLAGGED_DATABASE)",
       "sample": "wordpress",
       "database_name": "wordpress_terminal",
+      "contract_version": "1.3",
       "options": {
         "target_engines": ["elasticache", "dynamodb"]
       },
@@ -283,6 +288,7 @@
       "why": "An engine scope (DynamoDB and OpenSearch) that places statements on OpenSearch, so a designed result carries an OpenSearch design: indexes, data streams, mapped fields, aliases and the statements each serves",
       "sample": "wordpress",
       "database_name": "wordpress",
+      "contract_version": "1.3",
       "options": {
         "target_engines": ["dynamodb", "opensearch"]
       },
@@ -313,6 +319,7 @@
       "why": "An engine scope (Aurora PostgreSQL and DynamoDB) that places statements on Aurora PostgreSQL, so a designed result carries an Aurora PostgreSQL design: tables, primary keys, indexes and the DDL pointer",
       "sample": "wordpress",
       "database_name": "wordpress",
+      "contract_version": "1.3",
       "options": {
         "target_engines": ["aurora_postgresql", "dynamodb"]
       },
@@ -329,10 +336,11 @@
         "designs[AuroraDesign].ddl_artifact_path"
       ]
     },
-    "trailgear_contract_1_2": {
-      "why": "Contract 1.2 (#1603) on a SQL Server source with foreign keys: each statement's text, anti-patterns and per-engine fit breakdown (gated engines, the unclassified rules and penalties included), the table facts with foreign keys (and, since 1.3 (#1632), each foreign key's average of its two tables' row counts, each row count's basis and each statement's parse status), the consolidations' action and the engines' unique-value ids",
+    "trailgear_contract_1_3": {
+      "why": "Contract 1.3 on a SQL Server source with foreign keys: each statement's text, anti-patterns and per-engine fit breakdown (gated engines, the unclassified rules and penalties included) and parse status, the table facts with foreign keys, each foreign key's average of its two tables' row counts and each row count's basis, the consolidations' action and the engines' unique-value ids (the fields 1.2 (#1603) and 1.3 (#1632) added)",
       "sample": "trailgear",
       "database_name": "trailgear",
+      "contract_version": "1.3",
       "options": {},
       "scope": null,
       "guards": [
@@ -396,6 +404,7 @@
       "why": "Contract 1.2 (#1603): a designed result whose DynamoDB design has an item collection, so its entry carries aggregate_pattern and entities with key templates; the test designer makes the first DynamoDB table one for this database name only (tests/assess_models.py, ENTITIES_DATABASE)",
       "sample": "wordpress",
       "database_name": "wordpress_entities",
+      "contract_version": "1.3",
       "options": {},
       "scope": null,
       "guards": [

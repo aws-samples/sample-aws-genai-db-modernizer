@@ -21,16 +21,22 @@ the report are in ``artifacts`` (with ``include_artifacts=True``). The
 deterministic analysis's own data-model guesses are inputs to that design, not
 results, and are never part of the stable surface.
 
-Stable surface (contract ``1.3``, semantic versioning): ``contract_version``,
+Stable surface (contract ``1.3``, semantic versioning; this release supports 1.3
+only): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
 result carries a data model), ``library_version``, ``ruleset_version``/``ruleset_hash``, ``options`` (as applied),
 ``scope`` (echoed), ``summary``, ``statements[]``, ``groups[]`` and ``designs``. Read a statement's
 engine from ``statements[].engine`` and a table's owner from ``summary.tables[].owner``;
-both are final for the run. A statement's ``fit_breakdown`` (contract 1.2) says how
+both are final for the run. A statement's ``fit_breakdown`` says how
 the scorer reached each score in ``fit``; it explains a score and never decides an
 engine. ``reason_text`` and every ``reason`` (an engine's, a
 consolidation's, a table's) are customer-facing sentences: use ``reason_code`` and
 ``role`` rather than parsing them.
+
+Contract versions 1.0, 1.1 and 1.2 were beta development versions, removed in
+v0.4.0-beta.3: a request (or a result read back) naming one raises a
+``RetiredContractVersionError`` (a ``ValueError``). Pin ``contract_version="1.3"``, or
+send none.
 
 Not stable: ``artifacts`` (only with ``include_artifacts=True``) carries the pipeline's
 internal contracts verbatim, each with its own internal version, and has no
@@ -48,7 +54,7 @@ runs and change consolidations; each change it makes is a Move with actor
 and the designs and the report's executive summary can differ between runs. Results
 are never stored or reused: a repeat call is a new run.
 
-Cutting a result per service (contract 1.3): ``cut_collection(result, table_ids=...,
+Cutting a result per service: ``cut_collection(result, table_ids=...,
 parts=...)`` keeps the given tables and the statements that lie wholly among them, plus
 the caller's rewrites (parts) of statements that cross the cut, and returns a
 ``CollectionCut`` whose opaque ``collection`` and ``scope`` are the next request's. A part's
@@ -102,6 +108,7 @@ from src.assessment.models import (
     PublicReasonCode,
     RelationalEngine,
     ResultLabel,
+    RetiredContractVersionError,
     RunThrough,
     StatementResult,
     StatementType,
@@ -147,6 +154,7 @@ __all__ = [
     "PublicReasonCode",
     "RelationalEngine",
     "ResultLabel",
+    "RetiredContractVersionError",
     "RunThrough",
     "StatementPart",
     "StatementResult",

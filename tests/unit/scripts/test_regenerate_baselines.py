@@ -41,10 +41,13 @@ class _Runner:
         return self.codes.get(argv[1], 0)
 
 
+@pytest.mark.passes_on_main
 def test_every_baseline_the_edit_hook_protects_is_regenerated_here() -> None:
     covered = {f for baseline in rb.BASELINES for f in baseline.files}
     protected = set(_hook_protected())
-    # Recorded at a release with --write-released <tag>, never on a rebase.
+    # Recorded at a release with --write-released <tag>, never on a rebase; the
+    # snapshot before 1.3 is the historical record, never re-recorded at all.
+    protected.discard("tests/contract/assess_released_since_1_3.json")
     protected.discard("tests/contract/assess_released_snapshot.json")
     assert (
         protected <= covered
