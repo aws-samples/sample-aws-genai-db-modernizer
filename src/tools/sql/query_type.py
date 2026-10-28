@@ -56,6 +56,7 @@ def statement_query_type(sql: str, source_engine: str) -> str:
         strip_following_space=True,
         nested=block_comments_nest(engine),
         mysql_executable=mysql_family,
+        mysql_dashes=mysql_family,
     ).lstrip()
     match = _VERB_RE.match(text)
     if match:

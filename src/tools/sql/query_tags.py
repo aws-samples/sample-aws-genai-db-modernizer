@@ -56,6 +56,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from src.shared.sql_comments import block_comments_nest, leading_comments, trailing_comments
+from src.shared.sql_spans import backslash_quotes
 from src.tools.sql.facade import sqlglot_dialect
 
 __all__ = [
@@ -90,13 +91,16 @@ def statement_tags(sql: str, source_engine: str) -> list[str]:
         "hash_comments": mysql_family,
         "nested": block_comments_nest(engine),
         "mysql_executable": mysql_family,
+        "mysql_dashes": mysql_family,
     }
     tags = []
     for text in leading_comments(sql or "", **options):
         tag = _tag_of(text)
         if tag:
             tags.append(tag)
-    for text in trailing_comments(sql or "", **options):
+    # A string reads as the source reads it (#1482): its settings say what a ``\\`` escapes.
+    quotes = backslash_quotes(engine)
+    for text in trailing_comments(sql or "", **options, backslash_quotes=quotes):
         tag = _tag_of(text)
         if tag and parse_sqlcommenter(tag):
             tags.append(tag)

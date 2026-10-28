@@ -39,6 +39,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 
+from src.shared.sql_spans import replace_strings_and_comments
 from src.tools.sql.facade import TableReferences
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,6 @@ SHADOW_ARTIFACT = "collector/sql_shadow.json"
 SCHEMA_VERSION = 2  # 2: the facade drives the output; ``current`` became ``regex``
 _QUERY_TEXT_LIMIT = 500
 
-_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _QUAL = r'(?:[`"\[]?\w+[`"\]]?\s*\.\s*){0,2}'
 
 
@@ -60,8 +60,13 @@ def _keyword_ref(table_id: str) -> re.Pattern[str]:
     return re.compile(r"(?<![\w@$#])(?:FROM|JOIN|INTO|UPDATE)\s+" + _name_re(table_id), re.I)
 
 
-def _categories(query_text: str, regex_only: list[str], facade_only: list[str]) -> list[str]:
-    stripped = _COMMENT_RE.sub(" ", query_text)
+def _categories(
+    query_text: str, regex_only: list[str], facade_only: list[str], source_engine: str = ""
+) -> list[str]:
+    # Comments read in the source engine's forms and string settings (#1482).
+    stripped = replace_strings_and_comments(
+        query_text, source_engine, string=lambda span: span, comment=lambda _span: " "
+    )
     found: list[str] = []
     for table_id in regex_only:
         name = _name_re(table_id)
@@ -146,7 +151,7 @@ class TableShadow:
         # "unknown" is the resolver's placeholder for "no table", not a table.
         regex_only = [t for t in regex if t not in facade and t != "unknown"]
         facade_only = [t for t in facade if t not in regex and t != "unknown"]
-        categories = _categories(query_text, regex_only, facade_only)
+        categories = _categories(query_text, regex_only, facade_only, self.source_engine)
         self.categories.update(categories)
         self.disagreements.append(
             {

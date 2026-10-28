@@ -9,6 +9,10 @@ Two readings changed on purpose, to the shared grammar's: a ``$`` that continues
 (``a$b$``) opens no dollar quote, and ``#E'..'`` in PostgreSQL is an operator then an
 escape string (the old scan took the ``#`` as part of a name). The comparison skips texts
 with either, and a test pins the changed readings.
+
+A third changed with #1482: MySQL and MariaDB read ``--`` as a comment only before a space
+or a control character (or the end of the text), so ``5--1`` is arithmetic there. The
+MySQL-family comparison skips texts with another ``--``, and a test pins the reading.
 """
 
 from __future__ import annotations
@@ -54,8 +58,19 @@ def _same(text: str, dialect: str, brackets: bool) -> None:
     assert new.unterminated_comment == old.unterminated_comment, where
 
 
+_MYSQL_FAMILY = frozenset({"mysql", "mariadb"})
+
+
+def _mysql_dash_reading(text: str) -> bool:
+    """Whether the text holds a ``--`` MySQL reads as two minus signs (#1482)."""
+    return re.search(r"--(?![\x00-\x20\x7f]|\Z)", text) is not None
+
+
 def _all_dialects(text: str) -> None:
+    dashes = _mysql_dash_reading(text)
     for dialect in _DIALECTS:
+        if dashes and dialect.lower() in _MYSQL_FAMILY:
+            continue
         _same(text, dialect, False)
         # Callers read ``[name]`` as quoted for SQL Server only (the old scan let a MySQL
         # backslash escape inside one, which no caller reaches).
@@ -91,7 +106,7 @@ def test_the_normalized_digests_of_the_samples_are_unchanged(texts):
     # The scan feeds normalize_digest_text; its output must not move for any dialect.
     for text in texts:
         for dialect in ("mysql", "postgresql", "sqlserver", "oracle"):
-            if _changed_reading(text):
+            if _changed_reading(text) or (dialect == "mysql" and _mysql_dash_reading(text)):
                 continue
             assert normalize_digest_text(text, dialect) == _with_reference(text, dialect)
 
@@ -99,8 +114,11 @@ def test_the_normalized_digests_of_the_samples_are_unchanged(texts):
 def _with_reference(text: str, dialect: str):
     from src.tools.sql import normalize
 
+    def reference(text: str, dialect: str, brackets: bool = False, settings=None):  # type: ignore[no-untyped-def]
+        return _reference_scan._scan(text, dialect, brackets)
+
     real = normalize._scan
-    normalize._scan = _reference_scan._scan  # type: ignore[assignment]
+    normalize._scan = reference  # type: ignore[assignment]
     try:
         return normalize.normalize_digest_text(text, dialect)
     finally:
@@ -151,6 +169,19 @@ def test_generated_text_is_masked_as_before(tokens):
     text = "".join(tokens)
     assume(not _changed_reading(text))
     _all_dialects(text)
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "mariadb"])
+def test_mysql_reads_a_dash_pair_before_a_non_space_as_minus_signs(dialect):
+    text = "SELECT 5--1 FROM t WHERE a = 'x'"
+    assert not any(quoted_mask(text, dialect)[: text.index("'")])
+    assert any(_reference_scan._scan(text, dialect).mask[: text.index("'")])  # the old reading
+    # Before a space, a tab, a control character or the end of the text it is a comment.
+    for tail in (" c", "\tc", "\x01c", ""):
+        masked = quoted_mask(f"SELECT 5 --{tail}", dialect)
+        assert masked[len("SELECT 5 ") :] == [True] * (2 + len(tail))
+    # Before a newline it is an empty comment, and the next line is code.
+    assert quoted_mask("SELECT 5 --\nc", dialect)[-4:] == [True, True, True, False]
 
 
 @pytest.mark.passes_on_main

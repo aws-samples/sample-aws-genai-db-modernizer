@@ -37,6 +37,7 @@ from src.agents.collector.mysql_collector import (
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import CollectorOutputContract
 from src.shared.contract_versioning import load_contract
+from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.mariadb_tools import MariaDBRemoteCollector
 
@@ -68,6 +69,14 @@ def collect(input_contract: CollectorInput) -> CollectorOutputContract:
 
 
 def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
+    """The live collection, read with the source's string settings (#1482): the ones the
+    metadata stage reads become the active ones for the stages after it (the query and
+    definition text each one redacts), and end with the collection."""
+    with with_span_settings(None):
+        return _collect_live_mariadb_stages(inp, ckpt)
+
+
+def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     """Live collection using MariaDBRemoteCollector for correct version feature flags."""
     start = time.monotonic()
     cred_mgr = _build_cred_mgr(inp)
@@ -87,8 +96,13 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     meta_raw = ckpt.load_or_run(
         "metadata",
-        lambda: {"version": db.get_version(), "db_size_gb": db.get_database_size_gb()},
+        lambda: {
+            "version": db.get_version(),
+            "db_size_gb": db.get_database_size_gb(),
+            "settings": db.get_settings(),
+        },
     )
+    use_span_settings(span_settings("mariadb", meta_raw.get("settings")))
     schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
@@ -139,4 +153,5 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         views=schema_views,
         procedures=schema_procs,
         triggers=schema_triggers,
+        settings=meta_raw.get("settings"),
     )

@@ -27,6 +27,7 @@ from src.assessment.models import AssessmentRequest, AssessmentResult
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
 from src.shared.progress import in_context, to_logger
+from src.shared.sql_spans import with_span_settings
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,12 @@ def assess(
         return build_result(state, req)
 
     def run(target_store: Any) -> AssessmentResult:
-        with to_logger(_progress, extra={"job_id": job_id}):
+        # The phases make the collection's source settings active (#1482); the caller's
+        # are back when the run returns.
+        with (
+            with_span_settings(None),
+            to_logger(_progress, extra={"job_id": job_id}),
+        ):
             return run_phases(_Job(target_store, req.database_name, job_id, req))
 
     # The analyses also write text artifacts (diagrams), which need ``write_text``.

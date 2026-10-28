@@ -20,6 +20,7 @@ Stages (DDL mode):
 import logging
 import math
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -47,6 +48,7 @@ from src.contracts.collector_output import (
     Schema,
     SourceDatabase,
     SourceHost,
+    SourceSettings,
     Table,
     Trigger,
     TriggerEventType,
@@ -61,6 +63,7 @@ from src.shared.row_counts import (
     read_size_mb,
 )
 from src.shared.source_cache import percent_or_none
+from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.aws.rds_tools import (
     get_cloudwatch_metrics,
@@ -347,6 +350,14 @@ def _init_checkpoint_store(inp: CollectorInput) -> CheckpointStore | NoopCheckpo
 
 
 def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
+    """The live collection, read with the source's string settings (#1482): the ones the
+    metadata stage reads become the active ones for the stages after it (the query and
+    definition text each one redacts), and end with the collection."""
+    with with_span_settings(None):
+        return _collect_live_stages(inp, ckpt)
+
+
+def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     start = time.monotonic()
     cred_mgr = _build_cred_mgr(inp)
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
@@ -371,8 +382,10 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         lambda: {
             "version": db.get_version(),
             "db_size_gb": db.get_database_size_gb(),
+            "settings": db.get_settings(),
         },
     )
+    use_span_settings(span_settings(inp.engine.value, meta_raw.get("settings")))
 
     # Stage 2: schema
     schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
@@ -433,6 +446,7 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         views=schema_views,
         procedures=schema_procs,
         triggers=schema_triggers,
+        settings=meta_raw.get("settings"),
     )
 
 
@@ -1331,6 +1345,8 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
             # relational-move gap check reads.
             language=_text_or_none(p.get("language")),
             return_type=p.get("return_type"),
+            # #1482: the sql_mode MySQL parses this body under (its own, not the server's).
+            sql_mode=_text_or_none(p.get("sql_mode")),
         )
         for p in raw
     ]
@@ -1390,6 +1406,7 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
                 event_type=TriggerEventType(event),
                 timing=TriggerTiming(timing),
                 definition=t.get("definition"),
+                sql_mode=_text_or_none(t.get("sql_mode")),
             )
         )
 
@@ -1408,6 +1425,20 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
 # ---------------------------------------------------------------------------
 
 
+def source_settings(raw: object) -> SourceSettings | None:
+    """The source settings a collection reported (#1482), as the contract keeps them:
+    only the ones the SQL scanners read, each as the server's text; ``None`` when it
+    reported none."""
+    if not isinstance(raw, Mapping):
+        return None
+    kept = {
+        key: str(raw[key])
+        for key in ("sql_mode", "standard_conforming_strings")
+        if raw.get(key) is not None
+    }
+    return SourceSettings(**kept) if kept else None
+
+
 def _build_output(
     inp: CollectorInput,
     start: float,
@@ -1423,11 +1454,14 @@ def _build_output(
     triggers=None,
     engines_in_use=None,
     database_name: str | None = None,
+    settings: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
     ``database_name``: the collected database's name, the table ids' qualifier
-    (#1572); ``inp.database_name`` when not given."""
+    (#1572); ``inp.database_name`` when not given. ``settings``: the source settings the
+    collection read (``sql_mode``, ``standard_conforming_strings``, #1482), kept as
+    :func:`source_settings` reads them."""
     elapsed = time.monotonic() - start
     return CollectorOutputContract(
         job_id=inp.job_id,
@@ -1443,6 +1477,7 @@ def _build_output(
                 database_size_gb=db_size,
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,
+                settings=source_settings(settings),
             ),
             engines_in_use=(
                 [e for e in engines_in_use if isinstance(e, str)]

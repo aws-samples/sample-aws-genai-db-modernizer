@@ -5056,6 +5056,23 @@
                               }
                             ]
                           }
+                        },
+                        "sql_mode": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maxLength": 4096,
+                                "type": "string"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
                         }
                       }
                     },
@@ -5853,6 +5870,23 @@
                             ]
                           }
                         },
+                        "sql_mode": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maxLength": 4096,
+                                "type": "string"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "table_id": {
                           "required": true,
                           "schema": {
@@ -6397,6 +6431,57 @@
                                     "kind": "scalar",
                                     "minimum": 1,
                                     "type": "integer"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "settings": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object",
+                          "properties": {
+                            "sql_mode": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "maxLength": 4096,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "standard_conforming_strings": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "maxLength": 16,
+                                    "type": "string"
                                   },
                                   {
                                     "kind": "scalar",
@@ -8655,8 +8740,8 @@
         }
       }
     },
-    "schema_hash": "6629f50f0b086b82d70de56add00fdad63d96ddb1b2517c899ba38babe013bae",
-    "version": "5.0"
+    "schema_hash": "fff7c7fa3e5cb2ba2d48b42aa9bf9f59435e86ae40f3e7eb19e1580605f555b6",
+    "version": "5.1"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

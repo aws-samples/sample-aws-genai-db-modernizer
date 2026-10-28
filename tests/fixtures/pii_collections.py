@@ -216,7 +216,7 @@ def keep_literals(monkeypatch: Any) -> None:
     collected, as the code did before #1625."""
     import src.tools.sql.redact as redact
 
-    monkeypatch.setattr(redact, "_redacted", lambda text, engine, mode: text)
+    monkeypatch.setattr(redact, "_redacted", lambda text, engine, mode, settings=None: text)
 
 
 def leaked(text: str) -> list[str]:

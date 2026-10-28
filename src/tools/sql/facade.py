@@ -64,7 +64,15 @@ import sqlglot
 from sqlglot import exp
 
 from src.shared.sql_comments import block_comments_nest, strip_comments, strip_leading_comments
-from src.shared.sql_spans import is_alternative_quote, literals_and_comments_for, spans
+from src.shared.sql_spans import (
+    SpanSettings,
+    active_span_settings,
+    backslash_quotes,
+    is_alternative_quote,
+    literals_and_comments_for,
+    span_dialect,
+    spans,
+)
 from src.tools.sql.normalize import (
     NormalizedQuery,
     normalize_digest_text,
@@ -560,6 +568,68 @@ def _cut_short(sql: str, normalized: NormalizedQuery, source_engine: str) -> boo
     return (source_engine or "").lower() in ("mysql", "mariadb") and len(sql) >= _MYSQL_DIGEST_CAP
 
 
+def _strings_as_sqlglot_reads_them(
+    text: str, source_engine: str, settings: SpanSettings | None = None
+) -> str:
+    """``text`` with each string literal (and MySQL ``"..."`` name) rewritten so that
+    sqlglot, which reads every dialect with its default settings, reads what the source
+    does (#1482).
+
+    Only when the source's settings differ from its dialect's defaults (``settings``, by
+    default the active ones): with MySQL's ``NO_BACKSLASH_ESCAPES`` a ``\\`` in a string
+    is written ``\\\\`` (the default reading's literal backslash); with ``ANSI_QUOTES`` a
+    ``"..."`` name is written in backticks; with PostgreSQL's
+    ``standard_conforming_strings = off`` a string's ``\\`` escapes and doubled quotes are
+    read in one left-to-right pass and it is written in standard form (a quote doubled, a
+    backslash plain). The spans are the settings-aware grammar's (``sql_spans``), so a
+    quote it closes is the one the source closes. Every other text is unchanged.
+    """
+    settings = active_span_settings() if settings is None else settings
+    dialect = span_dialect(source_engine)
+    mysql_off = dialect == "mysql" and settings.no_backslash_escapes
+    ansi = dialect == "mysql" and settings.ansi_quotes
+    postgres_off = dialect == "postgresql" and not settings.standard_conforming_strings
+    backslashes = "\\" in text and (mysql_off or postgres_off)
+    if not (backslashes or (ansi and '"' in text)):
+        return text
+    grammar = literals_and_comments_for(source_engine, settings)
+    out: list[str] = []
+    last = 0
+    for start, end, opener in spans(text, grammar):
+        out.append(text[last:start])
+        span = text[start:end]
+        inner = span[1:-1]
+        if ansi and opener == '"':
+            span = "`" + inner.replace('""', '"').replace("`", "``") + "`"
+        elif opener in ("'", '"') and opener not in grammar.identifiers and "\\" in span:
+            if mysql_off:
+                span = opener + inner.replace("\\", "\\\\") + opener
+            elif postgres_off:
+                span = "'" + _postgres_escaped_value(inner).replace("'", "''") + "'"
+        out.append(span)
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+# In a PostgreSQL string read with ``standard_conforming_strings = off``: a backslash
+# escape or a doubled quote, read left to right in one pass.
+_PG_ESCAPE_OR_PAIR_RE = re.compile(r"\\(.)|''", re.S)
+
+
+def _postgres_escaped_value(inner: str) -> str:
+    """The value of a ``standard_conforming_strings = off`` string's body: ``\\'`` is
+    ``'``, ``\\\\`` is ``\\``, ``''`` is ``'``, and any other escape is kept as written."""
+
+    def one(match: re.Match[str]) -> str:
+        escaped = match.group(1)
+        if escaped is None:
+            return "'"
+        return escaped if escaped in "'\\" else "\\" + escaped
+
+    return _PG_ESCAPE_OR_PAIR_RE.sub(one, inner)
+
+
 def _parse(sql: str, source_engine: str) -> _Parsed:
     """Parse ``sql`` once, or say why the regex fallback answers instead."""
     # A comment after a ';' is no statement and no part of one (#1335, #1340).
@@ -579,7 +649,7 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
 
     if not normalized.text.strip():
         return fallback("empty")
-    text = normalized.text
+    text = _strings_as_sqlglot_reads_them(normalized.text, source_engine)
     dml_top_dropped = replace_read_as_insert = False
     if dialect == "oracle":
         text = _plain_oracle_strings(text)
@@ -591,7 +661,9 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
         dml_top_dropped, text = bridged != text, bridged
     elif dialect == "mysql":
         # After the statement's leading comments (#1178): a tagged REPLACE is one too.
-        body = strip_leading_comments(text, hash_comments=True, mysql_executable=True)
+        body = strip_leading_comments(
+            text, hash_comments=True, mysql_executable=True, mysql_dashes=True
+        )
         bridged = _MYSQL_REPLACE_RE.sub(r"\1INSERT", body, count=1)
         replace_read_as_insert = bridged != body
         text = text[: len(text) - len(body)] + bridged
@@ -915,7 +987,14 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
 
     Read from the text without its comments, as sqlglot reads it: a keyword in a
     comment is not part of the statement (#483)."""
-    sql = strip_comments(sql, nested=block_comments_nest(dialect), hash_comments=dialect == "mysql")
+    sql = strip_comments(
+        sql,
+        nested=block_comments_nest(dialect),
+        hash_comments=dialect == "mysql",
+        mysql_dashes=dialect == "mysql",
+        # The source's string settings (#1482): a ``\\`` that escapes a quote there.
+        backslash="'" in backslash_quotes(dialect),
+    )
     return SqlFacts(
         join_count=regex_join_count(sql),
         has_joins=regex_has_joins(sql),

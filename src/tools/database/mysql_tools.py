@@ -71,6 +71,19 @@ class MySQLRemoteCollector:
         rows = self._query("SELECT VERSION() AS version")
         return str(rows[0]["version"]) if rows else "unknown"
 
+    def get_settings(self) -> dict[str, str]:
+        """The server settings that change how SQL text is read (#1482): the default
+        ``sql_mode`` the application's sessions start with. Empty when it can't be read."""
+        try:
+            rows = self._query("SELECT @@GLOBAL.sql_mode AS sql_mode")
+        except Exception as error:  # noqa: BLE001 -- a setting not read is the default
+            logger.info("sql_mode not read (%s); the engine's defaults are read", error)
+            return {}
+        if not rows:
+            logger.info("sql_mode not read (no row); the engine's defaults are read")
+            return {}
+        return {"sql_mode": str(rows[0]["sql_mode"] or "")}
+
     def get_database_size_gb(self) -> float:
         rows = self._query("""
             SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 4) AS size_gb
@@ -208,7 +221,7 @@ class MySQLRemoteCollector:
     def collect_procedures(self) -> list[dict]:
         return self._query("""
             SELECT routine_name, routine_type, data_type AS return_type,
-                   routine_definition AS definition
+                   routine_definition AS definition, sql_mode
             FROM information_schema.routines
             WHERE routine_schema = DATABASE()
             ORDER BY routine_type, routine_name
@@ -218,7 +231,7 @@ class MySQLRemoteCollector:
         return self._query("""
             SELECT trigger_name, event_manipulation AS event_type,
                    event_object_table AS table_name,
-                   action_timing AS timing, action_statement AS definition
+                   action_timing AS timing, action_statement AS definition, sql_mode
             FROM information_schema.triggers
             WHERE trigger_schema = DATABASE()
             ORDER BY event_object_table, trigger_name

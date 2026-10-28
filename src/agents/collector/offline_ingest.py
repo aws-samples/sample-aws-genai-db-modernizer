@@ -176,6 +176,8 @@ def build_offline_contract(
         # #949: AWS engines the application already runs next to the source.
         engines_in_use=offline_meta.get("engines_in_use"),
         database_name=collected_name,
+        # #1482: the source settings the collection script read.
+        settings=offline_meta.get("settings"),
     )
 
 

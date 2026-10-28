@@ -69,6 +69,24 @@ class PostgreSQLRemoteCollector:
         rows = self._query("SELECT version() AS version")
         return str(rows[0]["version"]) if rows else "unknown"
 
+    def get_settings(self) -> dict[str, str]:
+        """The server settings that change how SQL text is read (#1482):
+        ``standard_conforming_strings``. Empty when it can't be read."""
+        try:
+            rows = self._query(
+                "SELECT current_setting('standard_conforming_strings') "
+                "AS standard_conforming_strings"
+            )
+        except Exception as error:  # noqa: BLE001 -- a setting not read is the default
+            logger.info(
+                "standard_conforming_strings not read (%s); the engine's default is read", error
+            )
+            return {}
+        if not rows:
+            logger.info("standard_conforming_strings not read (no row); the default is read")
+            return {}
+        return {"standard_conforming_strings": str(rows[0]["standard_conforming_strings"] or "")}
+
     def get_database_size_gb(self) -> float:
         rows = self._query(
             "SELECT pg_database_size(current_database()) / 1024.0 / 1024.0 / 1024.0 AS size_gb"

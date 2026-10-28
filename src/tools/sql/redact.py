@@ -69,6 +69,18 @@ with two differences: a string keeps its own quotes and becomes ``'?'`` (a gap r
 reads the quote form, ``relational_gaps``), and numbers are kept: in code they are
 sizes, flags and loop bounds far more often than values.
 
+Redaction fails closed on the source's string settings (#1482). Whether a ``\\``
+escapes a quote depends on a setting (MySQL's ``NO_BACKSLASH_ESCAPES``, PostgreSQL's
+``standard_conforming_strings``), and the one a statement ran under can differ from the
+one the collection reports: an application's session sets its own ``sql_mode``, a
+routine keeps the mode it was created with. So a text is read both ways, and every
+character either reading puts inside a string or a comment is masked: where the two
+readings agree on a span, it is redacted as that span; where they disagree, the whole
+run they disagree on is one value (``?``, or ``'?'`` in a definition). The reported
+settings (``sql_spans.SpanSettings``, the collection's own for a whole collection) only
+choose which reading names a span both readings agree on; they never shrink what is
+masked.
+
 Text the database already normalised has nothing left to replace and comes back
 unchanged, and redacting redacted text changes nothing (``redact(redact(t)) ==
 redact(t)``). :func:`src.tools.sql.normalize.literal_shape` is not reused for the
@@ -81,16 +93,23 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Any
 
+from src.shared.sql_comments import block_comments_nest
 from src.shared.sql_spans import (
+    Grammar,
+    SpanSettings,
+    active_span_settings,
     is_alternative_quote,
     literals_and_comments_for,
     opens_routine_body,
     span_dialect,
+    span_settings,
+    span_settings_of,
     spans,
+    with_span_settings,
 )
 
 __all__ = [
@@ -100,6 +119,7 @@ __all__ = [
     "redact_definition",
     "redact_literals",
     "redact_raw_collection",
+    "raw_collection_settings",
     "redact_values",
     "scrub_comment",
 ]
@@ -270,19 +290,25 @@ def scrub_comment(text: str) -> str:
     return _long_digit_runs(text)
 
 
-def redact_literals(text: str, source_engine: str | None) -> str:
-    """Query text with its literal values replaced by placeholders (module docstring)."""
+def redact_literals(
+    text: str, source_engine: str | None, settings: SpanSettings | None = None
+) -> str:
+    """Query text with its literal values replaced by placeholders (module docstring).
+    ``settings`` are the source's string settings, by default the active ones."""
     if not text or not _MAYBE_LITERAL_RE.search(text):
         return text
-    return _redacted(text, _engine(source_engine), "query")
+    return _redacted(text, _engine(source_engine), "query", settings)
 
 
-def redact_definition(text: str, source_engine: str | None) -> str:
+def redact_definition(
+    text: str, source_engine: str | None, settings: SpanSettings | None = None
+) -> str:
     """A view, procedure or trigger definition with each string literal's value
-    replaced by ``?`` inside its own quotes; numbers are kept (module docstring)."""
+    replaced by ``?`` inside its own quotes; numbers are kept (module docstring).
+    ``settings`` are the source's string settings, by default the active ones."""
     if not text or not _MAYBE_LITERAL_RE.search(text):
         return text
-    return _redacted(text, _engine(source_engine), "definition")
+    return _redacted(text, _engine(source_engine), "definition", settings)
 
 
 def redact_comment(text: str, source_engine: str | None) -> str:
@@ -334,18 +360,19 @@ class _SizeBoundCache:
 
     def __init__(self, max_chars: int) -> None:
         self.max_chars = max_chars
-        self._items: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+        # (text, engine, mode, settings): the text first, the size counted on it.
+        self._items: OrderedDict[tuple[Any, ...], str] = OrderedDict()
         self._chars = 0
         self._lock = Lock()
 
-    def get(self, key: tuple[str, str, str]) -> str | None:
+    def get(self, key: tuple[Any, ...]) -> str | None:
         with self._lock:
             value = self._items.get(key)
             if value is not None:
                 self._items.move_to_end(key)
             return value
 
-    def put(self, key: tuple[str, str, str], value: str) -> None:
+    def put(self, key: tuple[Any, ...], value: str) -> None:
         size = len(key[0]) + len(value)
         if size > self.max_chars // 8:
             return
@@ -355,7 +382,7 @@ class _SizeBoundCache:
             self._items[key] = value
             self._chars += size
             while self._chars > self.max_chars:
-                (text, _, _), old = self._items.popitem(last=False)
+                (text, *_), old = self._items.popitem(last=False)
                 self._chars -= len(text) + len(old)
 
     @property
@@ -364,17 +391,38 @@ class _SizeBoundCache:
 
 
 _CACHE = _SizeBoundCache(max_chars=8_000_000)
+# The most passes a text is redacted again to reach a fixed point (``_redacted``).
+_MAX_PASSES = 4
 
 
-def _redacted(text: str, engine: str, mode: str) -> str:
+def _redacted(text: str, engine: str, mode: str, settings: SpanSettings | None) -> str:
     """One text redacted, cached (:class:`_SizeBoundCache`): a job reads its collector
     output many times, and every read redacts it (:func:`redact_collector_output`)."""
-    key = (text, engine, mode)
+    settings = settings or active_span_settings()
+    key = (text, engine, mode, settings)
     cached = _CACHE.get(key)
     if cached is None:
-        cached = _Redactor(engine, mode).redact(text)
+        cached = _redacted_uncached(text, engine, mode, settings)
         _CACHE.put(key, cached)
     return cached
+
+
+def _redacted_uncached(text: str, engine: str, mode: str, settings: SpanSettings) -> str:
+    """One text redacted. Where the readings disagreed, a tail was cut or a comment
+    rewritten, the text is redacted again until nothing changes, so redacting stays
+    idempotent even where masking one run exposes another (a text cut inside nested
+    comments). Each pass only masks more; the bound is a guard. Otherwise the
+    redaction is the one reading's, which is idempotent, so no pass confirms it."""
+    redactor = _Redactor(engine, mode, settings)
+    out = redactor.redact(text)
+    for _ in range(_MAX_PASSES):
+        if not redactor.disagreed:
+            break
+        again = redactor.redact(out)
+        if again == out:
+            break
+        out = again
+    return out
 
 
 @dataclass
@@ -402,33 +450,75 @@ class _Redactor:
     """One redaction. ``mode`` is ``"query"`` (placeholders, numbers too) or
     ``"definition"`` (strings become ``'?'`` in their own quotes, numbers are kept)."""
 
-    def __init__(self, engine: str, mode: str) -> None:
+    def __init__(self, engine: str, mode: str, settings: SpanSettings | None = None) -> None:
         self.engine = engine
         self.dialect = span_dialect(engine)
-        self.grammar = literals_and_comments_for(engine)
+        # ANSI_QUOTES only ever makes a ``"..."`` a name, which is kept: never trusted,
+        # so a MySQL ``"..."`` is a string here whatever the source reports.
+        self.settings = replace(settings or active_span_settings(), ansi_quotes=False)
+        self.grammar = literals_and_comments_for(engine, self.settings)
+        # The other reading of the one setting that moves a string's end (module
+        # docstring): masked too, whatever the collection reports.
+        other = _other_reading(self.dialect, self.settings)
+        self.other = literals_and_comments_for(engine, other) if other is not None else None
+        # Whether the last redaction masked a run the readings disagree on, or a cut
+        # text's tail: then ``_redacted`` confirms it with another pass.
+        self.disagreed = False
         self.mode = mode
         self.quoted = mode != "query"
         self.style = {"oracle": ":", "postgresql": "$"}.get(self.dialect, "?")
 
     def redact(self, text: str) -> str:
+        self.disagreed = False
         masked = _blanked(text, self.grammar)
         numbering = _Numbering(self.style)
         pattern = _EXISTING_BIND_RE.get(self.style)
         if pattern is not None:
             numbering.next = max((int(m.group(1)) for m in pattern.finditer(masked)), default=0) + 1
-        return self._redact(text, numbering, body=False)
+        # A body's statement test reads the text with the same settings.
+        with with_span_settings(self.settings):
+            return self._redact(text, numbering, body=False)
 
     # -- one text (or a body / dynamic SQL inside one), left to right ----------------
 
-    def _redact(self, text: str, numbering: _Numbering, *, body: bool) -> str:
-        found = list(spans(text, self.grammar))
-        masked = _blanked(text, self.grammar, found)
-        # A quote or ``/*`` left in the code has no closer: the text was cut inside a
-        # string or a comment, which then runs to the end.
-        cut = _unterminated(masked, self.dialect)
+    def _found(self, text: str, grammar: Grammar) -> list[tuple[int, int, str]]:
+        """The spans of ``text`` one reading finds. A quote or ``/*`` left in the code
+        has no closer: the text was cut inside a string or a comment, which then runs to
+        the end."""
+        found = list(spans(text, grammar))
+        cut = _unterminated(_blanked(text, grammar, found), self.dialect, text, found)
         if cut is not None:
+            # A cut text is confirmed by another pass (``_redacted``): masking its tail
+            # can leave a form the next reading cuts again.
+            self.disagreed = True
+            if cut[2] == "/*" and self._ambiguous_cut(text, cut[0], found, grammar):
+                cut = (cut[0], cut[1], _DISAGREED)
             found = [s for s in found if s[1] <= cut[0]] + [cut]
-            masked = masked[: cut[0]] + "?" * (len(masked) - cut[0])
+        return found
+
+    def _ambiguous_cut(
+        self, text: str, start: int, found: list[tuple[int, int, str]], grammar: Grammar
+    ) -> bool:
+        """Whether a text cut inside a nested block comment reads two ways: as a comment
+        to the end (whose rest is redacted as SQL, where a nested ``*/`` can close it),
+        and with that ``/*`` as text, where a string follows it. Then the rest is one
+        value, masked whole (fails closed, #1482)."""
+        if not block_comments_nest(self.engine) or "*/" not in text[start + 2 :]:
+            return False
+        return any(
+            s > start and o not in ("--", "#", "/*") and o not in grammar.identifiers
+            for s, _e, o in found
+        )
+
+    def _redact(self, text: str, numbering: _Numbering, *, body: bool) -> str:
+        found = self._found(text, self.grammar)
+        # The readings differ only on a backslash: without one there is one reading.
+        if self.other is not None and "\\" in text:
+            other = self._found(text, self.other)
+            if other != found:
+                self.disagreed = True
+                found = _both_readings(found, other, self.grammar.identifiers)
+        masked = _blanked(text, self.grammar, found)
         numbers = _number_edits(masked, self.dialect) if self.mode == "query" else []
         out: list[str] = []
         last = 0
@@ -444,7 +534,12 @@ class _Redactor:
             _track_parens(masked, last, code_end, stack)
             span = text[start:end]
             if opener in ("--", "#", "/*") or opener.startswith("/*"):
-                out.append(self._comment(span, opener, end == len(text), numbering))
+                comment = self._comment(span, opener, end == len(text), numbering)
+                if comment != span:
+                    # A rewritten comment can lose a ``*/`` (a nested reading changes):
+                    # confirmed by another pass (``_redacted``).
+                    self.disagreed = True
+                out.append(comment)
             elif not _is_string(opener, self.grammar):
                 out.append(span)  # a quoted identifier
             else:
@@ -549,6 +644,9 @@ class _Redactor:
         body: bool,
     ) -> tuple[str, bool]:
         """A string literal's replacement, and whether it took a typed literal's keyword."""
+        if opener == _DISAGREED:
+            # A run the two readings split differently: one value, nothing of it kept.
+            return ("'?'" if self.quoted or body else numbering.take()), False
         closer_len, inner = _inner(span, opener)
         head = prefix + span[: len(span) - len(inner) - closer_len]
         tail = span[len(span) - closer_len :] if closer_len else ""
@@ -597,6 +695,54 @@ class _Redactor:
         return numbering.take(), bool(_TYPED_LITERAL_RE.search(before))
 
 
+# The opener of a run the two readings of a setting split differently (``_both_readings``).
+_DISAGREED = "\x00"
+
+
+def _other_reading(dialect: str, settings: SpanSettings) -> SpanSettings | None:
+    """The other value of the setting that moves a string's end in ``dialect``, or
+    ``None`` when no setting does (SQL Server, Oracle, an unknown engine)."""
+    if dialect == "mysql":
+        return replace(settings, no_backslash_escapes=not settings.no_backslash_escapes)
+    if dialect == "postgresql":
+        return replace(
+            settings, standard_conforming_strings=not settings.standard_conforming_strings
+        )
+    return None
+
+
+def _both_readings(
+    found: list[tuple[int, int, str]],
+    other: list[tuple[int, int, str]],
+    identifiers: frozenset[str],
+) -> list[tuple[int, int, str]]:
+    """The spans masking every character either reading hides (a string or a comment).
+
+    Each maximal run of hidden characters is one span: the reading's own when both
+    readings hide exactly that span, the same way, else a ``_DISAGREED`` value. A quoted
+    identifier is kept where no run covers it."""
+    hidden = sorted(
+        (start, end) for start, end, opener in found + other if opener not in identifiers
+    )
+    runs: list[list[int]] = []
+    for start, end in hidden:
+        if runs and start < runs[-1][1]:
+            runs[-1][1] = max(runs[-1][1], end)
+        else:
+            runs.append([start, end])
+    mine = {(s, e): o for s, e, o in found if o not in identifiers}
+    theirs = {(s, e): o for s, e, o in other if o not in identifiers}
+    out: list[tuple[int, int, str]] = []
+    for start, end in runs:
+        opener = mine.get((start, end))
+        agreed = opener is not None and theirs.get((start, end)) == opener
+        out.append((start, end, opener if agreed and opener is not None else _DISAGREED))
+    for start, end, opener in found:
+        if opener in identifiers and not any(s < end and start < e for s, e in runs):
+            out.append((start, end, opener))
+    return sorted(out)
+
+
 def _is_string(opener: str, grammar) -> bool:
     return opener not in ("--", "#", "/*") and opener not in grammar.identifiers
 
@@ -618,14 +764,38 @@ def _blanked(text: str, grammar, found: list[tuple[int, int, str]] | None = None
     return "".join(chars)
 
 
-def _unterminated(masked: str, dialect: str) -> tuple[int, int, str] | None:
-    """Where an unclosed string or block comment starts, as a span to the end."""
+# A PostgreSQL dollar quote's opener (``$$``, ``$tag$``), as ``sql_spans`` reads one.
+_DOLLAR_OPENER_RE = re.compile(r"(?<![\w$])\$(?:[^\W\d]\w*)?\$")
+
+
+def _unterminated(
+    masked: str,
+    dialect: str,
+    text: str = "",
+    found: list[tuple[int, int, str]] | None = None,
+) -> tuple[int, int, str] | None:
+    """Where an unclosed string or block comment starts, as a span to the end: a quote
+    (every prefixed form, ``N'``, ``E'``, ``q'[``, leaves its quote), a ``/*`` or, in
+    PostgreSQL, a dollar quote (``$$x`` cut at a length cap holds a value too). A dollar
+    opener is looked for with every span of ``found`` blanked to spaces, so one right
+    after a closed span (``$$a$$$$x``, ``"n"$$x``) counts: PostgreSQL opens a string
+    there, and erring that way masks more, never less."""
     quotes = "'\"" if dialect == "mysql" else "'"
     candidates = [masked.find(q) for q in quotes] + [masked.find("/*")]
+    dollar = None
+    if dialect == "postgresql":
+        chars = list(text or masked)
+        for start, end, _opener in found or ():
+            chars[start:end] = " " * (end - start)
+        dollar = _DOLLAR_OPENER_RE.search("".join(chars))
+    if dollar is not None:
+        candidates.append(dollar.start())
     starts = [c for c in candidates if c >= 0]
     if not starts:
         return None
     start = min(starts)
+    if dollar is not None and start == dollar.start():
+        return start, len(masked), dollar.group()
     opener = "/*" if masked.startswith("/*", start) else masked[start]
     return start, len(masked), opener
 
@@ -745,13 +915,13 @@ def collector_output_engine(payload: Mapping[str, Any]) -> str:
     return str(getattr(engine, "value", engine) or "")
 
 
-def _redacted_definitions(items: object, engine: str) -> object:
+def _redacted_definitions(items: object, engine: str, settings: SpanSettings) -> object:
     if not isinstance(items, list):
         return items
     out: list[Any] = []
     for item in items:
         if isinstance(item, Mapping) and isinstance(item.get("definition"), str):
-            text = redact_definition(item["definition"], engine)
+            text = redact_definition(item["definition"], engine, settings)
             if text != item["definition"]:
                 item = {**item, "definition": text}
         out.append(item)
@@ -760,13 +930,15 @@ def _redacted_definitions(items: object, engine: str) -> object:
 
 def redact_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     """A collector output (a dict) with every query text, query tag and view,
-    procedure and trigger definition redacted in its source engine's dialect.
+    procedure and trigger definition redacted in its source engine's dialect, read with
+    its source settings (``metadata.source_database.settings``; none: the defaults).
 
     The same object when nothing changes (a collector output written since #1625),
     else a new dict; the input is never changed. A shape it does not know (no
     ``queries.query_patterns`` list) is returned as it is.
     """
     engine = collector_output_engine(payload)
+    settings = span_settings_of(payload)
     out: dict[str, Any] | None = None
     queries = payload.get("queries")
     patterns = queries.get("query_patterns") if isinstance(queries, Mapping) else None
@@ -775,7 +947,7 @@ def redact_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         changed = False
         for row in patterns:
             if isinstance(row, Mapping):
-                fixed = _redacted_pattern(row, engine)
+                fixed = _redacted_pattern(row, engine, settings)
                 changed = changed or fixed is not row
                 row = fixed
             rows.append(row)
@@ -783,7 +955,9 @@ def redact_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             out = {**payload, "queries": {**queries, "query_patterns": rows}}  # type: ignore[dict-item]
     schema = payload.get("database_schema")
     if isinstance(schema, Mapping):
-        fixed_schema = {k: _redacted_definitions(schema.get(k), engine) for k in _DEFINITIONS}
+        fixed_schema = {
+            k: _redacted_definitions(schema.get(k), engine, settings) for k in _DEFINITIONS
+        }
         if any(fixed_schema[k] is not schema.get(k) for k in _DEFINITIONS if k in schema):
             out = dict(out if out is not None else payload)
             out["database_schema"] = {
@@ -793,10 +967,12 @@ def redact_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return out if out is not None else payload
 
 
-def _redacted_pattern(row: Mapping[str, Any], engine: str) -> Mapping[str, Any]:
+def _redacted_pattern(
+    row: Mapping[str, Any], engine: str, settings: SpanSettings
+) -> Mapping[str, Any]:
     text = row.get("query_text")
     tags = row.get("query_tags")
-    new_text = redact_literals(text, engine) if isinstance(text, str) else text
+    new_text = redact_literals(text, engine, settings) if isinstance(text, str) else text
     new_tags = tags
     if isinstance(tags, list) and tags:
         fixed = [redact_comment(t, engine) if isinstance(t, str) else t for t in tags]
@@ -809,7 +985,8 @@ def _redacted_pattern(row: Mapping[str, Any], engine: str) -> Mapping[str, Any]:
 
 def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
     """A raw collection-script file with every query text and definition redacted, in
-    the source engine the metadata names (``offline_parser.detect_source_engine``).
+    the source engine the metadata names (``offline_parser.detect_source_engine``), read
+    with the settings it reports (``metadata.settings``, :func:`raw_collection_settings`).
 
     A query row with no ``digest`` gets the one the parser gives it (the first 16 hex
     digits of the SHA-256 of its text as collected), so the copy keeps its
@@ -821,6 +998,7 @@ def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
 
     metadata = data.get("metadata")
     engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
+    settings = raw_collection_settings(engine, metadata)
     out: dict[str, Any] | None = None
     queries = data.get("queries")
     if isinstance(queries, list):
@@ -829,7 +1007,7 @@ def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
         for row in queries:
             text = row.get("query_text") if isinstance(row, Mapping) else None
             if isinstance(text, str):
-                redacted = redact_literals(text, engine)
+                redacted = redact_literals(text, engine, settings)
                 if redacted != text:
                     digest = row.get("digest") or hashlib.sha256(text.encode()).hexdigest()[:16]
                     row = {**row, "query_text": redacted, "digest": digest}
@@ -839,26 +1017,62 @@ def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
             out = {**data, "queries": rows}
     for key in _DEFINITIONS:
         if key in data:
-            fixed = _redacted_definitions(data[key], engine)
+            fixed = _redacted_definitions(data[key], engine, settings)
             if fixed is not data[key]:
                 out = dict(out if out is not None else data)
                 out[key] = fixed
     return out if out is not None else data
 
 
+def raw_collection_settings(source_engine: str | None, metadata: object) -> SpanSettings:
+    """The span settings a raw collection-script file reports in its ``metadata.settings``
+    (``sql_mode``, ``standard_conforming_strings``, #1482); none: the engine's defaults."""
+    if isinstance(metadata, str):
+        import json
+
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = None
+    reported = metadata.get("settings") if isinstance(metadata, Mapping) else None
+    return span_settings(source_engine, reported if isinstance(reported, Mapping) else None)
+
+
+def _reported_settings(data: Any, source_engine: str | None) -> SpanSettings | None:
+    """The source settings a collector output or a parsed collection reports, or ``None``."""
+    metadata = data.get("metadata") if isinstance(data, Mapping) else None
+    if isinstance(metadata, str):
+        return raw_collection_settings(source_engine, metadata)
+    if not isinstance(metadata, Mapping):
+        return None
+    source = metadata.get("source_database")
+    if isinstance(source, Mapping) and isinstance(source.get("settings"), Mapping):
+        return span_settings_of(data)
+    if isinstance(metadata.get("settings"), Mapping):
+        return raw_collection_settings(source_engine, metadata)
+    return None
+
+
 _TEXT_KEYS = {"query_text": redact_literals, "definition": redact_definition}
 
 
-def redact_values(data: Any, source_engine: str | None) -> Any:
+def redact_values(
+    data: Any, source_engine: str | None, settings: SpanSettings | None = None
+) -> Any:
     """``data`` (any JSON value: a live collector's stage, a collector output) with every
     ``query_text`` and ``definition`` string and every ``query_tags`` entry redacted,
-    however deep. A new value; the input is not changed. Idempotent."""
+    however deep, read with ``settings``: by default the ones ``data`` reports (a
+    collector output's ``metadata.source_database.settings``, a parsed collection's
+    ``metadata.settings``), else the active ones. A new value; the input is not changed.
+    Idempotent."""
+    if settings is None:
+        settings = _reported_settings(data, source_engine)
     if isinstance(data, Mapping):
         out: dict[Any, Any] = {}
         for key, value in data.items():
             redact = _TEXT_KEYS.get(key) if isinstance(key, str) else None
             if redact is not None and isinstance(value, str):
-                out[key] = redact(value, source_engine)
+                out[key] = redact(value, source_engine, settings)
             elif key == "query_tags" and isinstance(value, list):
                 tags = [
                     redact_comment(t, source_engine) if isinstance(t, str) else t for t in value
@@ -867,8 +1081,8 @@ def redact_values(data: Any, source_engine: str | None) -> Any:
                     list(dict.fromkeys(tags)) if all(isinstance(t, str) for t in tags) else tags
                 )
             else:
-                out[key] = redact_values(value, source_engine)
+                out[key] = redact_values(value, source_engine, settings)
         return out
     if isinstance(data, list):
-        return [redact_values(item, source_engine) for item in data]
+        return [redact_values(item, source_engine, settings) for item in data]
     return data

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.shared.catalog.write_intents import carried_write_floor, write_intent
+from src.shared.sql_spans import replace_strings_and_comments
 from src.tools.sql.facade import sql_tokens
 from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
 
@@ -62,8 +63,6 @@ def _has(tokens: tuple[str, ...], *sequence: str) -> bool:
     return any(tokens[i : i + n] == sequence for i in range(len(tokens) - n + 1))
 
 
-_STRING = re.compile(r"'(?:[^']|'')*'")
-_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _QUALIFIER = r'(?:(?P<q>"[^"]+"|\[[^\]]+\]|`[^`]+`|[A-Za-z_][\w$]*)\s*\.\s*)?'
 
 
@@ -76,11 +75,14 @@ def _unquoted(name: str) -> str:
     return name.strip('"[]`').lower()
 
 
-def _older_than(text: str, name: str, aliases: Collection[str]) -> bool:
+def _older_than(text: str, name: str, aliases: Collection[str], source_engine: str = "") -> bool:
     """Whether ``text`` compares column ``name`` (bare, or qualified by one of
     ``aliases``) as older than a cut-off: ``name < x``, ``name <= x``, ``x > name`` or
-    ``x >= name``, in any identifier quoting, outside string literals and comments."""
-    visible = _COMMENT.sub(" ", _STRING.sub("''", text))
+    ``x >= name``, in any identifier quoting, outside string literals and comments (read
+    in ``source_engine``'s forms and string settings, ``sql_spans``, #1482)."""
+    visible = replace_strings_and_comments(
+        text, source_engine, string=lambda _span: "''", comment=lambda _span: " "
+    )
     forward = re.compile(_QUALIFIER + _column(name) + r"\s*<(?!>)", re.I)
     backward = re.compile(r"(?<![<>!=-])>\s*=?\s*" + _QUALIFIER + _column(name), re.I)
     for pattern in (forward, backward):
@@ -172,7 +174,9 @@ def classify_write_intent(
         # side of the cut-off it keeps, and read none against a typed value
         # (``created_at < TIMESTAMP $1``).
         for name, info in columns.items():
-            if is_timestamp_type(info, source_engine) and _older_than(text, name, aliases):
+            if is_timestamp_type(info, source_engine) and _older_than(
+                text, name, aliases, source_engine
+            ):
                 return RETENTION_DELETE
         if any(len(scope.or_branches) >= 2 for scope in facts.scopes):
             return MULTI_REFERENCE_DELETE

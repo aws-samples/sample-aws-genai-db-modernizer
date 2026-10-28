@@ -51,6 +51,10 @@ Version History:
   Older outputs load through a MAJOR 4 adapter that reads each count again by the
   per-engine rule (src.shared.row_counts): a 0 from a source that cannot tell empty from
   unknown becomes None, SQL Server's stays 0.
+- 5.1 (2026-10-28, #1482): Added optional SourceDatabase.settings (sql_mode,
+  standard_conforming_strings) and Procedure.sql_mode / Trigger.sql_mode: the source's
+  string settings the SQL facts read (redaction masks both readings). Backward
+  compatible: all default to None (each engine's defaults).
 """
 
 import re
@@ -221,6 +225,28 @@ class RDSInstanceMetadata(BaseModel):
         return v
 
 
+class SourceSettings(BaseModel):
+    """The source settings a collection reports as the server returns them (#1482).
+    Read by ``src.shared.sql_spans.span_settings`` for the source's own dialect only, for
+    facts and parsing; redaction masks both readings whatever they say. ``sql_mode`` is
+    the server's default (a session can set its own), ``standard_conforming_strings``
+    the collecting session's (another role's override is not seen)."""
+
+    sql_mode: str | None = Field(
+        None,
+        max_length=4096,
+        description="MySQL / MariaDB @@sql_mode (NO_BACKSLASH_ESCAPES gives a backslash no meaning)",
+    )
+    standard_conforming_strings: str | None = Field(
+        None,
+        max_length=16,
+        description=(
+            "PostgreSQL current_setting('standard_conforming_strings'): 'on' or 'off' "
+            "('off' makes a backslash an escape in a plain string)"
+        ),
+    )
+
+
 class SourceDatabase(BaseModel):
     engine: DatabaseEngine = Field(..., description="Database engine type")
     version: str = Field(..., description="Database engine version (e.g., '8.0.32', '14.7')")
@@ -234,6 +260,14 @@ class SourceDatabase(BaseModel):
     )
     rds_instance_metadata: RDSInstanceMetadata | None = Field(
         None, description="RDS instance metadata (only present if deployment_type is rds_instance)"
+    )
+    settings: SourceSettings | None = Field(
+        None,
+        description=(
+            "The source's settings that change how SQL text is read (#1482): MySQL's and "
+            "MariaDB's sql_mode, PostgreSQL's standard_conforming_strings. None: not "
+            "reported, and each engine's defaults are read."
+        ),
     )
 
 
@@ -554,6 +588,14 @@ class Procedure(BaseModel):
         ),
     )
     language: str | None = Field(None, description="Language (e.g., SQL, PL/pgSQL, T-SQL)")
+    sql_mode: str | None = Field(
+        None,
+        max_length=4096,
+        description=(
+            "MySQL / MariaDB: the sql_mode the body was created with and is parsed under "
+            "(information_schema SQL_MODE, #1482); None when not reported"
+        ),
+    )
     return_type: str | None = Field(
         None, description="Return type for functions (null for procedures)"
     )
@@ -591,6 +633,14 @@ class Trigger(BaseModel):
         ),
     )
     is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
+    sql_mode: str | None = Field(
+        None,
+        max_length=4096,
+        description=(
+            "MySQL / MariaDB: the sql_mode the body was created with and is parsed under "
+            "(information_schema SQL_MODE, #1482); None when not reported"
+        ),
+    )
     execution_stats: TriggerExecutionStats | None = Field(
         None, description="Optional execution statistics if available"
     )
@@ -902,7 +952,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.0",
+        default="5.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -925,11 +975,17 @@ class CollectorOutputContract(BaseModel):
         redacted in the source dialect however the contract was built (a live
         collector, an offline collection, a stored or uploaded output).
         Idempotent, so a redacted output loads unchanged."""
+        from src.shared.sql_spans import span_settings
         from src.tools.sql.redact import redact_comment, redact_definition, redact_literals
 
-        engine = self.metadata.source_database.engine.value
+        source = self.metadata.source_database
+        engine = source.engine.value
+        # Read with the source's own string settings (#1482); none reported: the defaults.
+        settings = span_settings(
+            engine, source.settings.model_dump() if source.settings is not None else None
+        )
         for pattern in self.queries.query_patterns:
-            pattern.query_text = redact_literals(pattern.query_text, engine)
+            pattern.query_text = redact_literals(pattern.query_text, engine, settings)
             if pattern.query_tags:
                 tags = [redact_comment(tag, engine) for tag in pattern.query_tags]
                 pattern.query_tags = list(dict.fromkeys(tags))
@@ -937,5 +993,5 @@ class CollectorOutputContract(BaseModel):
         for items in (schema.views, schema.procedures, schema.triggers):
             for item in items or []:
                 if item.definition:
-                    item.definition = redact_definition(item.definition, engine)
+                    item.definition = redact_definition(item.definition, engine, settings)
         return self
