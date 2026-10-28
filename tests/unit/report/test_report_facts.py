@@ -806,6 +806,15 @@ def test_1169_the_reports_print_the_stored_split() -> None:
     assert cell in executive_text(report)
 
 
+@pytest.mark.passes_on_main  # guards main's behaviour the change keeps
+def test_the_map_heading_keeps_the_source_engine_label_without_a_wave_1_engine() -> None:
+    report = _with_facts(_mapped_merged_report())
+    for w in report["migration_waves"]:
+        w.pop("homogeneity", None)
+    md = render_engineering_report_md(report)
+    assert "2 stay on the source engine)" in md
+
+
 def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
     report = _with_facts(_mapped_merged_report())
     report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "stays": 1}
@@ -821,9 +830,9 @@ def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
 
 def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
     md = render_engineering_report_md(_with_facts(_mapped_merged_report()))
-    assert (
-        "## Migration map (5 tables: 2 migrate, 1 kept in sync, 2 stay on the source engine)"
-    ) in md
+    assert ("## Migration map (5 tables: 2 migrate, 1 kept in sync, 2 stay on Aurora MySQL)") in md
+    # #1642: "stay" names wave 1's engine, as wave 1's "the other N stay on" does.
+    assert "stay on the source engine)" not in md
     assert "no target table yet for 1 of the 3 tables that migrate: `db.t2`." in md
     assert (
         "Rows the schema design maps to DynamoDB that no query routed to DynamoDB reads "

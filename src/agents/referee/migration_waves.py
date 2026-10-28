@@ -169,7 +169,7 @@ from src.shared.migration_wave_engines import (
     RELATIONAL_ENGINES,
     SEARCH_ENGINES,
 )
-from src.shared.report_facts import wave_one_moved_by_later_waves
+from src.shared.report_facts import wave_one_moved_by_later_waves, wave_one_staying_split
 
 # ``_durable_owner`` is imported from here by callers; it lives in migration_wave_tables.
 __all__ = ["_durable_owner", "build_migration_waves", "wave_table_owners"]
@@ -440,6 +440,7 @@ def build_migration_waves(
             co_dependency_groups,
             retained_engine,
             source_engine,
+            after_cache=cache is not None,
         )
 
     doc_wave = None
@@ -577,7 +578,9 @@ def build_migration_waves(
         # facts layer's figure, so the two never disagree).
         moved = wave_one_moved_by_later_waves(waves)
         if mapped is not None and moved is not None:
-            waves[0]["rationale"] += wave_one_map_sentence(waves[0], mapped, moved)
+            waves[0]["rationale"] += wave_one_map_sentence(
+                waves[0], mapped, moved, wave_one_staying_split(waves, mapped)
+            )
 
     for w in waves:
         # #1028: every wave carries its gate as parts; a gate with no table

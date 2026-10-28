@@ -705,6 +705,33 @@ def test_totals_sum_over_designed_engines_only() -> None:
     assert totals["query_groups_non_relational"] == 2
 
 
+def test_totals_carry_the_query_pattern_and_also_read_counts_the_deliverables_print() -> None:
+    """The discourse judge flagged "1,654 queries in 1,055 distinct query patterns" and
+    "134 tables are also read by another engine" as unsupported: both are report facts
+    (``facts.query_pattern_counts``, ``facts.table_owner_lines``) its payload left out.
+    Each is its own key, labelled apart from query groups and access patterns."""
+    report = _report(
+        facts={
+            "query_pattern_counts": {"query_count": 1654, "pattern_count": 1055},
+            "table_owner_lines": {"table_count": 272, "also_read_table_count": 134},
+        }
+    )
+    totals = judge_facts.build_facts(report)["totals"]
+    assert totals["distinct_query_patterns"] == 1055
+    assert totals["tables_also_read_by_a_non_owner"] == 134
+    assert totals["query_groups"] == 1  # a different count, unchanged
+    labels = totals["count_labels"]
+    for key in ("distinct_query_patterns", "query_groups", "in_scope_access_patterns"):
+        assert key in labels
+    assert "tables_also_read_by_a_non_owner" in labels
+
+
+def test_the_new_counts_are_null_for_a_report_without_the_facts() -> None:
+    totals = judge_facts.build_facts(_report())["totals"]
+    assert totals["distinct_query_patterns"] is None
+    assert totals["tables_also_read_by_a_non_owner"] is None
+
+
 def test_an_unversioned_ranking_entry_needs_only_a_schema_design() -> None:
     """No ``assigned_queries`` key (no assignment ran): the design alone decides."""
     entry = {"target": "dynamodb", "target_tables": 7, "schema_design_available": True}

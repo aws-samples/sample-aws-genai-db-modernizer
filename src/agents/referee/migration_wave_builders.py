@@ -157,9 +157,12 @@ def _aurora_wave(
             f"later waves have moved their share; later waves move subsets of these "
             f"{len(tables)} tables and views out of {target_name}."
         )
+        # The discourse judge read "decommission the legacy source" as happening before
+        # wave 2's dual-write: name the database it retires and where later waves start.
         gate = (
-            "Schema and data parity validated against the source database before cutover; "
-            "decommission the legacy source once replication lag is zero."
+            "Schema and data parity validated against the source database before cutover. "
+            f"Once replication to {target_name} has caught up, decommission the source "
+            f"{source_name} database: later waves move from {target_name}, not from it."
         )
         title = f"Move to {target_name}"
         engines: list[str] = [retained_engine]
@@ -360,12 +363,22 @@ def _kv_wave(
     co_dependency_groups: list[list[str]],
     retained_engine: str | None,
     source_engine: str,
+    after_cache: bool = False,
 ) -> dict[str, Any] | None:
+    """The key-value wave. ``after_cache`` is whether the plan has a cache wave before it:
+    only then does the rationale say the cache took the read pressure off first."""
     rows = _served_tables(engine, table_assignments)
     n = int(by_engine[engine].get("assigned_queries") or 0)
     if not n and not rows:
         return None
     share = round(float(by_engine[engine].get("workload_percent") or 0.0), 1)
+    # A plan with no cache wave never cites one (the discourse judge's phantom cache wave).
+    order = (
+        ", and the smallest-blast-radius data migration available once the cache wave has "
+        "absorbed the read pressure"
+        if after_cache
+        else ""
+    )
     groups = _dynamodb_table_groups(engine, rows, co_dependency_groups, query_assignments)
     n_groups = len(groups) or len(rows)
     query = _query_noun(n)
@@ -388,8 +401,7 @@ def _kv_wave(
             # #951: no "where possible": the grouping is deterministic, each
             # co-dependency group's tables form one group (_dynamodb_table_groups).
             f"{n_groups} table {group}, where co-dependent tables move together: the "
-            f"pattern {display_engine(engine)} fits best, and the smallest-blast-radius data "
-            "migration available once the cache wave has absorbed the read pressure."
+            f"pattern {display_engine(engine)} fits best{order}."
         ),
         "gate": "Dual-write/backfill validated and query parity confirmed per table group.",
     }
@@ -621,7 +633,10 @@ def _merge_kv_and_document_waves(dynamo: dict[str, Any], doc: dict[str, Any]) ->
 
 
 def wave_one_map_sentence(
-    wave: dict[str, Any], mapped_tables: set[str], moved_by_later_waves: int
+    wave: dict[str, Any],
+    mapped_tables: set[str],
+    moved_by_later_waves: int,
+    staying: tuple[int, int] | None = None,
 ) -> str:
     """The sentence wave 1's rationale ends with when a schema design mapped tables
     (#380 review, #1284), for a wave 1 that names its Aurora engine.
@@ -654,5 +669,27 @@ def wave_one_map_sentence(
     rest = total - moved_by_later_waves
     return head + (
         f"later waves move {moved_by_later_waves} of the {total} off {target_name}, and the "
-        f"other {rest} {'stays' if rest == 1 else 'stay'} on {target_name}."
+        f"other {rest} {'stays' if rest == 1 else 'stay'} on {target_name}"
+        f"{_staying_basis(staying)}."
     )
+
+
+def _staying_basis(staying: tuple[int, int] | None) -> str:
+    """ ": 192 migration-map rows that do not migrate and 40 tables and views the map does
+    not list" (#1642): the basis of wave 1's staying count, so it reads against the
+    migration map's "80 migrate, 64 kept in sync, 128 stay"."""
+    if not staying:
+        return ""
+    in_map, unmapped = staying
+    parts = []
+    if in_map:
+        parts.append(
+            f"{in_map} migration-map {'row that does' if in_map == 1 else 'rows that do'} "
+            "not migrate"
+        )
+    if unmapped:
+        parts.append(
+            f"{unmapped} {'table or view' if unmapped == 1 else 'tables and views'} the map "
+            "does not list"
+        )
+    return ": " + " and ".join(parts) if parts else ""

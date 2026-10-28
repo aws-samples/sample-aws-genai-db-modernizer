@@ -10,7 +10,8 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
   overall risk, and the sums the deliverables print: target objects, in-scope
   and out-of-scope access patterns (designed engines only), query groups (all, and the
   non-relational ones the Engineering Report heading counts), open and resolved risks,
-  wave count (#646).
+  wave count (#646), the distinct query patterns and the tables read off their owner the
+  PDF prints (#1642), and ``count_labels`` saying what each of those alike counts counts.
 * ``engines`` -- per selected engine: workload, confidence (the routed fit the
   deliverables show, #152; ``analysis_confidence`` is the all-tables average), monthly cost,
   schema counts, assignment reasons, the tables its assigned queries touch
@@ -257,6 +258,23 @@ def _eliminated_engines(
         if move.get("action") == "full" and source and not after.get(source):
             out.append({"engine": source, "absorbed_by": move.get("to_engine")})
     return out
+
+
+# Four counts that read alike and count different things.
+COUNT_LABELS = {
+    "distinct_query_patterns": "distinct normalized SQL statements (the PDF's 'query patterns')",
+    "query_groups": "groups of queries that read tables together",
+    "in_scope_access_patterns": "designed target reads, designed engines only",
+    "tables_also_read_by_a_non_owner": (
+        "mapped tables an engine reads without owning them, from a CDC or one-time copy"
+    ),
+}
+
+
+def _fact_count(report: dict[str, Any], block: str, key: str) -> int | None:
+    """``report.facts[block][key]`` as an int, or None when the report does not carry it."""
+    value = ((report.get("facts") or {}).get(block) or {}).get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _count(value: Any) -> int | None:
@@ -724,6 +742,13 @@ def build_facts(
                 if isinstance(query_groups, list)
                 else None
             ),
+            # The PDF's "N queries in M distinct query patterns" and "K tables are also
+            # read by another engine" (the discourse judge read both as unsupported).
+            "distinct_query_patterns": _fact_count(report, "query_pattern_counts", "pattern_count"),
+            "tables_also_read_by_a_non_owner": _fact_count(
+                report, "table_owner_lines", "also_read_table_count"
+            ),
+            "count_labels": COUNT_LABELS,
             "open_risks": _counted_risks(risk_assessment.get("risks")),
             "resolved_risks": _counted_risks(risk_assessment.get("resolved_risks")),
             "migration_wave_count": len(waves) if isinstance(waves, list) and waves else None,

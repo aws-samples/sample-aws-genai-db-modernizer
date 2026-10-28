@@ -429,6 +429,31 @@ def run_synthesis_deterministic(
     # #1362: the write-group members their engine serves poorly, read before the risks,
     # which raise them; report.json keeps them for the detailed engineering report (#1364).
     carried_writes = _carried_writes(store, database_name, job_id, data)
+    owners_by_table = wave_table_owners(
+        ranking=ranking,
+        table_assignments=raw_table_assignments,
+        query_assignments=assignment.get("query_assignments") or [],
+        source_engine=source_database_engine(data.collector),
+        known_tables=wave_known_tables,
+        aurora_engine_choice=assignment.get("aurora_engine_choice"),
+        source=SourceScope.from_collector(data.collector),
+        engine_scope=scope_of(data.triage),
+    )
+    # #1642: the owner lines the sync risk reads its per-wave copies from: the Migration
+    # map's own rows when the design mapped tables (the lines ``also_read_table_count``
+    # counts), else one line per table the assignment's queries read.
+    usage = assignment_table_usage(data.assignment)
+    copy_lines = (
+        table_owner_fields(
+            table_mappings or [{"source_table": t} for t in sorted(usage)],
+            usage,
+            owners=owners_by_table,
+            retained_engine=wave_retained_engine(migration_waves),
+        )
+        if data.assignment
+        else None
+    )
+    copy_lines = [{**line, "table": line.get("source_table")} for line in copy_lines or []] or None
     # #950: the risks the migration's shape carries (tables kept in sync, close
     # calls, pending ties, design trade-offs, ...), from the facts built above,
     # before the summary states the risk count.
@@ -452,6 +477,7 @@ def run_synthesis_deterministic(
             scope_unservable=scope_unservable,
             redesign_requirements=redesign_requirements,
             carried_writes=carried_writes,
+            copy_lines=copy_lines,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -627,16 +653,7 @@ def run_synthesis_deterministic(
         "cache_overlay": cache_overlay,
         "migration_waves": migration_waves,
         # #212: each table's owner as the wave plan states it, for the map's owner lines.
-        "wave_table_owners": wave_table_owners(
-            ranking=ranking,
-            table_assignments=raw_table_assignments,
-            query_assignments=assignment.get("query_assignments") or [],
-            source_engine=source_database_engine(data.collector),
-            known_tables=wave_known_tables,
-            aurora_engine_choice=assignment.get("aurora_engine_choice"),
-            source=SourceScope.from_collector(data.collector),
-            engine_scope=scope_of(data.triage),
-        ),
+        "wave_table_owners": owners_by_table,
         "query_traces": query_traces,
         "table_sources": sources,
         "unresolved_names": unresolved_names,

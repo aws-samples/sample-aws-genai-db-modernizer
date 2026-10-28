@@ -173,6 +173,20 @@ class TestOrderAndNumbering:
 
 
 class TestAuroraWave:
+    def test_the_gate_retires_the_source_after_replication_and_names_where_later_waves_start(
+        self,
+    ):
+        """The discourse judge read "decommission the legacy source once replication lag
+        is zero" as retiring something before wave 2's dual-write: the gate names the
+        source database it retires and that later waves move from Aurora, not from it."""
+        gate = _build()[0]["gate"]
+        assert "legacy source" not in gate and "lag is zero" not in gate
+        assert gate == (
+            "Schema and data parity validated against the source database before cutover. "
+            "Once replication to Aurora MySQL has caught up, decommission the source MySQL "
+            "database: later waves move from Aurora MySQL, not from it."
+        )
+
     def test_whole_schema_moves_first_and_is_homogeneous(self):
         wave = _build()[0]
         assert wave["engines"] == ["aurora_mysql"]
@@ -327,7 +341,9 @@ class TestAuroraWave:
         # wp_options is mapped and stays on Aurora MySQL, so later waves move 3.
         assert (
             "4 of these tables and views are mapped to a target engine in the migration map; "
-            "later waves move 3 of the 6 off Aurora MySQL, and the other 3 stay on Aurora MySQL."
+            "later waves move 3 of the 6 off Aurora MySQL, and the other 3 stay on Aurora MySQL: "
+            "1 migration-map row that does not migrate and 2 tables and views the map does "
+            "not list."
         ) in aurora["rationale"]
 
     def test_a_mapped_table_that_stays_on_aurora_is_never_said_to_move(self):
@@ -337,8 +353,28 @@ class TestAuroraWave:
         rationale = waves[0]["rationale"]
         assert "in a later wave" not in rationale
         assert "later waves move 3 of the 4 off Aurora MySQL" in rationale
-        # One table left: singular agreement.
-        assert "the other 1 stays on Aurora MySQL." in rationale
+        # One table left: singular agreement, and every staying table is a map row.
+        assert (
+            "the other 1 stays on Aurora MySQL: 1 migration-map row that does not migrate."
+        ) in rationale
+
+    def test_the_staying_tables_are_named_by_basis_so_they_add_up_to_the_map(self):
+        """The discourse judge read the map's "128 stay on the source engine" next to wave
+        1's "the other 232 stay on Aurora" as unexplained: the 232 are the map rows that do
+        not migrate (its kept-in-sync and stay rows) plus the tables no design maps, and
+        the sentence says so."""
+        few = _build(mapped_tables={"wp_options"})[0]["rationale"]
+        # The 3 that move are not mapped here: the staying count still splits right.
+        assert (
+            "later waves move 3 of the 4 off Aurora MySQL, and the other 1 stays on Aurora "
+            "MySQL: 1 migration-map row that does not migrate."
+        ) in few
+        none_mapped = _build(
+            known_tables=KNOWN_TABLES | {"wp_never_queried"}, mapped_tables={"wp_posts"}
+        )[0]["rationale"]
+        assert (
+            "and the other 2 stay on Aurora MySQL: 2 tables and views the map does not list."
+        ) in none_mapped
 
     def test_the_moved_count_does_not_depend_on_what_is_mapped(self):
         # Only the migration map's count follows mapped_tables; what later waves
@@ -748,6 +784,17 @@ class TestDynamoDbWave:
             {"tables": ["wp_postmeta", "wp_posts"], "query_count": 2, "kind": "co_dependency"},
             {"tables": ["wp_comments"], "query_count": 0, "kind": "independent"},
         ]
+
+    def test_the_rationale_cites_the_cache_wave_only_when_the_plan_has_one(self):
+        """A plan with no cache wave never says the key-value wave follows one (the
+        discourse judge's phantom "cache wave"); a plan with one still says so."""
+        with_cache = _build()
+        assert with_cache[1]["engines"] == ["elasticache"]
+        assert "once the cache wave has absorbed the read pressure" in with_cache[2]["rationale"]
+        without = _build(cache_overlay=None)
+        dynamo = next(w for w in without if w["engines"] == ["dynamodb"])
+        assert "cache" not in dynamo["rationale"]
+        assert dynamo["rationale"].endswith("the pattern DynamoDB fits best.")
 
     def test_tables_with_no_co_dependency_group_form_their_own_independent_group(self):
         waves = _build(co_dependency_groups=[])

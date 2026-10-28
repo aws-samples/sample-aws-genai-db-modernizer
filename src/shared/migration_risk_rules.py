@@ -90,7 +90,7 @@ RULES: dict[str, RiskRule] = {
     "relational.gaps": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "relational gaps"),
     "cache.dropped": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "dropped cache reads"),
     "cache.unsupported": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "unsupported cache patterns"),
-    "design.app_layer": RiskRule("MEDIUM", "OPERATIONAL_RISK", "logic moved to the application"),
+    "design.app_layer": RiskRule("MEDIUM", "OPERATIONAL_RISK", "source objects' database logic"),
     "design.hot_partition": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "hot partitions"),
     "design.trade_offs": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "design trade-offs"),
     "design.redesign": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "redesigns routing relies on"),

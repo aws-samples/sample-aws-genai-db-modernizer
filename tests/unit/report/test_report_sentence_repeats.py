@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from src.report.engine_choices import pending_choices_md
+from src.report.engineering_report import _SaidOnce
 from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
 from src.shared.design_text import carried_write_detail, split_carried_write_detail
@@ -112,6 +113,24 @@ def test_open_risks_state_a_shared_sentence_once(report: dict[str, Any]) -> None
     register = section(render_engineering_report_md(report), "Risk register")
     assert register.count("Aurora serves single-table CRUD natively") == 1
     assert "Stated under RISK-901." in register
+
+
+def test_a_pointer_is_stated_once_where_two_sentences_point_at_one_place() -> None:
+    """The discourse judge read "Stated in the X migration note. Stated in the X
+    migration note." in one mitigation: two repeated sentences in a row that point at
+    the same place are one pointer."""
+    said = _SaidOnce()
+    first = (
+        "DynamoDB has no triggers, so the application writes the audit row itself on every "
+        "insert. The application also checks the approval flag before it accepts every reply "
+        "a user posts."
+    )
+    said.line(first, "in the x migration note")
+    assert said.line(first, "under RISK-001") == "Stated in the x migration note."
+    mixed = said.line(f"{first} A new sentence that nothing before has said at all.", "y")
+    assert mixed == (
+        "Stated in the x migration note. A new sentence that nothing before has said at all."
+    )
 
 
 def test_a_short_sentence_is_never_replaced(report: dict[str, Any]) -> None:

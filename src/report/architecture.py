@@ -13,6 +13,7 @@ from src.shared.report_facts import (
     MAP_SEARCH_READ_MODEL,
     MAP_SPLIT_ORDER,
     MAP_STAYS,
+    wave_retained_engine,
 )
 
 from .engine_roles import SEARCH_READ_MODEL
@@ -142,9 +143,13 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]] | None
     by_move = (report_facts(report).get("table_basis") or {}).get("mapped_tables_by_move") or {}
     if set(by_move) <= {MAP_MIGRATE}:
         return ""
-    return ": " + ", ".join(
-        f"{by_move[k]} {_MAP_PHRASE[k]}" for k in MAP_SPLIT_ORDER if by_move.get(k)
-    )
+    # The tables that stay, stay on wave 1's engine: name it, so "stay" is never read as
+    # the source database next to wave 1's "the other N stay on Aurora" (#1642).
+    retained = wave_retained_engine(report.get("migration_waves"))
+    phrase = dict(_MAP_PHRASE)
+    if retained:
+        phrase[MAP_STAYS] = f"stay on {display_engine(retained)}"
+    return ": " + ", ".join(f"{by_move[k]} {phrase[k]}" for k in MAP_SPLIT_ORDER if by_move.get(k))
 
 
 def _n_tables_mapped(report: dict[str, Any]) -> tuple[int, bool]:

@@ -15,7 +15,7 @@ from src.shared.design_text import (
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import executive_brief_text
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
-from src.shared.report_facts import CACHE_LAYER, query_group_at
+from src.shared.report_facts import CACHE_LAYER, query_group_at, same_label_places
 from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
@@ -914,6 +914,21 @@ def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> 
 # A sentence this long is stated once in the report's risk sections (#1454); the same
 # length the report guard (``tests/report_concision.py``) holds every sample to.
 _ONCE_MIN_WORDS = 15
+# A resolved risk's reason this short is stated by every risk it resolves, so each line
+# reads on its own: "Resolved because" plus the reason stays under ``_ONCE_MIN_WORDS``, the
+# length the report never repeats. A longer one is stated once, under the first, and the
+# others name that risk (#1410, #1642).
+RESOLVED_REASON_REPEAT_WORDS = _ONCE_MIN_WORDS - 3
+_ORDINALS = {
+    1: "first",
+    2: "second",
+    3: "third",
+    4: "fourth",
+    5: "fifth",
+    6: "sixth",
+    7: "seventh",
+    8: "eighth",
+}
 _SENTENCE_END = re.compile(r"((?<=[.!?])[:;]?\s+)")
 
 
@@ -934,15 +949,26 @@ class _SaidOnce:
         """``text`` with each long sentence stated before replaced by a pointer to
         ``where`` (the first line's own label: ``under RISK-001`` or ``above``)."""
         parts = _SENTENCE_END.split(text)
+        previous = ""  # the pointer the sentence before became, if it became one
         for i in range(0, len(parts), 2):
             key = " ".join(parts[i].replace("**", "").split()).strip(" -*:,.;")
             if len(key.split()) < _ONCE_MIN_WORDS:
+                previous = ""
                 continue
             if key in self._seen:
+                pointer = f"Stated {self._seen[key]}"
+                if pointer == previous:
+                    # Two repeated sentences in a row pointing at one place: one pointer
+                    # (the judge read "Stated in the X note. Stated in the X note.").
+                    parts[i] = ""
+                    parts[i - 1] = ""
+                    continue
                 end = parts[i][len(parts[i].rstrip(" .;:,")) :]
-                parts[i] = f"Stated {self._seen[key]}{end or '.'}"
+                parts[i] = f"{pointer}{end or '.'}"
+                previous = pointer
             else:
                 self._seen[key] = where
+                previous = ""
         return "".join(parts)
 
 
@@ -1021,7 +1047,15 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
         by_reason: dict[str, list[dict[str, Any]]] = {}
         for r in resolved:
             by_reason.setdefault(str(r.get("reason") or ""), []).append(r)
+        # A pointer names its risk exactly: by label, with its place among the resolved
+        # risks that share the label when several do (the review on #1644).
+        listed = [r for m in by_reason.values() for r in m]
+        places = same_label_places([resolved_risk_label(r) for r in listed])
+        place_of = {id(r): p for r, p in zip(listed, places, strict=True)}
         for reason, members in by_reason.items():
+            place = place_of.get(id(members[0]))
+            nth = f"{_ORDINALS.get(place, f'#{place}')} " if place else ""
+            first_label = f"{nth}{escaping.md_text(resolved_risk_label(members[0]))}"
             for i, r in enumerate(members):
                 _, body = _risk_engine_and_body(r.get("description"))
                 where = resolved_risk_label(r)
@@ -1033,10 +1067,10 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
                         "above",
                     )
                 )
-                if reason and i == 0:
+                if reason and (i == 0 or len(reason.split()) <= RESOLVED_REASON_REPEAT_WORDS):
                     out.append(f"  - Resolved because {escaping.md_text(reason)}.")
                 elif reason:
-                    out.append("  - Resolved for the same reason as the risk above.")
+                    out.append(f"  - Resolved for the same reason as the {first_label} risk above.")
                 # #950: a resolved risk keeps naming its tables, as an open one does.
                 affects = _affects_line(r)
                 if affects:

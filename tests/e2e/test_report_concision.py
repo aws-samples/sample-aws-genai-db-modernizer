@@ -16,7 +16,9 @@ import re
 
 import pytest
 
-from src.report.escaping import md_text
+from src.report.escaping import md_code, md_text
+from src.report.renderers import render_engineering_report_md
+from src.shared.gate_facts import GATE_TABLES_SHOWN
 from tests.e2e.pipeline import PipelineResult
 from tests.report_concision import (
     bare_ids,
@@ -40,9 +42,16 @@ def test_the_sources_of_truth_state_each_risk_once(run: PipelineResult) -> None:
     assert repeated_sentences(body) == []
 
 
-def test_each_wave_states_each_sentence_and_table_list_once(run: PipelineResult) -> None:
-    md = _md(run)
-    report = json.loads(run.report_json().read_text())
+# The pointer a capped gate list ends with (#1642, ``roadmap._gate_text``).
+MAP_POINTER = "the Migration map above lists each with its owner and readers"
+
+
+def _check_wave_lists(md: str, report: dict) -> None:
+    """Each wave section states each sentence once, and every table a gate list holds
+    is still named: in its wave, in "Sources of truth and replicas" when the gate refers
+    there (#1219 review: a list is referred to only where it is shown in full), or, for
+    a list capped at ``GATE_TABLES_SHOWN`` names (#1642), its first names in the gate
+    and every table in the Migration map the gate points to."""
     waves = {int(w["wave"]): w for w in report.get("migration_waves") or []}
     for heading, body in md_sections(section(md, "Migration roadmap"), 3):
         assert repeated_sentences(body) == [], heading
@@ -54,14 +63,53 @@ def test_each_wave_states_each_sentence_and_table_list_once(run: PipelineResult)
             if items and set(items) == set(kept):
                 # The kept-in-sync bullet names them; the gate refers to it.
                 assert md_text(", ".join(items)) not in gate, heading
-            # Every table a gate list holds is still named in its wave, or in "Sources
-            # of truth and replicas" when the gate refers there (#1219 review: a list
-            # is referred to only where it is shown in full).
+            capped = (
+                len(items) > GATE_TABLES_SHOWN
+                and md_text(
+                    f"{items[GATE_TABLES_SHOWN - 1]} and {len(items) - GATE_TABLES_SHOWN} more"
+                )
+                in gate
+            )
+            if capped:
+                assert md_text(MAP_POINTER) in gate, heading
+                first = ", ".join(items[:GATE_TABLES_SHOWN])
+                assert md_text(first) in gate, (heading, first)
+                mapped = section(md, "Migration map")
+                for table in items[GATE_TABLES_SHOWN:]:
+                    assert f"`{md_code(table)}`" in mapped, (heading, table)
+                continue
             named = body
             if 'listed under "Sources of truth and replicas"' in gate:
                 named += section(md, "Sources of truth and replicas")
             for table in items:
                 assert md_text(table) in named or f"`{table}`" in named, (heading, table)
+
+
+def test_each_wave_states_each_sentence_and_table_list_once(run: PipelineResult) -> None:
+    _check_wave_lists(_md(run), json.loads(run.report_json().read_text()))
+
+
+@pytest.mark.deterministic
+def test_a_capped_gate_list_names_its_first_tables_and_the_map_names_the_rest(
+    designed_run: PipelineResult,
+) -> None:
+    """The deterministic samples' gate lists stay at 5 tables or fewer, so the cap only
+    ran on a model run (the scoped discourse wave 2 gate: 70 tables). Force one here:
+    a gate list of every Migration map row that another engine reads is capped in the
+    wave section, and the check above finds each table in the map."""
+    report = json.loads(designed_run.report_json().read_text())
+    lines = report["facts"]["table_owner_lines"]["table_lines"]
+    tables = [r["table"] for r in lines][: GATE_TABLES_SHOWN + 4]
+    assert len(tables) > GATE_TABLES_SHOWN
+    wave = report["migration_waves"][-1]
+    wave["gate_parts"] = [
+        {"text": f"Check. {len(tables)} tables", "items": tables},
+        {"text": " stay dual-read.", "items": []},
+    ]
+    wave["gate"] = f"Check. {len(tables)} tables ({', '.join(tables)}) stay dual-read."
+    md = render_engineering_report_md(report)
+    assert md_text(MAP_POINTER) in md
+    _check_wave_lists(md, report)
 
 
 def test_the_reality_check_reason_is_stated_once(run: PipelineResult) -> None:

@@ -30,8 +30,11 @@ rule                       severity  raised when
                                      source of truth (``facts.table_sources.replicated_tables``;
                                      for an assignment written before write groups, the wave's
                                      ``kept_in_sync`` and ``shared_in_wave`` tables)
-                           LOW       the wave only reads tables no captured query writes: a
-                                     one-time copy (``facts.waves[].kept_in_sync``)
+                           LOW       the wave's only copies are of tables no captured query
+                                     writes: a one-time copy, both ways (a table the wave reads
+                                     from another owner, ``facts.waves[].kept_in_sync``, and one
+                                     the wave owns that another engine reads); with CDC copies
+                                     too, the risk states the total the two counts add up to
 ``routing.close_calls``    MEDIUM    a query in the wave moved to its engine by less than
                                      ``CLOSE_CALL_MARGIN`` points over the runner-up
                            LOW       every such query stays on the source-compatible engine
@@ -50,9 +53,13 @@ rule                       severity  raised when
 ``cache.unsupported``      MEDIUM    the cache layer's design lists unsupported patterns (an
                                      engine that only fronts reads is never raised by the
                                      per-engine risk loop); one risk per engine
-``design.app_layer``       MEDIUM    a relational design moves source objects' logic
-                                     (trigger, procedure, ...) into the application; one
+``design.app_layer``       MEDIUM    a design notes source objects whose logic moves into the
+                                     application (an extension, or any object on an engine
+                                     that is not wave 1's for a homogeneous source); one
                                      risk per engine
+                           LOW       every noted object is a trigger or routine on wave 1's
+                                     engine for a homogeneous source: it carries over with
+                                     the schema and is tested after cutover (#1642)
 ``design.hot_partition``   MEDIUM    design partitions run above 80% of their limit at peak;
                            HIGH      at ``HOT_PARTITION_HIGH_PCT`` or more; one per engine
 ``design.trade_offs``      MEDIUM    an engine's schema design records trade-offs to review;
@@ -106,7 +113,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.agents.referee.cache_overlay import is_write_query
@@ -133,7 +140,12 @@ from src.shared.migration_risk_rules import (
     wave_gate_strategies,
     wave_of_engine,
 )
-from src.shared.report_facts import CLOSE_CALL_MARGIN, RELATIONAL_ENGINES, wave_facts
+from src.shared.report_facts import (
+    CLOSE_CALL_MARGIN,
+    RELATIONAL_ENGINES,
+    non_owner_read_tables_by_wave,
+    wave_facts,
+)
 from src.shared.risk_severity import overall_risk_level
 from src.shared.unsupported_pattern import unsupported_pattern_ids
 
@@ -265,15 +277,19 @@ class _WaveSync:
     split_writers: set[str]
     pairs: dict[tuple[str, str], tuple[set[str], set[str]]]  # (source, replica) -> tables, reads
     kept: set[str]  # kept in sync by CDC from an owner outside the wave (older assignments)
-    copy_once: set[str]  # read here, written by no captured query
+    copy_once: set[str]  # read on an engine that does not own it, written by no captured query
     queries: set[str]
+    split_queries: set[str] = field(default_factory=set)  # the split tables' writes
 
 
 def _sync_risks(
     ctx: _Context,
     table_sources: list[dict[str, Any]] | None,
     normalise: Callable[[Iterable[str]], set[str]],
+    copy_lines: Iterable[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    if copy_lines is not None and table_sources is not None:
+        return _sync_risks_from_lines(ctx, table_sources, normalise, list(copy_lines))
     by_wave: dict[int, _WaveSync] = {}
 
     def slot(n: int) -> _WaveSync:
@@ -300,7 +316,9 @@ def _sync_risks(
                     s = slot(n)
                     s.split |= tables
                     s.split_writers |= writers
-                    s.queries |= {str(q) for q in row.get("write_query_ids") or [] if q}
+                    writes = {str(q) for q in row.get("write_query_ids") or [] if q}
+                    s.queries |= writes
+                    s.split_queries |= writes
                     covered |= tables
                 continue
             for replica in row.get("replicas") or []:
@@ -343,13 +361,143 @@ def _sync_risks(
             ws.queries |= {
                 q for q in mine if ctx.tables_of.get(q, set()) & (ws.copy_once | ws.kept)
             }
+        if table_sources is not None:
+            _owned_copies_read_elsewhere(ctx, w, engines, written | covered, slot)
     out: list[dict[str, Any]] = []
     for n in sorted(by_wave):
         out.append(_wave_sync_risk(ctx, n, by_wave[n]))
     return out
 
 
-def _wave_sync_risk(ctx: _Context, n: int, s: _WaveSync) -> dict[str, Any]:
+def _sync_risks_from_lines(
+    ctx: _Context,
+    table_sources: list[dict[str, Any]],
+    normalise: Callable[[Iterable[str]], set[str]],
+    lines: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The sync risks from the tables' owner lines (#1642): each wave's tables read off
+    their owner are ``non_owner_read_tables_by_wave``'s, the computation the facts
+    layer's ``also_read_table_count`` adds up, so the risk and the count never disagree.
+    A written table is a CDC copy from its owner to each reader, one written by no
+    captured query a one-time copy; a table with no single writer keeps its own
+    sentence (two-way sync), as before. The evidence is the readers' queries."""
+    by_wave: dict[int, _WaveSync] = {}
+
+    def slot(n: int) -> _WaveSync:
+        return by_wave.setdefault(n, _WaveSync(set(), set(), {}, set(), set(), set()))
+
+    rows = {
+        next(iter(normalise([str(r["table"])])), str(r["table"])): r
+        for r in table_sources
+        if isinstance(r, dict) and r.get("table")
+    }
+    readers_of = {
+        next(iter(normalise([str(line["table"])])), str(line["table"])): [
+            str(e) for e in line.get("also_read_by") or [] if e
+        ]
+        for line in lines
+        if line.get("table")
+    }
+    owner_of = {
+        next(iter(normalise([str(line["table"])])), str(line["table"])): str(
+            line.get("owner") or ""
+        )
+        for line in lines
+        if line.get("table")
+    }
+    per_wave = non_owner_read_tables_by_wave(lines, ctx.wave_of_engine)
+    total = sum(len(t) for t in per_wave.values())
+    for n, tables in per_wave.items():
+        resolved = sorted(normalise(tables))
+        if n is None or not resolved:
+            continue  # no wave, or no collected table left to copy: nothing to raise
+        s = slot(n)
+        for table in resolved:
+            row = rows.get(table)
+            readers = readers_of.get(table) or []
+            reads = {
+                q
+                for q, e in ctx.engine_of.items()
+                if e in readers and table in ctx.tables_of.get(q, set())
+            }
+            if row is not None and not row.get("source_of_truth"):
+                writers = {str(e) for e in row.get("write_engines") or [] if e}
+                s.split.add(table)
+                s.split_writers |= writers
+                writes = {str(q) for q in row.get("write_query_ids") or [] if q}
+                s.queries |= writes
+                s.split_queries |= writes
+                continue
+            replicas = [
+                r
+                for r in (row or {}).get("replicas") or []
+                if isinstance(r, dict) and r.get("engine")
+            ]
+            if row is None:
+                s.copy_once.add(table)
+                s.queries |= reads
+                continue
+            if not replicas:
+                # Written, but its readers are not recorded as replicas: CDC to each.
+                replicas = [
+                    {"engine": e, "read_query_ids": [q for q in reads if ctx.engine_of[q] == e]}
+                    for e in readers
+                ]
+            # A written table: CDC from its source of truth to each replica, with the
+            # replica's reads (``table_sources``, #992).
+            source = str(row.get("source_of_truth") or owner_of.get(table) or "")
+            for replica in replicas:
+                replica_reads = {str(q) for q in replica.get("read_query_ids") or [] if q}
+                pair = s.pairs.setdefault((source, str(replica["engine"])), (set(), set()))
+                pair[0].add(table)
+                pair[1].update(replica_reads)
+                s.queries |= replica_reads
+    migrating = sum(1 for w in ctx.waves if wave_facts(w)["migrating"])
+    return [
+        _wave_sync_risk(ctx, n, by_wave[n], plan_total=total if migrating > 1 else None)
+        for n in sorted(by_wave)
+        if by_wave[n].pairs or by_wave[n].copy_once or by_wave[n].split
+    ]
+
+
+def _owned_copies_read_elsewhere(
+    ctx: _Context,
+    wave: Mapping[str, Any],
+    engines: list[str],
+    skip: set[str],
+    slot: Callable[[int], _WaveSync],
+) -> None:
+    """The other direction of a wave's copies: the tables its own engines own that a
+    query on another engine reads, written by no captured query (``skip`` is every
+    written table), go to the later of the two engines' waves as a one-time copy, the
+    rule the CDC pairs follow, with the reads as evidence. Without this the risk counted
+    only the copies the wave reads (the discourse judge's "81 tables" plus "37 more"
+    against the gate's 70 dual-read and 64 kept-in-sync tables)."""
+    owners = {str(o.get("table")) for o in _wave_owner_entries(wave)}
+    owned = {str(t) for t in wave.get("tables") or []} - owners
+    here = set(engines)
+    n = int(wave_facts(dict(wave))["wave"])
+    for q, engine in ctx.engine_of.items():
+        if engine in here:
+            continue
+        hit = (ctx.tables_of.get(q, set()) & owned) - skip
+        if not hit:
+            continue
+        other = ctx.wave_of_engine.get(engine)
+        target = slot(max(n, other) if other else n)
+        target.copy_once |= hit
+        target.queries.add(q)
+
+
+def _wave_owner_entries(wave: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [o for o in wave.get("table_owners") or [] if isinstance(o, Mapping) and o.get("table")]
+
+
+def _wave_sync_risk(
+    ctx: _Context, n: int, s: _WaveSync, plan_total: int | None = None
+) -> dict[str, Any]:
+    """``plan_total``, when a plan has several migrating waves, is every table read off
+    its owner across the plan: the risk then says how many this wave's gate brings in."""
     sentences: list[str] = []
     steps: list[str] = []
     if s.split:
@@ -361,15 +509,34 @@ def _wave_sync_risk(ctx: _Context, n: int, s: _WaveSync) -> dict[str, Any]:
         )
         steps.append(f"give {_these(k, 'table', 'tables')} one writer")
     synced = set().union(*(t for t, _ in s.pairs.values())) if s.pairs else set()
+    # One-time copies are only the tables no CDC pair already carries.
+    once = s.copy_once - synced - s.split
+    both = bool(s.pairs) and bool(once)
     if s.pairs:
         reads = set().union(*(r for _, r in s.pairs.values()))
         k, m, pairs = len(synced), len(reads), len(s.pairs)
         sources = sorted({src for src, _ in s.pairs})
-        sentences.append(
-            f"{_n(m, 'read runs', 'reads run')} on a copy of {_n(k, 'table', 'tables')} that CDC "
-            f"keeps in sync from {_names(sources)} across {_n(pairs, 'engine pair', 'engine pairs')}, "
-            "so a read there can miss a recent write."
-        )
+        across = f"across {_n(pairs, 'engine pair', 'engine pairs')}"
+        if both:
+            # Both kinds of copy: every query and table first (the query count is the
+            # risk's evidence, ``query_ids``), then the ones on a CDC copy, so the
+            # counts add up (the judge read "435 reads" against 531 query ids).
+            readers = len(s.queries - (s.split_queries - reads))
+            sentences.append(
+                f"{_n(readers, 'query reads', 'queries read')} {len(synced | once)} tables "
+                "on an engine that does not own them."
+            )
+            sentences.append(
+                f"{m} of them {'reads' if m == 1 else 'read'} a copy of "
+                f"{_n(k, 'table', 'tables')} that CDC keeps in sync from {_names(sources)} "
+                f"{across}, so a read there can miss a recent write."
+            )
+        else:
+            sentences.append(
+                f"{_n(m, 'read runs', 'reads run')} on a copy of {_n(k, 'table', 'tables')} "
+                f"that CDC keeps in sync from {_names(sources)} {across}, so a read there "
+                "can miss a recent write."
+            )
         steps.append(
             "set up CDC for each engine pair the sources of truth section lists, and send any "
             "read that must see its own write to its source of truth"
@@ -381,12 +548,19 @@ def _wave_sync_risk(ctx: _Context, n: int, s: _WaveSync) -> dict[str, Any]:
             f"outside it, so CDC must keep {'its copy' if k == 1 else 'each copy'} current."
         )
         steps.append("set up CDC for the tables owned outside the wave")
-    if s.copy_once:
-        k = len(s.copy_once)
-        sentences.append(
-            f"{_n(k, 'more table is', 'more tables are')} read here and written by no captured "
-            f"query, so a one-time copy serves {_them(k)}."
-        )
+    if once:
+        k = len(once)
+        if both:
+            other = "The other table is" if k == 1 else f"The other {k} tables are"
+            sentences.append(
+                f"{other} written by no captured query, so a one-time copy serves {_them(k)}."
+            )
+        else:
+            sentences.append(
+                f"{_n(k, 'more table is', 'more tables are')} read on an engine that does not "
+                f"own {_them(k)} and written by no captured query, so a one-time copy serves "
+                f"{_them(k)}."
+            )
         steps.append(
             "copy the read-only tables once and confirm nothing outside the captured workload "
             "writes them"
@@ -401,6 +575,12 @@ def _wave_sync_risk(ctx: _Context, n: int, s: _WaveSync) -> dict[str, Any]:
     if not (s.pairs or s.split or s.kept):
         first = first.replace("more table is", "table is").replace("more tables are", "tables are")
     sentences[0] = f"Wave {n}: {first}"
+    if plan_total is not None:
+        mine = len(synced | once | s.split | s.kept)
+        sentences.append(
+            f"Across the plan, {plan_total} tables are read on an engine that does not own "
+            f"them; this wave's gate brings in {mine}."
+        )
     mitigation = (
         f"Before Wave {n} starts, " + "; ".join(steps) + f". Compare the row counts on both "
         f"sides at the {_gate(n)}."
@@ -410,7 +590,7 @@ def _wave_sync_risk(ctx: _Context, n: int, s: _WaveSync) -> dict[str, Any]:
         _wave_tag(ctx, n),
         " ".join(sentences),
         mitigation,
-        s.split | synced | s.kept | s.copy_once,
+        s.split | synced | s.kept | once,
         s.queries,
         n,
         severity=severity,
@@ -635,13 +815,33 @@ def _cache_risks(
 # ---------------------------------------------------------------------------
 
 
+# Source logic a source-compatible engine runs as the source does: wave 1 moves a
+# homogeneous source 1:1, so these carry over with the schema (#1642).
+_CARRIED_FEATURES = frozenset({"trigger", "function", "procedure", "stored procedure", "routine"})
+
+
+def _homogeneous_engines(ctx: _Context) -> set[str]:
+    return {
+        str(e)
+        for w in ctx.waves
+        if w.get("homogeneity") == "homogeneous"
+        for e in w.get("engines") or []
+    }
+
+
 def _app_layer_risks(
     ctx: _Context,
     schema_designs: Mapping[str, Mapping[str, Any]],
     trigger_tables: Mapping[str, str],
 ) -> list[dict]:
-    """One risk per engine: the source objects whose logic moves to the application."""
+    """One risk per engine for the source objects its design notes. On wave 1's engine
+    for a homogeneous source a trigger or routine carries over with the schema (#1642):
+    LOW, resting on the engine family alone (the collector reports no feature
+    compatibility), and the risk defers to the design's note for any application work,
+    never stating an outcome the note may contradict. Any other noted object needs
+    application code: MEDIUM."""
     out: list[dict[str, Any]] = []
+    same_family = _homogeneous_engines(ctx)
     for engine in sorted(schema_designs):
         notes = [
             n
@@ -650,34 +850,79 @@ def _app_layer_risks(
         ]
         if not notes:
             continue
-        by_feature: dict[str, list[str]] = {}
+        carried: dict[str, list[str]] = {}
+        coded: dict[str, list[str]] = {}
         for note in notes:
             feature = str(note.get("feature") or "object").strip().replace("_", " ").lower()
-            by_feature.setdefault(feature or "object", []).append(
-                str(note.get("source_object") or "").strip()
-            )
-        # Only a collected object is named (the executive report strips the
-        # collected names); a model-written name stays out of the text.
-        named = sorted({o for objs in by_feature.values() for o in objs if o in trigger_tables})
-        kinds = [
-            _n(len(objs), feature, feature if feature.endswith("s") else f"{feature}s")
-            for feature, objs in sorted(by_feature.items())
-        ]
-        k = len(notes)
+            feature = feature or "object"
+            into = carried if engine in same_family and feature in _CARRIED_FEATURES else coded
+            into.setdefault(feature, []).append(str(note.get("source_object") or "").strip())
+        name = display_engine(engine)
         wave = ctx.wave_of_engine.get(engine)
-        listed = f" ({', '.join(named)})" if named else ""
+        sentences: list[str] = []
+        steps: list[str] = []
+        named_all: set[str] = set()
+        for group, carries in ((coded, False), (carried, True)):
+            if not group:
+                continue
+            # Only a collected object is named (the executive report strips the
+            # collected names); a model-written name stays out of the text.
+            named = sorted({o for objs in group.values() for o in objs if o in trigger_tables})
+            named_all |= set(named)
+            kinds = [
+                _n(len(objs), feature, feature if feature.endswith("s") else f"{feature}s")
+                for feature, objs in sorted(group.items())
+            ]
+            k = sum(len(objs) for objs in group.values())
+            listed = f" ({', '.join(named)})" if named else ""
+            things = _join(sorted(group))
+            if carries:
+                # The rating rests on the engine family only: the collector reports no
+                # feature compatibility, and the design's note says what application work
+                # the object needs, so the risk defers to it (the re-review on #1644).
+                sentences.append(
+                    f"{_n(k, 'source object carries', 'source objects carry')} over to {name} "
+                    f"with the schema{listed}: {listed_items(kinds)}. This rests on {name} "
+                    "being the source's engine family; the collector reports no feature "
+                    "compatibility, so the schema design's note for each says what "
+                    "application work it needs."
+                )
+                steps.append(
+                    f"test the {things} on {name} against the source's behaviour and do the "
+                    "application work its note names"
+                )
+            else:
+                sentences.append(
+                    f"{_n(k, 'source object needs', 'source objects need')} application code "
+                    f"on {name}{listed}: {listed_items(kinds)}. The schema carries {_them(k)} "
+                    "over without the database logic."
+                )
+                steps.append(f"move the logic of the {things} into the application")
+        if coded and carried:
+            mitigation = (
+                f"{steps[0][:1].upper()}{steps[0][1:]} before the {_gate(wave)}, and {steps[1]}, "
+                "as the schema design's note for each says."
+            )
+        elif coded:
+            mitigation = (
+                f"Move the logic of each one into the application before the {_gate(wave)}, "
+                "as the schema design's note for it says."
+            )
+        else:
+            mitigation = (
+                f"Before the {_gate(wave)}, test each one on {name} against the source's "
+                "behaviour and do the application work the schema design's note for it names."
+            )
         out.append(
             _risk(
                 "design.app_layer",
                 engine,
-                f"{_n(k, 'source object needs', 'source objects need')} application code on "
-                f"{display_engine(engine)}{listed}: {listed_items(kinds)}. The schema carries "
-                f"{_them(k)} over without the database logic.",
-                f"Move the logic of each one into the application before the {_gate(wave)}, "
-                "as the schema design's note for it says.",
-                {trigger_tables[o] for o in named},
+                " ".join(sentences),
+                mitigation,
+                {trigger_tables[o] for o in named_all},
                 [],
                 wave,
+                severity=None if coded else "LOW",
             )
         )
     return out
@@ -828,7 +1073,7 @@ def _redesign_risks(
             if unknown
             else ""
         )
-        details = [d for qid in sorted(queries) if (d := _redesign_detail(queries[qid]))]
+        details = _redesign_details([queries[qid] for qid in sorted(queries)])
         if keys:
             body = (
                 f": it scored {_them(k)} with {_n(len(keys), 'key', 'keys')} the source does "
@@ -868,17 +1113,45 @@ def _redesign_risks(
     return out
 
 
+def _redesign_details(rows: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Each query's redesign as one detail line, except that queries with no evidence of
+    their own whose keys change the read the same way are one line naming every key
+    ("Keys on a.x and b.y: each read as ..."): the same sentence once per key read as
+    repetition (the discourse judge counted one line eight times)."""
+    lines: list[str] = []
+    shared: dict[str, set[str]] = {}
+    for r in rows:
+        columns = [str(key.get("column")) for key in r.get("assumed_keys") or []]
+        read_as = _read_as(r)
+        evidence = [text for e in r.get("evidence") or [] if (text := _item(str(e)))]
+        if columns and read_as and not evidence:
+            shared.setdefault(read_as, set()).update(columns)
+        elif line := _redesign_detail(r):
+            lines.append(line)
+    for read_as, key_columns in shared.items():
+        keys = _join(sorted(key_columns))
+        lines.append(
+            f"A key on {keys}: {read_as}."
+            if len(key_columns) == 1
+            else f"Keys on {keys}: each {read_as}."
+        )
+    return lines
+
+
+def _read_as(r: Mapping[str, Any]) -> str:
+    """The read a redesign makes of a query ("read as X instead of Y"), or ''."""
+    after = r.get("class_after_redesign")
+    if not after:
+        return ""
+    return f"read as {_class_words(after)} instead of {_class_words(r.get('class_as_written'))}"
+
+
 def _redesign_detail(r: Mapping[str, Any]) -> str:
     """One query's redesign as sentences (#1410): the key it gains and the read it
     becomes, then its evidence; a query that gains no key states only what it reads
     as, or its evidence. Access-pattern classes are named in words, never by id."""
     columns = ", ".join(str(key.get("column")) for key in r.get("assumed_keys") or [])
-    after = r.get("class_after_redesign")
-    read_as = (
-        f"read as {_class_words(after)} instead of {_class_words(r.get('class_as_written'))}"
-        if after
-        else ""
-    )
+    read_as = _read_as(r)
     head = f"A key on {columns}" + (f": {read_as}" if read_as else "") if columns else read_as
     sentences = [head[:1].upper() + head[1:]] if head else []
     sentences += [_sentence(text) for e in r.get("evidence") or [] if (text := _item(str(e)))]
@@ -1007,6 +1280,7 @@ def build_migration_risks(
     scope_unservable: list[dict[str, Any]] | None = None,
     redesign_requirements: Iterable[Mapping[str, Any]] | None = None,
     carried_writes: Iterable[Mapping[str, Any]] | None = None,
+    copy_lines: Iterable[Mapping[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -1017,6 +1291,11 @@ def build_migration_risks(
     ``cache_only_engines`` the engines that only front reads (never an
     ``assigned_engine``); ``trigger_tables`` maps a collected trigger's name
     to its table; ``normalise`` maps table names to the collector's ids;
+    ``copy_lines`` are the tables' owner lines (``table_owner_fields``: owner and the
+    engines that also read each), when the caller has them: the sync risk then reads its
+    per-wave tables from ``report_facts.non_owner_read_tables_by_wave``, the computation
+    behind ``table_owner_lines.also_read_table_count`` (#1642, ADR-032).
+
     ``table_sources`` is report.json's ``table_sources`` (None for an
     assignment written before write groups); ``flagged_unservable`` its
     ``flagged_unservable`` rows (#888, #1148); ``relational_gaps`` the gap check
@@ -1036,7 +1315,7 @@ def build_migration_risks(
         migration_waves or [], query_assignments or [], source_queries or [], norm, source_engine
     )
     risks = [
-        *_sync_risks(ctx, table_sources, norm),
+        *_sync_risks(ctx, table_sources, norm, copy_lines),
         *_unservable_risks(ctx, query_traces),
         *_tie_risks(ctx, tied_queries),
         *_close_call_risks(ctx, query_traces),

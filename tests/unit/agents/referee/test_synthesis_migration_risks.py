@@ -192,8 +192,16 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
     assert sync["severity"] == "MEDIUM"
     assert "orders" in sync["affected_tables"]
     assert "rel1" in sync["query_ids"]
+    # users is DynamoDB's, never written, and Aurora MySQL reads it: a one-time copy the
+    # risk counts with the CDC copy, so the two add up to the tables read off their owner.
+    assert "users" in sync["affected_tables"] and "rel_users" in sync["query_ids"]
     assert sync["description"].startswith(
-        "[dynamodb] Wave 2: 1 read runs on a copy of 1 table that CDC keeps in sync from DynamoDB"
+        f"[dynamodb] Wave 2: {len(sync['query_ids'])} queries read 2 tables on an engine "
+        "that does not own them. 1 of them reads a copy of 1 table that CDC keeps in sync "
+        "from DynamoDB"
+    )
+    assert sync["description"].endswith(
+        "The other table is written by no captured query, so a one-time copy serves it."
     )
     _write_synthesis_report(store, result, assignment_version=2)
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
