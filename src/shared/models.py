@@ -140,12 +140,16 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
         max_tokens=65536,
         max_tokens_env="SCHEMA_AGENT_MAX_TOKENS",
         # ElastiCache passes 32768; on Opus 5.5 at effort high, thinking plus the
-        # structured output overran that (MaxTokensReachedException, #624).
+        # structured output overran that (MaxTokensReachedException, #624). The
+        # 65536 floor stays after the move to medium: it is a ceiling, not a target.
         adaptive_max_tokens=65536,
         legacy_temperature=1.0,
         thinking=True,
         legacy_thinking_budget=6000,
-        effort="high",
+        # Medium, not high: a benchmark of the schema-design role (wordpress
+        # and a scoped discourse run) found no measured quality loss and
+        # 31-41% lower cost per design pass than high.
+        effort="medium",
         structured_output=True,
         # Not yet. Bedrock strict mode rejects parts of the designer schemas:
         # the DynamoDB output contract uses ``oneOf`` (join/calculation),
