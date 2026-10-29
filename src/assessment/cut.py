@@ -273,6 +273,10 @@ def cut_collection(
     out = {
         k: copy.deepcopy(v) for k, v in source.items() if k not in ("database_schema", "queries")
     }
+    if isinstance(out.get("metadata"), dict) and "collection_duration_seconds" in out["metadata"]:
+        # How long the source run took is run timing, and nothing reads it: leave it
+        # out so two runs of one collection cut to the same metadata but the timestamp.
+        out["metadata"]["collection_duration_seconds"] = None
     schema = dict(source.get("database_schema") or {})
     cut_tables, dropped_keys = _cut_tables(tables, kept)
     schema["tables"] = cut_tables
