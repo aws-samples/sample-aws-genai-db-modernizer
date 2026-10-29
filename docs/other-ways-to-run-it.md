@@ -44,7 +44,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     | Role | Used by | Default model | Environment variable |
     |---|---|---|---|
-    | Schema design | The six schema designers and PE reviewers | Claude Opus 5.5 | `SCHEMA_AGENT_MODEL_ID`, then `BEDROCK_MODEL_ID` (output cap: `SCHEMA_AGENT_MAX_TOKENS`, at least 16000 on models that think by default) |
+    | Schema design | The six schema designers and PE reviewers | Claude Opus 5.5 at effort medium | `SCHEMA_AGENT_MODEL_ID`, then `BEDROCK_MODEL_ID` (output cap: `SCHEMA_AGENT_MAX_TOKENS`, at least 16000 on models that think by default) |
     | Summary | Reality Check and Synthesis executive summaries | Claude Sonnet 5.5 | `SUMMARY_MODEL_ID` |
     | Validator | Reality Check consolidation validation | Claude Sonnet 5.5 | `VALIDATOR_MODEL_ID`, then `SUMMARY_MODEL_ID` |
     | Analysis advisor | Optional explanation text for one engine's analysis, only when you run `scripts/run_analysis.py --llm-mode bedrock` on its own; `run_assessment.py` and `/modernize` run analysis with no model, and the advisor never changes routing | Claude Sonnet 5.5 | `ANALYSIS_MODEL_ID` |
@@ -52,6 +52,8 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     | AWS Transform agent | AWS Transform orchestrator and subagents | Claude Sonnet 5.5 | `MODEL_ID` |
 
     The defaults use the `us.` cross-region inference profiles.
+
+    Schema design runs at effort medium rather than high. In a benchmark of this role on the WordPress sample and a scoped Discourse run, medium showed no measured quality loss (design validation results and agreement with the high-effort designs were within the run-to-run spread of high itself) and cost 31-41% less per design pass. The effort is set in `ROLE_SPECS` in `src/shared/models.py`; it is not an environment variable.
 
     ### Attach a guardrail (optional)
 

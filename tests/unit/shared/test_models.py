@@ -230,6 +230,15 @@ def test_bedrock_model_is_built_only_by_the_role_builder():
 # ---------------------------------------------------------------------------
 
 
+def test_schema_design_resolves_to_opus_five_five_at_medium_effort():
+    """Designers and PE reviewers share one role: Opus 5.5 at effort medium."""
+    assert resolve_model_id(Role.SCHEMA_DESIGN) == MODEL_IDS["opus-5.5"]
+    assert models.ROLE_SPECS[Role.SCHEMA_DESIGN].effort == "medium"
+    kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN)
+    assert kwargs["model_id"] == MODEL_IDS["opus-5.5"]
+    assert kwargs["additional_request_fields"] == {"output_config": {"effort": "medium"}}
+
+
 def test_defaults_are_the_five_five_family():
     assert resolve_model_id(Role.SCHEMA_DESIGN) == "us.anthropic.claude-opus-5-5"
     assert resolve_model_id(Role.SUMMARY) == "us.anthropic.claude-sonnet-5-5"
@@ -444,7 +453,7 @@ def test_default_requests_exactly():
     assert schema == {
         "model_id": "us.anthropic.claude-opus-5-5",
         "max_tokens": 65536,
-        "additional_request_fields": {"output_config": {"effort": "high"}},
+        "additional_request_fields": {"output_config": {"effort": "medium"}},
     }
     assert bedrock_model_kwargs(Role.SUMMARY) == {
         "model_id": "us.anthropic.claude-sonnet-5-5",
@@ -730,7 +739,7 @@ def test_schema_agents_default_to_opus_five_five(engine, max_tokens):
     kwargs = bedrock_model.call_args.kwargs
     assert kwargs["model_id"] == MODEL_IDS["opus-5.5"]
     assert "temperature" not in kwargs
-    assert kwargs["additional_request_fields"] == {"output_config": {"effort": "high"}}
+    assert kwargs["additional_request_fields"] == {"output_config": {"effort": "medium"}}
     # ElastiCache's 32768 is raised: on Opus 5.5 thinking shares the budget,
     # and 32768 overran on the wordpress sample (#624).
     assert kwargs["max_tokens"] == 65536
