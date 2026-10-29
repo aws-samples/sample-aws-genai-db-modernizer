@@ -1,0 +1,14 @@
+# Gap rule postgresql-extensions-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, CREATE EXTENSION; Extension versions for Amazon Aurora PostgreSQL.
+id = "postgresql-extensions-to-mysql"
+feature = "PostgreSQL extensions and their functions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL runs no PostgreSQL extensions, so what these installed extension functions provide (for example pgvector, citext, hstore, pg_trgm) is replaced by MySQL types and functions or moved out of the database."
+docs = "PostgreSQL documentation, CREATE EXTENSION; Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: Functions in C or internal code (an extension's), and CREATE EXTENSION.
+[match]
+routine_languages = ["c", "internal"]
+syntax = ["CREATE EXTENSION"]

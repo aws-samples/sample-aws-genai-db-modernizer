@@ -1,0 +1,13 @@
+# Gap rule mysql-query-cache-hint (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0 (query cache).
+id = "mysql-query-cache-hint"
+feature = "Query cache hint SQL_CACHE"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL 8.0 removed the query cache and its SQL_CACHE modifier (MariaDB keeps both, Aurora MySQL has neither), so these queries must drop the hint."
+docs = "MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0 (query cache)"
+
+# Looks for: The SQL_CACHE select modifier.
+[match]
+words = ["SQL_CACHE"]

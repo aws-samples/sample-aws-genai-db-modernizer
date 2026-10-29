@@ -1,0 +1,13 @@
+# Gap rule postgresql-types-mapped-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source, data type mappings.
+id = "postgresql-types-mapped-to-mysql"
+feature = "Data types the conversion maps"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "These types are converted to MySQL's matching type (boolean to tinyint(1), bytea to longblob, uuid to char(36) or binary(16), jsonb to json, timestamp with time zone to a UTC datetime, text to longtext, citext to a varchar with a _ci collation): check precision, range and time zones in the conversion report."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source, data type mappings"
+
+# Looks for: Column data types.
+[match]
+data_types = ["boolean", "bool", "bytea", "uuid", "jsonb", "timestamp with time zone", "timestamptz", "time with time zone", "timetz", "text", "citext", "double precision", "real", "bit varying", "varbit"]

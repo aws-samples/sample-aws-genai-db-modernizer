@@ -1,0 +1,14 @@
+# Gap rule mysql-found-rows-to-postgresql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, Window Functions.
+id = "mysql-found-rows-to-postgresql"
+feature = "SQL_CALC_FOUND_ROWS, FOUND_ROWS() and ROW_COUNT()"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no SQL_CALC_FOUND_ROWS, FOUND_ROWS() or ROW_COUNT(): the total row count becomes count(*) OVER () or a separate COUNT(*) query, and the affected-row count comes from the driver or GET DIAGNOSTICS."
+docs = "MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, Window Functions"
+
+# Looks for: The select modifier and the two functions.
+[match]
+words = ["SQL_CALC_FOUND_ROWS"]
+calls = ["FOUND_ROWS", "ROW_COUNT"]

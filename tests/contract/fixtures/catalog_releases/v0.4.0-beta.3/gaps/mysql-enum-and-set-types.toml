@@ -1,0 +1,13 @@
+# Gap rule mysql-enum-and-set-types (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, The ENUM Type and The SET Type.
+id = "mysql-enum-and-set-types"
+feature = "ENUM and SET columns"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "An ENUM column becomes a PostgreSQL enum type (CREATE TYPE ... AS ENUM) or a text column with a CHECK constraint, and a SET column, which PostgreSQL has no type for, becomes an array or a separate table."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, The ENUM Type and The SET Type"
+
+# Looks for: ENUM and SET column types.
+[match]
+data_types = ["enum", "set"]

@@ -1,0 +1,84 @@
+# Pattern unbounded-time-series-ingest. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "unbounded-time-series-ingest"
+name = "Unbounded time-series ingest"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+penalty_basis = "guidance_only"
+
+# Writes only: no parity anchor borrows from it and no access class lists it (#936).
+write_pattern = true
+
+# Reads below this share of the table's calls (reads and writes, calls per second) are
+# negligible: the table still counts as unread (maintainer decision on #904). A read at
+# or above it reads the rows.
+negligible_read_share = 0.01
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: summed INSERT rate >= HIGH_INGEST_CPS_THRESHOLD (pattern_catalog_base)
+# on an append-only table (the workload writes it only with INSERTs: no UPDATE, DELETE,
+# MERGE or REPLACE, KeyAccessReader.append_only) whose SELECTs are below
+# negligible_read_share of its calls (#904). The concern is retention, not write
+# throughput (#493): Aurora sustains this rate natively, but rows nobody reads accumulate
+# without bound (about 26 million a month at 10 INSERTs/s). A data-lifecycle task, not a
+# sign the engine is the wrong fit, so it is MEDIUM (severity below 0.7) and below every
+# other Aurora anti-pattern.
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-04"
+severity = 0.4
+why = "Append-only table: 10 or more INSERTs per second, no other writes (no UPDATE, DELETE, MERGE or REPLACE) and reads under 1% of its calls, so rows accumulate unread and the table grows without bound unless old rows expire. Guidance only: Aurora sustains the rate, and dropping old partitions is a data-lifecycle task (PostgreSQL documentation, Table Partitioning)."
+engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
+guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
+guidance_names_engine = true
+
+# Detection signals: summed INSERT rate >= HIGH_INGEST_CPS_THRESHOLD (pattern_catalog_base)
+# on an append-only table (the workload writes it only with INSERTs: no UPDATE, DELETE,
+# MERGE or REPLACE, KeyAccessReader.append_only) whose SELECTs are below
+# negligible_read_share of its calls (#904). The concern is retention, not write
+# throughput (#493): Aurora sustains this rate natively, but rows nobody reads accumulate
+# without bound (about 26 million a month at 10 INSERTs/s). A data-lifecycle task, not a
+# sign the engine is the wrong fit, so it is MEDIUM (severity below 0.7) and below every
+# other Aurora anti-pattern.
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-04"
+severity = 0.4
+why = "Append-only table: 10 or more INSERTs per second, no other writes (no UPDATE, DELETE, MERGE or REPLACE) and reads under 1% of its calls, so rows accumulate unread and the table grows without bound unless old rows expire. Guidance only: Aurora sustains the rate, and dropping old partitions is a data-lifecycle task (PostgreSQL documentation, Table Partitioning)."
+engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
+guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
+guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

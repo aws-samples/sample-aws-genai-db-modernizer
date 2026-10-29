@@ -1,0 +1,14 @@
+# Gap rule mysql-sql-calc-found-rows (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Information Functions (FOUND_ROWS deprecation).
+id = "mysql-sql-calc-found-rows"
+feature = "SQL_CALC_FOUND_ROWS and FOUND_ROWS()"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "SQL_CALC_FOUND_ROWS and FOUND_ROWS() are deprecated since MySQL 8.0.17: they still run on Aurora MySQL, but a later version may remove them, so plan a COUNT(*) query instead."
+docs = "MySQL 8.0 Reference Manual, Information Functions (FOUND_ROWS deprecation)"
+
+# Looks for: The select modifier and the function.
+[match]
+words = ["SQL_CALC_FOUND_ROWS"]
+calls = ["FOUND_ROWS"]

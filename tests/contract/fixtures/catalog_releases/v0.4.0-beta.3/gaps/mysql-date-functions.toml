@@ -1,0 +1,15 @@
+# Gap rule mysql-date-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Date and Time Functions.
+id = "mysql-date-functions"
+feature = "MySQL date and time functions"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "These date and time functions have no PostgreSQL function of the same name, so each call is rewritten with PostgreSQL's (DATE_FORMAT to to_char, DATE_ADD to + interval, YEAR() and MONTH() to extract, UNIX_TIMESTAMP to extract(epoch from ...))."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Date and Time Functions"
+
+# Looks for: Calls to MySQL date and time functions (a statement digest writes MONTH() and DAY() as SQL_TSI_MONTH and SQL_TSI_DAY).
+[match]
+# A performance_schema digest prints some functions by their token's other name:
+# MONTH ( ) as SQL_TSI_MONTH ( ), DAY ( ) as SQL_TSI_DAY ( ).
+calls = ["DATE_FORMAT", "STR_TO_DATE", "TIME_FORMAT", "GET_FORMAT", "DATE_ADD", "DATE_SUB", "ADDDATE", "SUBDATE", "ADDTIME", "SUBTIME", "DATEDIFF", "TIMEDIFF", "TIMESTAMPDIFF", "TIMESTAMPADD", "UNIX_TIMESTAMP", "FROM_UNIXTIME", "CURDATE", "CURTIME", "SYSDATE", "UTC_TIMESTAMP", "UTC_DATE", "UTC_TIME", "CONVERT_TZ", "YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "HOUR", "MINUTE", "SECOND", "MICROSECOND", "DAYOFMONTH", "DAYOFWEEK", "DAYOFYEAR", "DAYNAME", "MONTHNAME", "WEEKDAY", "WEEKOFYEAR", "YEARWEEK", "LAST_DAY", "MAKEDATE", "MAKETIME", "PERIOD_ADD", "PERIOD_DIFF", "TO_DAYS", "FROM_DAYS", "TO_SECONDS", "SEC_TO_TIME", "TIME_TO_SEC", "SQL_TSI_YEAR", "SQL_TSI_QUARTER", "SQL_TSI_MONTH", "SQL_TSI_WEEK", "SQL_TSI_DAY", "SQL_TSI_HOUR", "SQL_TSI_MINUTE", "SQL_TSI_SECOND"]

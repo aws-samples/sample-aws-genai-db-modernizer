@@ -1,0 +1,13 @@
+# Gap rule mysql-mixed-case-identifiers (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, Lexical Structure (identifiers and key words).
+id = "mysql-mixed-case-identifiers"
+feature = "Mixed-case table and column names"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "PostgreSQL folds unquoted names to lower case, so a name with capitals (such as ID) is either lower-cased by the conversion or kept in double quotes in every statement, and backtick quoting becomes double quotes."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, Lexical Structure (identifiers and key words)"
+
+# Looks for: Table and column names with a capital letter.
+[match]
+uppercase_names = true

@@ -1,0 +1,14 @@
+# Gap rule mariadb-sequences (#471). Fields: src/shared/catalog/gaps.py.
+# Source: MariaDB documentation, CREATE SEQUENCE; MySQL 8.0 Reference Manual, Using AUTO_INCREMENT.
+id = "mariadb-sequences"
+feature = "MariaDB sequences"
+source_engines = ["mariadb"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MariaDB sequence objects have no MySQL equivalent: replace NEXT VALUE FOR and NEXTVAL() with AUTO_INCREMENT columns or a counter table."
+docs = "MariaDB documentation, CREATE SEQUENCE; MySQL 8.0 Reference Manual, Using AUTO_INCREMENT"
+
+# Looks for: Sequence reads in queries and routines.
+[match]
+syntax = ["NEXT VALUE FOR", "PREVIOUS VALUE FOR"]
+calls = ["NEXTVAL", "LASTVAL", "SETVAL"]

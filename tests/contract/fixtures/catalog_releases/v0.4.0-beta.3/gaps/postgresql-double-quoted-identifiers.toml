@@ -1,0 +1,13 @@
+# Gap rule postgresql-double-quoted-identifiers (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Lexical Structure; MySQL 8.0 Reference Manual, Schema Object Names and Server SQL Modes (ANSI_QUOTES).
+id = "postgresql-double-quoted-identifiers"
+feature = "Double-quoted identifiers"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "informational"
+reason = "When an ORM writes these double quotes, its MySQL adapter quotes names with backticks on its own; hand-written SQL that quotes names with double quotes becomes backtick-quoted, or the session adds ANSI_QUOTES to sql_mode, because MySQL otherwise reads \"name\" as a string."
+docs = "PostgreSQL documentation, Lexical Structure; MySQL 8.0 Reference Manual, Schema Object Names and Server SQL Modes (ANSI_QUOTES)"
+
+# Looks for: A double-quoted span in the text (a name, in PostgreSQL's dialect).
+[match]
+quoted_with = ["\""]

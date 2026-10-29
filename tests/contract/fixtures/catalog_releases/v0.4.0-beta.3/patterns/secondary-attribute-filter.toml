@@ -1,0 +1,54 @@
+# Pattern secondary-attribute-filter. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+# Catalog-only (no detector): the access-pattern class "ad hoc filter" (#728) reads it, nothing else.
+# A read pattern: its Aurora ratings are the read evidence the DocumentDB and OpenSearch parity
+# anchors borrow (#936; they used to borrow multi-row-mutation, a write pattern).
+id = "secondary-attribute-filter"
+name = "Secondary attribute filter"
+detectors = []
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "A filter on non-key attributes is a Scan with a filter expression (the frequent-full-scan anti-pattern), so it earns no class score; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "Filters on any field, served by single-field and compound secondary indexes, are native queries. Class score (#728): 75, parity anchor: no engine-specific evidence yet; the secondary-index filter Aurora is rated at for this class (secondary-attribute-filter, 75), until a measurement replaces it (#936)."
+class_score = 75
+parity_anchor = "secondary-attribute-filter"
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "Every field is indexed (inverted index, BKD trees, doc values), so a multi-attribute filter is a native filter-context query; reads only, near real time, and never a write (not a system of record). Class score (#728): 75, parity anchor: no engine-specific evidence yet; the rating Aurora has for this class (secondary-attribute-filter, 75), until a measurement replaces it (#936)."
+class_score = 75
+parity_anchor = "secondary-attribute-filter"
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache serves reads by key only; a filter on non-key attributes earns no class score and adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "A WHERE clause on non-key columns is native SQL: a B-tree index range scan on an indexed column, and a bitmap scan that combines several indexes with AND and OR (PostgreSQL documentation, Combining Multiple Indexes). Class score (#728): 75, a read served by secondary indexes; unmeasured (#936)."
+class_score = 75
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "A WHERE clause on non-key columns is native SQL: a range access on an indexed column, and an index merge that combines range scans of several indexes of one table (MySQL Reference Manual, Index Merge Optimization). Class score (#728): 75, a read served by secondary indexes; unmeasured (#936)."
+class_score = 75
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

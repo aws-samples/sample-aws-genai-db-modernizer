@@ -1,0 +1,13 @@
+# Gap rule postgresql-returning-clause (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Information Functions (LAST_INSERT_ID).
+id = "postgresql-returning-clause"
+feature = "RETURNING clauses"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL has no RETURNING clause, so the values come from LAST_INSERT_ID() or a SELECT in the same transaction."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Information Functions (LAST_INSERT_ID)"
+
+# Looks for: The RETURNING keyword.
+[match]
+words = ["RETURNING"]

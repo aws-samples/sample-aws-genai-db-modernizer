@@ -1,0 +1,13 @@
+# Gap rule source-version-unknown (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora MySQL release notes; Amazon Aurora PostgreSQL release calendar.
+id = "source-version-unknown"
+feature = "Source version not collected"
+source_engines = ["mysql", "postgresql"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "informational"
+reason = "The collection names no source version, so the version check did not run: confirm the source's major version against the Aurora versions before planning the move."
+docs = "Amazon Aurora MySQL release notes; Amazon Aurora PostgreSQL release calendar"
+
+# Looks for: No parseable version in metadata.source_database.version.
+[match]
+version = "unknown"

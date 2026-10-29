@@ -1,0 +1,88 @@
+# The triage signals and the engines each one names (ADR-031 Decision 8, #921). Fields:
+# src/shared/catalog/routing.py.
+#
+# [signals.<name>]: ``targets`` are the engines whose analysis the signal is evidence
+# for, in the order triage lists them (the legacy ``aurora`` id is the relational
+# baseline Synthesis reads; a future engine's signals are kept for reporting only). The
+# detection of each signal stays in code (src/agents/referee/triage.py). Every owning
+# engine is analysed whatever the signals say (ADR-031 Decision 2 step 1, #726); a
+# signal only adds a cache overlay engine.
+#
+# ``override_engine``: a query showing the signal is assigned to this engine before
+# scoring (the signal override), recorded as the move-ledger rule ``override_reason_code``
+# (#616). An override onto a future engine never fires (Decision 9), so it has no code.
+
+# Schema signals
+[signals.json_columns]
+targets = ["documentdb"]
+
+[signals.junction_tables]
+targets = ["neptune", "dynamodb"]
+
+[signals.high_fk_density]
+targets = ["neptune"]
+
+[signals.self_referential_fk]
+targets = ["neptune", "dynamodb"]
+
+[signals.eav_pattern]
+targets = ["dynamodb", "documentdb"]
+
+# Query signals
+[signals.key_value_lookups]
+targets = ["dynamodb", "elasticache", "documentdb"]
+
+[signals.range_queries]
+targets = ["dynamodb", "documentdb"]
+
+[signals.status_filters]
+targets = ["aurora", "documentdb"]
+
+[signals.write_heavy]
+targets = ["dynamodb", "keyspaces", "documentdb"]
+
+[signals.low_frequency_writes]
+targets = ["dynamodb", "documentdb"]
+
+[signals.low_frequency_reads]
+targets = ["dynamodb", "documentdb"]
+
+[signals.complex_joins]
+targets = ["documentdb", "aurora"]
+
+[signals.aggregations]
+targets = ["documentdb", "opensearch"]
+
+[signals.large_scans]
+targets = ["aurora", "opensearch"]
+
+[signals.time_series]
+targets = ["dynamodb", "keyspaces", "documentdb", "opensearch"]
+
+[signals.session_store]
+targets = ["dynamodb", "elasticache", "documentdb"]
+
+[signals.metadata_config]
+targets = ["dynamodb", "documentdb"]
+
+[signals.text_search]
+targets = ["opensearch"]
+override_engine = "opensearch"
+override_reason_code = "override.text_search"
+
+[signals.time_range_filters]
+targets = ["dynamodb", "keyspaces", "opensearch", "documentdb"]
+
+[signals.leaderboard_pattern]
+targets = ["elasticache"]
+
+[signals.subqueries]
+targets = ["aurora"]
+
+[signals.high_frequency_reads]
+targets = ["dynamodb", "elasticache", "documentdb"]
+
+# Not built by triage today: the override stays inert while Neptune is a placeholder.
+[signals.graph_traversal]
+targets = []
+override_engine = "neptune"
