@@ -561,9 +561,11 @@ def _schema_output_targets() -> list[tuple[str, str]]:
         if find_spec(module) is None:
             continue
         # The module name is built from a catalog engine id, never from input.
-        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
         names = [
-            n for n in vars(importlib.import_module(module)) if n.endswith("ModelOutputContract")
+            n
+            # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+            for n in vars(importlib.import_module(module))
+            if n.endswith("ModelOutputContract")
         ]
         if len(names) == 1:
             found.append((_SCHEMA_OUTPUT.format(engine=re.escape(engine)), f"{module}:{names[0]}"))
