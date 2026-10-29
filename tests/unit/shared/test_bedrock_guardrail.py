@@ -380,18 +380,31 @@ def _annotation_name(annotation: ast.AST | None) -> str | None:
     return None
 
 
+#: ``RoleBedrockModel``'s method returning the same model with its conversation cached.
+_CONVERSATION_SIBLING = "with_conversation_cache"
+
+
 def _model_comes_from_the_builder(
     value: ast.AST, call: ast.Call, parents: dict, builders: set[str]
 ) -> bool:
     """A ``model=`` value is ``build_bedrock_model``'s result, directly or through a
     local name assigned only from it (or from a function that only returns it), or a
-    parameter annotated with its return type."""
+    parameter annotated with its return type; or such a model's
+    ``with_conversation_cache()`` (#1675), the same model for a multi-turn agent."""
 
     def is_builder_call(node: ast.AST) -> bool:
         return _call_name(node) == _BUILDER or _call_name(node) in builders
 
     if is_builder_call(value):
         return True
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == _CONVERSATION_SIBLING
+        and not value.args
+        and not value.keywords
+    ):
+        return _model_comes_from_the_builder(value.func.value, call, parents, builders)
     if not isinstance(value, ast.Name):
         return False
     scope: ast.AST | None = call
@@ -479,6 +492,10 @@ _PROBES = {
         "def f():\n    return Agent(model=_build_model())\n"
     ),
     "aliased Agent": "from strands import Agent as A\nA(tools=[])\n",
+    "the conversation sibling of a model that is not the builder's": (
+        "from strands import Agent\n"
+        "def f():\n    m = os.environ['M']\n    return Agent(model=m.with_conversation_cache())\n"
+    ),
 }
 
 
@@ -487,6 +504,7 @@ def test_the_strands_guard_catches_each_probe(name):
     assert strands_model_offenders(_PROBES[name]), name
 
 
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
 def test_the_strands_guard_allows_the_role_builder():
     ok = (
         "from strands import Agent\n"
@@ -495,6 +513,8 @@ def test_the_strands_guard_allows_the_role_builder():
         "def g(model: RoleBedrockModel):\n    return Agent(model=model, tools=[])\n"
         "def _build_model():\n    return build_bedrock_model(Role.X)\n"
         "def h():\n    return Agent(model=_build_model())\n"
+        "def k():\n    model = _build_model()\n"
+        "    return Agent(model=model.with_conversation_cache())\n"
     )
     assert strands_model_offenders(ok) == []
 

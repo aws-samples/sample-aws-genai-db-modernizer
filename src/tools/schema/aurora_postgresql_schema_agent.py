@@ -289,7 +289,8 @@ def run_aurora_postgresql_schema_agent(
     )
 
     designer = Agent(
-        model=model,
+        # Multi-turn: each turn resends the conversation, so it is cached (#1675).
+        model=model.with_conversation_cache(),
         system_prompt=system_prompt,
         tools=[],
         structured_output_model=AuroraDesignDeltaContract,

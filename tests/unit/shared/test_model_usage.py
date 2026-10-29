@@ -171,3 +171,23 @@ def test_write_usage_stores_the_record_and_skips_a_run_with_no_call(tmp_path) ->
     written = json.loads((tmp_path / "db" / "job" / "_logs" / "model_usage.json").read_text())
     assert written["by_phase"]["schema_design"][OPUS]["inputTokens"] == 5
     assert written["totals"]["calls"] == 1
+
+
+def test_a_second_run_is_added_not_overwritten(tmp_path) -> None:
+    """``assess()`` and ``run_assessment.py`` share ``write_usage`` (#1675): a later run
+    of the job is one more entry under ``runs``, and the top level is their sum."""
+    from src.storage.local_store import LocalArtifactStore
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    for tokens in (5, 7):
+        LEDGER.reset()
+        with phase("schema_design"):
+            record_usage(OPUS, {"inputTokens": tokens, "outputTokens": 1})
+        model_usage.write_usage(store, "db", "job")
+    LEDGER.reset()
+    written = json.loads((tmp_path / "db" / "job" / "_logs" / "model_usage.json").read_text())
+    assert [r["run"] for r in written["runs"]] == [1, 2]
+    assert [r["totals"]["inputTokens"] for r in written["runs"]] == [5, 7]
+    assert written["by_phase"]["schema_design"][OPUS]["inputTokens"] == 12
+    assert written["by_model"][OPUS]["calls"] == 2
+    assert written["totals"]["calls"] == 2

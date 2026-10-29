@@ -9,6 +9,7 @@ the Strands ``Agent`` are stubbed.
 from __future__ import annotations
 
 import logging
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -95,7 +96,7 @@ def _stub(monkeypatch, mod, agent_input: dict, deltas: list[dict], captured: dic
     monkeypatch.setattr(mod.SchemaDesignRunner, "run", fake_run)
     monkeypatch.setattr(mod.SchemaDesignRunner, "_invoke_designer", fake_invoke)
     monkeypatch.setattr(mod, "load_agent_input", lambda paths=None: agent_input)
-    monkeypatch.setattr(mod, "_build_model", lambda: object())
+    monkeypatch.setattr(mod, "_build_model", lambda: MagicMock(spec=["with_conversation_cache"]))
 
     def fake_agent(**kwargs):
         captured.setdefault("agents", []).append(kwargs)

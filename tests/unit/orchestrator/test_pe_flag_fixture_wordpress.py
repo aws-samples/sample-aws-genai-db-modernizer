@@ -39,7 +39,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -155,7 +155,10 @@ def flagged(tmp_path_factory) -> dict:
     review = _expanded_review([qa["query_id"] for qa in v2["query_assignments"]])
     with (
         patch("src.tools.schema.dynamodb_schema_agent.Agent", _replay_agent(review)),
-        patch("src.tools.schema.dynamodb_schema_agent._build_model", return_value=object()),
+        patch(
+            "src.tools.schema.dynamodb_schema_agent._build_model",
+            return_value=MagicMock(spec=["with_conversation_cache"]),
+        ),
     ):
         design(JOB, DB, "dynamodb", store, 2)
         trace_v2 = store.read_json(f"{prefix}/schema-dynamodb/v2/design_trace.json")

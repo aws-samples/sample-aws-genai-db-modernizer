@@ -3,9 +3,10 @@
 
     uv run python scripts/usage_cost.py <artifacts/<db>/<job>/_logs/model_usage.json>
 
-Reads the record ``assess()`` writes, prices every model id with
-``src/catalog/model_prices.toml`` (public Bedrock list prices, dated there) and prints
-the cost per phase and model and in total. A model id with no price raises
+Reads the record ``assess()`` and ``scripts/run_assessment.py`` write, prices every
+model id with ``src/catalog/model_prices.toml`` (public Bedrock list prices, dated
+there) and prints the cost per phase and model, per run of the job (#1675) and in
+total. A model id with no price raises
 ``MissingPriceError``: a guessed price would be a wrong figure.
 """
 
@@ -71,11 +72,18 @@ def compute(usage: dict[str, Any], prices: dict[str, dict[str, float]]) -> dict[
             dollars = cost_of(row, model_id, prices)
             by_phase.setdefault(phase, {})[model_id] = dollars
             by_model[model_id] = by_model.get(model_id, 0.0) + dollars
-    return {
+    result: dict[str, Any] = {
         "by_phase": {p: {**m, "total": sum(m.values())} for p, m in by_phase.items()},
         "by_model": by_model,
         "total_usd": sum(by_model.values()),
     }
+    runs = usage.get("runs")
+    if isinstance(runs, list) and runs:  # each run of the job, summed above (#1675)
+        result["runs"] = [
+            {"run": run.get("run", i + 1), "total_usd": compute(run, prices)["total_usd"]}
+            for i, run in enumerate(runs)
+        ]
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         for model_id, dollars in models.items():
             if model_id != "total":
                 print(f"  {model_id}: ${dollars:.2f}")
+    for run in result.get("runs", []):
+        print(f"run {run['run']}: ${run['total_usd']:.2f}")
     print(f"total: ${result['total_usd']:.2f}")
     return 0
 

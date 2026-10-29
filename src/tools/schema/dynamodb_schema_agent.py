@@ -486,7 +486,8 @@ def run_dynamodb_schema_agent(
     system_prompt = load_skill(skill_path) + "\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
 
     designer = Agent(
-        model=model,
+        # Multi-turn: each turn resends the conversation, so it is cached (#1675).
+        model=model.with_conversation_cache(),
         system_prompt=system_prompt,
         tools=[_input_tool(paths), compute_performances_and_costs],
         structured_output_model=DynamoDBModelOutputContract,

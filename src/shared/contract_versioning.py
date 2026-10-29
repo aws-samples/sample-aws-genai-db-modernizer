@@ -386,7 +386,8 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
     (
         r"_logs/model_usage\.json",
         "token usage of the run's model calls by phase and model id (#1494), written by "
-        "assess() for a run that called a model and read by scripts/usage_cost.py",
+        "assess() and scripts/run_assessment.py (#1675) for a run that called a model and "
+        "read by scripts/usage_cost.py",
     ),
     (r"uploads/input_key\.json", "AWS Transform transport state: the resolved input location"),
     (

@@ -3,9 +3,17 @@
 Schema design is the only role with ``prompt_cache``: every designer and PE
 turn resends the same output-contract tool schema and skill text, and parallel
 design groups share them too. These tests pin the request shape Bedrock
-receives (cache points after the tool definitions and after the system prompt,
-none in the conversation), that no other role changes, and the per-call token
-accounting the design trace records.
+receives (cache points after the tool definitions and after the system prompt;
+one more on the latest user turn for a multi-turn designer, #1675, none for a
+one-shot call such as the PE reviewer), that no other role changes, and the
+per-call token accounting the design trace records.
+
+The Bedrock limits checked here are from the Amazon Bedrock prompt-caching guide
+(docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, "Supported
+models, Regions, and explicit caching limits"): Claude Opus 5.5 takes at most 4
+cache checkpoints per request, in ``tools``, ``system`` and ``messages``, each
+needing a 512-token prefix; a hit is looked up about 20 content blocks back from
+a checkpoint.
 
 Tests never call a real model: the Bedrock client's ``converse_stream`` is
 patched.
@@ -74,7 +82,7 @@ def test_unrecognised_model_id_gets_no_cache_points():
         (MODEL_IDS["opus-4.6"], 4096),
         (MODEL_IDS["haiku-4.5"], 4096),
         (MODEL_IDS["sonnet-4.6"], 1024),
-        ("anthropic.claude-opus-4-7", 2048),
+        ("anthropic.claude-opus-4-7", 4096),  # the Bedrock table; was 2048 before #1675
         ("anthropic.claude-opus-4-8", 1024),
         ("anthropic.claude-sonnet-5", 1024),
         ("anthropic.claude-opus-5", 512),
@@ -138,18 +146,9 @@ def _stream(blocks: list[dict], stop: str, usage: dict[str, int]) -> dict:
 SKILL_TEXT = "# Designer skill\n" + "Rule.\n" * 50
 
 
-def _run_designer(model_id: str) -> tuple[list[dict], Any]:
-    """A designer-shaped agent: a load-input tool turn, then the structured output."""
-    from strands import Agent, tool
-
-    @tool
-    def load_agent_input() -> dict:
-        """Load the projected input."""
-        return {"tables": ["a", "b"]}
-
-    model = build_bedrock_model(Role.SCHEMA_DESIGN, model_id=model_id)
-    requests: list[dict] = []
-    responses = [
+def _designer_turns() -> list[dict]:
+    """A load-input tool turn, then the structured output."""
+    return [
         _stream(
             [{"toolUse": ("load_agent_input", {})}],
             "tool_use",
@@ -162,14 +161,33 @@ def _run_designer(model_id: str) -> tuple[list[dict], Any]:
         ),
     ]
 
+
+def _run_designer(
+    model_id: str, *, conversation: bool = False, responses: list[dict] | None = None
+) -> tuple[list[dict], Any]:
+    """A designer-shaped agent on the role's model (``conversation``: the designer's
+    conversation-cached model, as the six designers build it)."""
+    from strands import Agent, tool
+
+    @tool
+    def load_agent_input() -> dict:
+        """Load the projected input."""
+        return {"tables": ["a", "b"]}
+
+    model = build_bedrock_model(Role.SCHEMA_DESIGN, model_id=model_id)
+    agent_model = model.with_conversation_cache() if conversation else model
+    requests: list[dict] = []
+    responses = _designer_turns() if responses is None else responses
+
     def fake_converse_stream(**request):
         requests.append(json.loads(json.dumps(request)))  # snapshot: Strands mutates in place
         return responses.pop(0) if responses else _stream([{"text": "done"}], "end_turn", {})
 
     model.client = MagicMock()
     model.client.converse_stream.side_effect = fake_converse_stream
+    agent_model.client = model.client
     agent = Agent(
-        model=model,
+        model=agent_model,
         system_prompt=SKILL_TEXT,
         tools=[load_agent_input],
         structured_output_model=_Design,
@@ -188,8 +206,10 @@ def _cache_points(value: Any) -> int:
     return 0
 
 
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
 @pytest.mark.parametrize("model_id", SCHEMA_MODELS)
-def test_designer_requests_cache_tools_and_system_only(model_id):
+def test_a_one_shot_model_caches_tools_and_system_only(model_id):
+    """The role's own model (what the PE reviewer is given) never marks the messages."""
     requests, _ = _run_designer(model_id)
     assert len(requests) >= 2, "the tool-loop turn was not exercised"
     for request in requests:
@@ -208,6 +228,200 @@ def test_cached_prefix_is_identical_across_turns(model_id):
     requests, _ = _run_designer(model_id)
     prefixes = {json.dumps([r["toolConfig"]["tools"], r["system"]]) for r in requests}
     assert len(prefixes) == 1
+
+
+# ---------------------------------------------------------------------------
+# The designer's conversation (#1675)
+# ---------------------------------------------------------------------------
+
+
+def _three_turns() -> list[dict]:
+    """Load the input, send an output that fails validation, then a valid one."""
+    load, valid = _designer_turns()
+    invalid = _stream(
+        [{"toolUse": ("_Design", {"tables": "not a list"})}],
+        "tool_use",
+        {"inputTokens": 40, "outputTokens": 15, "cacheReadInputTokens": 5900},
+    )
+    return [load, invalid, valid]
+
+
+def _message_points(request: dict) -> list[tuple[int, int]]:
+    """(message index, block index) of every cache point in the messages."""
+    return [
+        (m, b)
+        for m, message in enumerate(request["messages"])
+        for b, block in enumerate(message["content"])
+        if "cachePoint" in block
+    ]
+
+
+def _without_points(messages: list[dict]) -> list[dict]:
+    return [{**m, "content": [b for b in m["content"] if "cachePoint" not in b]} for m in messages]
+
+
+@pytest.mark.parametrize("model_id", SCHEMA_MODELS)
+def test_the_designer_caches_its_conversation(model_id):
+    requests, _ = _run_designer(model_id, conversation=True, responses=_three_turns())
+    assert len(requests) == 3, "the three-turn conversation was not exercised"
+    for request in requests:
+        # The stable prefix keeps its two points ...
+        assert request["system"] == [{"text": SKILL_TEXT}, {"cachePoint": {"type": "default"}}]
+        assert request["toolConfig"]["tools"][-1] == {"cachePoint": {"type": "default"}}
+        # ... and the latest user turn carries one more, as its last block.
+        points = _message_points(request)
+        assert len(points) == 1
+        msg, block = points[0]
+        last_user = max(i for i, m in enumerate(request["messages"]) if m["role"] == "user")
+        assert msg == last_user
+        assert block == len(request["messages"][msg]["content"]) - 1
+        # Bedrock's limit for Claude models: four cache checkpoints per request.
+        assert _cache_points(request) == 3 <= 4
+
+
+@pytest.mark.parametrize("model_id", SCHEMA_MODELS)
+def test_each_designer_turn_can_read_the_previous_turns_entry(model_id):
+    """The next turn resends the cached prefix byte for byte, and its own point is
+    within the ~20 blocks Bedrock looks back from a checkpoint for a hit."""
+    requests, _ = _run_designer(model_id, conversation=True, responses=_three_turns())
+    for before, after in zip(requests, requests[1:], strict=False):
+        msg, block = _message_points(before)[0]
+        cached = _without_points(before["messages"][: msg + 1])
+        resent = _without_points(after["messages"])
+        assert resent[: msg + 1] == cached
+        next_msg, next_block = _message_points(after)[0]
+        between = sum(len(m["content"]) for m in resent[msg + 1 : next_msg]) + next_block
+        assert between <= 20
+
+
+@pytest.mark.parametrize(
+    "skill",
+    [
+        "aurora_mysql-data-modeling.md",
+        "aurora_postgresql-data-modeling.md",
+        "documentdb-data-modeling.md",
+        "dynamodb-data-modeling.md",
+        "elasticache-data-modeling.md",
+        "opensearch-index-modeling.md",
+    ],
+)
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
+def test_every_designers_cached_prefix_meets_the_models_minimum(skill):
+    """A checkpoint on a prefix under the minimum is silently not cached. The system
+    point alone covers the skill text, already over the default model's minimum
+    (at a generous 4 characters a token), so every later point is too."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "src/skills" / skill).read_text("utf-8")
+    default = models.ROLE_SPECS[Role.SCHEMA_DESIGN].default_model
+    assert len(text) // 4 >= min_cacheable_tokens(default)
+
+
+def test_the_designers_model_shares_the_role_models_totals():
+    model = build_bedrock_model(Role.SCHEMA_DESIGN)
+    designer = model.with_conversation_cache()
+    assert designer is not model and designer.cache_conversation and not model.cache_conversation
+    assert designer.usage is model.usage
+    assert designer.structured_output_reasks is model.structured_output_reasks
+    assert designer.client is model.client and designer.config is model.config
+    assert designer.with_conversation_cache() is designer
+
+
+def test_a_designer_turn_and_a_pe_review_add_up_on_one_model():
+    requests, model = _run_designer(SCHEMA_MODELS[0], conversation=True)
+    assert model.usage["calls"] == 2 == len(requests)
+
+
+def _pe_request(model: Any) -> dict:
+    """The request the ElastiCache PE reviewer sends on ``model``."""
+    from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
+    from src.tools.schema import elasticache_schema_agent as agent
+
+    requests: list[dict] = []
+
+    def fake_converse_stream(**request):
+        requests.append(json.loads(json.dumps(request)))
+        return _stream(
+            [{"toolUse": ("PEReviewResult", {"verdict": "APPROVED", "summary": "ok"})}],
+            "tool_use",
+            {"inputTokens": 100, "outputTokens": 10},
+        )
+
+    model.client = MagicMock()
+    model.client.converse_stream.side_effect = fake_converse_stream
+    fields: dict[str, Any] = {"key_designs": [], "access_patterns": []}
+    design = ElastiCacheModelOutputContract.model_construct(**fields)
+    review = agent._invoke_pe_reviewer(model, design, {"table_count": 1})
+    assert review.verdict.value == "APPROVED"
+    assert len(requests) == 1
+    return requests[0]
+
+
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
+def test_the_pe_reviewer_puts_no_cache_point_on_its_input():
+    request = _pe_request(build_bedrock_model(Role.SCHEMA_DESIGN))
+    assert _message_points(request) == []
+    assert _cache_points(request) == 2  # tools and system only
+
+
+def test_the_runner_hands_the_pe_reviewer_the_one_shot_model():
+    from src.tools.schema.base_schema_agent import SchemaDesignRunner
+
+    model = build_bedrock_model(Role.SCHEMA_DESIGN)
+    given: list[Any] = []
+
+    def reviewer(m, design, summary, skill):
+        given.append(m)
+        return MagicMock(verdict="APPROVED", pe_notes=[], routing_flags=[])
+
+    designer = MagicMock(return_value=MagicMock(structured_output=_Design(tables=["a"])))
+    runner = SchemaDesignRunner(
+        target_type="elasticache",
+        output_model=_Design,
+        model=model,
+        designer_agent=designer,
+        pe_reviewer_fn=reviewer,
+    )
+    runner.run("design")
+    assert given == [model] and not given[0].cache_conversation
+
+
+def _agent_models(module_path: str) -> dict[str, str]:
+    """``{variable: source of its model= argument}`` for each ``Agent(...)`` assigned in a module."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(module_path).read_text(encoding="utf-8"))
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            call = node.value
+            if getattr(call.func, "id", None) != "Agent":
+                continue
+            target = node.targets[0]
+            name = target.id if isinstance(target, ast.Name) else ast.unparse(target)
+            model = next(k.value for k in call.keywords if k.arg == "model")
+            found[name] = ast.unparse(model)
+    return found
+
+
+@pytest.mark.parametrize(
+    "engine",
+    [
+        "aurora_mysql",
+        "aurora_postgresql",
+        "documentdb",
+        "dynamodb",
+        "elasticache",
+        "opensearch",
+    ],
+)
+def test_every_designer_caches_its_conversation_and_no_reviewer_does(engine):
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / f"src/tools/schema/{engine}_schema_agent.py"
+    agents = _agent_models(str(path))
+    assert agents == {"designer": "model.with_conversation_cache()", "pe_agent": "model"}
 
 
 def test_model_adds_up_token_usage_per_call():

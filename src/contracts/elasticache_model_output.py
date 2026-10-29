@@ -7,11 +7,11 @@ translated to Redis/Valkey commands, TTL policies, and eviction strategies.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 # ---------------------------------------------------------------------------
 # Building blocks
@@ -164,6 +164,11 @@ class KeyDesign(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 class AccessPattern(BaseModel):
     """An access pattern translated to Redis/Valkey commands."""
@@ -195,6 +200,11 @@ class AccessPattern(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 class UnsupportedPattern(BaseModel):
     """A source query pattern that cannot be served by Redis/Valkey."""
@@ -206,6 +216,11 @@ class UnsupportedPattern(BaseModel):
     workaround: str | None = Field(None, description="Suggested alternative approach")
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 class MigrationNote(BaseModel):
@@ -222,6 +237,11 @@ class MigrationNote(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 class CacheInvalidationStrategy(BaseModel):
     """Cache invalidation strategy for a key design."""
@@ -237,6 +257,11 @@ class CacheInvalidationStrategy(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +307,8 @@ class ElastiCacheModelOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
