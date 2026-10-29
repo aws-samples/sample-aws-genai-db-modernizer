@@ -20,6 +20,13 @@ One entry per overlap (``dynamodb_merge.merge_overlaps``) that has an open risk:
   to whole 1 KB write request units one item at a time (the DynamoDB estimate's rule,
   ``write_request_units``, #1491), at the on-demand write price.
 
+The DynamoDB engine's TCO row counts the sync's total (#1566): ``build_tco_analysis`` adds
+``total_monthly_cost_usd`` to the row, so the projected cost, the ranking and every
+deliverable's cost table agree, and states :func:`tco_assumptions` with the TCO's
+assumptions. Synthesis computes the sync once (:func:`syncs_by_engine`) and hands the same
+value to the TCO and to ``facts.derived_copy_sync``. A row sized to no query (nothing in
+scope for the engine) is left as it is. Routing never reads it: its cost dimension is its own per-query model.
+
 Prices are the price table's (``src/catalog/prices.toml``); a missing one raises
 (``catalog.required_price``, #1460). The consumer's own compute, the free tier and the
 copies' storage and GSIs are not priced.
@@ -39,6 +46,7 @@ from src.agents.schema_design.dynamodb_merge import (
 from src.agents.schema_design.scope import normalize_table_name
 from src.shared import catalog
 from src.shared.catalog.prices import SECONDS_PER_MONTH
+from src.shared.engine_names import display_engine
 from src.tools.analysis.dynamodb_analysis_tools import STANDARD, write_request_units
 
 DATA_CONSISTENCY = "DATA_CONSISTENCY"
@@ -217,3 +225,34 @@ def derived_copy_sync_facts(
             "not included.",
         ],
     }
+
+
+def syncs_by_engine(
+    designs: Mapping[str, Mapping[str, Any] | None], risks: Iterable[Mapping[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """``facts.derived_copy_sync`` of each engine's design that has a sync, by engine id."""
+    risks = list(risks)
+    found = {engine: derived_copy_sync_facts(schema, risks) for engine, schema in designs.items()}
+    return {engine: fact for engine, fact in found.items() if fact}
+
+
+def tco_assumptions(engine: str, sync: Mapping[str, Any]) -> list[str]:
+    """The TCO assumption lines that say the engine's figure includes the sync and what it
+    leaves out (#1566): two lines with no semicolon, since the reports join assumptions
+    with one."""
+    syncs = sync["syncs"]
+    n = sum(len(s["derived"]) for s in syncs)
+    risks = ", ".join(str(s["risk_id"]) for s in syncs)
+    prices = catalog.pricing(engine)
+    batch_bytes = catalog.required_price(
+        engine, "streams_read_unit_bytes", prices.streams_read_unit_bytes
+    )
+    batch_mb = int(batch_bytes) // (1024 * 1024)
+    return [
+        f"The {display_engine(engine)} figure includes {_usd(sync['total_monthly_cost_usd'])}/mo "
+        f"for the stream sync of {n} derived {_plural(n, 'copy', 'copies')} ({risks}) at "
+        f"on-demand prices, with Streams reads billed as full {batch_mb} MB batches (a lower "
+        "bound) and each copy's replayed writes",
+        "The sync figure leaves out the consumer's compute, the free tier, and the copies' "
+        "storage and indexes",
+    ]
