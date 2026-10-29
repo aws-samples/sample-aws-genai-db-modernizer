@@ -69,6 +69,7 @@ __all__ = [
     "ignored_flag_outcome",
     "parse_model_flags",
     "route_flagged_unit",
+    "waiver_for_capability",
 ]
 
 # Customer-facing wording for each reason category (never the raw enum value),
@@ -80,6 +81,26 @@ FLAG_REASON_LABELS: dict[FlagReason, str] = {
 OUTCOME_MOVED = "moved"
 OUTCOME_KEPT = "kept"
 OUTCOME_IGNORED = "ignored"
+
+
+def waiver_for_capability(
+    capability: str, query: Mapping, engine: str, scoring_context: ScoringContext
+) -> str | None:
+    """The catalog waiver that lifts ``capability`` for ``query`` on ``engine``, or None.
+
+    Routing placed the query on ``engine`` past that gap before the approval gate
+    (``gates.toml`` ``[[waivers]]``, ADR-031 Decision 2 Amendment 12): a key-scoped
+    count on DynamoDB, served by ``Query`` with ``Select = COUNT``. An unsupported entry
+    whose own category is that same capability names a gap already decided, so the
+    post-schema router does not move the query for it (#1650, ADR-031 Amendment 18).
+    The match is on the capability id, never on the entry's text. Returns the
+    waiver's ``rule_id``.
+    """
+    wanted = capability.strip().lower()
+    for waiver in scoring_context.capability_waivers(query, engine):
+        if waiver.capability == wanted:
+            return waiver.rule_id
+    return None
 
 
 @dataclass(frozen=True)

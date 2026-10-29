@@ -259,7 +259,7 @@ State a consistency or staleness window by its mechanism and its bound: what end
 - All GSI `partition_key` and `sort_key` fields are lists (multi-attribute, never composite strings)
 - All base table `partition_key.attribute_name` and `sort_key.attribute_name` are single attributes or composite strings
 - Every non-PK unique attribute that an in-scope write inserts or changes has a sentinel item written in that write's `TransactWriteItems` with `attribute_not_exists`, and `trade_offs` documents it (a GSI alone does not count)
-- Every text search and aggregation query is in `unsupported_patterns`
+- Every text search and aggregation query is in `unsupported_patterns`, except a `key_scoped_counts` entry: routing placed it here to be served as a `Query` with `Select = COUNT` (or a counter item), so design it in an access pattern and never list it as unsupported
 - All `hot_partition_analysis` entries where `at_risk=true` have a non-null `mitigation`
 - The cost / hot-partition check ran successfully on the final `hot_partition_analysis`: the `compute_performances_and_costs` tool returned without error (Bedrock mode), or `scripts/run_schema_design.py --engine dynamodb --check-costs <draft>` returned `"passed": true` (external / Claude Code mode), and every entry's `partition_limit`, `utilization_pct` and `at_risk` are the ones it returned. Both run the same computation.
 

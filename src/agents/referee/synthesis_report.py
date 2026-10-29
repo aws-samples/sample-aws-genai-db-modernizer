@@ -1228,6 +1228,7 @@ def build_risk_assessment(
     data: SynthesisData,
     eliminated: dict[str, str | None] | None = None,
     lifted: Collection[tuple[str, str, str]] = frozenset(),
+    waived: Mapping[str, Collection[str]] | None = None,
 ) -> dict:
     """Compile risks from anti-patterns, migration notes, and unsupported patterns.
 
@@ -1255,6 +1256,11 @@ def build_risk_assessment(
     serving engine's design is given the keys (``design.redesign`` raises it where the
     plan relies on them), so an anti-pattern risk leaves those queries out: one finding
     raises at most one risk.
+
+    ``waived``: per engine, the queries whose unsupported entry the post-schema router
+    found a catalog waiver for (``RouterOutput.waived``, #1650): the query stays there
+    and is served as routed, so its entry is no open risk. It is recorded in
+    ``resolved_risks`` as served through the waiver, and never counts as unsupported.
 
     ``eliminated`` maps engines the reality check removed to the engine that absorbed
     them (see ``synthesis_grounding.eliminated_engines``). Surviving engines' risk text
@@ -1312,8 +1318,11 @@ def build_risk_assessment(
         engine: covered_query_ids(engine, artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
     }
+    waived_on = {e: {str(q) for q in ids} for e, ids in (waived or {}).items()}
+    for engine_id, ids in waived_on.items():
+        waived_on[engine_id] = {q for q in ids if query_engine.get(q) == engine_id}
     unsupported_by = {
-        engine: _unsupported_query_ids(artifacts.schema_design or {})
+        engine: _unsupported_query_ids(artifacts.schema_design or {}) - waived_on.get(engine, set())
         for engine, artifacts in data.engines.items()
     }
     # target engine -> {query id: severity} for queries an anti-pattern's advice moved to
@@ -1624,6 +1633,24 @@ def build_risk_assessment(
         for up in field_list(schema, "unsupported_patterns"):
             pattern_ids = unsupported_pattern_ids(up)
             tables = sorted({t for q in pattern_ids for t in risk_tables.get(q, ())})
+            # #1650: an entry naming a gap a catalog waiver lifted for every one of its
+            # queries here is served as routed: no open risk, a resolved record.
+            if pattern_ids and set(pattern_ids) <= waived_on.get(engine, set()):
+                resolved.append(
+                    _resolved_risk(
+                        engine,
+                        "MEDIUM",
+                        f"{unsupported_pattern_label(up)}: "
+                        f"{_unsupported_pattern_problem(engine, up, query_text)}",
+                        tables,
+                        set(pattern_ids),
+                        engine,
+                        f"served as routed: {display_name(engine)} serves "
+                        f"{'it' if len(pattern_ids) == 1 else 'them'} past this gap through "
+                        "a catalog waiver (a key-scoped count is a Query with Select = COUNT)",
+                    )
+                )
+                continue
             risk_id += 1
             # Dedup-only GROUP BY (#336): every one of this *aggregation* entry's
             # queries is a GROUP BY used only to de-duplicate rows (no aggregate

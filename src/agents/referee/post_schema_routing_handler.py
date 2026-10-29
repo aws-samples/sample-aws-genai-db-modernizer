@@ -216,6 +216,7 @@ class PostSchemaRouting:
             "held_queries": [],
             "terminal": [],
             "held": [],
+            "waived": [],
         }
 
     def _post_schema_routing_pass(
@@ -238,7 +239,12 @@ class PostSchemaRouting:
         from src.agents.referee.tie_break import settled_counts
         from src.agents.referee.waived_counts import pinned_counts_by_table
         from src.agents.schema_design.design_trace import read_design_trace
-        from src.contracts.post_schema_router_output import HeldQuery, QueryRouting, TerminalQuery
+        from src.contracts.post_schema_router_output import (
+            HeldQuery,
+            QueryRouting,
+            TerminalQuery,
+            WaivedFlag,
+        )
 
         selected_engines = run["selected_engines"]
         assignment_version = run["assignment_version"]
@@ -341,6 +347,13 @@ class PostSchemaRouting:
         held_recorded = {h.query_id for h in all_held_records}
         all_held_records.extend(h for h in router_output.held if h.query_id not in held_recorded)
         run["held"] = [h.model_dump(mode="json") for h in all_held_records]
+        # #1650: each waived designer entry once per query and engine.
+        all_waived = [WaivedFlag.model_validate(w) for w in run.get("waived") or []]
+        waived_seen = {(w.query_id, w.flagged_engine) for w in all_waived}
+        all_waived.extend(
+            w for w in router_output.waived if (w.query_id, w.flagged_engine) not in waived_seen
+        )
+        run["waived"] = [w.model_dump(mode="json") for w in all_waived]
         run["routings"] = [r.model_dump(mode="json") for r in all_routings]
         run["terminal_queries"] = all_terminal
         run["held_queries"] = all_held
@@ -357,6 +370,7 @@ class PostSchemaRouting:
                 "held_queries": list(all_held),
                 "terminal": list(all_terminal_records),
                 "held": list(all_held_records),
+                "waived": list(all_waived),
             }
         )
         self.store.write_json(

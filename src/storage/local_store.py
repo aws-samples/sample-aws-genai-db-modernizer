@@ -126,6 +126,16 @@ class LocalArtifactStore(ArtifactStore):
         with open(full_path, "wb") as f:
             f.write(data)
 
+    def delete(self, path: str) -> bool:
+        base = os.path.realpath(str(self.base_dir)) + os.sep
+        full_path = os.path.realpath(os.path.join(self.base_dir, path))
+        if not (full_path + os.sep).startswith(base):
+            raise ValueError(f"path escapes the artifact root: {path!r}")
+        if not os.path.isfile(full_path):
+            return False
+        os.remove(full_path)
+        return True
+
     def exists(self, path: str) -> bool:
         base = os.path.realpath(str(self.base_dir)) + os.sep
         full_path = os.path.realpath(os.path.join(self.base_dir, path))

@@ -23,6 +23,7 @@ SCAN_ROOTS = ("src", "scripts", "tests/e2e")
 WRITE_METHODS = {"write_json", "write_text", "write_bytes", "dump"}
 # The files whose writers must call ``write_design_trace``.
 WRITER_FILES = (
+    "src/agents/schema_design/carry_forward.py",
     "src/agents/schema_design/handler.py",
     "src/agents/schema_design/group_merger.py",
     "src/agents/schema_design/pe_review_external.py",

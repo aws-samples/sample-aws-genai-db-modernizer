@@ -281,6 +281,12 @@ def _consolidate_design_traces(
         if match and key.rsplit("/", 1)[0] == base_key.rstrip("/"):
             keyed.append((int(match.group(1)), key))
     group_traces = []
+    # A part a post-schema reroute carried forward spent its tokens on the version it
+    # came from (#1650): its trace is kept, its token_usage is not counted again.
+    from src.agents.schema_design.carry_forward import carried_parts_at
+
+    carried = carried_parts_at(store, base_key.rstrip("/"))
+    spent: list[dict] = []
     for idx, key in sorted(keyed):
         try:
             trace = store.read_json(key)
@@ -294,9 +300,11 @@ def _consolidate_design_traces(
         if isinstance(renumbered, dict):
             renumbered = {k: v for k, v in renumbered.items() if k != "contract_version"}
         group_traces.append(renumbered)
+        if idx not in carried and isinstance(renumbered, dict):
+            spent.append(renumbered)
     if group_traces or merge_notes:
         combined: dict = {"total_groups": len(group_traces), "groups": group_traces}
-        total = _sum_token_usage(group_traces)
+        total = _sum_token_usage(spent)
         if total is not None:
             combined["token_usage"] = total
             logger.info("schema-merge usage over %d groups | %s", len(group_traces), total)

@@ -390,6 +390,72 @@ def build_groups(
     return assign_table_owners(groups, db_name, resolver)
 
 
+def keep_prior_parts(
+    queries: list[dict],
+    prior_parts: list[dict],
+    db_name: str,
+    collector_output: dict | None = None,
+    analysis_output: dict | None = None,
+    co_dependency_groups: list[list[str]] | None = None,
+    *,
+    by_pattern: bool = False,
+) -> list[dict]:
+    """The groups of a post-schema reroute version: the previous version's parts, kept.
+
+    Each prior part (``query_ids`` in input order, ``primary_tables`` it owned, its
+    ``group_name``) keeps the statements of ``queries`` it held, in the same order; a
+    part left with none is dropped. The statements no prior part held (they joined the engine) are grouped
+    among themselves by :func:`build_groups` and appended. A table a dropped part
+    owned becomes a candidate of every kept part that touches it, so it still gets an
+    owner. Ownership, budget and names are then settled as for any split (the caller),
+    so a part whose statements and tables did not change gets the same input as before
+    and its design is carried forward (``carry_forward``, #1650). For a per-pattern
+    engine (``by_pattern``) each kept part's statements are made into query pattern
+    units again, which keeps a pattern cut across parts cut the same way.
+    """
+    resolver = TableNameResolver.from_collector(collector_output) if collector_output else None
+    source_engine = source_engine_of(collector_output)
+    by_id = {_qid(q): q for q in queries}
+    placed: set[str] = set()
+    kept: list[tuple[list[dict], list[str], str | None]] = []
+    dropped_tables: set[str] = set()
+    for part in prior_parts:
+        held = [by_id[qid] for qid in (str(q) for q in part.get("query_ids") or []) if qid in by_id]
+        held = [q for q in held if _qid(q) not in placed]
+        if not held:
+            dropped_tables.update(part.get("primary_tables") or [])
+            continue
+        placed.update(_qid(q) for q in held)
+        kept.append((held, list(part.get("primary_tables") or []), part.get("group_name")))
+    still_owned = {t for _, tables, _ in kept for t in tables}
+    orphans = dropped_tables - still_owned
+    groups: list[dict] = []
+    for held, tables, name in kept:
+        touched = {
+            _canon(t, db_name, resolver) for q in held for t in q.get("tables_accessed") or []
+        }
+        groups.append(
+            {
+                "group_name": name or "kept_part",
+                "primary_tables": sorted(set(tables) | (orphans & touched)),
+                "queries": pattern_units(held, source_engine) if by_pattern else held,
+            }
+        )
+    newcomers = [q for q in queries if _qid(q) not in placed]
+    if newcomers:
+        groups.extend(
+            build_groups(
+                pattern_units(newcomers, source_engine) if by_pattern else newcomers,
+                db_name,
+                collector_output,
+                analysis_output,
+                co_dependency_groups=co_dependency_groups,
+                max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
+            )
+        )
+    return groups
+
+
 def assign_table_owners(
     groups: list[dict], db_name: str, resolver: TableNameResolver | None = None
 ) -> list[dict]:
@@ -793,6 +859,7 @@ def split_schema_input(
     schema_version: int = 1,
     co_dependency_groups: list[list[str]] | None = None,
     decision_trace: dict | None = None,
+    prior_parts: list[dict] | None = None,
 ) -> SchemaDesignGroupsManifest:
     """Split schema design input into groups and write per-group input files.
 
@@ -811,6 +878,10 @@ def split_schema_input(
         decision_trace: The engine's analysis decision trace (DocumentDB and
             OpenSearch). Each group's input carries it scoped to the group's
             own queries and tables (#1068); None leaves the key out.
+        prior_parts: The parts of the version a post-schema reroute derived this
+            one from (``carry_forward.prior_parts``: each part's ``group_name``,
+            ``query_ids`` and ``primary_tables``). Kept as they were (:func:`keep_prior_parts`), so a
+            move changes only the parts holding it (#1650); None splits afresh.
 
     Returns:
         SchemaDesignGroupsManifest with group entries. A query that touches no
@@ -839,18 +910,29 @@ def split_schema_input(
     # #1602: the engine's parts are built from query patterns, one unit each, capped at
     # MAX_PATTERNS_PER_PART patterns; ownership and context still count every statement.
     by_pattern = engine in PATTERN_ENGINES
-    groups = build_groups(
-        (
-            pattern_units(design_queries, source_engine_of(collector_output))
-            if by_pattern
-            else design_queries
-        ),
-        database_name,
-        collector_output,
-        analysis_output,
-        co_dependency_groups=co_dependency_groups,
-        max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
-    )
+    if prior_parts:
+        groups = keep_prior_parts(
+            design_queries,
+            prior_parts,
+            database_name,
+            collector_output,
+            analysis_output,
+            co_dependency_groups=co_dependency_groups,
+            by_pattern=by_pattern,
+        )
+    else:
+        groups = build_groups(
+            (
+                pattern_units(design_queries, source_engine_of(collector_output))
+                if by_pattern
+                else design_queries
+            ),
+            database_name,
+            collector_output,
+            analysis_output,
+            co_dependency_groups=co_dependency_groups,
+            max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
+        )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 
     def measure(group: dict) -> int:
