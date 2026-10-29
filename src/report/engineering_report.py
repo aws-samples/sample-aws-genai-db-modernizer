@@ -15,7 +15,12 @@ from src.shared.design_text import (
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import executive_brief_text
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
-from src.shared.report_facts import CACHE_LAYER, query_group_at, same_label_places
+from src.shared.report_facts import (
+    CACHE_LAYER,
+    display_group_name,
+    query_group_at,
+    same_label_places,
+)
 from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
@@ -462,7 +467,7 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
             )
             reason_text = _table_reason_cell(reasons)
             out.append(
-                f"| {escaping.md_cell(str(g.get('group_name', '?')))} | {r.get('query_count', 0)} "
+                f"| {escaping.md_cell(display_group_name(g.get('group_name', '?')))} | {r.get('query_count', 0)} "
                 f"| {escaping.md_cell(fmt_num(r.get('calls_per_second', 0)))} "
                 f"| {escaping.md_cell(reason_text or '-')} |"
             )
@@ -1460,7 +1465,7 @@ def render_engineering_report_md(
                 # #226: the reads it fronts, which their owner's group serves.
                 queries = f"{len(sqs)} cached {plural_noun(len(sqs), 'read')}"
             out.append(
-                f"| {escaping.md_cell(g.get('group_name', '?'))} | {escaping.md_cell(engines)} "
+                f"| {escaping.md_cell(display_group_name(g.get('group_name', '?')))} | {escaping.md_cell(engines)} "
                 f"| {len(aps) if isinstance(aps, list) else escaping.md_cell(aps or '-')} "
                 f"| {queries} "
                 f"| {escaping.md_cell(fmt_num(g.get('total_design_rps', '-')))} |"

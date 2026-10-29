@@ -654,8 +654,13 @@ _TOP_GROUPS_PER_ENGINE = 5
 # duplicated here, not imported, to avoid a circular import --
 # synthesis_report already imports from this module). Neither is a real
 # access pattern a reader should see named as a "busiest" group.
+# #1536: a saved report's old "Table not identified by the collector" label is skipped too.
 _GROUPS_NEVER_TOP = frozenset(
-    {"Utility and session statements", "Table not identified by the collector"}
+    {
+        "Utility and session statements",
+        "No source table",
+        "Table not identified by the collector",
+    }
 )
 
 

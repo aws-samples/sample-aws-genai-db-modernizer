@@ -144,7 +144,8 @@ Version History:
   omitted (redundant with the group's own name, and always ``None``,
   respectively). A query with no real source table -- the collector's
   ``tables_accessed: ["unknown"]`` fallback, or only a parsed ``DUAL`` --
-  groups under ``"Table not identified by the collector"``, or under
+  groups under ``"No source table"`` (``"Table not identified by the collector"``
+  in a report saved before #1536), or under
   ``"Utility and session statements"`` when it is a real utility/session
   statement (``utility_statements.is_utility_statement``, already routed to
   the relational engine by the assignment: SHOW/SET/EXPLAIN, catalog

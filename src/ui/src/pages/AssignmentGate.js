@@ -51,6 +51,7 @@ import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayer
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import { pinnedFitLabel } from "../utils/queryRouting";
+import { displayTables } from "../utils/tableNames";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -1262,7 +1263,7 @@ const AssignmentGatePage = memo(() => {
                             </Box>
                             <Box>
                               <Box variant="awsui-key-label">{t('assignment-gate.row-detail.tables-accessed')}</Box>
-                              <Box>{(details.tables_accessed || []).map(tbl => tbl.split('.').pop()).join(', ') || '-'}</Box>
+                              <Box>{displayTables(details.tables_accessed).join(', ') || '-'}</Box>
                             </Box>
                           </ColumnLayout>
                         </div>

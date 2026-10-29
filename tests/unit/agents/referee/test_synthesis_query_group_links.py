@@ -330,10 +330,8 @@ def test_relational_branch_labels_tableless_queries(engine: str) -> None:
     assert "unknown" not in by_name
     # q3 is "SELECT 1" with tables_accessed ["unknown"] -- not a utility
     # statement, so it lands in the collector-blame group.
-    assert "Table not identified by the collector" in by_name
-    assert by_name["Table not identified by the collector"]["access_patterns"][0]["query_ids"] == [
-        "q3"
-    ]
+    assert "No source table" in by_name
+    assert by_name["No source table"]["access_patterns"][0]["query_ids"] == ["q3"]
 
 
 @pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])

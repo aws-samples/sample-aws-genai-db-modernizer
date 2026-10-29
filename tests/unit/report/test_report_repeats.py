@@ -32,7 +32,7 @@ from src.report.escaping import md_cell, md_text
 from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md
 from src.report.risks import resolved_risk_label
-from src.shared.report_facts import query_group_facts
+from src.shared.report_facts import display_group_name, query_group_facts
 from tests.report_concision import repeated_paragraphs, repeated_statements, section
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_model_run_1_60_report.json"
@@ -347,11 +347,11 @@ def test_queries_on_aurora_by_table_are_the_facts_rows(md: str, saved) -> None:
     ]
     assert len(table) == len(rows) == 27
     for line, row in zip(table, rows, strict=True):
-        name = saved["query_groups"][row["group_index"]]["group_name"]
+        name = display_group_name(saved["query_groups"][row["group_index"]]["group_name"])
         assert line.startswith(f"| {md_cell(name)} | {row['query_count']} | ")
     # The two blame groups come last.
     assert table[-1].startswith("| Utility and session statements |")
-    assert table[-2].startswith("| Table not identified by the collector |")
+    assert table[-2].startswith("| No source table |")
 
 
 def test_query_group_facts_cover_every_group() -> None:

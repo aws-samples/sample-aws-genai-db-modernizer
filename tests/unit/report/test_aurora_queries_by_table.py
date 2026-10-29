@@ -128,7 +128,9 @@ class TestQueriesOnAuroraByTable:
         section = md.split("## Queries on Aurora by table", 1)[1].split("\n## ", 1)[0]
         rows = [line for line in section.splitlines() if line.startswith("| ")][1:]  # drop header
         # Despite having the highest calls/s, the two blame rows sort last.
-        assert "Table not identified by the collector" in rows[-2]
+        # The fixture is a saved report (the label before #1536); it reads as the current one.
+        assert "No source table" in rows[-2]
+        assert "Table not identified by the collector" not in md
         assert "Utility and session statements" in rows[-1]
         assert "wp.wp_posts" in rows[0] or "wp.wp_postmeta" in rows[0]
 

@@ -313,6 +313,20 @@ def test_top_query_groups_never_names_the_collector_blame_groups() -> None:
     assert "Utility and session statements" not in text
 
 
+def test_top_query_groups_never_names_the_no_source_table_group() -> None:
+    """#1536: the group for statements with no source table is never a busiest group,
+    under its current label or the one a saved report carries."""
+    groups = [
+        {"group_name": "No source table", "engines": ["aurora_mysql"]},
+        {"group_name": "Table not identified by the collector", "engines": ["aurora_mysql"]},
+        {"group_name": "Option lookups", "engines": ["dynamodb"]},
+    ]
+    text = build_summary(_data(), RANKING, MAPPINGS, TCO, RISKS, groups)
+    assert "Top query groups by throughput: Option lookups." in text
+    assert "No source table" not in text
+    assert "Table not identified by the collector" not in text
+
+
 def test_top_query_groups_omitted_when_only_collector_blame_groups_exist() -> None:
     groups = [
         {"group_name": "Table not identified by the collector", "engines": ["aurora_mysql"]},
