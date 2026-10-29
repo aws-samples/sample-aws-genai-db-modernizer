@@ -39,17 +39,21 @@ Output modes (issue #278):
 """
 
 import json
+import logging
 import os
 import re
 import sys
 import uuid
 import zipfile
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts._compact_output import CompactConsole, display_path, want_verbose  # noqa: E402
+from src.shared import model_usage  # noqa: E402
 from src.shared.bedrock_guardrail import (  # noqa: E402
     describe_active_guardrail,
     exit_on_invalid_guardrail_config,
@@ -173,6 +177,8 @@ def _set_job_context(store, db: str, job_id: str) -> None:
 def _start_phase(phase: str) -> None:
     global _CURRENT_PHASE
     _CURRENT_PHASE = phase
+    # Model calls from here on count under this phase (#1675), as in assess().
+    model_usage.LEDGER.set_phase(phase)
     if _JOB:
         _clear_phase_marker(_JOB["store"], _JOB["db"], _JOB["job_id"], phase)
 
@@ -215,6 +221,69 @@ def _mark_unhandled_failure(exc: BaseException) -> None:
     record_unhandled_failure(
         (_JOB["store"], _JOB["db"], _JOB["job_id"], _CURRENT_PHASE, None, True), exc
     )
+
+
+class _CurrentStderr(logging.Handler):
+    """Writes each record to ``sys.stderr`` as it is when the record arrives.
+
+    In compact mode that is the console, which writes to the run log only, so
+    stdout keeps just the status lines; in verbose mode it is the terminal's stderr.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            sys.stderr.write(self.format(record) + "\n")
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001 - logging never breaks the run
+            self.handleError(record)
+
+
+@contextmanager
+def _reasks_to_run_log() -> Iterator[None]:
+    """Route the structured-output re-ask lines (INFO, #1675) to the run log.
+
+    Only that logger: one line per re-ask, naming the case and the failing field
+    paths (declared field names and indexes only). Its DEBUG detail, which can
+    quote model text, stays off.
+    """
+    from src.shared.role_bedrock_model import REASK_LOGGER
+
+    handler = _CurrentStderr(logging.INFO)
+    handler.setFormatter(logging.Formatter("[model] %(message)s"))
+    level = REASK_LOGGER.level
+    REASK_LOGGER.addHandler(handler)
+    REASK_LOGGER.setLevel(logging.INFO)
+    try:
+        yield
+    finally:
+        REASK_LOGGER.removeHandler(handler)
+        REASK_LOGGER.setLevel(level)
+
+
+def _write_model_usage() -> None:
+    """Write the run's model token usage as ``_logs/model_usage.json`` (#1675).
+
+    The same recorder and file as ``assess()`` (``src/shared/model_usage.py``): totals
+    by phase and model id, written only when the run called a model, so
+    ``scripts/usage_cost.py`` prices a CLI run too. A later run of the job (``--job-id``)
+    is added as one more run and the totals are summed, never overwritten. A failed
+    run still records what it spent; a write error never hides the run's own.
+    """
+    if not _JOB:
+        return
+    try:
+        record = model_usage.write_usage(_JOB["store"], _JOB["db"], _JOB["job_id"])
+    except Exception as exc:  # the run's own outcome matters more than its usage record
+        print(f"[usage] Model usage not recorded: {type(exc).__name__}", flush=True)
+        return
+    if record is not None:
+        key = f"{_JOB['db']}/{_JOB['job_id']}/{model_usage.USAGE_KEY}"
+        run = record["runs"][-1]
+        print(
+            f"[usage] {run['totals']['calls']} model call(s) recorded as run {run['run']}: "
+            f"{_path(_JOB['store'], key)}",
+            flush=True,
+        )
 
 
 def _log(phase: str, msg: str) -> None:
@@ -1169,16 +1238,19 @@ def main() -> None:
     if args.llm_mode == "bedrock":
         exit_on_invalid_guardrail_config()
 
+    model_usage.LEDGER.reset()
     if _want_verbose(args.verbose):
         sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
         try:
-            _run(args)
+            with _reasks_to_run_log():
+                _run(args)
         except SystemExit:
             raise  # _error() already recorded the failure, if any (#517)
         except BaseException as exc:  # incl. KeyboardInterrupt: still mark the phase
             _mark_unhandled_failure(exc)
             raise
         finally:
+            _write_model_usage()
             sys.stdout = sys.stdout._stream  # type: ignore[attr-defined]
         return
 
@@ -1190,7 +1262,8 @@ def main() -> None:
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"### run_assessment.py {' '.join(sys.argv[1:])}  [{ts}]", flush=True)
-        _run(args)
+        with _reasks_to_run_log():
+            _run(args)
     except SystemExit:
         raise  # _error() already printed the phase's error line
     except BaseException as exc:  # incl. KeyboardInterrupt: still report the phase
@@ -1204,6 +1277,7 @@ def main() -> None:
         exc.__compact_logged__ = True  # type: ignore[attr-defined]
         raise
     finally:
+        _write_model_usage()
         sys.stdout, sys.stderr = console.stdout, console.stderr
         _CONSOLE = None
         console.close()

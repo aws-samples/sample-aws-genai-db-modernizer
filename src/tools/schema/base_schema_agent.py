@@ -222,6 +222,22 @@ def enforce_design_numbers[Out: BaseModel](
     return output
 
 
+def model_token_usage(model: Any) -> dict[str, int] | None:
+    """The design trace's ``token_usage``: the model's token totals over every call.
+
+    Adds ``structured_output_reasks``, the number of requests that asked again for
+    a structured output (#1675), when there was one; None for a model with no totals.
+    """
+    usage = getattr(model, "usage", None)
+    if not isinstance(usage, dict):
+        return None
+    totals = dict(usage)
+    reasks = getattr(model, "structured_output_reasks", None)
+    if isinstance(reasks, list) and reasks:
+        totals["structured_output_reasks"] = len(reasks)
+    return totals
+
+
 class SchemaDesignTrace:
     """Collects designer iterations and PE reviews for the design_trace artifact."""
 
@@ -465,14 +481,15 @@ class SchemaDesignRunner:
         """The design trace, with the model's token usage over the run when it has one.
 
         ``token_usage`` covers every designer and PE call on ``self.model``
-        (#626): input, output, cache-read and cache-write tokens, and calls.
+        (#626): input, output, cache-read and cache-write tokens, and calls (see
+        :func:`model_token_usage`).
         """
         trace = self.trace.to_dict()
         if self.routing_flags:
             trace["routing_flags"] = list(self.routing_flags)
-        usage = getattr(self.model, "usage", None)
-        if isinstance(usage, dict):
-            trace["token_usage"] = dict(usage)
+        usage = model_token_usage(self.model)
+        if usage is not None:
+            trace["token_usage"] = usage
         return trace
 
     def _checked(self, output: T) -> T:

@@ -30,6 +30,7 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import botocore.client
 import pytest
@@ -305,7 +306,10 @@ def run_every_model_input(
                 module, "Agent", None
             ) is real_agent:
                 mp.setattr(module, "Agent", _ModelStandIn)
-        mp.setattr("src.shared.role_bedrock_model.RoleBedrockModel", lambda *a, **k: object())
+        mp.setattr(
+            "src.shared.role_bedrock_model.RoleBedrockModel",
+            lambda *a, **k: MagicMock(spec=["with_conversation_cache"]),
+        )
         mp.setattr("time.sleep", lambda _s: None)
         mp.setattr(schema_handler, "_dispatch_schema_agent", recording_dispatch)
         selected = run_assessment.phase_triage(bed_store, bjob, bdb)

@@ -16,7 +16,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.agents.prompt_framing import is_framed
 from src.agents.schema_design.group_input import CONTEXT_TABLE_RULE, build_group_input
@@ -102,6 +104,7 @@ def test_the_bedrock_pe_reviewer_is_given_the_rule_and_the_context_tables() -> N
     assert prompts and CONTEXT_TABLE_RULE not in prompts[0]
 
 
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
 def test_the_bedrock_designer_hands_its_context_tables_to_the_pe_review(tmp_path: Path) -> None:
     from src.tools.schema import dynamodb_schema_agent as agent
 
@@ -114,7 +117,9 @@ def test_the_bedrock_designer_hands_its_context_tables_to_the_pe_review(tmp_path
         raise RuntimeError("stop")
 
     with (
-        patch.object(agent, "_build_model", return_value=object()),
+        patch.object(
+            agent, "_build_model", return_value=MagicMock(spec=["with_conversation_cache"])
+        ),
         patch.object(agent, "Agent", lambda **_: object()),
         patch.object(agent, "_project_input", lambda _p: {"design_metrics": None}),
         patch.object(agent, "_collector_for_columns", lambda _p: {}),

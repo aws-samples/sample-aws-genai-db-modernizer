@@ -30,7 +30,9 @@ try).
 
 Roles with ``prompt_cache`` (schema design, #626) send Bedrock cache points
 after the tool definitions and after the system prompt, the prefix every
-designer and PE turn repeats. A prefix shorter than the model's minimum
+designer and PE turn repeats. A multi-turn designer also caches its
+conversation, one more point on the latest user turn (#1675); a one-shot PE
+review does not. A prefix shorter than the model's minimum
 (:func:`min_cacheable_tokens`) is simply not cached; nothing fails.
 
 The defaults are the 5.5 family (measured before and after the switch on the
@@ -126,7 +128,8 @@ class RoleSpec:
     #: Bedrock prompt caching (#626): cache points after the tool definitions
     #: and after the system prompt, so the stable prefix every turn resends
     #: (output-contract tool schema, skill text) bills at the cache-read rate.
-    #: The conversation itself is not cached. Claude model IDs only.
+    #: A multi-turn agent also caches its conversation (``RoleBedrockModel.
+    #: with_conversation_cache``, #1675). Claude model IDs only.
     prompt_cache: bool = False
 
 
@@ -309,8 +312,10 @@ def min_cacheable_tokens(model_id: str) -> int | None:
     """The shortest prefix (tokens) ``model_id`` caches, or None if unknown.
 
     A cache point on a shorter prefix is silently ignored: no error, no cache
-    write, no cache read. Values from Anthropic's prompt-caching reference; the
-    minimum is not monotonic across generations (Opus 4.6 needs 4096, 5.x 512).
+    write, no cache read. Values from the Amazon Bedrock prompt-caching guide's
+    "Supported models, Regions, and explicit caching limits" table (the minimum
+    counts the whole prefix before the point: tools, system and messages); the
+    minimum is not monotonic across generations (Opus 4.5-4.7 need 4096, 5.x 512).
     """
     legacy = _LEGACY_NAMED.search(model_id)
     if legacy:
@@ -324,10 +329,8 @@ def min_cacheable_tokens(model_id: str) -> int | None:
     if tier == "haiku":
         return 4096 if version >= (4, 5) else 2048
     if tier == "opus":
-        if version in ((4, 5), (4, 6)):
+        if version in ((4, 5), (4, 6), (4, 7)):
             return 4096
-        if version == (4, 7):
-            return 2048
     return 1024
 
 
@@ -337,11 +340,12 @@ def _cache_config(spec: RoleSpec, profile: ModelProfile) -> Any:
     ``strategy="auto"`` places cache points only on Claude model IDs; with
     ``tools_ttl=True`` Strands adds one after the tool definitions and one after
     the system prompt (Bedrock renders tools, then system, then messages, so the
-    second covers both). Strands would also put one on the last user turn;
-    :class:`~src.shared.role_bedrock_model.RoleBedrockModel` drops that one,
-    because a designer prompt or a PE review input is sent once and a cache
-    write on it is a 25% surcharge nothing reads back. The TTL is Bedrock's
-    default (5 minutes), refreshed by every read.
+    second covers both). Strands also puts one on the last user turn;
+    :class:`~src.shared.role_bedrock_model.RoleBedrockModel` keeps it only for a
+    multi-turn designer (#1675), whose next turn reads it back, and drops it for
+    a one-shot PE review, where a cache write is a 25% surcharge nothing reads
+    back. That is at most three points per request; Bedrock allows four. The TTL
+    is Bedrock's default (5 minutes), refreshed by every read.
     """
     if not spec.prompt_cache or profile.family == "unknown":
         return None

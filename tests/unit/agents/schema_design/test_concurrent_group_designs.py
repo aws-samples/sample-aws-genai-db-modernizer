@@ -23,7 +23,7 @@ import os
 import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -122,7 +122,10 @@ def drafts(tmp_path_factory) -> dict[int, tuple[set[str], set[str]]]:
     barrier = threading.Barrier(GROUPS)
     with (
         patch("src.tools.schema.dynamodb_schema_agent.Agent", _replay_agent(barrier)),
-        patch("src.tools.schema.dynamodb_schema_agent._build_model", return_value=object()),
+        patch(
+            "src.tools.schema.dynamodb_schema_agent._build_model",
+            return_value=MagicMock(spec=["with_conversation_cache"]),
+        ),
         patch(
             "src.tools.schema.dynamodb_schema_agent.check_design_numbers",
             side_effect=_record_check,

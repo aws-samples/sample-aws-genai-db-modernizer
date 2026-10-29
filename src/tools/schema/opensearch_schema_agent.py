@@ -39,7 +39,11 @@ from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
-from src.tools.schema.base_schema_agent import AgentInputPaths, enforce_design_numbers
+from src.tools.schema.base_schema_agent import (
+    AgentInputPaths,
+    enforce_design_numbers,
+    model_token_usage,
+)
 from src.tools.schema.design_metrics import (
     check_design_numbers,
     design_metrics_from_projection,
@@ -385,7 +389,8 @@ def run_opensearch_schema_agent(
     )
 
     designer = Agent(
-        model=model,
+        # Multi-turn: each turn resends the conversation, so it is cached (#1675).
+        model=model.with_conversation_cache(),
         system_prompt=system_prompt,
         tools=[_input_tool(paths)],
         structured_output_model=OpenSearchModelOutputContract,
@@ -530,7 +535,7 @@ def run_opensearch_schema_agent(
     trace_dict = trace.to_dict()
     if routing_flags:
         trace_dict["routing_flags"] = routing_flags
-    usage = getattr(model, "usage", None)
-    if isinstance(usage, dict):  # token usage over every designer and PE call (#626)
-        trace_dict["token_usage"] = dict(usage)
+    usage = model_token_usage(model)
+    if usage is not None:  # token usage over every designer and PE call (#626)
+        trace_dict["token_usage"] = usage
     return design_output, trace_dict

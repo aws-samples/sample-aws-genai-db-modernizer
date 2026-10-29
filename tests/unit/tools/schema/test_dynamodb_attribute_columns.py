@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
 
 from src.tools.schema.dynamodb_attribute_columns import check_attribute_columns
 
@@ -190,6 +193,7 @@ def test_token_matching_no_attribute_is_checked_as_a_column() -> None:
     assert "sk_template" in message and "'nothing'" in message
 
 
+@pytest.mark.passes_on_main  # a guard: main already behaves this way
 def test_bedrock_runner_checks_columns_on_the_first_design_only(tmp_path) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -218,7 +222,9 @@ def test_bedrock_runner_checks_columns_on_the_first_design_only(tmp_path) -> Non
     path = tmp_path / "c.json"
     path.write_text("{}", encoding="utf-8")
     with (
-        patch.object(agent, "_build_model", return_value=object()),
+        patch.object(
+            agent, "_build_model", return_value=MagicMock(spec=["with_conversation_cache"])
+        ),
         patch.object(agent, "Agent", lambda **_: object()),
         patch.object(agent, "_project_input", lambda _p: {"design_metrics": None}),
         patch.object(agent, "_collector_for_columns", lambda _p: COLLECTOR),
