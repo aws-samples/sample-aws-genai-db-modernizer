@@ -38,6 +38,7 @@ from src.agents.referee.cache_overlay import (
     candidate_summary,
     overlay_summary,
 )
+from src.agents.referee.derived_copy_sync import tco_assumptions
 from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.routed_confidence import RoutedFit, routed_fits
 from src.agents.referee.schema_fields import field_list
@@ -1025,8 +1026,14 @@ def build_tco_analysis(
     retired_costs: dict[str, float] | None = None,
     wave_one_engine: str | None = None,
     retired_bases: dict[str, dict] | None = None,
+    derived_copy_syncs: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict:
     """Aggregate cost estimates from all analysis outputs.
+
+    ``derived_copy_syncs`` (#1566) is each engine's stream sync of its derived copies
+    (``derived_copy_sync.syncs_by_engine``): its monthly total joins that engine's row,
+    so the projected cost, the ranking and every cost table count it, and the TCO states
+    it as an assumption. An engine whose analysis priced nothing keeps its figure.
 
     ``wave_one_engine`` (#1378) is wave 1's Aurora engine (``wave_retained_engine``):
     wave 1 moves the whole source database, so the tables no in-scope query reads are
@@ -1056,6 +1063,7 @@ def build_tco_analysis(
     # #1476: a line an engine's estimate asks the TCO to state with its figure (the
     # DynamoDB read-consistency footnote), each once, in engine order.
     footnotes: list[str] = []
+    sync_lines: list[str] = []
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -1082,6 +1090,12 @@ def build_tco_analysis(
             monthly = estimate.monthly_cost_usd
             components = estimate.cost_components
         footnotes += [str(f) for f in components.get("footnotes") or [] if str(f) not in footnotes]
+        # #1566: the derived copies' stream sync is part of the engine's cost (one price
+        # source: facts.derived_copy_sync), stated once with the TCO's assumptions.
+        sync = (derived_copy_syncs or {}).get(engine)
+        if sync and components and (sizing is None or sizing["sized_query_count"] > 0):
+            monthly = round(monthly + sync["total_monthly_cost_usd"], 2)
+            sync_lines += tco_assumptions(engine, sync)
         target_costs.append(
             {
                 "database": engine,
@@ -1160,6 +1174,7 @@ def build_tco_analysis(
                 if (line := unknown_size_assumption(_unknown_size_count(data.collector)))
                 else []
             ),
+            *sync_lines,
             *footnotes,
         ],
     }

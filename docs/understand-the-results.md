@@ -82,7 +82,7 @@ A close call is a query whose engine scored less than 5 points above another eng
 
 ## Costs
 
-Every cost figure is labelled as the full-modernization estimate: all waves done, every kept engine running. It is not the cost of wave 1. The estimates use public on-demand list prices for the stated Region, and the TCO lists its assumptions; check them with your own pricing in the [AWS Pricing Calculator](https://calculator.aws/). With no current cost collected for the source, the deliverables say so and claim no saving. When the DynamoDB design keeps derived copies of data in sync through DynamoDB Streams, the deliverables price that sync and list it under the overlap risk it belongs to.
+Every cost figure is labelled as the full-modernization estimate: all waves done, every kept engine running. It is not the cost of wave 1. The estimates use public on-demand list prices for the stated Region, and the TCO lists its assumptions; check them with your own pricing in the [AWS Pricing Calculator](https://calculator.aws/). With no current cost collected for the source, the deliverables say so and claim no saving. When the DynamoDB design keeps derived copies of data in sync through DynamoDB Streams, the deliverables price that sync, list it under the overlap risk it belongs to, and count it in the DynamoDB cost, with the TCO stating what the figure includes.
 
 ## Risks
 

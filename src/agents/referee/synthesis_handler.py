@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
-from src.agents.referee.derived_copy_sync import derived_copy_sync_facts
+from src.agents.referee.derived_copy_sync import syncs_by_engine
 from src.agents.referee.engine_scope import scope_of, scope_unservable_rows
 from src.agents.referee.flagged_unservable import flagged_unservable_records
 from src.agents.referee.migration_risks import (
@@ -371,11 +371,18 @@ def run_synthesis_deterministic(
     )
     # #1378: built once the waves exist, so wave 1's Aurora engine stores the tables no
     # in-scope query reads (wave 1 moves the whole source database).
+    # #1566: the derived copies' stream sync, computed once from the risks it sits under
+    # (built above): the DynamoDB cost counts it and facts.derived_copy_sync lists it.
+    derived_copy_syncs = syncs_by_engine(
+        {e: a.schema_design for e, a in data.engines.items()},
+        risk_assessment.get("risks") or [],
+    )
     tco = build_tco_analysis(
         data,
         retired_costs=retired_costs,
         wave_one_engine=wave_retained_engine(migration_waves),
         retired_bases=retired_bases,
+        derived_copy_syncs=derived_copy_syncs,
     )
     # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
     # queries), never the whole-collection analysis estimate, so every cost agrees.
@@ -650,6 +657,7 @@ def run_synthesis_deterministic(
         "scope_unservable": scope_unservable,
         "carried_writes": carried_writes,
         "relational_gaps": relational_gaps,
+        "derived_copy_syncs": derived_copy_syncs,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
         "engines_in_use": sorted(running),
@@ -1432,6 +1440,16 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     relational_gaps = (
         result["relational_gaps"] if "relational_gaps" in result else _relational_gaps(data)
     )
+    # #1566: the sync synthesis computed once for the cost (an older caller's result
+    # without it gets it here).
+    derived_copy_syncs = (
+        result["derived_copy_syncs"]
+        if "derived_copy_syncs" in result
+        else syncs_by_engine(
+            {e: a.schema_design for e, a in data.engines.items()},
+            (result.get("risk_assessment") or {}).get("risks") or [],
+        )
+    )
     output_data["facts"] = compute_report_facts(
         output_data,
         view_ids=view_ids,
@@ -1443,19 +1461,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # prices each kept engine itself, so each row records its own (ADR-032 Decision 6).
         # #1527: the stream sync of the DynamoDB design's derived copies, by the design
         # conflict risk it sits under.
-        derived_copy_sync=next(
-            (
-                found
-                for artifacts in data.engines.values()
-                if (
-                    found := derived_copy_sync_facts(
-                        artifacts.schema_design,
-                        (output_data.get("risk_assessment") or {}).get("risks") or [],
-                    )
-                )
-            ),
-            None,
-        ),
+        derived_copy_sync=next(iter(derived_copy_syncs.values()), None),
         price_list=estimates_price_basis(
             {
                 str(row.get("database")): row.get("price_list")
