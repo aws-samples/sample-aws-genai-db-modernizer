@@ -41,6 +41,8 @@ Version History:
   optional source_compatible (move ledger).
 - 1.7 (2026-10-23, #1329): No field of its own. Move evidence gained the optional
   ``closest_engine`` (move ledger).
+- 1.8 (2026-10-29, #1650): RouterOutput.waived (WaivedFlag): designer unsupported
+  entries that name a gap a catalog waiver lifted; no move (#1650)
 """
 
 from __future__ import annotations
@@ -125,11 +127,22 @@ class HeldQuery(BaseModel):
     )
 
 
+class WaivedFlag(BaseModel):
+    """A designer's unsupported entry the router did not act on (#1650): it names the
+    capability a catalog waiver lifted for the query on its engine before the gate
+    (``gates.toml`` ``[[waivers]]``), so the query stays and is served as routed."""
+
+    query_id: str = Field(..., description="The query the entry named")
+    flagged_engine: str = Field(..., description="The engine whose design listed it (id)")
+    capability: str = Field(..., description="The waived capability the entry names")
+    rule_id: str = Field(..., description="The catalog waiver that serves it there")
+
+
 class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.7", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.8", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")
@@ -154,5 +167,12 @@ class RouterOutput(BaseModel):
     terminal: list[TerminalQuery] = Field(
         default_factory=list,
         description="Each terminal query with the flag that made it terminal (#888)",
+    )
+    waived: list[WaivedFlag] = Field(
+        default_factory=list,
+        description=(
+            "Designer unsupported entries naming a gap a catalog waiver lifted for the "
+            "query on its engine: no move, the query is served as routed (#1650)"
+        ),
     )
     cascade_depth: int = Field(default=0, description="Current depth of the routing cascade")

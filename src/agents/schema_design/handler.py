@@ -1030,6 +1030,16 @@ def run_schema_split(
     # Derive artifact version: use assignment_version when set, else 1
     artifact_version = assignment_version if assignment_version > 0 else 1
 
+    # A post-schema reroute version keeps the parts of the version it came from, and
+    # every part whose input did not change keeps its design (#1650).
+    from src.agents.schema_design.carry_forward import carry_forward_parts, prior_parts
+
+    prior = (
+        prior_parts(store, database_name, job_id, target_type, artifact_version)
+        if assignment_version > 0
+        else None
+    )
+
     # Split into groups
     manifest = split_schema_input(
         job_id=job_id,
@@ -1042,6 +1052,12 @@ def run_schema_split(
         schema_version=artifact_version,
         co_dependency_groups=co_dependency_groups,
         decision_trace=_read_decision_trace(store, database_name, job_id, target_type),
+        prior_parts=prior[1] if prior else None,
+    )
+    carried = (
+        carry_forward_parts(store, database_name, job_id, target_type, prior[0], artifact_version)
+        if prior
+        else {}
     )
 
     elapsed = time.time() - start_time
@@ -1049,6 +1065,11 @@ def run_schema_split(
         f"[schema-split/{target_type}] ✅ Split into {manifest.total_groups} groups "
         f"({manifest.total_queries} queries) in {elapsed:.1f}s"
     )
+    if prior:
+        say(
+            f"[schema-split/{target_type}] {len(carried)} of {manifest.total_groups} groups "
+            f"unchanged since v{prior[0]}: their designs are carried forward"
+        )
     for g in manifest.groups:
         say(
             f"  Group {g.group_index:2d}: {g.query_count:4d} queries, "
@@ -1304,7 +1325,11 @@ def run_schema_design_auto(
         # mid-run would redo all groups from scratch (the heaviest engines split
         # into dozens), and under a tight Bedrock quota that re-work is exactly what
         # we cannot afford. Draft writes are per-group, so completed groups persist.
-        if store.exists(draft_key):
+        from src.agents.schema_design.carry_forward import is_dropped_copy
+
+        base_key = f"{database_name}/{job_id}/schema-{target_type}/v{artifact_version}"
+        # A copy a re-split dropped (#1650) is no design of this group: design it.
+        if store.exists(draft_key) and not is_dropped_copy(store, base_key, idx):
             say(f"[schema-design/{target_type}] Group {idx} already designed — reusing draft")
             return
         input_key = (

@@ -131,7 +131,16 @@ def _local_path(store: ArtifactStore, key: str) -> str:
 def is_recorded(
     store: ArtifactStore, db: str, job_id: str, engine: str, version: int, group: int | None
 ) -> bool:
-    """Whether the design's trace already holds a review (its own, or one carried forward)."""
+    """Whether the design's trace already holds a review (its own, or one carried forward).
+
+    A review a post-schema reroute carried forward with a part's draft counts only while
+    that draft is the carried one, byte for byte (#1650): once the part is designed
+    afresh, the copied review is of another design."""
+    if group is not None:
+        from src.agents.schema_design.carry_forward import stale_review
+
+        if stale_review(store, f"{db}/{job_id}/schema-{engine}/v{version}", group):
+            return False
     trace = _read(store, trace_key(db, job_id, engine, version, group))
     return isinstance(trace, dict) and isinstance(trace.get(REVIEW_KEY), dict)
 

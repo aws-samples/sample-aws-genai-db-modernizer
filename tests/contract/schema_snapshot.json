@@ -18665,10 +18665,49 @@
           },
           "kind": "array"
         }
+      },
+      "waived": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "capability": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "flagged_engine": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "rule_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
       }
     },
-    "schema_hash": "dabad23315f976e41df9c91a739b6ae56c3f179808921df76cc7a07836117f5a",
-    "version": "1.7"
+    "schema_hash": "7b0b9b43f757ee17e5eebc03682c6a7494a51fc96101c174f4c4440ee4167cee",
+    "version": "1.8"
   },
   "reality_check_marker.RealityCheckMarker": {
     "fields": {

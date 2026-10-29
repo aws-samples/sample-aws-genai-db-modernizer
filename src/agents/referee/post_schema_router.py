@@ -22,12 +22,17 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Literal
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.consolidation_validator import scorer_ladder
-from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags, route_flagged_unit
+from src.agents.referee.model_flags import (
+    FLAG_REASON_LABELS,
+    parse_model_flags,
+    route_flagged_unit,
+    waiver_for_capability,
+)
 from src.agents.referee.move_ledger import group_key
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.tie_break import group_tie
@@ -39,6 +44,7 @@ from src.contracts.post_schema_router_output import (
     QueryRouting,
     RouterOutput,
     TerminalQuery,
+    WaivedFlag,
 )
 from src.contracts.schema_design_trace import DesignTrace
 from src.shared.engine_names import display_engine
@@ -73,6 +79,8 @@ def _extract_unsupported_query_ids(schema_output: dict, engine: str) -> list[dic
     - DynamoDB: UnsupportedPattern has query_ids field
     - DocumentDB: UnsupportedPattern has source_query_ids field
     - OpenSearch: UnsupportedPattern has query_ids field (newly added)
+
+    Each entry keeps its ``pattern_type`` (DynamoDB's category, empty elsewhere).
     """
     unsupported = schema_output.get("unsupported_patterns", [])
     results = []
@@ -80,27 +88,77 @@ def _extract_unsupported_query_ids(schema_output: dict, engine: str) -> list[dic
         query_ids = pattern.get("query_ids") or pattern.get("source_query_ids") or []
         reason = pattern.get("reason") or pattern.get("recommendation") or "unsupported pattern"
         if query_ids:
-            results.append({"query_ids": query_ids, "reason": reason})
+            results.append(
+                {
+                    "query_ids": query_ids,
+                    "reason": reason,
+                    "pattern_type": str(pattern.get("pattern_type") or ""),
+                }
+            )
     return results
 
 
-def _unsupported_as_flags(schema_output: dict, engine: str) -> list[ModelFlag]:
-    """A designer's unsupported patterns, read as flags on ``engine``."""
-    return [
-        ModelFlag(
-            query_ids=[str(q) for q in entry["query_ids"]],
-            flagged_engine=engine,  # type: ignore[arg-type]  # checked by the caller
-            reason_category=FlagReason.MISSING_FEATURE,
-            # Cut on a label boundary: the gate may have written a query's label
-            # (#1321), and a cut inside it would leave an unpaired backtick.
-            explanation=clip(str(entry["reason"]), MAX_EXPLANATION_CHARS) or "unsupported pattern",
+def _unsupported_as_flags(
+    schema_output: dict,
+    engine: str,
+    waive: Callable[[str, str], str | None] | None = None,
+    waived: list[WaivedFlag] | None = None,
+) -> list[ModelFlag]:
+    """A designer's unsupported patterns, read as flags on ``engine``.
+
+    ``waive(query_id, pattern_type)``: the catalog waiver that lifts the entry's own
+    category for the query on ``engine`` (``model_flags.waiver_for_capability``), or
+    None. A query it names is left out of the flag and recorded in ``waived`` (#1650)."""
+    flags: list[ModelFlag] = []
+    for entry in _extract_unsupported_query_ids(schema_output, engine):
+        query_ids: list[str] = []
+        for qid in (str(q) for q in entry["query_ids"]):
+            rule = waive(qid, entry["pattern_type"]) if waive and entry["pattern_type"] else None
+            if rule is None:
+                query_ids.append(qid)
+                continue
+            logger.info(
+                "Kept %r on %s: its unsupported entry names %s, which waiver %s lifts there",
+                qid[:80],
+                engine,
+                entry["pattern_type"],
+                rule,
+            )
+            if waived is not None:
+                waived.append(
+                    WaivedFlag(
+                        query_id=qid,
+                        flagged_engine=engine,
+                        capability=entry["pattern_type"].strip().lower(),
+                        rule_id=rule,
+                    )
+                )
+        if not query_ids:
+            continue
+        flags.append(
+            ModelFlag(
+                query_ids=query_ids,
+                flagged_engine=engine,  # type: ignore[arg-type]  # checked by the caller
+                reason_category=FlagReason.MISSING_FEATURE,
+                # Cut on a label boundary: the gate may have written a query's label
+                # (#1321), and a cut inside it would leave an unpaired backtick.
+                explanation=clip(str(entry["reason"]), MAX_EXPLANATION_CHARS)
+                or "unsupported pattern",
+            )
         )
-        for entry in _extract_unsupported_query_ids(schema_output, engine)
-    ]
+    return flags
 
 
-def _engine_flags(engine: str, raw_flags: Iterable[object], schema_output: dict) -> list[ModelFlag]:
-    """Every valid flag on ``engine``: the PE reviewer's first, then the designer's."""
+def _engine_flags(
+    engine: str,
+    raw_flags: Iterable[object],
+    schema_output: dict,
+    waive: Callable[[str, str], str | None] | None = None,
+    waived: list[WaivedFlag] | None = None,
+) -> list[ModelFlag]:
+    """Every valid flag on ``engine``: the PE reviewer's first, then the designer's
+    (less the entries ``waive`` finds a catalog waiver for, see
+    :func:`_unsupported_as_flags`)."""
     pe_flags, _rejected = parse_model_flags(raw_flags)
     kept: list[ModelFlag] = []
     for flag in pe_flags:
@@ -113,7 +171,7 @@ def _engine_flags(engine: str, raw_flags: Iterable[object], schema_output: dict)
             continue
         kept.append(flag)
     try:
-        kept.extend(_unsupported_as_flags(schema_output, engine))
+        kept.extend(_unsupported_as_flags(schema_output, engine, waive, waived))
     except ValueError:  # an engine id outside the flag contract
         logger.warning("Ignored unsupported patterns from unknown engine %r", engine)
     return kept
@@ -257,13 +315,26 @@ def route_unsupported_queries(
     # Every (query, engine) a model flagged on the engine the query is on.
     pending: list[tuple[str, str, ModelFlag]] = []
     failed_engines: dict[str, set[str]] = defaultdict(set)
+    waived: list[WaivedFlag] = []
     for engine, output in schema_outputs.items():
         # A cache engine owns none of its queries: one its design cannot serve is
         # still served by its owner, so it is not re-routed. The synthesis safety
         # net drops its cache overlay instead (#296).
         if engine in CACHE_OVERLAY_ENGINES:
             continue
-        for flag in _engine_flags(engine, routing_flags_by_engine.get(engine, []), output):
+
+        def waive(qid: str, capability: str, engine: str = engine) -> str | None:
+            # Only for a query on this engine, and not one a customer pinned or an
+            # earlier pass moved: the waiver read is that of the query where it is.
+            if assigned_engines.get(qid) != engine or qid in already_routed:
+                return None
+            return waiver_for_capability(
+                capability, query_map.get(qid) or {}, engine, scoring_context
+            )
+
+        for flag in _engine_flags(
+            engine, routing_flags_by_engine.get(engine, []), output, waive, waived
+        ):
             for qid in flag.query_ids:
                 if qid in already_routed:
                     continue
@@ -393,5 +464,6 @@ def route_unsupported_queries(
         terminal=terminal,
         held_queries=held,
         held=held_records,
+        waived=waived,
         cascade_depth=cascade_depth,
     )

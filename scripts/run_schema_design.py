@@ -268,12 +268,13 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
     manifest = store.read_json(f"{base_key}/groups_manifest.json")
     excluded_queries = manifest.get("excluded_queries") or []
+    entries = _group_entries(store, base_key, manifest)
     _output(
         {
             "status": "split",
             "assignment_version": assignment_version,
             "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
-            "groups": _public(_group_entries(store, base_key, manifest)),
+            "groups": _public(entries),
             # The "of {total}" in a part's query range: the queries in the groups.
             "query_total": sum(g.get("query_count") or 0 for g in manifest.get("groups", [])),
             # The same figure under its unit's name: every statement the groups hold.
@@ -283,6 +284,8 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
             # Queries with no source table (#276/#369): left out of every
             # group, so their count would otherwise be invisible here.
             "excluded_count": len(excluded_queries),
+            # Parts whose design a post-schema reroute kept (#1650): dispatch none.
+            "carried_count": sum(1 for g in entries if g["carried_from"] is not None),
         }
     )
 
@@ -340,6 +343,11 @@ def _draft_state(store, key: str) -> tuple[str, str | None]:
 def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
     """One compact entry per group: what a group subagent's dispatch needs."""
     entries = []
+    # The parts a post-schema reroute carried forward from the version before
+    # (#1650): their draft and review are already in place, so no subagent designs them.
+    from src.agents.schema_design.carry_forward import carried_parts_at, is_dropped_copy
+
+    carried = carried_parts_at(store, base_key)
     # Queries are numbered consecutively in group order (#1546): part 1 gets
     # 1-N, part 2 continues from N+1. The range comes from the manifest's own
     # per-group counts, so the label never depends on a model's arithmetic.
@@ -351,6 +359,9 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
         seen += count
         draft_key = f"{base_key}/schema_draft_group_{idx}.json"
         state, digest = _draft_state(store, draft_key)
+        if state != "missing" and is_dropped_copy(store, base_key, idx):
+            # A copy a re-split dropped (#1650): no design of this part, so redo it.
+            state, digest = "missing", None
         # A PE review recorded after the last --merge (#1059) makes the merge
         # stale too: --merge is what consolidates the group's trace.
         _trace_state, trace_digest = _draft_state(
@@ -374,6 +385,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
                 "draft": _local_path(store, draft_key),
                 "draft_exists": state != "missing",
                 "draft_state": state,
+                # The part on the version before whose design this one keeps, or None.
+                "carried_from": carried.get(idx),
                 "_hash": digest,
                 "_trace_hash": trace_digest,
             }

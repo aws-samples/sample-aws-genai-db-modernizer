@@ -1366,6 +1366,19 @@ def render_engineering_report_md(
                     for u in unsupported
                 ]
                 out.append("")
+            # #1650: entries the post-schema router kept through a catalog waiver are
+            # served as routed (synthesis moved them out of ``unsupported_patterns``).
+            waived = [u for u in dz.get("served_by_waiver") or [] if isinstance(u, dict)]
+            if waived:
+                out += [
+                    f"**Served as routed through a catalog waiver ({len(waived)}):** the "
+                    "design lists these as unsupported, but routing placed them here past "
+                    "that gap (a key-scoped count is a Query with Select = COUNT), so they "
+                    "stay on this engine.",
+                    "",
+                ]
+                out += [f"- {_unsupported_pattern_md(u)}" for u in waived]
+                out.append("")
             notes = dz.get("migration_notes") or []
             if isinstance(notes, str):
                 # Contractually a list of dicts; a bare string is a malformed

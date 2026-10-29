@@ -37,3 +37,10 @@ class ArtifactStore(ABC):
     def list_prefix(self, prefix: str) -> list[str]:
         """Return all artifact keys under *prefix*."""
         ...
+
+    def delete(self, path: str) -> bool:
+        """Delete the artifact at *path* where the store supports it; returns whether it
+        did. Optional: a store that cannot delete (S3 without delete rights, AWS
+        Transform's artifact store) keeps the default, which deletes nothing, and a
+        caller must not rely on the file being gone (#1650)."""
+        return False

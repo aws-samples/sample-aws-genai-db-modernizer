@@ -75,6 +75,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `schema-[^/]+/v\d+/finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
 | `schema-[^/]+/v\d+/changelog\.json` | a schema revision's changelog, shown with the revision |
 | `schema-[^/]+/v\d+/revision_context\.json` | a schema revision's context for the designer, rewritten per revision |
+| `schema-[^/]+/v\d+/carried_forward\.json` | the parts a post-schema reroute version kept from the version before, with their designs (#1650): an audit record the --split line reads |
 | `post-schema-router/external_run\.json` | external-mode post-schema routing pass record (depth, engines to design again) |
 | `load-test-[^/]+/v\d+/config\.json` | the load test's configuration as run |
 | `load-test-[^/]+/v\d+/result\.json` | the load test runner's raw result |

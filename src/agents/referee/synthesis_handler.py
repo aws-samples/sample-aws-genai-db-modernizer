@@ -306,7 +306,10 @@ def run_synthesis_deterministic(
     )
     say("[synthesis] Building risk assessment...")
     risk_assessment = build_risk_assessment(
-        data, eliminated, lifted=_lifted_findings(store, database_name, job_id, assignment_version)
+        data,
+        eliminated,
+        lifted=_lifted_findings(store, database_name, job_id, assignment_version),
+        waived=_waived_unsupported(store, database_name, job_id),
     )
     say("[synthesis] Building architecture recommendation...")
     architecture = build_architecture_recommendation(data, ranking, table_mappings)
@@ -1153,6 +1156,19 @@ def _engine_choices(data: SynthesisData) -> dict:
     }
 
 
+def _waived_unsupported(store, database_name: str, job_id: str) -> dict[str, set[str]]:
+    """Per engine, the queries whose unsupported entry the post-schema router kept there
+    through a catalog waiver (``RouterOutput.waived``, #1650); empty with no router run."""
+    key = f"{database_name}/{job_id}/post-schema-router/router_output.json"
+    if not store.exists(key):
+        return {}
+    out: dict[str, set[str]] = {}
+    for record in store.read_json(key).get("waived") or []:
+        if isinstance(record, dict) and record.get("query_id") and record.get("flagged_engine"):
+            out.setdefault(str(record["flagged_engine"]), set()).add(str(record["query_id"]))
+    return out
+
+
 def _lifted_findings(
     store: ArtifactStore, database_name: str, job_id: str, assignment_version: int
 ) -> set[tuple[str, str, str]]:
@@ -1321,7 +1337,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         "query_groups": result["query_groups"],
         "tco_analysis": result["tco_analysis"],
         "risk_assessment": result["risk_assessment"],
-        "schema_designs": _build_schema_summaries(data),
+        "schema_designs": _build_schema_summaries(
+            data, _waived_unsupported(store, data.database_name, data.job_id)
+        ),
         "trade_offs": result["trade_offs"],
         "assignment_summary": result["assignment_summary"],
         "cache_overlay": result.get("cache_overlay"),
@@ -1639,7 +1657,39 @@ def run_synthesis(
     _write_synthesis_report(store, result, assignment_version)
 
 
-def _build_schema_summaries(data):
+def _build_schema_summaries(data, waived: dict[str, set[str]] | None = None):
+    from src.shared.unsupported_pattern import unsupported_pattern_ids
+
+    summaries = _engine_schema_summaries(data)
+    if not waived:
+        return summaries
+    engine_of = {
+        qa.get("query_id"): qa.get("assigned_engine")
+        for qa in (data.assignment or {}).get("query_assignments") or []
+        if qa.get("in_scope", True)
+    }
+    # #1650: an unsupported entry the post-schema router kept through a catalog waiver
+    # is served as routed, so every deliverable lists it under ``served_by_waiver``,
+    # never under ``unsupported_patterns`` (the risk register records it as resolved).
+    for engine, waived_ids in waived.items():
+        # Only while the query is still there (a later pass may have moved it).
+        ids = {q for q in waived_ids if engine_of.get(q) == engine}
+        summary = summaries.get(engine) or {}
+        entries = summary.get("unsupported_patterns")
+        if not isinstance(entries, list) or not ids:
+            continue
+        served = [
+            e
+            for e in entries
+            if isinstance(e, dict) and (qids := set(unsupported_pattern_ids(e))) and qids <= ids
+        ]
+        if served:
+            summary["unsupported_patterns"] = [e for e in entries if e not in served]
+            summary["served_by_waiver"] = served
+    return summaries
+
+
+def _engine_schema_summaries(data):
     summaries = {}
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}

@@ -113,6 +113,8 @@ class Headless:
     def design_dynamodb(self, review: bool = True) -> None:
         split = self.run("split", "run_schema_design.py", "--engine", "dynamodb", "--split")
         for group in split["groups"]:
+            if group["carried_from"] is not None:
+                continue  # 6e: a part a reroute did not change keeps its design (#1650)
             group_input = json.loads(Path(group["input_file"]).read_text())
             queries = group_input["collector_output"]["queries"]["query_patterns"]
             _write(Path(group["draft"]), _draft_from(queries))
@@ -238,6 +240,12 @@ def headless(tmp_path_factory) -> dict:
         "groups_v3": len(
             store.read_json(f"{prefix}/schema-dynamodb/v3/groups_manifest.json")["groups"]
         ),
+        # The v3 parts whose design the reroute carried forward from v2 (#1650).
+        "carried_v3": [
+            g["group_index"]
+            for g in [line for step, line in run.lines if step == "split"][-1]["groups"]
+            if g["carried_from"] is not None
+        ],
         "second_reviews": second_reviews,
         "second": second,
         "again": again,
@@ -354,11 +362,14 @@ class TestTheRerouteRunsTheSharedRouter:
         assert not headless["has_pass_1_early"]
 
     def test_no_pass_runs_before_the_redesigns_are_reviewed(self, headless) -> None:
-        """The redesigned DynamoDB groups are designed but not reviewed: wait."""
+        """The redesigned DynamoDB groups are designed but not reviewed: wait. A part
+        the move did not change keeps its design and review from v2 (#1650)."""
         line = headless["unreviewed"]
         assert line["status"] == "awaiting_redesign" and line["missing_designs"] == []
+        carried = headless["carried_v3"]
+        assert 0 < len(carried) < headless["groups_v3"]
         assert line["missing_reviews"] == [
-            f"dynamodb group {g}" for g in range(headless["groups_v3"])
+            f"dynamodb group {g}" for g in range(headless["groups_v3"]) if g not in carried
         ]
         assert not headless["has_pass_1_unreviewed"]
         # Reviewed after the merge and merged again: the trace has them.

@@ -356,6 +356,11 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "a schema revision's context for the designer, rewritten per revision",
     ),
     (
+        r"schema-[^/]+/v\d+/carried_forward\.json",
+        "the parts a post-schema reroute version kept from the version before, with their "
+        "designs (#1650): an audit record the --split line reads",
+    ),
+    (
         r"post-schema-router/external_run\.json",
         "external-mode post-schema routing pass record (depth, engines to design again)",
     ),
@@ -561,9 +566,11 @@ def _schema_output_targets() -> list[tuple[str, str]]:
         if find_spec(module) is None:
             continue
         # The module name is built from a catalog engine id, never from input.
-        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
         names = [
-            n for n in vars(importlib.import_module(module)) if n.endswith("ModelOutputContract")
+            n
+            # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+            for n in vars(importlib.import_module(module))
+            if n.endswith("ModelOutputContract")
         ]
         if len(names) == 1:
             found.append((_SCHEMA_OUTPUT.format(engine=re.escape(engine)), f"{module}:{names[0]}"))
