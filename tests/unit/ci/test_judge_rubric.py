@@ -402,9 +402,119 @@ def test_a_sentence_with_a_stated_bound_is_not_a_hedge() -> None:
     assert '"a moment"' in hedging[: hedging.index("Not a hedge:")]
 
 
-def test_the_clarified_rubric_is_version_4() -> None:
+def test_the_count_anchored_rubric_is_version_5() -> None:
     meta = judge.rubric_identity(judge.DEFAULT_RUBRIC_PATH)
-    assert meta["rubric_version"] == 4
+    assert meta["rubric_version"] == 5
+
+
+# --- rubric_version 5: anchors a judge can count (#513) ---------------------
+
+COUNTED = ("grounded", "justified_engines", "risks", "roadmap", "contradictions")
+
+
+def test_a_counted_criterion_defines_its_defect_and_what_is_not_one() -> None:
+    """Two samples read the same text as 3 and 4 when the anchor says "at
+    least one" and leaves 4 undefined. Each counted criterion says what one
+    defect is, names what is not one, and gives the count for 2 and 4 too."""
+    for name in COUNTED:
+        body = " ".join(_section(name).split())
+        assert "A defect is" in body or "Two kinds of defect" in body or "List each" in body, name
+        assert "Not a defect" in body or "Not a contradiction" in body, name
+        assert re.search(r"\(\d? ?[24] is [^)]*\)", body), name
+
+
+def test_the_roadmap_counts_both_defect_kinds_the_judge_can_report() -> None:
+    roadmap = _section("roadmap")
+    for kind in ("roadmap_mismatch", "unclear_order"):
+        assert kind in judge.DEFECT_KINDS
+        assert f"`{kind}`" in roadmap
+    # a stated reason is clear, an overlay wave lists no tables, a wave that
+    # moves a table on again is not a defect: the three readings that flipped
+    assert "A reason that\n  is stated is clear" in roadmap
+    assert "overlay" in roadmap and "moved whole in an early wave" in roadmap
+
+
+def test_the_multi_engine_rule_is_applied_before_scoring_with_the_wave_gate_example() -> None:
+    rules = RUBRIC[: RUBRIC.index("## 1. grounded")]
+    assert "**Apply the two rules above before scoring.**" in rules
+    applied = rules[rules.index("**Apply the two rules above") :].split("\n- ", 1)[0]
+    for phrase in ("tables_served", "owned_tables", "dual-read", "never the counts"):
+        assert phrase in applied, phrase
+    assert "**Score from counts.**" in rules
+    assert rules.index("Apply the two rules") < rules.index("Score from counts")
+
+
+_NUMBER_WORDS = {"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+
+
+def _count_table() -> dict[int, range]:
+    """The generic "Score from counts" table, parsed: score -> defect counts."""
+    rules = " ".join(RUBRIC[: RUBRIC.index("## 1. grounded")].split())
+    row = re.search(r"The tables read: (5 is no defect.*?1 is six or more)", rules)
+    assert row, "the generic count table is missing"
+    table: dict[int, range] = {}
+    for score, low, high in re.findall(
+        r"(\d) is (no|one|two|four|six)(?: defect)?(?: or (three|five|more))?", row.group(1)
+    ):
+        lo = _NUMBER_WORDS[low]
+        if high == "more":
+            table[int(score)] = range(lo, 1000)
+        else:
+            table[int(score)] = range(lo, _NUMBER_WORDS[high] + 1 if high else lo + 1)
+    return table
+
+
+def test_every_defect_count_maps_to_exactly_one_score() -> None:
+    table = _count_table()
+    assert sorted(table) == [1, 2, 3, 4, 5]
+    for n in range(0, 30):
+        assert sum(n in counts for counts in table.values()) == 1, n
+
+
+def test_every_roadmap_combination_of_defect_kinds_maps_to_one_score() -> None:
+    """The review of #1706: three mismatches, a mismatch with unclear-order
+    defects, and four unclear-order defects that are not "all waves" had no
+    level. Both kinds count the same, so walk every pair."""
+    roadmap = " ".join(_section("roadmap").split())
+    assert "Both kinds count the same" in roadmap
+    table = _count_table()
+    for mismatches in range(0, 9):
+        for unclear in range(0, 9):
+            scores = [s for s, counts in table.items() if mismatches + unclear in counts]
+            assert len(scores) == 1, (mismatches, unclear)
+    # the roadmap's own anchors restate the same rows
+    assert "Six or more defects" in roadmap and "Two or three defects of either kind" in roadmap
+    assert "(4 is one defect of either kind; 2 is four or five.)" in roadmap
+
+
+def test_the_counted_criteria_restate_the_generic_table_not_their_own() -> None:
+    for name in ("grounded", "justified_engines", "risks", "roadmap", "contradictions"):
+        body = " ".join(_section(name).split())
+        assert "4 is one" in body and "four or five" in body, name
+        assert "two or three" in body.lower(), name
+    assert "10 or more hedges" in _section("hedging")
+
+
+def test_the_headline_cap_is_stated_once_and_the_criteria_point_to_it() -> None:
+    """One rule for a headline defect (cap 2); no criterion scores it 1 on its own."""
+    assert RUBRIC.count("limits the score to 2") == 1
+    rules = " ".join(RUBRIC[: RUBRIC.index("## 1. grounded")].split())
+    for headline in ("the engine set", "projected total cost", "overall risk level", "waves"):
+        assert headline in rules, headline
+    assert "only the count table gives 1" in rules
+    for name in ("grounded", "contradictions"):
+        assert "headline cap above" in " ".join(_section(name).split()), name
+    assert "limits the score to 2" not in "".join(_section(n) for n in judge.CRITERIA)
+
+
+def test_grounded_does_not_accept_renderer_computed_figures() -> None:
+    """ADR-032: renderers only format, so a sum or share facts does not carry is a defect."""
+    grounded = " ".join(_section("grounded").split())
+    assert "Renderers only format (ADR-032)" in grounded
+    assert "is a defect, even when the arithmetic is right" in grounded
+    not_a_defect = grounded[grounded.index("Not a defect:") :]
+    assert "sum, difference or share" not in not_a_defect
+    assert "`facts.wave_figures`" in not_a_defect and "verbatim" in not_a_defect
 
 
 def test_wave_figures_come_from_the_facts_layer() -> None:

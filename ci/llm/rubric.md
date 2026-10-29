@@ -1,5 +1,5 @@
 ---
-rubric_version: 4
+rubric_version: 5
 pass_mean: 3.0
 min_score: 2
 ---
@@ -88,11 +88,29 @@ the deliverable.
   relies on, for example `engineering_report > Risk register`,
   `executive_pdf > Migration waves`, or
   `facts.engines[dynamodb].tables_served`.
-- **Anchors.** Each criterion has anchors for 1, 3 and 5; 2 and 4 sit between
-  them. Score what the deliverables show, against the anchor text, and list
-  each instance you scored down for in `defects` (criterion, kind, where,
-  quote). Two judges reading the same deliverables should list the same
-  defects, so count instances rather than forming an overall impression.
+- **Apply the two rules above before scoring.** Settle every table's engine
+  with `tables_served` and `owned_tables` first, then score `grounded`,
+  `roadmap` and `contradictions`. Worked example (a wave gate): "13 tables stay
+  dual-read by Aurora MySQL queries ... DynamoDB owns them, so keep the Aurora
+  MySQL copy in sync from DynamoDB" and, in the same gate, "3 tables Aurora
+  MySQL owns and keeps owning ... keep a DynamoDB copy of them in sync" are two
+  different groups of tables with two different owners. Compare the table
+  names against `owned_tables`, never the counts. Both sentences are
+  consistent, and neither is a defect for `roadmap` or `contradictions`.
+- **Score from counts.** List the defects first, then read the score off the
+  criterion's count table. A defect is one distinct problem, quoted once
+  however many places repeat it, that matches the criterion's definition;
+  text that matches a "Not a defect" line, or that a rule above reconciles, is
+  not listed. Score from the list, never from an overall impression: a
+  criterion with the same list gets the same score. The tables read: 5 is no
+  defect, 4 is one, 3 is two or three, 2 is four or five, 1 is six or more
+  (hedging states its own table). One rule caps every criterion: a headline
+  defect (the engine set, the projected total cost or a missing executive
+  monthly cost, the overall risk level, a headline count of tables, queries or
+  waves, or a table sequenced into an engine the assignment does not select or
+  reality-check eliminated) limits the score to 2, whatever the count; only the
+  count table gives 1. List each instance in `defects` (criterion, kind,
+  where, quote).
 
 ## 1. grounded
 
@@ -101,31 +119,50 @@ supported by `facts`: engines, costs, table and query counts. This includes
 the monthly cost: the executive report states the projected total and a
 per-engine breakdown, both matching `facts.tco`.
 
-- **1** — A number in the reports (an engine, a cost, a table or query count)
-  appears nowhere in `facts` or contradicts it; or the executive report has no
-  monthly cost.
-- **3** — The engines and the projected total match `facts`, but at least one
-  supporting figure (a table count, a per-engine cost row, a wave figure) is
-  unsupported, does not reconcile with the total, or is rounded so that it
-  looks inconsistent with another deliverable.
+A defect is one distinct figure (an engine, a cost, a table, query or wave
+count) that no `facts` field carries, or that contradicts one (kinds
+`unsupported_figure`, `cost_mismatch`), or a per-engine cost row that does not
+add up to the total (more than $1 apart). Renderers only format (ADR-032): a
+sum, difference or share that a renderer computed and `facts` does not carry
+is a defect, even when the arithmetic is right. Not a defect: a figure `facts`
+carries (a wave's `facts.wave_figures`, `facts.tco`, `facts.totals`), a facts
+figure rounded to the precision it is shown at, a per-query or schema-design
+figure shown verbatim from its own section (not summed or shared in a
+renderer), and the same figure stated twice.
+
+- **1** — Six or more defects (the headline cap above limits a headline
+  defect to 2).
+- **3** — The engines and the projected total match `facts`, and the count of
+  supporting-figure defects (a table count, a per-engine cost row, a wave
+  figure) is two or three.
 - **5** — Every number traces to `facts`; the executive report's total and
   per-engine costs match `facts.tco` and add up; no deliverable contradicts
   them.
+
+(2 is four or five defects; 4 is one.)
 
 ## 2. justified_engines
 
 Each selected engine has a stated workload reason tied to its queries, and the
 narrow engine choices are named as such.
 
+A defect is one engine whose reason names no access pattern, query shape or
+latency/consistency need (`missing_reason`), or one engine pair in
+`facts.routing_margins` that no deliverable names with its query count
+(`close_margin_unstated`). Count the engines in `facts.engines` and the pairs
+in `facts.routing_margins` one by one. Not a defect: a reason that names the
+pattern in the engineering report's engine table or in
+`engineering_report > Executive summary` even when the executive report states
+it more briefly, and a per-query reason in an appendix.
+
 - **1** — Engines are named with no reasoning, or the reasoning is generic
   boilerplate unrelated to the actual query patterns.
-- **3** — Every engine has a reason, but at least one is generic (no access
-  pattern, query shape or latency/consistency need named); or
-  `facts.routing_margins` lists close calls and no deliverable says which
-  engine pairs were close.
+- **3** — Every engine has a reason, but two or three defects.
 - **5** — Every engine states a specific workload reason tied to its queries,
   and when `facts.routing_margins` lists close calls a deliverable names the
   engine pair and how many queries were close.
+
+(2 is four or five defects; 4 is one.)
 
 ## 3. risks
 
@@ -156,25 +193,56 @@ deliverable raises that sync as a risk with a mitigation, scores 2. Resolved
 risks are routing outcomes, not migration risks: they do not fill the
 register.
 
+A defect is one risk that `migration_risk_facts` implies (one key, or one
+engine within a key) and that no deliverable raises (kind missing_risk),
+raises without a table, pattern or engine (generic_risk), or raises without a
+mitigation (missing_mitigation). Count the implied risks one by one.
+
+Not a defect: a risk raised in any place the first paragraph lists, a mitigation
+stated once for several risks, and a risk whose `migration_risk_facts` entry is
+null or zero.
+
 - **1** — Risks are generic ("migration risk exists") with no named table,
   pattern or engine, or no mitigation is given anywhere.
 - **3** — Some implied risks are raised with their tables and a mitigation,
-  but at least one implied risk is missing, generic, or has no mitigation.
+  and two or three are missing, generic, or have no mitigation.
 - **5** — Every risk `migration_risk_facts` implies is raised, names its
   tables, access pattern or engine, and pairs it with a concrete mitigation
   (a check, a threshold, a rollback), tied to the wave or gate it belongs to.
+
+(2 is four or five defects, or the empty-register case above; 4 is one.)
 
 ## 4. roadmap
 
 Migration sequencing is coherent with the assignment: no wave migrates a
 table assigned to an engine that was eliminated.
 
-- **1** — The roadmap sequences a table into or via an engine that the
-  assignment does not select (or that reality-check eliminated).
-- **3** — The roadmap is coherent with the assignment but the ordering
-  rationale for at least one wave is unclear or unstated.
+Two kinds of defect, each counted per wave. Both kinds count the same, so the
+number of defects is `roadmap_mismatch` plus `unclear_order`, and the generic
+count table scores it.
+
+- `roadmap_mismatch`: a wave lists a table whose engine in the wave is not in
+  that table's `tables_served`, and the wave does not list it as kept in sync.
+- `unclear_order`: a wave whose section, and the roadmap's introduction, state
+  no reason at all for its position (a dependency, a risk or a business
+  priority, in a "once", "before", "because" or "Why" sentence). A reason that
+  is stated is clear, even when short.
+
+Not a defect: a wave that lists no tables because it is an overlay (a cache
+wave says what it fronts); a table moved whole in an early wave and moved on
+by a later wave when the roadmap says so ("later waves move 15 of the 50");
+shares of calls that overlap between waves; wave figures that reconcile through
+`facts.wave_figures` (tables served, moving and kept in sync); and a gate's
+sync sentences, which the multi-engine rule above settles.
+
+- **1** — Six or more defects (a table sequenced into or via an engine the
+  assignment does not select, or that reality-check eliminated, is a headline
+  defect: the headline cap above applies).
+- **3** — Two or three defects of either kind.
 - **5** — Every wave's tables map cleanly onto the final assignment, in a
   clearly justified order (dependencies, risk, or business priority).
+
+(4 is one defect of either kind; 2 is four or five.)
 
 ## 5. hedging
 
@@ -224,10 +292,20 @@ engine in `table_mappings` that differs from the Migration map's Owner (the
 ownership rule above), a statement and its
 stated exception, or a resolved risk listed next to the open ones.
 
-- **1** — Several contradictions, or one on a headline (the engine set, the
-  total cost, the overall risk level, the wave count).
-- **3** — One contradiction that is not on a headline.
+List each contradiction (kind `contradiction`) as a pair: both quotes, each with its place. It
+counts only if the two quotes cannot both be true when read literally. Not a
+contradiction: a pair that conflicts only after an inference, a pair about
+two different groups of tables (compare the table names, not the counts, so
+"3 tables read and written by no captured query get a one-time copy" and "3
+tables Aurora MySQL owns keep a DynamoDB copy in sync" are about different
+tables), and a pair a rule above reconciles.
+
+- **1** — Six or more contradictions (the headline cap above limits a
+  contradiction on a headline to 2).
+- **3** — Two or three contradictions.
 - **5** — No contradictions.
+
+(4 is one contradiction; 2 is four or five.)
 
 ## Evidence by criterion
 
