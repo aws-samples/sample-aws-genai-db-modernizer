@@ -1,0 +1,13 @@
+# Gap rule postgresql-case-sensitive-comparison (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Collation Support; MySQL 8.0 Reference Manual, Character Sets and Collations.
+id = "postgresql-case-sensitive-comparison"
+feature = "Case-sensitive text comparison"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "behaves_differently"
+reason = "PostgreSQL compares text case-sensitively, and Aurora MySQL's default collation (utf8mb4_0900_ai_ci) ignores case and accents, so lookups, GROUP BY, DISTINCT and unique keys on text can change unless the columns use a _bin or _as_cs collation."
+docs = "PostgreSQL documentation, Collation Support; MySQL 8.0 Reference Manual, Character Sets and Collations"
+
+# Looks for: Every PostgreSQL source moving to Aurora MySQL (the collection names no column collation).
+[match]
+always = true

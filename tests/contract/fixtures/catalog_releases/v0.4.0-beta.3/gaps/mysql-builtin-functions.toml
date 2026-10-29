@@ -1,0 +1,13 @@
+# Gap rule mysql-builtin-functions (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Functions and Operators.
+id = "mysql-builtin-functions"
+feature = "MySQL-only functions"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "These functions have no PostgreSQL function of the same name and behaviour, so each call is rewritten (for example IF() to CASE, IFNULL to COALESCE, GROUP_CONCAT to string_agg, FIND_IN_SET and FIELD to array_position, RAND to random, GET_LOCK to pg_advisory_lock)."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Functions and Operators"
+
+# Looks for: Calls to MySQL functions PostgreSQL does not have.
+[match]
+calls = ["IF", "IFNULL", "ISNULL", "GROUP_CONCAT", "FIND_IN_SET", "FIELD", "ELT", "INSTR", "LOCATE", "SUBSTRING_INDEX", "LCASE", "UCASE", "MID", "SPACE", "STRCMP", "FORMAT", "CONVERT", "HEX", "UNHEX", "CONV", "BIN", "OCT", "SOUNDEX", "MAKE_SET", "EXPORT_SET", "QUOTE", "TRUNCATE", "RAND", "UUID", "UUID_SHORT", "SHA1", "SHA2", "AES_ENCRYPT", "AES_DECRYPT", "COMPRESS", "UNCOMPRESS", "INET_ATON", "INET_NTOA", "INET6_ATON", "INET6_NTOA", "DATABASE", "CONNECTION_ID", "SLEEP", "GET_LOCK", "RELEASE_LOCK", "RELEASE_ALL_LOCKS", "IS_FREE_LOCK", "IS_USED_LOCK", "LOAD_FILE"]

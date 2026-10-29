@@ -1,0 +1,24 @@
+# The Aurora major version lines the relational-move gap check (#471) compares a
+# homogeneous source against. Fields: src/shared/catalog/gaps.py.
+#
+# List only the lines with standard support today, oldest first: a source below the
+# oldest line moves with a major version upgrade, and one above the newest line moves
+# to an older major version. Point releases are not compared (an Aurora line can trail
+# the community point release). Update a list when Aurora adds or retires a line.
+
+# Amazon Aurora MySQL release calendar: Aurora MySQL version 3 is compatible with
+# MySQL 8.0, and Aurora MySQL version 8.4 with MySQL 8.4 (standard support to April
+# 2032); version 2 (MySQL 5.7) is past standard support and runs only under Amazon RDS
+# Extended Support.
+[engines.aurora_mysql]
+source_engines = ["mysql"]
+lines = ["8.0", "8.4"]
+docs = "Amazon Aurora MySQL release calendar (Aurora MySQL version 3 is MySQL 8.0-compatible, Aurora MySQL version 8.4 is MySQL 8.4-compatible); Amazon RDS Extended Support"
+
+# Amazon Aurora PostgreSQL release calendar: the major versions with standard support
+# (14 to 18; 13 left standard support on 28 February 2026, 18 was released on 11 June
+# 2026 with standard support to 28 February 2031).
+[engines.aurora_postgresql]
+source_engines = ["postgresql"]
+lines = ["14", "15", "16", "17", "18"]
+docs = "Amazon Aurora PostgreSQL release calendar"

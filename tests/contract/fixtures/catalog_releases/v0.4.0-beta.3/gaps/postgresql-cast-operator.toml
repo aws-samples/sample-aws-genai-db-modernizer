@@ -1,0 +1,13 @@
+# Gap rule postgresql-cast-operator (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Type Casts; MySQL 8.0 Reference Manual, Cast Functions and Operators.
+id = "postgresql-cast-operator"
+feature = "Type casts with the :: operator"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no :: cast operator, so each cast becomes CAST(x AS type) with a type MySQL's CAST accepts (CHAR, SIGNED, DECIMAL, DATETIME, JSON, ...); casts to regclass, interval or arrays have no equivalent."
+docs = "PostgreSQL documentation, Type Casts; MySQL 8.0 Reference Manual, Cast Functions and Operators"
+
+# Looks for: The :: operator.
+[match]
+syntax = [": :"]

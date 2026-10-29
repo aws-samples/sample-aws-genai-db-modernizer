@@ -1,0 +1,13 @@
+# Gap rule mysql-last-insert-id (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, INSERT (RETURNING clause).
+id = "mysql-last-insert-id"
+feature = "LAST_INSERT_ID()"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no LAST_INSERT_ID(), so the new id comes from INSERT ... RETURNING id (or currval() on the column's sequence)."
+docs = "MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, INSERT (RETURNING clause)"
+
+# Looks for: Calls to LAST_INSERT_ID.
+[match]
+calls = ["LAST_INSERT_ID"]

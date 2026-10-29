@@ -1,0 +1,13 @@
+# Gap rule oracle-empty-string-is-null (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Null handling.
+id = "oracle-empty-string-is-null"
+feature = "Empty strings stored as NULL"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "behaves_differently"
+reason = "Oracle stores an empty string as NULL, and both targets keep '' and NULL apart, so filters, joins and constraints on text columns can change."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Null handling"
+
+# Looks for: Every Oracle source.
+[match]
+always = true

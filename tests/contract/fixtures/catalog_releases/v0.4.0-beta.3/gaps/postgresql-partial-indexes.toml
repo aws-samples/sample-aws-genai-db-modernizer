@@ -1,0 +1,13 @@
+# Gap rule postgresql-partial-indexes (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Partial Indexes; MySQL 8.0 Reference Manual, CREATE INDEX Statement.
+id = "postgresql-partial-indexes"
+feature = "Partial indexes"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "MySQL has no partial (WHERE) indexes, so each becomes a full index or an index on a generated column, and a partial UNIQUE index (unique only among the rows it covers) needs a generated column that is NULL outside them."
+docs = "PostgreSQL documentation, Partial Indexes; MySQL 8.0 Reference Manual, CREATE INDEX Statement"
+
+# Looks for: Indexes with a predicate.
+[match]
+partial_indexes = true

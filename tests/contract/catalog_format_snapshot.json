@@ -3752,5 +3752,5 @@
       "location": "src/catalog/write_intents/*.toml"
     }
   },
-  "released": null
+  "released": "v0.4.0-beta.3"
 }

@@ -1,0 +1,13 @@
+# Gap rule mysql-older-major-version (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora MySQL release notes; MySQL 8.0 Reference Manual, Changes in MySQL 8.0.
+id = "mysql-older-major-version"
+feature = "Source MySQL major version older than Aurora MySQL"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+impact = "behaves_differently"
+reason = "The source runs a MySQL major version older than every Aurora MySQL line with standard support, so the move is also a major version upgrade: review the removed features, new reserved words and changed defaults in the upgrade notes."
+docs = "Amazon Aurora MySQL release notes; MySQL 8.0 Reference Manual, Changes in MySQL 8.0"
+
+# Looks for: A source below the oldest line in aurora_versions.toml.
+[match]
+version = "older_than_target"

@@ -1,0 +1,48 @@
+# Pattern write-time-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+#
+# Precomputing an aggregate at write time is a design every engine can use (#967): no
+# analysis reports it as a fit any more, and the schema designers' skills describe it.
+id = "write-time-aggregation"
+name = "Write-time aggregation"
+detectors = []
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "A design note, not a fit (#967): precomputing an aggregate on write and storing it as a document (a change stream or a CDC pipeline) is as available on Aurora (summary tables, materialized views) and DynamoDB (Streams), so no engine is credited for it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

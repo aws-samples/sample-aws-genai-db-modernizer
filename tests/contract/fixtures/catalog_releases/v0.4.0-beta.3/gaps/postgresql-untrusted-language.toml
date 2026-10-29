@@ -1,0 +1,13 @@
+# Gap rule postgresql-untrusted-language (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora User Guide, Working with Trusted Language Extensions for PostgreSQL; Extension versions for Amazon Aurora PostgreSQL.
+id = "postgresql-untrusted-language"
+feature = "Functions in an untrusted procedural language"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "blocks_move"
+reason = "Aurora PostgreSQL runs no untrusted procedural language, so these functions must be rewritten in PL/pgSQL or a trusted language (for example with Trusted Language Extensions) before the move."
+docs = "Amazon Aurora User Guide, Working with Trusted Language Extensions for PostgreSQL; Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: Procedure.language.
+[match]
+routine_languages = ["plperlu", "plpythonu", "plpython2u", "plpython3u", "pltclu"]

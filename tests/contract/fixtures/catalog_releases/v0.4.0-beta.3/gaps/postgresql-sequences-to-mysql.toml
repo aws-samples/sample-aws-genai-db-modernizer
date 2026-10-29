@@ -1,0 +1,13 @@
+# Gap rule postgresql-sequences-to-mysql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Sequence Manipulation Functions.
+id = "postgresql-sequences-to-mysql"
+feature = "Sequence functions"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "Aurora MySQL has no sequences, so nextval(), currval(), setval() and lastval() become AUTO_INCREMENT columns with LAST_INSERT_ID(), or a counter table updated in the same transaction."
+docs = "AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Sequence Manipulation Functions"
+
+# Looks for: Calls to the sequence functions.
+[match]
+calls = ["NEXTVAL", "CURRVAL", "SETVAL", "LASTVAL", "PG_GET_SERIAL_SEQUENCE"]

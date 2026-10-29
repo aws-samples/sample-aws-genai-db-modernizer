@@ -1,0 +1,14 @@
+# Gap rule oracle-builtin-functions (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Built-in functions.
+id = "oracle-builtin-functions"
+feature = "Oracle-only built-in functions"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "NVL, NVL2, DECODE, SYSDATE and the other Oracle-only functions have other names on the target (COALESCE, CASE, CURRENT_TIMESTAMP, ...), so each call is converted."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Built-in functions"
+
+# Looks for: Function calls and the SYSDATE/SYSTIMESTAMP keywords.
+[match]
+calls = ["NVL", "NVL2", "DECODE", "ADD_MONTHS", "MONTHS_BETWEEN", "SYS_GUID", "LISTAGG"]
+words = ["SYSDATE", "SYSTIMESTAMP"]

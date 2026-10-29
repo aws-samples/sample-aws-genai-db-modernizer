@@ -1,0 +1,14 @@
+# Gap rule postgresql-server-file-access (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions; Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster.
+id = "postgresql-server-file-access"
+feature = "Server file system and shell access"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "Aurora PostgreSQL gives no superuser and no access to the database server's file system or shell, so reads and writes of server files move to Amazon S3 (the aws_s3 extension)."
+docs = "Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions; Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster"
+
+# Looks for: Server-side file and large-object functions, and COPY ... PROGRAM.
+[match]
+calls = ["PG_READ_FILE", "PG_READ_BINARY_FILE", "PG_LS_DIR", "PG_STAT_FILE", "LO_IMPORT", "LO_EXPORT"]
+syntax = ["FROM PROGRAM", "TO PROGRAM"]

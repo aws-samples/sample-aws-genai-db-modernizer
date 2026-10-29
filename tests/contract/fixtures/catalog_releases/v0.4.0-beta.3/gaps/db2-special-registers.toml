@@ -1,0 +1,14 @@
+# Gap rule db2-special-registers (#471). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW.
+id = "db2-special-registers"
+feature = "Db2 special registers and SYSDUMMY1"
+source_engines = ["db2"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "CURRENT DATE, CURRENT TIMESTAMP and SYSIBM.SYSDUMMY1 become CURRENT_DATE, CURRENT_TIMESTAMP and a query with no table."
+docs = "AWS Schema Conversion Tool User Guide, Migrating from Db2 for LUW"
+
+# Looks for: The two-word special registers and the dummy table.
+[match]
+syntax = ["CURRENT DATE", "CURRENT TIMESTAMP", "CURRENT TIME"]
+words = ["SYSDUMMY1"]

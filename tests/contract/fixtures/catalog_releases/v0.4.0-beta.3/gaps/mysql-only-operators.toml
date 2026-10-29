@@ -1,0 +1,14 @@
+# Gap rule mysql-only-operators (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Operators and Server SQL Modes (PIPES_AS_CONCAT); PostgreSQL documentation, Comparison Functions and Operators.
+id = "mysql-only-operators"
+feature = "MySQL-only operators"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "<=> becomes IS NOT DISTINCT FROM, DIV becomes div() and XOR and && become boolean expressions, and || is a logical OR in MySQL's default SQL mode but string concatenation in PostgreSQL, so each is rewritten."
+docs = "MySQL 8.0 Reference Manual, Operators and Server SQL Modes (PIPES_AS_CONCAT); PostgreSQL documentation, Comparison Functions and Operators"
+
+# Looks for: The <=>, ||, && operators and the DIV and XOR keywords.
+[match]
+syntax = ["< = >", "| |", "& &"]
+words = ["DIV", "XOR"]

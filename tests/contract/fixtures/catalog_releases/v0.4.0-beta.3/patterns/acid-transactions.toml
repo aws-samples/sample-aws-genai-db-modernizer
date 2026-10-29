@@ -1,0 +1,58 @@
+# Pattern acid-transactions. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "acid-transactions"
+name = "ACID transactions"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+capability = "acid_transactions"
+penalty = 40
+penalty_basis = "cannot_run"
+
+# ADR-031 Decision 3 (#493): DynamoDB supports ACID transactions, so a transaction is
+# never a capability it lacks. A write too wide for one transaction is scored by its
+# shape instead: wide-transaction.toml.
+[engines.dynamodb]
+kind = "native"
+supported = true
+why = "TransactWriteItems/TransactGetItems are ACID across up to 100 items, and a conditional write is ACID on one item; a wider write is scored by its shape (wide-transaction)."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "Multi-document ACID transactions are native (engine 4.0 or later, one-minute limit per transaction)."
+
+# Detection signals: UPDATE or DELETE query_type with CPS > 1
+[engines.opensearch]
+kind = "anti_pattern"
+# No multi-document ACID transactions (no multi_doc_acid in the hard capability gate).
+supported = false
+catalog = "opensearch"
+catalog_id = "os-ap-02"
+severity = 0.6
+why = "Frequent UPDATE/DELETE operations (> 1 CPS) indicate mutable data with ACID transactional requirements. OpenSearch has no multi-document transactions: each document write stands alone (OpenSearch documentation, Bulk API)."
+guidance = "Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
+
+[engines.elasticache]
+kind = "unscored"
+supported = false
+why = "MULTI/EXEC has no rollback or failover durability, so no ACID transactions; its analysis does not report this pattern, and the penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) are native."
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) are native."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

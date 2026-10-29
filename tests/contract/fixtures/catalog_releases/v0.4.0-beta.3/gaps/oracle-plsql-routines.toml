@@ -1,0 +1,13 @@
+# Gap rule oracle-plsql-routines (#471). Fields: src/shared/catalog/gaps.py.
+# Source: Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation); AWS Schema Conversion Tool User Guide.
+id = "oracle-plsql-routines"
+feature = "PL/SQL procedures, functions and triggers"
+source_engines = ["oracle"]
+targets = ["aurora_mysql", "aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PL/SQL routines are converted to the target's procedural language (PL/pgSQL on Aurora PostgreSQL, stored programs on Aurora MySQL): a schema conversion tool converts most of the code, and the rest (packages, autonomous transactions, DBMS_ packages) is rewritten by hand."
+docs = "Oracle to Aurora PostgreSQL Migration Playbook (AWS DMS documentation); AWS Schema Conversion Tool User Guide"
+
+# Looks for: Every collected procedure, function and trigger.
+[match]
+routines = true

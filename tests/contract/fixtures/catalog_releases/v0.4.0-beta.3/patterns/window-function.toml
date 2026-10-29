@@ -1,0 +1,65 @@
+# Pattern window-function. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "window-function"
+name = "Window function"
+detectors = [
+    "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: OVER(), PARTITION BY, ROW_NUMBER/RANK/LAG/LEAD
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_pg"
+catalog_id = "aurora-pg-02"
+score = 90
+why = "Window functions (OVER, PARTITION BY, ROW_NUMBER, RANK, LAG, LEAD) for running totals, rankings and row-level analytics, in one pass without self-joins, with the ROWS, RANGE and GROUPS frame modes and frame exclusion (PostgreSQL documentation, Window Function Calls)."
+concerns = [
+    "Large partition sizes may increase memory usage during window computation.",
+]
+table_bonus = 10
+complexity_feature = true
+
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-07"
+score = 85
+why = "Window functions (OVER, PARTITION BY, ROW_NUMBER, RANK, LAG, LEAD) for running totals, rankings and row-level analytics, in one pass without self-joins, on MySQL 8.0, which Aurora MySQL version 3 is compatible with; MySQL documents fewer frame features (no DISTINCT in a windowed aggregate, no nested window functions, no frame bounds that depend on the current row: MySQL Reference Manual, Window Function Restrictions)."
+concerns = [
+    "Large partition sizes may increase memory usage during window computation.",
+]
+table_bonus = 10
+complexity_feature = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

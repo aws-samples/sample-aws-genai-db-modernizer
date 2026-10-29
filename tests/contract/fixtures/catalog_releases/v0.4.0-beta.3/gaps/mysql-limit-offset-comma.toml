@@ -1,0 +1,13 @@
+# Gap rule mysql-limit-offset-comma (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, SELECT Statement (LIMIT); PostgreSQL documentation, LIMIT and OFFSET.
+id = "mysql-limit-offset-comma"
+feature = "LIMIT offset, count"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "PostgreSQL has no LIMIT offset, count form, so it becomes LIMIT count OFFSET offset (the two values swap places)."
+docs = "MySQL 8.0 Reference Manual, SELECT Statement (LIMIT); PostgreSQL documentation, LIMIT and OFFSET"
+
+# Looks for: LIMIT followed by a value and a comma.
+[match]
+syntax = ["LIMIT {value} ,"]

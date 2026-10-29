@@ -1,0 +1,13 @@
+# Gap rule mysql-case-insensitive-collations (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Character Sets and Collations; PostgreSQL documentation, Collation Support (nondeterministic collations).
+id = "mysql-case-insensitive-collations"
+feature = "Case-insensitive collations"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "These tables compare text case-insensitively (a _ci collation), and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change."
+docs = "MySQL 8.0 Reference Manual, Character Sets and Collations; PostgreSQL documentation, Collation Support (nondeterministic collations)"
+
+# Looks for: Table collations ending in _ci.
+[match]
+collations = ["*_ci"]
