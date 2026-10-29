@@ -79,7 +79,11 @@ repos:
         # parser's 16-hex text hashes. tests/fixtures/assess_results_v1_3/*.json
         # (#1648): saved assess() results of the synthetic wordpress and trailgear
         # samples, with the same query ids. All excluded here rather than scanned at all.
-        exclude: (^package-lock\.json$|^tests/fixtures/assess_cut_v1_3_trailgear_support\.json$|^tests/fixtures/assess_results_v1_3/[a-z_]+\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/contract/assess_released_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
+        # tests/fixtures/real_runs/<run>/job/ (#1463): the saved job folder, full of
+        # 12 to 16-hex group keys and text hashes. Excluded by path only; `replay.py save`
+        # scans every file it writes there with the detect-secrets plugins (the entropy
+        # ones aside) and refuses the run on any finding (ci/llm/private_scan.py).
+        exclude: (^package-lock\.json$|^tests/fixtures/assess_cut_v1_3_trailgear_support\.json$|^tests/fixtures/assess_results_v1_3/[a-z_]+\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/contract/assess_released_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$|^tests/fixtures/real_runs/[^/]+/job/)
 
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves

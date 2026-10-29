@@ -1,0 +1,1196 @@
+{
+  "contract_version": "1.1",
+  "job_id": "099e6873",
+  "source_database": "wordpress",
+  "target_engine": "elasticache",
+  "key_designs": [
+    {
+      "key_pattern": "wp_options:{option_name}",
+      "data_type": "hash",
+      "use_case": "reference_data",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "fields_mapped": [
+        "option_name",
+        "option_value",
+        "autoload"
+      ],
+      "ttl_seconds": 3600,
+      "eviction_notes": "Eviction follows the cluster-wide maxmemory-policy (allkeys-lru, set in the parameter group). The __oversize=1 marker keeps the normal one-hour TTL.",
+      "estimated_key_count": 231630,
+      "estimated_avg_value_bytes": 400,
+      "rationale": "Both option reads filter on the unique option_name, one returning option_value and one returning autoload, so one hash per option serves both with a single fill. Most lookups find no row (0.28 and 0.08 rows on average), so a missing option is cached as a hash holding only __missing=1. An option whose value is over 100 KB is cached as a hash holding only __oversize=1, and readers send it straight to Aurora MySQL. The braces are a literal hash tag around the option name, so the data key, its :ver key and its :lock key share one slot. Fills go through the versioned fill script in EC-AP-1.",
+      "example_key": "wp_options:{woocommerce_currency}",
+      "example_value": "{\"option_value\":\"USD\",\"autoload\":\"yes\"}"
+    },
+    {
+      "key_pattern": "wp_postmeta:{post_id}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "fields_mapped": [
+        "meta_id",
+        "post_id",
+        "meta_key",
+        "meta_value"
+      ],
+      "ttl_seconds": 1800,
+      "eviction_notes": "Values are JSON over 64 B, so these hashes use hashtable encoding. The capacity plan counts that overhead. The __oversize=1 marker keeps the normal TTL.",
+      "estimated_key_count": 119900,
+      "estimated_avg_value_bytes": 4000,
+      "rationale": "Holds every meta row of one post. Each field is a meta_id and each value is JSON {meta_key, meta_value}. A post has about 24 to 32 meta rows, so the post-level read and the IN-list read become one HGETALL per post. The application sorts fields by numeric meta_id to keep the ORDER BY meta_id result. The field __loaded=1 marks a filled hash, so a post with no meta is cached as well. A post whose meta totals over 100 KB is cached as __oversize=1 only. The braces are a literal hash tag around post_id, so this key, wp_postmeta:{post_id}:keys, :ver and :lock share one slot and are filled in one atomic script.",
+      "example_key": "wp_postmeta:{1842}",
+      "example_value": "{\"__loaded\":\"1\",\"9001\":\"{\\\"meta_key\\\":\\\"_price\\\",\\\"meta_value\\\":\\\"19.99\\\"}\",\"9002\":\"{\\\"meta_key\\\":\\\"_stock\\\",\\\"meta_value\\\":\\\"12\\\"}\"}"
+    },
+    {
+      "key_pattern": "wp_postmeta:{post_id}:keys",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "fields_mapped": [
+        "post_id",
+        "meta_key",
+        "meta_id"
+      ],
+      "ttl_seconds": 1800,
+      "eviction_notes": "Filled in the same versioned fill script as wp_postmeta:{post_id}, from the same owner read.",
+      "estimated_key_count": 119900,
+      "estimated_avg_value_bytes": 800,
+      "rationale": "Maps meta_key to the lowest meta_id for one post, which serves the meta_id lookup by meta_key and post_id. That lookup finds a row 4% of the time. The hash is filled with the full key set plus __loaded=1, so an absent field means no row exists and the check never reaches the owner database. It shares the post_id hash tag with wp_postmeta:{post_id} and is written in the same fill script, so the two hashes cannot disagree.",
+      "example_key": "wp_postmeta:{1842}:keys",
+      "example_value": "{\"__loaded\":\"1\",\"_price\":\"9001\",\"_stock\":\"9002\"}"
+    },
+    {
+      "key_pattern": "wp_posts:{ID}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "fields_mapped": [
+        "ID",
+        "post_author",
+        "post_date",
+        "post_date_gmt",
+        "post_content",
+        "post_title",
+        "post_excerpt",
+        "post_status",
+        "comment_status",
+        "ping_status",
+        "post_password",
+        "post_name",
+        "to_ping",
+        "pinged",
+        "post_modified",
+        "post_modified_gmt",
+        "post_content_filtered",
+        "post_parent",
+        "guid",
+        "menu_order",
+        "post_type",
+        "post_mime_type",
+        "comment_count"
+      ],
+      "ttl_seconds": 3600,
+      "eviction_notes": "The __oversize=1 marker keeps the normal one-hour TTL.",
+      "estimated_key_count": 119900,
+      "estimated_avg_value_bytes": 2500,
+      "rationale": "Full row cache for the primary-key read. It also hydrates the ID lists cached by the child and title lookups, so those keys store IDs only. A post whose post_content is over 100 KB is cached as __oversize=1 only. The braces are a literal hash tag around the ID.",
+      "example_key": "wp_posts:{1842}",
+      "example_value": "{\"ID\":\"1842\",\"post_author\":\"1\",\"post_title\":\"Blue Hoodie\",\"post_status\":\"publish\",\"post_type\":\"product\",\"post_name\":\"blue-hoodie\",\"post_parent\":\"0\",\"comment_count\":\"0\",\"post_content\":\"...\"}"
+    },
+    {
+      "key_pattern": "wp_posts:children:{post_parent}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "fields_mapped": [
+        "ID",
+        "post_parent",
+        "post_type",
+        "post_status"
+      ],
+      "ttl_seconds": 600,
+      "eviction_notes": null,
+      "estimated_key_count": 50000,
+      "estimated_avg_value_bytes": 200,
+      "rationale": "Caches the child-post queries for one parent. Each field is a query signature ({post_type}:{status_set}:{order}:{limit}) and each value is JSON {ids, found_rows}. Both captured child queries return 0 rows on average, so caching the empty result removes those reads from the owner database. One hash per parent lets a post write delete every cached variant with one DEL. The fill script sets the TTL with EXPIRE NX, so only the first fill sets it and new variant fields never extend the key's life. The 10-minute limit is a hard bound. The braces are a literal hash tag around post_parent.",
+      "example_key": "wp_posts:children:{1842}",
+      "example_value": "{\"product_variation:publish,private:menu_order_asc:all\":\"{\\\"ids\\\":[],\\\"found_rows\\\":0}\"}"
+    },
+    {
+      "key_pattern": "wp_posts:title:{post_type:sha1(post_title)}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "fields_mapped": [
+        "ID",
+        "post_type",
+        "post_title",
+        "post_status",
+        "post_date_gmt"
+      ],
+      "ttl_seconds": 600,
+      "eviction_notes": null,
+      "estimated_key_count": 60000,
+      "estimated_avg_value_bytes": 120,
+      "rationale": "Caches the lookup by type and exact title. The field is the sorted status set plus offset and limit, and the value is a JSON ID list ordered by post_date_gmt. Hashing the title keeps keys short. The hash tag covers both type and title hash, so titles of one busy type spread across slots. The query returns 0 rows on average, so empty results are cached. The TTL is set once with EXPIRE NX, so it is a hard 10-minute bound.",
+      "example_key": "wp_posts:title:{shop_order:3f786850e387550fdab836ed7e6dc881de23001b}",
+      "example_value": "{\"draft,pending,publish:0:1\":\"[]\"}"
+    },
+    {
+      "key_pattern": "wp_term_relationships:{object_id}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_terms",
+        "wordpress.wp_termmeta"
+      ],
+      "fields_mapped": [
+        "object_id",
+        "term_taxonomy_id",
+        "taxonomy",
+        "term_id",
+        "meta_key"
+      ],
+      "ttl_seconds": 600,
+      "eviction_notes": null,
+      "estimated_key_count": 119900,
+      "estimated_avg_value_bytes": 150,
+      "rationale": "Pre-joins the object-terms result for one object. Each field is a query signature and each value is a JSON term_id list. Termmeta-ordered fields carry the current wp_termmeta:ver value in their name ({taxonomy}:orderby_meta:{meta_key}:v{n}), so a termmeta write makes every older ordered field unreachable at once. This replaces the two- and three-join queries with one HGET per object. The TTL is set once with EXPIRE NX, so it is a hard 10-minute bound. Term data itself comes from wp_terms:{term_id}.",
+      "example_key": "wp_term_relationships:{1842}",
+      "example_value": "{\"product_cat\":\"[15,22]\",\"product_type\":\"[2]\",\"product_cat:orderby_meta:order:v3\":\"[22,15]\"}"
+    },
+    {
+      "key_pattern": "wp_termmeta:ver",
+      "data_type": "string",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "fields_mapped": [],
+      "ttl_seconds": 86400,
+      "eviction_notes": null,
+      "estimated_key_count": 1,
+      "estimated_avg_value_bytes": 8,
+      "rationale": "Global termmeta version counter. The termmeta write path INCRs it and refreshes its TTL. Readers of termmeta-ordered term lists pipeline GET wp_termmeta:ver with the HGET and include the value in the field name. The TTL (24 hours) is far longer than the 10-minute hard TTL of the hashes that use it. If the counter expires and restarts at 0, every field written under an older value has already expired.",
+      "example_key": "wp_termmeta:ver",
+      "example_value": "3"
+    },
+    {
+      "key_pattern": "wp_terms:{term_id}",
+      "data_type": "hash",
+      "use_case": "reference_data",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "fields_mapped": [
+        "term_id",
+        "name",
+        "slug",
+        "term_group",
+        "term_taxonomy_id",
+        "taxonomy",
+        "description",
+        "parent",
+        "count"
+      ],
+      "ttl_seconds": 3600,
+      "eviction_notes": null,
+      "estimated_key_count": 150,
+      "estimated_avg_value_bytes": 400,
+      "rationale": "Denormalizes the wp_terms row with its wp_term_taxonomy rows, which matches the terms-by-ID join. There are 15 terms, so the full set fits in memory with a long TTL. Because a term_id can belong to more than one taxonomy, the taxonomy rows are stored as a JSON array in one field.",
+      "example_key": "wp_terms:{15}",
+      "example_value": "{\"term_id\":\"15\",\"name\":\"Clothing\",\"slug\":\"clothing\",\"term_group\":\"0\",\"taxonomies\":\"[{\\\"term_taxonomy_id\\\":15,\\\"taxonomy\\\":\\\"product_cat\\\",\\\"description\\\":\\\"\\\",\\\"parent\\\":0,\\\"count\\\":42}]\"}"
+    },
+    {
+      "key_pattern": "wp_actionscheduler_actions:{action_id}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "fields_mapped": [
+        "action_id",
+        "hook",
+        "status",
+        "scheduled_date_gmt",
+        "scheduled_date_local",
+        "priority",
+        "args",
+        "schedule",
+        "group_id",
+        "attempts",
+        "last_attempt_gmt",
+        "last_attempt_local",
+        "claim_id",
+        "extended_args",
+        "slug"
+      ],
+      "ttl_seconds": 60,
+      "eviction_notes": null,
+      "estimated_key_count": 125370,
+      "estimated_avg_value_bytes": 700,
+      "rationale": "Full action row with the group slug copied in as the field group, which removes the LEFT JOIN. Group slugs (4 rows) do not change once created. A 60-second TTL bounds staleness because action status changes do not appear in the captured write set.",
+      "example_key": "wp_actionscheduler_actions:{50211}",
+      "example_value": "{\"action_id\":\"50211\",\"hook\":\"woocommerce_cleanup_draft_orders\",\"status\":\"pending\",\"scheduled_date_gmt\":\"2026-10-28 16:00:00\",\"priority\":\"10\",\"args\":\"[]\",\"group_id\":\"2\",\"group\":\"woocommerce-db-updates\",\"attempts\":\"0\",\"claim_id\":\"0\"}"
+    },
+    {
+      "key_pattern": "wp_actionscheduler_actions:hook:{hook}:{status_set}",
+      "data_type": "sorted_set",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "fields_mapped": [
+        "action_id",
+        "hook",
+        "status",
+        "scheduled_date_gmt"
+      ],
+      "ttl_seconds": 60,
+      "eviction_notes": "Capped at 1,000 members (about 30 KB). Above the cap only the __oversize sentinel is stored.",
+      "estimated_key_count": 2000,
+      "estimated_avg_value_bytes": 3000,
+      "rationale": "Caches the actions of one hook in a status set. status_set is limited to two fixed values, pending and in-progress+pending. Queries with any other status list read Aurora MySQL, so the writer deletes exactly two keys per hook and needs no registry. Members are action_id zero-padded to 20 digits and scores are the scheduled_date_gmt epoch, so ties on equal scores sort in numeric action_id order. When a hook has more than 1,000 matching actions, the set holds only the member __oversize (score -2) and readers go to Aurora MySQL. An empty result is the member 0 with score -1. The braces are a literal hash tag around the hook, so both status-set keys and their :ver keys share one slot.",
+      "example_key": "wp_actionscheduler_actions:hook:{woocommerce_cleanup_draft_orders}:in-progress+pending",
+      "example_value": "[[\"00000000000000050211\",1793203200]]"
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_items:{order_id}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "fields_mapped": [
+        "order_id",
+        "order_item_id",
+        "order_item_type",
+        "order_item_name"
+      ],
+      "ttl_seconds": 1800,
+      "eviction_notes": null,
+      "estimated_key_count": 127000,
+      "estimated_avg_value_bytes": 250,
+      "rationale": "All line items of one order (1.9 on average). Each field is an order_item_id and each value is JSON {order_item_type, order_item_name}. The reader sorts by numeric field to match ORDER BY order_item_id. The field __loaded=1 marks a filled hash. The braces are a literal hash tag around order_id.",
+      "example_key": "wp_woocommerce_order_items:{7710}",
+      "example_value": "{\"__loaded\":\"1\",\"3301\":\"{\\\"order_item_type\\\":\\\"line_item\\\",\\\"order_item_name\\\":\\\"Blue Hoodie\\\"}\",\"3302\":\"{\\\"order_item_type\\\":\\\"shipping\\\",\\\"order_item_name\\\":\\\"Flat rate\\\"}\"}"
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "fields_mapped": [
+        "meta_id",
+        "order_item_id",
+        "meta_key",
+        "meta_value"
+      ],
+      "ttl_seconds": 1800,
+      "eviction_notes": null,
+      "estimated_key_count": 247130,
+      "estimated_avg_value_bytes": 900,
+      "rationale": "All meta rows of one order item (9 to 10 on average). Each field is a meta_id and each value is JSON {meta_key, meta_value}. One HGETALL per item serves both the single-item read and the IN-list read. The field __loaded=1 marks a filled hash. The braces are a literal hash tag around order_item_id, shared with the :keys, :ver and :lock companions.",
+      "example_key": "wp_woocommerce_order_itemmeta:{3301}",
+      "example_value": "{\"__loaded\":\"1\",\"88001\":\"{\\\"meta_key\\\":\\\"_product_id\\\",\\\"meta_value\\\":\\\"1842\\\"}\",\"88002\":\"{\\\"meta_key\\\":\\\"_qty\\\",\\\"meta_value\\\":\\\"2\\\"}\"}"
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}:keys",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "fields_mapped": [
+        "order_item_id",
+        "meta_key",
+        "meta_id"
+      ],
+      "ttl_seconds": 1800,
+      "eviction_notes": null,
+      "estimated_key_count": 247130,
+      "estimated_avg_value_bytes": 300,
+      "rationale": "Maps meta_key to meta_id for one order item, for the existence lookup by meta_key and order_item_id, which finds a row 10% of the time. The full key set plus __loaded=1 makes an absent field an authoritative no-row answer. It is written in the same fill script as the item meta hash.",
+      "example_key": "wp_woocommerce_order_itemmeta:{3301}:keys",
+      "example_value": "{\"__loaded\":\"1\",\"_product_id\":\"88001\",\"_qty\":\"88002\"}"
+    },
+    {
+      "key_pattern": "wp_wc_tax_rate_classes:all",
+      "data_type": "string",
+      "use_case": "reference_data",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "fields_mapped": [
+        "tax_rate_class_id",
+        "name",
+        "slug"
+      ],
+      "ttl_seconds": 86400,
+      "eviction_notes": null,
+      "estimated_key_count": 1,
+      "estimated_avg_value_bytes": 200,
+      "rationale": "The table has 2 rows and is read in full ordered by name, so one JSON string pre-sorted by name serves every call with one GET. Its version key is wp_wc_tax_rate_classes:ver, and fills go through the same versioned fill script.",
+      "example_key": "wp_wc_tax_rate_classes:all",
+      "example_value": "[{\"tax_rate_class_id\":2,\"name\":\"Reduced rate\",\"slug\":\"reduced-rate\"},{\"tax_rate_class_id\":3,\"name\":\"Zero rate\",\"slug\":\"zero-rate\"}]"
+    },
+    {
+      "key_pattern": "{table}:{entity_id}:ver",
+      "data_type": "string",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_options",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "fields_mapped": [],
+      "ttl_seconds": 7200,
+      "eviction_notes": "Created only by writes, so the count follows write volume. Under allkeys-lru a version key can be evicted. A stale fill is then accepted only if the eviction falls between the writer's INCR and the reader's compare, and that entry is bounded by the data key TTL.",
+      "estimated_key_count": 500000,
+      "estimated_avg_value_bytes": 8,
+      "rationale": "Per-entity version counter that guards cache fills against a concurrent write. It is the data key name plus :ver and sits in the same hash-tag slot. In one MULTI, the writer INCRs it after commit, refreshes its TTL and DELs the data keys. The filler reads it before querying Aurora MySQL and writes only if the value has not changed. A fill that overlaps a write is discarded. The TTL is twice the TTL of the data key it guards.",
+      "example_key": "wp_postmeta:{1842}:ver",
+      "example_value": "17"
+    },
+    {
+      "key_pattern": "{table}:{entity_id}:lock",
+      "data_type": "string",
+      "use_case": "caching",
+      "source_tables": [
+        "wordpress.wp_options",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "fields_mapped": [],
+      "ttl_seconds": 2,
+      "eviction_notes": null,
+      "estimated_key_count": 1000,
+      "estimated_avg_value_bytes": 1,
+      "rationale": "Single-refiller lock for stampede protection. On a miss the reader runs SET {data_key}:lock 1 NX PX 2000. The winner queries Aurora MySQL and fills the key. Losers sleep 25 ms and reread the cache up to 4 times, then read Aurora MySQL without filling. This keeps a stock change on a popular product from sending every concurrent reader to Aurora MySQL.",
+      "example_key": "wp_postmeta:{1842}:lock",
+      "example_value": "1"
+    }
+  ],
+  "access_patterns": [
+    {
+      "pattern_id": "EC-AP-1",
+      "description": "Read an option value by option_name. __missing=1 is a cached no-row answer and __oversize=1 sends the read to Aurora MySQL. On a miss the reader takes the fill lock, reads the version, queries Aurora MySQL and fills through the versioned fill script. A hash or a __missing marker is written only when the version is unchanged. Options read on every request (autoload=yes) are also held in process for 5 seconds and can be read from replicas.",
+      "operation": "HMGET",
+      "key_pattern": "wp_options:{option_name}",
+      "command_example": "HMGET wp_options:{woocommerce_currency} option_value __missing __oversize",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "source_query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+      ],
+      "pipeline_commands": [
+        "SET wp_options:{woocommerce_currency}:lock 1 NX PX 2000",
+        "GET wp_options:{woocommerce_currency}:ver",
+        "EVALSHA <versioned_fill_sha> 2 wp_options:{woocommerce_currency}:ver wp_options:{woocommerce_currency} '' 3600 '{\"wp_options:{woocommerce_currency}\":{\"option_value\":\"USD\",\"autoload\":\"yes\"}}'"
+      ],
+      "lua_script": "-- Versioned cache fill. KEYS[1] = version key; KEYS[2..n] = data keys sharing its hash tag.\n-- ARGV[1] = version read before the Aurora query ('' when absent); ARGV[2] = TTL seconds;\n-- ARGV[3] = JSON object {data_key: {field: value, ...} or string value}\nlocal cur = redis.call('GET', KEYS[1]) or ''\nif cur ~= ARGV[1] then return 0 end\nlocal data = cjson.decode(ARGV[3])\nfor i = 2, #KEYS do\n  local v = data[KEYS[i]]\n  if type(v) == 'string' then\n    redis.call('SET', KEYS[i], v, 'EX', ARGV[2])\n  elseif v then\n    local args = {}\n    for f, val in pairs(v) do args[#args + 1] = f; args[#args + 1] = val end\n    if #args > 0 then redis.call('HSET', KEYS[i], unpack(args)) end\n    redis.call('EXPIRE', KEYS[i], ARGV[2], 'NX')\n  end\nend\nreturn 1"
+    },
+    {
+      "pattern_id": "EC-AP-2",
+      "description": "Read all meta of one post or of an IN-list of posts. The client pipelines one HGETALL per post_id and sorts each result by meta_id. It fills the misses from one owner query, using the fill lock per post and the versioned fill script, which writes wp_postmeta:{post_id} and wp_postmeta:{post_id}:keys together.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_postmeta:{post_id}",
+      "command_example": "HGETALL wp_postmeta:{1842}",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+        "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6"
+      ],
+      "pipeline_commands": [
+        "HGETALL wp_postmeta:{1843}",
+        "SET wp_postmeta:{1842}:lock 1 NX PX 2000",
+        "GET wp_postmeta:{1842}:ver",
+        "EVALSHA <versioned_fill_sha> 3 wp_postmeta:{1842}:ver wp_postmeta:{1842} wp_postmeta:{1842}:keys 17 1800 '{\"wp_postmeta:{1842}\":{\"__loaded\":\"1\",\"9001\":\"{...}\"},\"wp_postmeta:{1842}:keys\":{\"__loaded\":\"1\",\"_price\":\"9001\"}}'"
+      ],
+      "lua_script": "Same versioned fill script as EC-AP-1, called with KEYS = [wp_postmeta:{post_id}:ver, wp_postmeta:{post_id}, wp_postmeta:{post_id}:keys]."
+    },
+    {
+      "pattern_id": "EC-AP-3",
+      "description": "Read all meta of one order item or of an IN-list of order items. The client pipelines one HGETALL per order_item_id and sorts each result by meta_id. Misses fill through the versioned fill script together with the :keys companion.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}",
+      "command_example": "HGETALL wp_woocommerce_order_itemmeta:{3301}",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+        "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084"
+      ],
+      "pipeline_commands": [
+        "HGETALL wp_woocommerce_order_itemmeta:{3302}",
+        "GET wp_woocommerce_order_itemmeta:{3301}:ver",
+        "EVALSHA <versioned_fill_sha> 3 wp_woocommerce_order_itemmeta:{3301}:ver wp_woocommerce_order_itemmeta:{3301} wp_woocommerce_order_itemmeta:{3301}:keys '' 1800 '<json>'"
+      ],
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-4",
+      "description": "Look up the meta_id for a meta_key on a post. When __loaded is present, a nil field means no row exists. A miss fills both postmeta hashes as in EC-AP-2.",
+      "operation": "HMGET",
+      "key_pattern": "wp_postmeta:{post_id}:keys",
+      "command_example": "HMGET wp_postmeta:{1842}:keys _price __loaded __oversize",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-5",
+      "description": "Read the term IDs assigned to objects for a taxonomy set. The client pipelines one HGET per object_id using the signature field. A miss runs the join on the owner and fills the field through the versioned fill script, which sets the TTL only on the first fill (EXPIRE NX).",
+      "operation": "HGET",
+      "key_pattern": "wp_term_relationships:{object_id}",
+      "command_example": "HGET wp_term_relationships:{1842} product_cat",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+      ],
+      "pipeline_commands": [
+        "GET wp_term_relationships:{1842}:ver",
+        "EVALSHA <versioned_fill_sha> 2 wp_term_relationships:{1842}:ver wp_term_relationships:{1842} '' 600 '{\"wp_term_relationships:{1842}\":{\"product_cat\":\"[15,22]\"}}'"
+      ],
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-6",
+      "description": "Read a full post row by ID. __oversize=1 sends the read to Aurora MySQL. Misses use the fill lock and the versioned fill script.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_posts:{ID}",
+      "command_example": "HGETALL wp_posts:{1842}",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2"
+      ],
+      "pipeline_commands": [
+        "SET wp_posts:{1842}:lock 1 NX PX 2000",
+        "GET wp_posts:{1842}:ver",
+        "EVALSHA <versioned_fill_sha> 2 wp_posts:{1842}:ver wp_posts:{1842} '' 3600 '<json>'"
+      ],
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-7",
+      "description": "Read the autoload flag of an option from the same hash as EC-AP-1, with the same marker handling and fill path.",
+      "operation": "HMGET",
+      "key_pattern": "wp_options:{option_name}",
+      "command_example": "HMGET wp_options:{woocommerce_currency} autoload __missing __oversize",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "source_query_ids": [
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-8",
+      "description": "Read one scheduled action with its group slug already copied in. Misses fill through the versioned fill script.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_actionscheduler_actions:{action_id}",
+      "command_example": "HGETALL wp_actionscheduler_actions:{50211}",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "source_query_ids": [
+        "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-9",
+      "description": "Read the line items of an order and sort them by order_item_id in the client. Misses fill through the versioned fill script.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_woocommerce_order_items:{order_id}",
+      "command_example": "HGETALL wp_woocommerce_order_items:{7710}",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "source_query_ids": [
+        "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-10",
+      "description": "Read the child posts of a parent for a type and status set. The cached ID list is hydrated with pipelined HGETALL on wp_posts:{ID}. A new variant field is filled through the versioned fill script, which sets the TTL only on the first fill (EXPIRE NX).",
+      "operation": "HGET",
+      "key_pattern": "wp_posts:children:{post_parent}",
+      "command_example": "HGET wp_posts:children:{1842} product_variation:publish,private:menu_order_asc:all",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-11",
+      "description": "Read the term IDs of an object ordered by a termmeta key. The reader pipelines GET wp_termmeta:ver and reads the field whose name carries that version, so any termmeta write retires every older ordered field.",
+      "operation": "HGET",
+      "key_pattern": "wp_term_relationships:{object_id}",
+      "command_example": "HGET wp_term_relationships:{1842} product_cat:orderby_meta:order:v3",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba"
+      ],
+      "pipeline_commands": [
+        "GET wp_termmeta:ver"
+      ],
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-12",
+      "description": "Find the next scheduled action for a hook in one of the two cached status sets (pending, in-progress+pending), ordered by scheduled date with offset and limit. The reader pipelines ZRANGE key 0 0 to detect the __oversize sentinel, which sends the read to Aurora MySQL, and the 0 sentinel, which means an empty result. Other status lists read Aurora MySQL.",
+      "operation": "ZRANGE",
+      "key_pattern": "wp_actionscheduler_actions:hook:{hook}:{status_set}",
+      "command_example": "ZRANGE wp_actionscheduler_actions:hook:{woocommerce_cleanup_draft_orders}:in-progress+pending 0 +inf BYSCORE LIMIT 0 1",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "source_query_ids": [
+        "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616"
+      ],
+      "pipeline_commands": [
+        "ZRANGE wp_actionscheduler_actions:hook:{woocommerce_cleanup_draft_orders}:in-progress+pending 0 0"
+      ],
+      "lua_script": "-- Versioned sorted-set fill. KEYS[1] = version key; KEYS[2] = sorted set key (same hash tag).\n-- ARGV[1] = expected version ('' when absent); ARGV[2] = TTL seconds; ARGV[3..] = score, member pairs\nlocal cur = redis.call('GET', KEYS[1]) or ''\nif cur ~= ARGV[1] then return 0 end\nredis.call('DEL', KEYS[2])\nlocal args = {}\nfor i = 3, #ARGV do args[#args + 1] = ARGV[i] end\nredis.call('ZADD', KEYS[2], unpack(args))\nredis.call('EXPIRE', KEYS[2], ARGV[2])\nreturn 1"
+    },
+    {
+      "pattern_id": "EC-AP-13",
+      "description": "Find post IDs by type, exact title and status set, ordered by post_date_gmt. New variant fields go through the versioned fill script with EXPIRE NX.",
+      "operation": "HGET",
+      "key_pattern": "wp_posts:title:{post_type:sha1(post_title)}",
+      "command_example": "HGET wp_posts:title:{shop_order:3f786850e387550fdab836ed7e6dc881de23001b} draft,pending,publish:0:1",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-14",
+      "description": "Read terms with their taxonomy rows for an IN-list of term IDs, as one pipelined HGETALL per term_id.",
+      "operation": "HGETALL",
+      "key_pattern": "wp_terms:{term_id}",
+      "command_example": "HGETALL wp_terms:{15}",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+      ],
+      "pipeline_commands": [
+        "HGETALL wp_terms:{22}"
+      ],
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-15",
+      "description": "Look up the meta_id for a meta_key on an order item. When __loaded is present, a nil field means no row exists.",
+      "operation": "HMGET",
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}:keys",
+      "command_example": "HMGET wp_woocommerce_order_itemmeta:{3301}:keys _reduced_stock __loaded",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-16",
+      "description": "Read all tax rate classes, pre-sorted by name. Misses fill through the versioned fill script, guarded by wp_wc_tax_rate_classes:ver.",
+      "operation": "GET",
+      "key_pattern": "wp_wc_tax_rate_classes:all",
+      "command_example": "GET wp_wc_tax_rate_classes:all",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "source_query_ids": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    },
+    {
+      "pattern_id": "EC-AP-17",
+      "description": "Paged child-post ID query with a found-rows total. It reads a signature field that holds {ids, found_rows}, so the total comes from the same cached value.",
+      "operation": "HGET",
+      "key_pattern": "wp_posts:children:{post_parent}",
+      "command_example": "HGET wp_posts:children:{1842} product_variation:publish:menu_order_asc:0:10",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c"
+      ],
+      "pipeline_commands": null,
+      "lua_script": null
+    }
+  ],
+  "cache_invalidation": [
+    {
+      "key_pattern": "wp_options:{option_name}",
+      "strategy": "write_through",
+      "description": "After each update, upsert or delete commits, the owner write path runs MULTI, INCR wp_options:{name}:ver, EXPIRE on the version key, DEL wp_options:{name}, EXEC. A fill that read the old version is rejected by the versioned fill script, so a concurrent reader cannot write the pre-write value back. A newly created option replaces a __missing entry the same way. The one-hour TTL bounds staleness if the write-path transaction fails. Options held in process stay stale for at most their 5-second local TTL, and replica reads lag the primary by the replication delay that the CloudWatch ReplicationLag metric reports.",
+      "source_write_query_ids": [
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ]
+    },
+    {
+      "key_pattern": "wp_postmeta:{post_id}",
+      "strategy": "write_through",
+      "description": "Each postmeta insert or update, including the stock increment and decrement, runs after commit one MULTI on the post_id slot: INCR wp_postmeta:{post_id}:ver, EXPIRE on the version key, DEL wp_postmeta:{post_id}, DEL wp_postmeta:{post_id}:keys. The version check stops a concurrent reader from writing back pre-checkout stock. The postmeta delete path (delete_post_meta), which is not in the captured workload, runs the same transaction. The 30-minute TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ]
+    },
+    {
+      "key_pattern": "wp_postmeta:{post_id}:keys",
+      "strategy": "write_through",
+      "description": "Version-bumped and deleted in the same transaction as wp_postmeta:{post_id} by every postmeta insert, update and delete, so it cannot keep reporting a removed meta_key. The 30-minute TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ]
+    },
+    {
+      "key_pattern": "wp_posts:{ID}",
+      "strategy": "write_through",
+      "description": "Every post update by ID (comment count, modified dates, guid, full update) runs after commit: MULTI, INCR wp_posts:{ID}:ver, DEL wp_posts:{ID}, EXEC. Post deletion (wp_delete_post), which is not in the captured workload, runs the same transaction and also deletes the post's meta, children and title keys. Inserts create a new ID that has no cache entry. The one-hour TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+        "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+        "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9",
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e"
+      ]
+    },
+    {
+      "key_pattern": "wp_posts:children:{post_parent}",
+      "strategy": "write_through",
+      "description": "A post insert, full update or delete runs a version bump and DEL on wp_posts:children:{post_parent} for the new parent, and for the old parent when post_parent changed. Each parent sits in its own slot, so each one gets its own MULTI. Writes that touch only comment_count, modified dates or guid leave the ID lists unchanged. The TTL is set only on the first fill (EXPIRE NX), so the 10-minute TTL is a hard bound if a DEL fails.",
+      "source_write_query_ids": [
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8"
+      ]
+    },
+    {
+      "key_pattern": "wp_posts:title:{post_type:sha1(post_title)}",
+      "strategy": "write_through",
+      "description": "A post insert, full update or delete runs a version bump and DEL on the title key for the new type and title, and on the old one when the title or type changed. The TTL is set only on the first fill (EXPIRE NX), so the 10-minute TTL is a hard bound if a DEL fails.",
+      "source_write_query_ids": [
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8"
+      ]
+    },
+    {
+      "key_pattern": "wp_term_relationships:{object_id}",
+      "strategy": "write_through",
+      "description": "The captured write set contains no term relationship writes. The term-assignment path runs a version bump and DEL on wp_term_relationships:{object_id} after it changes an object's terms. Termmeta-ordered fields are retired by the wp_termmeta:ver bump. The TTL is set only on the first fill (EXPIRE NX), so no field outlives the 10-minute TTL.",
+      "source_write_query_ids": [
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ]
+    },
+    {
+      "key_pattern": "wp_termmeta:ver",
+      "strategy": "event_driven",
+      "description": "Each termmeta update runs INCR wp_termmeta:ver and EXPIRE wp_termmeta:ver 86400 after commit. Readers include the version in the orderby_meta field name, so every termmeta-ordered list cached under the old version stops being read immediately, and the old fields expire with their key's 10-minute TTL.",
+      "source_write_query_ids": [
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ]
+    },
+    {
+      "key_pattern": "wp_terms:{term_id}",
+      "strategy": "manual",
+      "description": "The captured write set contains no term or term taxonomy writes. The term edit path and the term count update run a version bump and DEL on wp_terms:{term_id}. The one-hour TTL bounds staleness of the count field when that DEL is missing.",
+      "source_write_query_ids": []
+    },
+    {
+      "key_pattern": "wp_actionscheduler_actions:{action_id}",
+      "strategy": "ttl",
+      "description": "New actions get new IDs with no cache entry. Status, claim and attempt changes are not in the captured write set, so the action scheduler's update paths run a version bump and DEL on wp_actionscheduler_actions:{action_id}. The 60-second TTL bounds staleness when that DEL is missing.",
+      "source_write_query_ids": [
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ]
+    },
+    {
+      "key_pattern": "wp_actionscheduler_actions:hook:{hook}:{status_set}",
+      "strategy": "write_through",
+      "description": "An action insert runs one MULTI on the hook's slot: INCR wp_actionscheduler_actions:hook:{hook}:ver, DEL on the pending key and the in-progress+pending key. The status set is limited to those two values, so no registry is needed. Status changes run the same transaction from the scheduler's update path. The 60-second TTL bounds staleness for writes that are not captured.",
+      "source_write_query_ids": [
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ]
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_items:{order_id}",
+      "strategy": "write_through",
+      "description": "An order item insert runs a version bump and DEL on wp_woocommerce_order_items:{order_id} after commit. Order item updates and deletes (wc_update_order_item, wc_delete_order_item), which are not in the captured workload, run the same transaction for the parent order. An item delete also clears that item's meta and :keys hashes. The 30-minute TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d"
+      ]
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}",
+      "strategy": "write_through",
+      "description": "An item meta insert or update runs one MULTI on the order_item_id slot after commit: INCR the :ver key, DEL the meta hash, DEL the :keys hash. Item meta deletes, which are not in the captured workload, run the same transaction. The 30-minute TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ]
+    },
+    {
+      "key_pattern": "wp_woocommerce_order_itemmeta:{order_item_id}:keys",
+      "strategy": "write_through",
+      "description": "Version-bumped and deleted in the same transaction as the item meta hash by every item meta insert, update and delete. The 30-minute TTL bounds staleness if the transaction fails.",
+      "source_write_query_ids": [
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ]
+    },
+    {
+      "key_pattern": "wp_wc_tax_rate_classes:all",
+      "strategy": "manual",
+      "description": "The captured write set contains no tax class writes. The tax class admin save path runs INCR wp_wc_tax_rate_classes:ver and DEL wp_wc_tax_rate_classes:all. The 24-hour TTL bounds staleness when that path is missing.",
+      "source_write_query_ids": []
+    }
+  ],
+  "unsupported_patterns": [
+    {
+      "source_query_ids": [
+        "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+      ],
+      "reason": "This is the slug uniqueness check WordPress runs while saving a post. wp_posts has no unique index on (post_type, post_name), so this query is the only thing preventing duplicate slugs. A cache hit that missed a concurrent insert or a failed delete would produce duplicate slugs and URL collisions. The query runs only on post save (2.7 calls per second), so caching it saves little load.",
+      "workaround": "Run the check on Aurora MySQL against the existing post_name index, inside the post save path. The cache does not hold or answer slug lookups."
+    }
+  ],
+  "migration_notes": [
+    {
+      "object_name": "versioned cache fill protocol",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_postmeta",
+      "application_logic_required": "Deleting a key after commit does not stop a reader that queried Aurora MySQL before the write from writing the old value back afterwards. Every read-then-fill key is therefore guarded by a version key in its slot. Readers GET {data_key}:ver before the Aurora MySQL query and fill only through the versioned fill script, which compares the version and writes the hash, any companion hash and the TTL atomically. Writers run MULTI, INCR the version key, EXPIRE it, DEL the data keys, EXEC after commit."
+    },
+    {
+      "object_name": "post save invalidation",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_posts",
+      "application_logic_required": "After a post insert, update or delete commits, the application reads the old and new post_parent, post_type and post_title. It then runs a version bump and DEL for wp_posts:{ID}, both children keys and both title keys. Those keys sit in different slots, so this is one small MULTI per slot sent in one pipeline, and each MULTI is idempotent and retried on failure."
+    },
+    {
+      "object_name": "meta write invalidation",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_postmeta",
+      "application_logic_required": "After any postmeta or order item meta write commits, including the `meta_value + ?` and `meta_value - ?` stock updates, the application bumps the entity's version and deletes the meta hash and its :keys hash in one MULTI on the entity's slot."
+    },
+    {
+      "object_name": "delete paths outside the captured workload",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_woocommerce_order_items",
+      "application_logic_required": "The application adds the versioned invalidation transaction to these paths: delete_post_meta (postmeta keys), wp_delete_post (post, meta, children and title keys), wc_update_order_item and wc_delete_order_item (the parent order's items key, plus the item's meta and :keys hashes on delete), and order item meta deletes."
+    },
+    {
+      "object_name": "action scheduler status updates",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_actionscheduler_actions",
+      "application_logic_required": "The scheduler's claim, status and attempt updates are not in the captured workload. Its data store layer runs a version bump and DEL on wp_actionscheduler_actions:{action_id} and on the hook's two status-set keys after each update. Claim and execution logic keeps reading Aurora MySQL."
+    },
+    {
+      "object_name": "negative caching and oversize sentinels",
+      "object_type": "constraint",
+      "source_table": "wordpress.wp_options",
+      "application_logic_required": "The cache client writes __missing=1 for absent options, __loaded=1 for filled meta and item hashes, the member 0 with score -1 for empty action sets, __oversize=1 for options, posts and post meta over 100 KB, and the member __oversize with score -2 for hooks with more than 1,000 actions. It treats __missing, __loaded and the empty sentinel as authoritative no-row answers, and sends __oversize reads straight to Aurora MySQL without trying a fill."
+    },
+    {
+      "object_name": "term assignment, term edits and termmeta ordering",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_term_relationships",
+      "application_logic_required": "No term relationship or term taxonomy writes were captured. The term-assignment path bumps the version of wp_term_relationships:{object_id} and deletes it. Term edits and count updates do the same for wp_terms:{term_id}. Termmeta writes INCR wp_termmeta:ver, and readers include that value in the orderby_meta field name."
+    },
+    {
+      "object_name": "slug uniqueness check",
+      "object_type": "constraint",
+      "source_table": "wordpress.wp_posts",
+      "application_logic_required": "wp_posts has no unique constraint on post_name, so the slug check in the post save path stays on Aurora MySQL and is never answered from the cache."
+    },
+    {
+      "object_name": "stampede protection and hot options",
+      "object_type": "transaction",
+      "source_table": "wordpress.wp_options",
+      "application_logic_required": "On a miss for options, posts, post meta and item meta, the reader runs SET {data_key}:lock 1 NX PX 2000. Only the lock holder queries Aurora MySQL and fills. Other readers sleep 25 ms and reread up to 4 times, then read Aurora MySQL without filling. Autoloaded options (siteurl, home, active_plugins and the rest of autoload=yes) are held in the PHP process cache for 5 seconds. Option reads can use replicas (READONLY in cluster mode)."
+    },
+    {
+      "object_name": "engine version and cluster parameters",
+      "object_type": "constraint",
+      "source_table": null,
+      "application_logic_required": "The fill script uses EXPIRE with the NX flag, which needs ElastiCache for Valkey 7.2 or later (or Redis OSS 7.0 or later). On Valkey 9.0 or later, per-field HEXPIRE can replace whole-key TTLs on the variant hashes. The cluster parameter group sets maxmemory-policy allkeys-lru and reserved-memory-percent 25 for the whole cluster."
+    }
+  ],
+  "trade_offs": [
+    {
+      "description": "Option lookups by name are cached with negative entries. Query `66c96f95` returns a row on 28% of calls and query `e223aefb` on 8%, so a missing option is stored as __missing=1 instead of being skipped.",
+      "impact": "About 72% of the 76 option reads per second, and most of the 10 autoload checks per second, are answered by the cache without touching Aurora MySQL. A newly created option is visible once the owner write's version bump and delete run, and after at most the one-hour TTL if that transaction fails.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options:{option_name}"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Every read-then-fill key has a version key in its slot. Fills go through a Lua compare-and-set script, and writers bump the version in the same transaction that deletes the data keys.",
+      "impact": "A reader that loaded stock=12 from Aurora MySQL before a checkout decremented it to 11 cannot write 12 back, because its fill is rejected once the version changes. A cache miss costs one extra GET and runs one script instead of a plain HSET. Version keys add about 500,000 small keys at 10x volume.",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_options",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "{table}:{entity_id}:ver",
+        "wp_postmeta:{post_id}",
+        "wp_options:{option_name}",
+        "wp_woocommerce_order_itemmeta:{order_item_id}"
+      ],
+      "query_ids": [
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Post meta is cached per post as one hash, plus a second hash from meta_key to meta_id. Both are filled by one atomic script from one owner read, and any meta write deletes both.",
+      "impact": "Five read shapes on wp_postmeta (about 32 reads per second) become single-key reads. Memory holds each post's meta twice (about 4.8 KB per post). A stock change deletes the whole post's meta cache. The fill lock then sends one reader, not every concurrent reader, to reload about 30 rows from Aurora MySQL.",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "target_tables": [
+        "wp_postmeta:{post_id}",
+        "wp_postmeta:{post_id}:keys",
+        "{table}:{entity_id}:lock"
+      ],
+      "query_ids": [
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+        "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Hash field order does not follow meta_id or order_item_id, so the client sorts the HGETALL result numerically to match the ORDER BY of the source queries.",
+      "impact": "Sorting 10 to 30 fields in application code costs microseconds. Code that relied on database order calls the shared cache helper that sorts the fields.",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "target_tables": [
+        "wp_postmeta:{post_id}",
+        "wp_woocommerce_order_itemmeta:{order_item_id}",
+        "wp_woocommerce_order_items:{order_id}"
+      ],
+      "query_ids": [
+        "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+        "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+        "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Hashes that cache one field per query variant set their TTL only on the first fill (EXPIRE NX). Termmeta-ordered term lists carry a global termmeta version in the field name.",
+      "impact": "A busy parent or object with new variants arriving still expires 10 minutes after its first fill, so the 10-minute limit holds. A termmeta write retires every older ordered list at once. Hot parents are rebuilt from Aurora MySQL every 10 minutes even when nothing changed.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "wp_posts:children:{post_parent}",
+        "wp_posts:title:{post_type:sha1(post_title)}",
+        "wp_term_relationships:{object_id}",
+        "wp_termmeta:ver"
+      ],
+      "query_ids": [
+        "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+        "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+        "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+        "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "The object-term joins (queries `d5ae7abb` and `4481cc0c`) are pre-joined into a term_id list per object, and the term rows are stored separately in wp_terms:{term_id}.",
+      "impact": "About 16 join queries per second become one hash read per object. No captured write covers term assignment, so the term-assignment code path bumps the object's version and deletes its key.",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "wp_term_relationships:{object_id}",
+        "wp_terms:{term_id}"
+      ],
+      "query_ids": [
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+        "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+        "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Child and title lookups on wp_posts store only post IDs, cached per parent or per type and title. Empty results are cached too, because the child and title queries return 0 rows on average.",
+      "impact": "Each lookup costs one key read plus pipelined row reads. The post write path computes the old and new parent and title and invalidates those keys, which is extra application code for each post save.",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "wp_posts:children:{post_parent}",
+        "wp_posts:title:{post_type:sha1(post_title)}",
+        "wp_posts:{ID}"
+      ],
+      "query_ids": [
+        "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+        "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+        "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "The slug uniqueness check, query `fcfd82fa`, stays on Aurora MySQL and is not cached.",
+      "impact": "Its 2.7 calls per second still reach Aurora MySQL through the post_name index. In exchange, no stale cache entry can produce a duplicate slug, which matters because wp_posts has no unique constraint on post_name.",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [],
+      "query_ids": [
+        "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Action scheduler reads use a 60-second TTL because the scheduler's status, claim and attempt updates are absent from the captured write set. Hook lookups cache only two fixed status sets and at most 1,000 actions per hook, with zero-padded members so equal scores sort by numeric action_id.",
+      "impact": "An action's cached status lags the database by up to 60 seconds when the scheduler's update path does not invalidate the key. Claiming and running actions read and write Aurora MySQL directly, so the cache never decides whether an action runs. Hooks with more than 1,000 matching actions, and other status lists, read Aurora MySQL.",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "target_tables": [
+        "wp_actionscheduler_actions:{action_id}",
+        "wp_actionscheduler_actions:hook:{hook}:{status_set}"
+      ],
+      "query_ids": [
+        "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+        "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "WooCommerce order items and item meta are cached per order and per item, with a meta_key-to-meta_id companion hash for existence checks. Invalidation also covers item updates, item deletes and meta deletes made outside the captured workload.",
+      "impact": "About 22 order reads per second are served by the cache. A removed line item or meta row disappears from the cache when its write path runs the invalidation transaction, and after at most the 30-minute TTL if that fails. Checkout and payment reads that need the committed state read Aurora MySQL.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "wp_woocommerce_order_items:{order_id}",
+        "wp_woocommerce_order_itemmeta:{order_item_id}",
+        "wp_woocommerce_order_itemmeta:{order_item_id}:keys"
+      ],
+      "query_ids": [
+        "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+        "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+        "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Tax rate classes (2 rows) are one pre-sorted JSON string with a 24-hour TTL, and no captured write covers the table.",
+      "impact": "A tax class edit is visible after the admin save path invalidates the key, and after at most 24 hours if that path is missing.",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "target_tables": [
+        "wp_wc_tax_rate_classes:all"
+      ],
+      "query_ids": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Key counts in the key designs are already 10x today's rows: 11,990 posts become 119,900 post keys, 23,163 options become 231,630 option keys and 24,713 order items become 247,130 item meta keys. At that 10x volume the cache holds about 1.7 million data keys plus about 0.5 million version keys and about 1.4 GB of values. Adding per-key overhead of about 90 B (about 0.2 GB) and hashtable encoding for meta hashes whose JSON values exceed the 64 B hash-max-listpack-value (about 0.7 GB) gives about 2.3 GB.",
+      "impact": "The cluster runs in cluster mode with 2 shards. Each shard is one cache.r7g.large primary and one replica, at 13.07 GiB per node. With reserved-memory-percent 25 that leaves about 19.6 GiB of usable data memory, which holds the 2.3 GB 10x estimate with about 8x headroom. It also holds the 14 GB figure that results if the per-key counts are read as today's volume. The parameter group sets maxmemory-policy allkeys-lru for the whole cluster. Oversized values always read Aurora MySQL.",
+      "source_tables": [
+        "wordpress.wp_options",
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "wp_options:{option_name}",
+        "wp_posts:{ID}",
+        "wp_postmeta:{post_id}",
+        "wp_woocommerce_order_itemmeta:{order_item_id}"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Key patterns use literal hash tags. The braces in wp_postmeta:{post_id} hold the actual post_id, so a data key, its :keys companion, its :ver key and its :lock key share one slot.",
+      "impact": "Fills and invalidations for one entity run as a single script or MULTI under cluster mode. A post save that touches several parents or titles sends one small transaction per slot in a pipeline. Each one is idempotent and is retried on its own.",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "wp_postmeta:{post_id}",
+        "wp_postmeta:{post_id}:keys",
+        "wp_woocommerce_order_itemmeta:{order_item_id}:keys"
+      ],
+      "query_ids": [
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Values over 100 KB are cached as an __oversize=1 marker with the normal TTL instead of being skipped, and autoloaded options are held in the PHP process for 5 seconds.",
+      "impact": "A large serialized option or post costs one small cache read and one direct Aurora MySQL read, with no failed fill attempt. Autoloaded options read on every page skip the network round trip, and stay stale for at most 5 seconds after an option change.",
+      "source_tables": [
+        "wordpress.wp_options",
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "target_tables": [
+        "wp_options:{option_name}",
+        "wp_posts:{ID}",
+        "wp_postmeta:{post_id}"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "[PE note] In cluster mode, IN-list reads (EC-AP-2, EC-AP-3, EC-AP-14) span slots. The client has to use a cluster-aware pipeline that splits commands by slot. The Aurora fill must read each missing entity's `:ver` before the single owner query.",
+      "impact": "[PE note] In cluster mode, IN-list reads (EC-AP-2, EC-AP-3, EC-AP-14) span slots. The client has to use a cluster-aware pipeline that splits commands by slot. The Aurora fill must read each missing entity's `:ver` before the single owner query.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "elasticache"
+    },
+    {
+      "description": "[PE note] Numeric IDs share hash tags across tables: `wp_posts:{1842}`, `wp_postmeta:{1842}`, `wp_term_relationships:{1842}` and `wp_actionscheduler_actions:{1842}` all land in the same slot. That is harmless for overall distribution, but a viral product concentrates all of its keys on one shard. Watch per-shard EngineCPUUtilization.",
+      "impact": "[PE note] Numeric IDs share hash tags across tables: `wp_posts:{1842}`, `wp_postmeta:{1842}`, `wp_term_relationships:{1842}` and `wp_actionscheduler_actions:{1842}` all land in the same slot. That is harmless for overall distribution, but a viral product concentrates all of its keys on one shard. Watch per-shard EngineCPUUtilization.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "elasticache"
+    },
+    {
+      "description": "[PE note] Both the fill script and EXPIRE NX need Redis OSS 7.0+ or Valkey 7.2+. Pin the engine version in IaC. Also keep every value in the fill JSON as a JSON string, because Lua number-to-integer conversion would truncate a value like 19.99.",
+      "impact": "[PE note] Both the fill script and EXPIRE NX need Redis OSS 7.0+ or Valkey 7.2+. Pin the engine version in IaC. Also keep every value in the fill JSON as a JSON string, because Lua number-to-integer conversion would truncate a value like 19.99.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "elasticache"
+    },
+    {
+      "description": "[PE note] `wp_termmeta:ver` is a single global key read on every termmeta-ordered request. Its traffic is low, and the 5-second in-process option cache pattern could be applied to it if it gets hot.",
+      "impact": "[PE note] `wp_termmeta:ver` is a single global key read on every termmeta-ordered request. Its traffic is low, and the 5-second in-process option cache pattern could be applied to it if it gets hot.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "elasticache"
+    }
+  ],
+  "validation_passed": true,
+  "validation_failures": []
+}

@@ -8,6 +8,8 @@ Usage:
         --judge judge.json --mode chat|ui|both --fixture wordpress|discourse
     uv run python ci/llm/run.py collect-logs --artifact-root artifacts --out DIR \
         [--db DB --job JOB] [--extra-log .local-ui/api.log ...]
+    uv run python ci/llm/run.py collect-job --artifact-root artifacts --out DIR \
+        [--db DB --job JOB]
     uv run python ci/llm/run.py check-model TRANSCRIPT --expected MODEL_ID
 
 Transcript shapes
@@ -152,6 +154,7 @@ import os
 import re
 import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrusted input
 import sys
+import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1779,6 +1782,121 @@ def cmd_collect_logs(args: argparse.Namespace) -> None:
     print(json.dumps({"copied": copied}))
 
 
+# The whole job, for the replay (#1463). The CI job uploads only test-results/, and
+# the replay (ci/llm/replay.py) needs the job's contract artifacts, not only the
+# synthesis folder. They go into ONE gzip archive, ``job.tar.gz`` (members
+# ``<db>/<job>/...``): JSON compresses about ten to one, so a job uploads as a few
+# hundred KB and the mirror's artifact collection, which takes the whole of
+# test-results/, needs no change.
+JOB_ARCHIVE = "job.tar.gz"
+# An allowlist, not a denylist: only these job files are archived, the ones the
+# replayed external-mode checks open (tests/e2e: the collector output, triage,
+# analysis, assignment versions and their access patterns, reality-check output and
+# schema outputs; the synthesis report names the version the replay lays out).
+# Everything else (logs, rendered files, the uploaded collection, a stray file the
+# job gained) stays out by default.
+JOB_ALLOW_RES = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"collector/output\.json",
+        r"referee-triage/triage\.json",
+        r"analysis-[a-z_]+/analysis\.json",
+        r"assignment/v\d+/(?:assignment|access_patterns)\.json",
+        r"reality-check/(?:v\d+/)?output\.json",
+        r"schema-[a-z_]+/v\d+/schema_output\.json",
+        r"synthesis/v\d+/report\.json",
+    )
+)
+JOB_MAX_FILE_BYTES = 5_000_000
+
+
+def _job_files(job_dir: Path) -> tuple[list[Path], list[str], list[str]]:
+    """The allowlisted files of ``job_dir``, the ones left out because they are too
+    large, and the findings of the secret scan over the allowlisted files."""
+    from ci.llm.private_scan import secret_findings
+
+    keep: list[Path] = []
+    too_large: list[str] = []
+    findings: list[str] = []
+    for path in sorted(job_dir.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        rel = path.relative_to(job_dir).as_posix()
+        if not any(rx.fullmatch(rel) for rx in JOB_ALLOW_RES):
+            continue
+        if path.stat().st_size > JOB_MAX_FILE_BYTES:
+            too_large.append(rel)
+            continue
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        findings += [f"{rel}: {hit}" for hit in secret_findings(text)]
+        keep.append(path)
+    return keep, too_large, findings
+
+
+def collect_job(
+    artifact_root: Path,
+    out_dir: Path,
+    db: str = "",
+    job: str = "",
+    state_file: Path | None = None,
+) -> dict:
+    """Write the job's replay artifacts as ``out_dir/job.tar.gz`` (#1463).
+
+    ``db``/``job`` default to ``.modernizer-state.json``. Returns ``{}`` when there is
+    no job folder. The allowlisted files are scanned for secrets (detect-secrets, see
+    ``ci/llm/private_scan.py``); on any finding NO archive is written and the result
+    is ``{"refused": [...]}`` (kind and line, never the value), so a secret is never
+    dropped silently into a half-empty upload. Otherwise the result has ``archive``,
+    ``files``, ``bytes`` and ``too_large`` (files left out for their size).
+    """
+    if (not db or not job) and state_file is not None and state_file.is_file():
+        try:
+            state = json.loads(state_file.read_text())
+            db = db or str(state.get("database_name") or "")
+            job = job or str(state.get("job_id") or "")
+        except (OSError, ValueError):
+            pass
+    if not (db and job and _is_safe_name(db) and _is_safe_name(job)):
+        return {}
+    root = artifact_root.resolve()
+    job_dir = (artifact_root / db / job).resolve()
+    if not (job_dir.is_relative_to(root) and job_dir.is_dir()):
+        return {}
+    files, too_large, findings = _job_files(job_dir)
+    if findings:
+        return {"refused": findings, "too_large": too_large}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    archive = out_dir / JOB_ARCHIVE
+    with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:
+        for path in files:
+            arcname = f"{db}/{job}/{path.relative_to(job_dir).as_posix()}"
+            info = tar.gettarinfo(str(path), arcname=arcname)
+            # No owner, group or machine detail in the archive.
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            with path.open("rb") as f:
+                tar.addfile(info, f)
+    return {
+        "archive": str(archive),
+        "files": len(files),
+        "bytes": archive.stat().st_size,
+        "too_large": too_large,
+    }
+
+
+def cmd_collect_job(args: argparse.Namespace) -> None:
+    result = collect_job(
+        Path(args.artifact_root),
+        Path(args.out),
+        db=args.db or "",
+        job=args.job or "",
+        state_file=(
+            Path(args.state_file) if args.state_file else REPO_ROOT / ".modernizer-state.json"
+        ),
+    )
+    print(json.dumps(result))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1841,6 +1959,17 @@ def build_parser() -> argparse.ArgumentParser:
     p3.add_argument("--state-file", default=None)
     p3.add_argument("--extra-log", action="append", default=[])
     p3.set_defaults(func=cmd_collect_logs)
+
+    p3b = sub.add_parser(
+        "collect-job",
+        help="Write the job folder, without secrets, as job.tar.gz in the output dir (#1463).",
+    )
+    p3b.add_argument("--artifact-root", required=True)
+    p3b.add_argument("--out", required=True)
+    p3b.add_argument("--db", default="")
+    p3b.add_argument("--job", default="")
+    p3b.add_argument("--state-file", default=None)
+    p3b.set_defaults(func=cmd_collect_job)
 
     return parser
 

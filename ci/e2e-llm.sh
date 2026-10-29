@@ -112,7 +112,7 @@ mkdir -p "$OUT"
 # must never stand in for this run's: a test step the job budget skips or stops
 # writes no junit, and results.json would otherwise read the old file (#1593).
 # Only these files: a dry run's $E2E_LLM_TRANSCRIPT may live in this folder.
-rm -f "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
+rm -f "$OUT/job.tar.gz" "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
   "$OUT/reports-junit.xml" "$OUT/ui-junit.xml"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 
@@ -134,6 +134,16 @@ on_exit() {
       --db "${DB:-}" --job "${JOB:-}" \
       --extra-log "$REPO_ROOT/.local-ui/api.log" --extra-log "$REPO_ROOT/.local-ui/serve.log" \
       >/dev/null 2>&1 || true
+    # The job's replay artifacts as one job.tar.gz, so the replay
+    # (ci/replay.sh, #1463) has the assignment versions, collector output, triage
+    # and the rest, not only the synthesis folder.
+    # Only the files the replay reads are archived, and any secret finding refuses
+    # the whole archive. The JSON (files, size, files too large, or the refusal's
+    # findings by kind and line, never a value) goes to the job log and the console.
+    mkdir -p "$OUT/job-logs"
+    uv run python ci/llm/run.py collect-job --artifact-root "$ARTIFACT_ROOT" --out "$OUT" \
+      --db "${DB:-}" --job "${JOB:-}" >"$OUT/job-logs/collect-job.json" 2>&1 || true
+    echo "collect-job: $(cat "$OUT/job-logs/collect-job.json" 2>/dev/null)" >&2
     # The run may have left its own local API/UI up (ui/both modes); stop them
     # via the same allowlisted script /modernize uses, not pkill -- see
     # scripts/start_local_ui.py's module docstring.

@@ -23,10 +23,10 @@ it. The unit tests read the same fixture
 (``tests/unit/ci/test_replay.py``,
 ``tests/unit/tools/validation/test_customer_text_guard_id_fields.py``).
 
-The e2e-llm upload carries the synthesis folder, the deliverables and the
-transcript, not the rest of the job (the assignment versions, the collector
-output, the triage, the reality-check output), so the checks that read those are not replayed:
-``NEEDS_FULL_JOB`` lists them.
+The e2e-llm upload carries the whole job folder as ``job.tar.gz`` (#1463, secrets
+and rendered files left out; ``ci/llm/run.py collect-job``), so the fixture holds the
+assignment versions, collector output, triage, reality-check and schema outputs too
+(``job/``) and every external-mode check is replayed.
 
 Usage::
 
@@ -34,7 +34,6 @@ Usage::
         --to tests/fixtures/real_runs/wordpress-both
     uv run python ci/llm/replay.py prepare --fixture tests/fixtures/real_runs/wordpress-both \\
         --root test-results/replay/artifacts
-    uv run python ci/llm/replay.py deselect
 """
 
 from __future__ import annotations
@@ -44,12 +43,15 @@ import json
 import re
 import shutil
 import sys
+import tarfile
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from ci.llm.private_scan import identity_findings, line_of, secret_findings  # noqa: E402
 
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "real_runs" / "wordpress-both"
 
@@ -90,7 +92,6 @@ _ABSOLUTE_PATH_RE = re.compile(
 )
 _PRIVATE_VALUE_RES = (
     ("aws access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("aws account id", re.compile(r"(?<![\w.-])\d{12}(?![\w])")),
     ("aws arn", re.compile(r"\barn:aws[\w-]*:")),
 )
 
@@ -102,50 +103,14 @@ TRIM_KEEP = 400
 # Tool-call inputs the transcript checks read whole (a Bash command, an Agent prompt).
 KEEP_INPUT_KEYS = frozenset({"command", "prompt", "description", "file_path", "skill"})
 
-# The external-mode e2e checks that read a job artifact the saved run does not
-# carry, so the replay deselects them. A check that needs only report.json and the
-# deliverables is replayed; one added later that needs more goes here.
-_ASSIGNMENT = "reads assignment/v*/assignment.json"
-_COLLECTOR = "reads collector/output.json"
-_TRIAGE = "reads referee-triage/triage.json"
-# With no reality-check folder the check returns early and scans nothing: it would
-# count as a replayed pass that checked nothing.
-_REALITY_CHECK = "reads reality-check/output.json"
-_ALL_ARTIFACTS = "lists every artifact of the job"
-NEEDS_FULL_JOB: dict[str, str] = {
-    "tests/e2e/test_confidence_follows_engine.py::test_every_version_holds_its_engines_score[external]": _ASSIGNMENT,
-    "tests/e2e/test_confidence_follows_engine.py::test_a_consolidated_query_shows_its_new_engines_score[external]": _ASSIGNMENT,
-    "tests/e2e/test_confidence_follows_engine.py::test_an_assignment_saved_before_the_fix_is_corrected_on_read[external]": _ASSIGNMENT,
-    "tests/e2e/test_customer_facing_wording.py::test_assignment_reasons_have_no_internal_wording[external]": _ASSIGNMENT,
-    "tests/e2e/test_customer_facing_wording.py::test_reality_check_output_has_no_internal_wording[external]": _REALITY_CHECK,
-    "tests/e2e/test_data_movement_plan.py::test_each_sample_job_gets_one_valid_plan_per_wave[external]": _ASSIGNMENT,
-    "tests/e2e/test_detailed_report.py::test_every_query_and_write_group_of_the_assignment_is_listed[external]": _ASSIGNMENT,
-    "tests/e2e/test_data_movement_plan.py::test_the_plans_ignore_the_hash_seed[external]": _ASSIGNMENT,
-    "tests/e2e/test_data_movement_plan.py::test_priced_plans_state_each_waves_monthly_cost[external]": _ASSIGNMENT,
-    "tests/e2e/test_one_writer_per_table.py::test_no_table_has_writes_on_two_engines[external]": _ASSIGNMENT,
-    "tests/e2e/test_one_writer_per_table.py::test_report_json_states_each_tables_source_of_truth_and_replicas[external]": _ASSIGNMENT,
-    "tests/e2e/test_pipeline.py::test_contract_artifacts_validate[external]": _ALL_ARTIFACTS,
-    "tests/e2e/test_pipeline.py::test_every_versioned_artifact_is_a_registered_contract_file[external]": _ALL_ARTIFACTS,
-    "tests/e2e/test_pipeline.py::test_every_read_back_artifact_loads_a_newer_file_with_unknown_fields[external]": _ALL_ARTIFACTS,
-    "tests/e2e/test_relational_gaps.py::test_each_sample_finds_its_reviewed_gaps[external]": _TRIAGE,
-    "tests/e2e/test_relational_gaps.py::test_every_found_gap_names_evidence_that_exists[external]": _TRIAGE,
-    "tests/e2e/test_report_pdf.py::test_the_file_is_report_json_rendered_byte_for_byte[external]": _COLLECTOR,
-    "tests/e2e/test_report_pdf.py::test_every_wave_its_counts_and_its_reason[external]": _ASSIGNMENT,
-    "tests/e2e/test_report_pdf.py::test_no_collected_table_name_appears[external]": _COLLECTOR,
-    "tests/e2e/test_report_pdf.py::test_nothing_is_cut[external]": _COLLECTOR,
-    "tests/e2e/test_schema_design_analysis_scope.py::test_the_external_request_names_only_the_engines_own_tables[external]": _ASSIGNMENT,
-    "tests/e2e/test_schema_design_analysis_scope.py::test_the_bedrock_input_names_only_the_engines_own_tables[external]": _ASSIGNMENT,
-    "tests/e2e/test_schema_revision_input_scope.py::test_a_revision_names_only_the_engines_own_tables[external]": _ASSIGNMENT,
-    "tests/e2e/test_schema_revision_input_scope.py::test_a_revision_input_equals_the_single_call_design_input[external]": _ASSIGNMENT,
-    "tests/e2e/test_schema_revision_input_scope.py::test_an_aurora_mysql_revision_holds_fewer_tables_than_the_collection[external]": _ASSIGNMENT,
-    "tests/e2e/test_table_profile_writes.py::test_every_profile_write_count_equals_its_write_group[external]": _ASSIGNMENT,
-    "tests/e2e/test_table_profile_writes.py::test_only_writes_not_typed_as_dml_change_a_profile[external]": _ASSIGNMENT,
-    "tests/e2e/test_utility_pin_label.py::test_every_utility_pin_is_labelled_in_the_review_and_the_journey[external]": _ASSIGNMENT,
-    "tests/e2e/test_utility_pin_label.py::test_an_assignment_saved_before_the_field_still_labels_its_pins[external]": _ASSIGNMENT,
-    "tests/e2e/test_utility_pin_label.py::test_the_mean_fit_leaves_pins_out_and_says_how_many[external]": _ASSIGNMENT,
-    "tests/e2e/test_utility_pin_label.py::test_an_old_assignment_still_leaves_its_pins_out_of_the_mean[external]": _ASSIGNMENT,
-    "tests/e2e/test_waived_counts_follow_their_table.py::test_no_waived_count_sits_off_its_tables_source_of_truth[external]": _ASSIGNMENT,
-}
+# The job folder the fixture keeps next to the synthesis files (everything the
+# e2e-llm upload's job.tar.gz holds except synthesis/, which is the top-level files).
+JOB_DIR = "job"
+# The repo refuses files over 1000 KB; a larger job file is written compact first.
+MAX_FIXTURE_FILE_BYTES = 900_000
+# A member of job.tar.gz is read into memory: the upload never writes one over 5 MB,
+# so a larger one (a crafted archive) is refused before it is read.
+MAX_ARCHIVE_MEMBER_BYTES = 6_000_000
 
 
 def _trim(value: Any) -> Any:
@@ -182,14 +147,25 @@ def scrub_paths(text: str) -> str:
 
 def private_data(text: str) -> list[str]:
     """What in ``text`` would name a machine, a user or an account: an absolute path
-    outside the placeholders, an AWS access key, account id or ARN."""
+    outside the placeholders, an AWS access key, account id or ARN, and what
+    ``identity_findings`` finds. Each finding is ``"<kind> at line N"``, never the value."""
     found = [
-        f"absolute path {m.group(0)}"
+        f"absolute path at line {line_of(text, m)}"
         for m in _ABSOLUTE_PATH_RE.finditer(text)
         if not m.group(0).startswith(ALLOWED_PATH_PREFIXES)
     ]
-    found += [f"{kind} {m.group(0)}" for kind, rx in _PRIVATE_VALUE_RES for m in rx.finditer(text)]
-    return found
+    found += [
+        f"{kind} at line {line_of(text, m)}"
+        for kind, rx in _PRIVATE_VALUE_RES
+        for m in rx.finditer(text)
+    ]
+    return found + identity_findings(text)
+
+
+def job_private_data(text: str) -> list[str]:
+    """``private_data`` and every credential detect-secrets finds (``ci/llm/private_scan.py``,
+    the scan the upload runs): for the saved job's files and the synthesis files."""
+    return private_data(text) + secret_findings(text)
 
 
 def trim_transcript(text: str) -> str:
@@ -242,6 +218,61 @@ def _load(path: Path) -> dict[str, Any]:
     return data
 
 
+JOB_ARCHIVE = "job.tar.gz"
+
+
+def _read_job_archive(archive: Path, db: str, job: str) -> tuple[dict[str, str], int]:
+    """The text files of ``archive`` (the e2e-llm upload's ``job.tar.gz``, members
+    ``<db>/<job>/...``) except the synthesis folder, by relative path, and the
+    version of the synthesis folder the deliverables came from. Only regular files
+    under that prefix are read; a path that climbs out of it is refused."""
+    if not archive.is_file():
+        raise ValueError(
+            f"{archive}: no job.tar.gz; the run predates the full-job upload (#1463), "
+            "keep a newer passing run"
+        )
+    prefix = f"{db}/{job}/"
+    files: dict[str, str] = {}
+    versions: set[int] = set()
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar:
+            if not member.isreg() or not member.name.startswith(prefix):
+                continue
+            rel = member.name[len(prefix) :]
+            if not rel or ".." in Path(rel).parts or Path(rel).is_absolute():
+                raise ValueError(f"{archive}: unsafe member {member.name}")
+            if rel.startswith("synthesis/"):
+                m = re.match(r"synthesis/v(\d+)/", rel)
+                if m:
+                    versions.add(int(m.group(1)))
+                continue
+            if member.size > MAX_ARCHIVE_MEMBER_BYTES:
+                raise ValueError(
+                    f"{archive}: {member.name} is over {MAX_ARCHIVE_MEMBER_BYTES} bytes"
+                )
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise ValueError(f"{archive}: {member.name} has no data")
+            # Never more than the cap, whatever the header says.
+            raw = extracted.read(MAX_ARCHIVE_MEMBER_BYTES + 1)
+            if len(raw) > MAX_ARCHIVE_MEMBER_BYTES:
+                raise ValueError(
+                    f"{archive}: {member.name} is over {MAX_ARCHIVE_MEMBER_BYTES} bytes"
+                )
+            text = raw.decode("utf-8")
+            if len(text.encode()) > MAX_FIXTURE_FILE_BYTES:
+                try:
+                    text = json.dumps(json.loads(text), separators=(",", ":")) + "\n"
+                except ValueError:
+                    pass
+                if len(text.encode()) > MAX_FIXTURE_FILE_BYTES:
+                    raise ValueError(f"{archive}: {rel} is too large for the repo even compact")
+            files[rel] = text if text.endswith("\n") else text + "\n"
+    if not files:
+        raise ValueError(f"{archive}: holds no files of {prefix}")
+    return files, max(versions, default=1)
+
+
 def save(source: Path, dest: Path) -> dict[str, Any]:
     """Keep the passing run in ``source`` (an e2e-llm output folder,
     ``test-results/llm-<mode>-<fixture>``) as the replay fixture ``dest``."""
@@ -260,7 +291,23 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
         if (synthesis / name).is_file()
     }
     files[TRANSCRIPT_FILE] = trim_transcript((source / TRANSCRIPT_FILE).read_text())
-    found = [f"{name}: {hit}" for name, text in files.items() for hit in private_data(text)]
+    job_files, synthesis_version = _read_job_archive(source / JOB_ARCHIVE, str(db), str(job))
+    # The transcript is prose and tool output: key-name findings (a word such as
+    # "password" in a sentence) would flag it, so it gets the credential-shape scan only.
+    found = [
+        f"{name}: {hit}"
+        for name, text in files.items()
+        for hit in (
+            private_data(text) + secret_findings(text, key_names=False)
+            if name == TRANSCRIPT_FILE
+            else job_private_data(text)
+        )
+    ]
+    found += [
+        f"{JOB_DIR}/{name}: {hit}"
+        for name, text in job_files.items()
+        for hit in job_private_data(text)
+    ]
     if found:
         # The fixture is public: nothing is written until every file is clean.
         raise ValueError(f"{source}: the run names a machine or an account: {found[:10]}")
@@ -269,6 +316,11 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
         (dest / name).unlink(missing_ok=True)
     for name, text in files.items():
         (dest / name).write_text(text if text.endswith("\n") else text + "\n")
+    shutil.rmtree(dest / JOB_DIR, ignore_errors=True)
+    for name, text in job_files.items():
+        target = dest / JOB_DIR / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
     judge = source / "judge.json"
     judge_mean = _load(judge).get("mean") if judge.is_file() else None
     run = {
@@ -280,6 +332,8 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
         "timestamp": results.get("timestamp"),
         "cost_usd": results.get("cost_usd"),
         "judge_mean": judge_mean,
+        "job_source": "e2e-llm",
+        "synthesis_version": synthesis_version,
         "checks": results.get("checks"),
     }
     (dest / RUN_FILE).write_text(json.dumps(run, indent=2) + "\n")
@@ -287,8 +341,9 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
 
 
 def prepare(fixture: Path, root: Path) -> dict[str, Any]:
-    """Lay the saved run out as a job under ``root`` (its synthesis folder as
-    version 1) and render its deliverables with the current renderers."""
+    """Lay the saved run out as a job under ``root`` (its saved job folder and its
+    synthesis folder at the version it had) and render its deliverables with the
+    current renderers."""
     from scripts.run_report import run as render_job
 
     run = _load(fixture / RUN_FILE)
@@ -296,7 +351,14 @@ def prepare(fixture: Path, root: Path) -> dict[str, Any]:
     job_dir = root / db / job
     if job_dir.exists():
         shutil.rmtree(job_dir)
-    synthesis = job_dir / "synthesis" / "v1"
+    saved_job = fixture / JOB_DIR
+    if not saved_job.is_dir():
+        raise RuntimeError(
+            f"{fixture}: no {JOB_DIR}/ folder; refresh the fixture from a run that uploaded "
+            "the whole job (ci/llm/replay.py save, #1463)"
+        )
+    shutil.copytree(saved_job, job_dir)
+    synthesis = job_dir / "synthesis" / f"v{int(run.get('synthesis_version') or 1)}"
     synthesis.mkdir(parents=True)
     for name in SYNTHESIS_FILES:
         if (fixture / name).is_file():
@@ -305,10 +367,6 @@ def prepare(fixture: Path, root: Path) -> dict[str, Any]:
     if rendered.get("status") != "complete":
         raise RuntimeError(f"rendering the saved report failed: {rendered}")
     return {"artifact_root": str(root), "db": db, "job_id": job, "mode": run.get("mode")}
-
-
-def deselect_args() -> list[str]:
-    return [arg for node in NEEDS_FULL_JOB for arg in ("--deselect", node)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -320,15 +378,12 @@ def main(argv: list[str] | None = None) -> int:
     p_prep = sub.add_parser("prepare", help="Lay the fixture out as a job and render it.")
     p_prep.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     p_prep.add_argument("--root", type=Path, required=True)
-    sub.add_parser("deselect", help="Print the pytest --deselect args, one per line.")
     args = parser.parse_args(argv)
     if args.command == "save":
         print(json.dumps(save(args.source, args.dest)))
     elif args.command == "prepare":
         info = prepare(args.fixture, args.root)
         print(f"{info['db']} {info['job_id']} {info['mode']}")
-    else:
-        print("\n".join(deselect_args()))
     return 0
 
 

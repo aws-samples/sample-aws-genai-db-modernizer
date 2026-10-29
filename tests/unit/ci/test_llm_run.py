@@ -1290,6 +1290,119 @@ def test_collect_logs_without_a_job_copies_nothing(tmp_path: Path) -> None:
     assert run.collect_logs(tmp_path / "artifacts", tmp_path / "out") == []
 
 
+def _job_tree(root: Path) -> Path:
+    job = root / "wordpress" / "job1"
+    files = {
+        "assignment/v1/assignment.json": '{"ok": 1}',
+        "assignment/v2/access_patterns.json": "{}",
+        "collector/output.json": '{"tables": []}',
+        "analysis-dynamodb/analysis.json": "{}",
+        "reality-check/v2/output.json": "{}",
+        "schema-aurora_mysql/v2/schema_output.json": "{}",
+        "synthesis/v2/report.json": "{}",
+        # Not on the allowlist: left out, whatever they hold.
+        "_logs/run.log": "log",
+        "deliverables/assessment.pdf": "pdf",
+        "synthesis/v1/summary.pptx": "pptx",
+        "synthesis/v2/llm_input.json": "{}",
+        "uploads/collector-output.json": "{}",
+        "analysis-dynamodb/decision-trace.json": "{}",
+        "decisions/.env": "KEY=1",
+        "decisions/credentials.json": "{}",
+        "notes/dump.sql": "insert into t values (1);",
+        "collector/extra.json": "{}",
+    }
+    for name, text in files.items():
+        path = job / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return job
+
+
+def _archive_names(archive: str) -> list[str]:
+    import tarfile
+
+    with tarfile.open(archive) as tar:
+        return sorted(tar.getnames())
+
+
+def test_collect_job_archives_only_the_files_the_replay_reads(tmp_path: Path) -> None:
+    _job_tree(tmp_path / "artifacts")
+    result = run.collect_job(tmp_path / "artifacts", tmp_path / "out", db="wordpress", job="job1")
+    assert Path(result["archive"]) == tmp_path / "out" / "job.tar.gz"
+    assert _archive_names(result["archive"]) == [
+        "wordpress/job1/analysis-dynamodb/analysis.json",
+        "wordpress/job1/assignment/v1/assignment.json",
+        "wordpress/job1/assignment/v2/access_patterns.json",
+        "wordpress/job1/collector/output.json",
+        "wordpress/job1/reality-check/v2/output.json",
+        "wordpress/job1/schema-aurora_mysql/v2/schema_output.json",
+        "wordpress/job1/synthesis/v2/report.json",
+    ]
+    assert result["files"] == 7 and result["too_large"] == []
+
+
+def test_collect_job_refuses_the_whole_archive_on_a_secret(tmp_path: Path) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    secret = "postgres://admin:" + "hunter2pw" + "@db.internal/wp"  # pragma: allowlist secret
+    (job / "collector" / "output.json").write_text(json.dumps({"dsn": secret}))
+    (job / "assignment" / "v1" / "assignment.json").write_text(
+        '{"password": "hunter2pw"}'  # pragma: allowlist secret
+    )  # pragma: allowlist secret
+    result = run.collect_job(tmp_path / "artifacts", tmp_path / "out", db="wordpress", job="job1")
+    assert "archive" not in result
+    assert not (tmp_path / "out" / "job.tar.gz").exists()
+    refused = " ".join(result["refused"])
+    assert "collector/output.json: Basic Auth Credentials at line 1" in refused
+    assert "assignment/v1/assignment.json: Secret Keyword at line 1" in refused
+    assert "hunter2pw" not in refused  # a finding never repeats the value
+
+
+def test_collect_job_lists_a_file_left_out_for_its_size(tmp_path: Path, monkeypatch) -> None:
+    _job_tree(tmp_path / "artifacts")
+    monkeypatch.setattr(run, "JOB_MAX_FILE_BYTES", 10)
+    result = run.collect_job(tmp_path / "artifacts", tmp_path / "out", db="wordpress", job="job1")
+    assert "collector/output.json" in result["too_large"]
+    assert "wordpress/job1/collector/output.json" not in _archive_names(result["archive"])
+
+
+def test_collect_job_falls_back_to_the_state_file_and_refuses_outside_names(
+    tmp_path: Path,
+) -> None:
+    _job_tree(tmp_path / "artifacts")
+    state = tmp_path / "state.json"
+    state.write_text('{"database_name": "wordpress", "job_id": "job1"}')
+    assert run.collect_job(tmp_path / "artifacts", tmp_path / "o1", state_file=state)["files"] == 7
+    assert run.collect_job(tmp_path / "artifacts", tmp_path / "o2") == {}
+    for db, job in (("..", "job1"), ("wordpress", "../.."), ("wordpress", "nope")):
+        assert run.collect_job(tmp_path / "artifacts", tmp_path / "o3", db=db, job=job) == {}
+    assert not (tmp_path / "o3").exists()
+
+
+def test_the_archive_is_small_and_names_no_owner(tmp_path: Path) -> None:
+    import tarfile
+
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "collector" / "output.json").write_text(json.dumps({"rows": ["abc"] * 50_000}))
+    result = run.collect_job(tmp_path / "artifacts", tmp_path / "out", db="wordpress", job="job1")
+    assert result["bytes"] < 20_000
+    with tarfile.open(result["archive"]) as tar:
+        assert {(m.uid, m.gid, m.uname, m.gname) for m in tar} == {(0, 0, "", "")}
+
+
+def test_e2e_llm_uploads_the_job_on_exit() -> None:
+    text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    on_exit = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]
+    assert "ci/llm/run.py collect-job" in on_exit
+    assert '--out "$OUT"' in on_exit
+    # Its result (what was refused or left out) goes to the job log, not /dev/null.
+    call = on_exit[on_exit.index("ci/llm/run.py collect-job") :].splitlines()[1]
+    assert "/dev/null" not in call
+    assert "job-logs/collect-job.json" in call
+    # A reused folder's old archive never stands in for this run's.
+    assert '"$OUT/job.tar.gz"' in text[: text.index("on_exit() {")]
+
+
 def test_e2e_llm_collects_logs_on_exit() -> None:
     text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
     on_exit = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]

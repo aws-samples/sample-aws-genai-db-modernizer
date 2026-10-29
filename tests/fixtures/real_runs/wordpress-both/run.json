@@ -1,12 +1,14 @@
 {
   "db": "wordpress",
-  "job_id": "3b664548",
+  "job_id": "099e6873",
   "mode": "both",
   "fixture": "wordpress",
-  "git_sha": "00cadbe",
-  "timestamp": "2026-10-26T23:19:45.419191+00:00",
-  "cost_usd": 4.2413970999999995,
-  "judge_mean": 3.429,
+  "git_sha": "5393f2e",
+  "timestamp": "2026-10-29T16:31:26.958910+00:00",
+  "cost_usd": 3.577963299999999,
+  "judge_mean": 3.857,
+  "job_source": "research run (not e2e-llm)",
+  "synthesis_version": 2,
   "checks": {
     "transcript": true,
     "contracts": true,
@@ -14,5 +16,8 @@
     "pdf": true,
     "ui": true,
     "judge": true
-  }
+  },
+  "job_relabelled_from": "838e63c4",
+  "job_timestamp": "2026-10-28T15:35:21Z",
+  "job_git_sha": "7223240"
 }

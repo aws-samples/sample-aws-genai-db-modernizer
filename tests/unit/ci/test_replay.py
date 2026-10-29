@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import ast
+import io
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -108,13 +109,13 @@ def test_home_temp_and_socket_paths_are_replaced_by_placeholders() -> None:
 
 
 def test_private_data_names_paths_keys_and_accounts_but_not_ids() -> None:
-    assert replay.private_data("/opt/runner/x and /builds/team/repo") == [
-        "absolute path /opt/runner/x",
-        "absolute path /builds/team/repo",
+    assert replay.private_data("ok\n/opt/runner/x and /builds/team/repo") == [
+        "absolute path at line 2",
+        "absolute path at line 2",
     ]
-    assert replay.private_data(f"key {_FAKE_KEY}") == [f"aws access key {_FAKE_KEY}"]
-    assert replay.private_data("account 123456789012 here") == ["aws account id 123456789012"]
-    assert replay.private_data("arn:aws:iam::x") == ["aws arn arn:aws:"]
+    assert replay.private_data(f"key {_FAKE_KEY}") == ["aws access key at line 1"]
+    assert replay.private_data("a\nb\naccount 123456789012 here") == ["aws account id at line 3"]
+    assert replay.private_data("arn:aws:iam::x") == ["aws arn at line 1"]
     # A uuid's tail, a long decimal, a localhost URL and the placeholders are not.
     assert (
         replay.private_data(
@@ -175,7 +176,25 @@ def _e2e_llm_output(tmp_path: Path, passed: bool = True) -> Path:
     )
     (src / "judge.json").write_text('{"mean": 3.3}')
     (src / "transcript.jsonl").write_text(_transcript())
+    _write_job_archive(
+        src / replay.JOB_ARCHIVE,
+        {
+            "assignment/v1/assignment.json": '{"v": 1}',
+            "assignment/v2/assignment.json": '{"v": 2}',
+            "collector/output.json": '{"tables": []}',
+            "synthesis/v2/report.json": '{"database_name": "wordpress"}',
+        },
+    )
     return src
+
+
+def _write_job_archive(path: Path, files: dict[str, str], prefix: str = "wordpress/job1/") -> None:
+    with tarfile.open(path, "w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(prefix + name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
 
 
 def test_save_keeps_the_synthesis_files_the_trimmed_transcript_and_the_run(
@@ -184,11 +203,22 @@ def test_save_keeps_the_synthesis_files_the_trimmed_transcript_and_the_run(
     dest = tmp_path / "fixture"
     info = replay.save(_e2e_llm_output(tmp_path), dest)
     assert sorted(p.name for p in dest.iterdir()) == [
+        "job",
         "llm_input.json",
         "report.json",
         "run.json",
         "transcript.jsonl",
     ]
+    # The job folder is kept except its synthesis folder (the top-level files), and
+    # the version that synthesis folder had is recorded.
+    assert sorted(
+        p.relative_to(dest / "job").as_posix() for p in (dest / "job").rglob("*.json")
+    ) == [
+        "assignment/v1/assignment.json",
+        "assignment/v2/assignment.json",
+        "collector/output.json",
+    ]
+    assert info["synthesis_version"] == 2
     assert info["db"] == "wordpress" and info["job_id"] == "job1" and info["mode"] == "both"
     assert info["judge_mean"] == 3.3
     assert json.loads((dest / "run.json").read_text()) == info
@@ -205,6 +235,45 @@ def test_save_refuses_a_run_that_names_a_machine_or_an_account(tmp_path: Path, l
     with pytest.raises(ValueError, match="names a machine or an account"):
         replay.save(src, dest)
     assert not dest.exists()  # nothing is written
+
+
+def test_save_refuses_a_run_without_the_full_job_upload(tmp_path: Path) -> None:
+    src = _e2e_llm_output(tmp_path)
+    (src / replay.JOB_ARCHIVE).unlink()
+    dest = tmp_path / "fixture"
+    with pytest.raises(ValueError, match="no job.tar.gz"):
+        replay.save(src, dest)
+    assert not dest.exists()
+
+
+def test_save_refuses_a_job_file_that_names_a_machine(tmp_path: Path) -> None:
+    src = _e2e_llm_output(tmp_path)
+    _write_job_archive(
+        src / replay.JOB_ARCHIVE, {"collector/output.json": '{"host": "/home/alice/db"}'}
+    )
+    dest = tmp_path / "fixture"
+    with pytest.raises(ValueError, match="job/collector/output.json"):
+        replay.save(src, dest)
+    assert not dest.exists()
+
+
+def test_save_refuses_an_archive_member_that_climbs_out_of_the_job(tmp_path: Path) -> None:
+    src = _e2e_llm_output(tmp_path)
+    _write_job_archive(src / replay.JOB_ARCHIVE, {"../../escape.json": "{}"})
+    with pytest.raises(ValueError, match="unsafe member"):
+        replay.save(src, tmp_path / "fixture")
+
+
+def test_save_writes_a_job_file_over_the_repo_limit_compact(tmp_path: Path) -> None:
+    src = _e2e_llm_output(tmp_path)
+    big = json.dumps({"rows": ["x" * 20 for _ in range(30_000)]}, indent=4)
+    assert len(big) > replay.MAX_FIXTURE_FILE_BYTES
+    _write_job_archive(src / replay.JOB_ARCHIVE, {"collector/output.json": big})
+    dest = tmp_path / "fixture"
+    replay.save(src, dest)
+    kept = (dest / "job" / "collector" / "output.json").read_text()
+    assert len(kept.encode()) <= replay.MAX_FIXTURE_FILE_BYTES
+    assert json.loads(kept) == json.loads(big)
 
 
 def test_save_refuses_a_run_that_did_not_pass(tmp_path: Path) -> None:
@@ -267,10 +336,11 @@ def test_replay_runs_every_transcript_check() -> None:
     assert 'ci/llm/run.py check-transcript "$FIXTURE/transcript.jsonl" --mode "$MODE"' in script
 
 
+@pytest.mark.passes_on_main  # guards that the fixture names no machine; it now also covers job/
 def test_the_saved_run_names_no_machine_user_or_account() -> None:
     """Every record and field of every fixture file, not only the init record's cwd."""
-    for path in sorted(FIXTURE.iterdir()):
-        assert replay.private_data(path.read_text()) == [], path.name
+    for path in sorted(p for p in FIXTURE.rglob("*") if p.is_file()):
+        assert replay.private_data(path.read_text()) == [], path.relative_to(FIXTURE).as_posix()
     recs = [
         json.loads(line)
         for line in (FIXTURE / replay.TRANSCRIPT_FILE).read_text().splitlines()
@@ -283,14 +353,18 @@ def test_the_saved_run_names_no_machine_user_or_account() -> None:
 def test_prepare_lays_the_run_out_as_a_job_and_renders_it(tmp_path: Path) -> None:
     info = replay.prepare(FIXTURE, tmp_path)
     job = tmp_path / info["db"] / info["job_id"]
-    assert (job / "synthesis" / "v1" / "report.json").is_file()
+    run_info = json.loads((FIXTURE / "run.json").read_text())
+    version = run_info["synthesis_version"]
+    assert (job / "synthesis" / f"v{version}" / "report.json").is_file()
+    # The saved job folder (#1463): the artifacts the external checks read.
+    for name in ("collector/output.json", "referee-triage/triage.json"):
+        assert (job / name).is_file(), name
+    assert list(job.glob("assignment/v*/assignment.json"))
+    assert list(job.glob("schema-*/v*/schema_output.json"))
     # Every file of the deliverables folder (FOLDER_FILENAMES, the one list), the
     # detailed engineering report (#1364) included.
     names = sorted(p.name for p in (job / "deliverables").iterdir())
     assert names == sorted(FOLDER_FILENAMES)
-    # The saved run predates the routing records: its detailed report says so.
-    detailed = (job / "deliverables" / "engineering-report-detailed.md").read_text()
-    assert "## Records not available" in detailed
     # A second prepare starts from a clean job, not on top of the first.
     (job / "stray.json").write_text("{}")
     replay.prepare(FIXTURE, tmp_path)
@@ -310,23 +384,86 @@ def test_the_judge_facts_read_the_real_report() -> None:
 
 
 # ---------------------------------------------------------------------------
-# NEEDS_FULL_JOB
+# the full job (#1463)
 # ---------------------------------------------------------------------------
 
 
-def test_every_check_left_out_of_the_replay_exists() -> None:
-    """A renamed check would leave its --deselect pointing at nothing, and the
-    renamed one would fail the replay; each entry names a real test function."""
-    for node, reason in replay.NEEDS_FULL_JOB.items():
-        path, _, name = node.partition("::")
-        assert name.endswith("[external]"), node
-        assert reason, node
-        tree = ast.parse((REPO / path).read_text())
-        functions = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-        assert name.removesuffix("[external]") in functions, node
+def test_prepare_refuses_a_fixture_without_a_saved_job(tmp_path: Path) -> None:
+    old = tmp_path / "old"
+    old.mkdir()
+    for name in (*replay.SYNTHESIS_FILES, replay.RUN_FILE):
+        (old / name).write_text((FIXTURE / name).read_text())
+    with pytest.raises(RuntimeError, match="no job/ folder"):
+        replay.prepare(old, tmp_path / "root")
 
 
-def test_deselect_args_pair_each_node_with_the_flag() -> None:
-    args = replay.deselect_args()
-    assert args[0::2] == ["--deselect"] * len(replay.NEEDS_FULL_JOB)
-    assert args[1::2] == list(replay.NEEDS_FULL_JOB)
+def test_no_external_check_is_left_out_of_the_replay() -> None:
+    """Every external-mode check runs (the old NEEDS_FULL_JOB deselect list is gone)."""
+    script = (REPO_ROOT / "ci" / "replay.sh").read_text()
+    assert "--deselect" not in script
+    assert not hasattr(replay, "NEEDS_FULL_JOB")
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "postgres://admin:hunter2pw@db.example.org/wp",  # pragma: allowlist secret
+        '"password": "hunter2pw"',  # pragma: allowlist secret
+        "db.abc.us-east-1.rds.amazonaws.com",
+        "10.12.34.56",
+        "dba@customer-corp.com",
+        "bucket-123456789012-logs",
+        "C:\\\\Users\\\\jdoe\\\\work",
+    ],
+)
+def test_save_refuses_a_job_file_with_a_credential_host_or_person(
+    tmp_path: Path, leak: str
+) -> None:
+    src = _e2e_llm_output(tmp_path)
+    _write_job_archive(src / replay.JOB_ARCHIVE, {"collector/output.json": f"[1,\n{leak}\n]"})
+    dest = tmp_path / "fixture"
+    with pytest.raises(ValueError, match="names a machine or an account") as exc:
+        replay.save(src, dest)
+    assert "job/collector/output.json" in str(exc.value)
+    assert not dest.exists()
+
+
+def test_save_refuses_an_archive_member_over_the_size_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(replay, "MAX_ARCHIVE_MEMBER_BYTES", 100)
+    src = _e2e_llm_output(tmp_path)
+    _write_job_archive(src / replay.JOB_ARCHIVE, {"collector/output.json": "[" + "1," * 200 + "1]"})
+    with pytest.raises(ValueError, match="is over 100 bytes"):
+        replay.save(src, tmp_path / "fixture")
+
+
+def test_the_fixture_says_where_its_job_came_from() -> None:
+    """The judge, checks and cost in run.json belong to the transcript's run; the job
+    folder may come from another (#1463), and run.json must say so."""
+    run_info = json.loads((FIXTURE / "run.json").read_text())
+    assert run_info["job_source"] in ("e2e-llm", "research run (not e2e-llm)")
+    if run_info["job_source"] != "e2e-llm":
+        assert run_info["job_relabelled_from"] and run_info["job_timestamp"]
+        assert "mixed" in (REPO_ROOT / "ci" / "README.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "/opt/agent/work/x",
+        _FAKE_KEY,
+        "123456789012",
+        "arn:aws:iam::x",
+        "dba@customer-corp.com",
+        "db.abc.us-east-1.rds.amazonaws.com",
+        "10.12.34.56",
+        "bucket-123456789012-logs",
+    ],
+)
+def test_a_finding_names_its_kind_and_line_never_the_value(leak: str) -> None:
+    findings = replay.job_private_data(f"one\ntwo\n{leak}\n")
+    assert findings
+    assert all(f.endswith("at line 3") for f in findings), findings
+    for f in findings:
+        assert leak not in f and leak.split("/")[-1] not in f
