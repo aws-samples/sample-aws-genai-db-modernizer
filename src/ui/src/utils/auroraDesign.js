@@ -25,6 +25,7 @@
  */
 
 import { displayEngine } from './engineNames';
+import { NO_SOURCE_TABLE, displayGroupName } from './tableNames';
 
 // Mirrors AURORA_ENGINES in src/agents/referee/synthesis_report.py, plus the
 // legacy bare "aurora" key a few fixtures still use.
@@ -33,14 +34,12 @@ export const AURORA_ENGINE_KEYS = ['aurora_mysql', 'aurora_postgresql', 'aurora'
 export const isAuroraEngine = (engine) => AURORA_ENGINE_KEYS.includes(engine);
 
 // Mirrors UTILITY_GROUP_LABEL/UNRESOLVED_TABLE_GROUP_LABEL in
-// src/agents/referee/synthesis_report.py exactly (#478):
+// src/agents/referee/synthesis_report.py exactly (#478; a saved report's old label for
+// the second is mapped by displayGroupName, #1536):
 // neither is a real table a reader should see ranked by throughput like
 // the others, so both always sort last here -- the same rule the
 // engineering report's "Queries on Aurora by table" subsection applies.
-export const AURORA_BLAME_LABELS = [
-  'Utility and session statements',
-  'Table not identified by the collector',
-];
+export const AURORA_BLAME_LABELS = ['Utility and session statements', NO_SOURCE_TABLE];
 
 /**
  * One schema design's `table_definitions` entry, shaped for compact display:
@@ -134,7 +133,7 @@ export function buildAuroraQueryGroups(engine, queryGroups) {
     if (queries.length === 0) return;
 
     groups.push({
-      sourceTable: g.group_name,
+      sourceTable: displayGroupName(g.group_name),
       totalCallsPerSecond: queries.reduce((sum, q) => sum + q.callsPerSecond, 0),
       queries,
     });

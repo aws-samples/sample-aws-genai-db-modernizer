@@ -2053,7 +2053,21 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 # utility/session/DDL statement, or a query the collector found no table for. Listed
 # last under "Queries on Aurora by table": neither is a busiest table.
 UTILITY_GROUP_LABEL = "Utility and session statements"
-UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
+UNRESOLVED_TABLE_GROUP_LABEL = "No source table"
+# What a report saved before #1536 carries for the same group. Saved reports are never
+# rewritten, so every reader accepts it and every renderer shows the current label.
+LEGACY_UNRESOLVED_TABLE_GROUP_LABELS = frozenset({"Table not identified by the collector"})
+NO_SOURCE_TABLE_GROUP_LABELS = frozenset({UNRESOLVED_TABLE_GROUP_LABEL}) | (
+    LEGACY_UNRESOLVED_TABLE_GROUP_LABELS
+)
+BLAME_GROUP_LABELS = frozenset({UTILITY_GROUP_LABEL}) | NO_SOURCE_TABLE_GROUP_LABELS
+
+
+def display_group_name(name: Any) -> str:
+    """A query group's name as a deliverable shows it (#1536): the label a saved report
+    carries for a group with no source table is shown as the current one."""
+    text = str(name)
+    return UNRESOLVED_TABLE_GROUP_LABEL if text in LEGACY_UNRESOLVED_TABLE_GROUP_LABELS else text
 
 
 def is_listed_query_group(group: Mapping[str, Any]) -> bool:
@@ -2118,8 +2132,7 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
                     "calls_per_second": _unrounded(
                         sum(float(ap.get("design_rps") or 0) for ap in aps)
                     ),
-                    "blame": str(g.get("group_name"))
-                    in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL),
+                    "blame": str(g.get("group_name")) in BLAME_GROUP_LABELS,
                 }
             )
         engine_rows.sort(key=lambda r: (bool(r["blame"]), -float(r["calls_per_second"])))

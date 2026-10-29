@@ -28,6 +28,7 @@ import ApiManager from "../classes/ApiManager";
 import EngineBadge from "../components/EngineBadge";
 import EngineFitFigure from "../components/EngineFitFigure";
 import { isCacheEngine } from "../utils/cacheLayer";
+import { displayTables } from "../utils/tableNames";
 
 
 
@@ -384,8 +385,8 @@ const PatternAnalysisPage = memo(() => {
       header: t('engine-analysis.table.col-tables'),
       cell: item => (
         <SpaceBetween direction="horizontal" size="xs">
-          {(item.tables_accessed || []).map((table, idx) => (
-            <Badge key={idx} color="grey">{table.split('.').pop()}</Badge>
+          {displayTables(item.tables_accessed).map((table, idx) => (
+            <Badge key={idx} color="grey">{table}</Badge>
           ))}
         </SpaceBetween>
       ),

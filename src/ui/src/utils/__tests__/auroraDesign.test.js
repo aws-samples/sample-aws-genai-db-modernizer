@@ -290,9 +290,18 @@ describe('AURORA_BLAME_LABELS ordering (#478)', () => {
       },
     ];
     const result = buildAuroraQueryGroups('aurora_mysql', groups);
-    expect(result.map((g) => g.sourceTable)).toEqual([
-      'wordpress.wp_posts',
-      'Table not identified by the collector',
-    ]);
+    // #1536: a saved report's old label reads as the current one.
+    expect(result.map((g) => g.sourceTable)).toEqual(['wordpress.wp_posts', 'No source table']);
+  });
+
+  test('the current label sorts last too, and the legacy one is never shown', () => {
+    const groups = ['No source table', 'wordpress.wp_posts'].map((name, i) => ({
+      group_name: name,
+      engines: ['aurora_mysql'],
+      access_patterns: [{ engine: 'aurora_mysql', design_rps: i ? 1 : 999, query_ids: [`q${i}`] }],
+      source_queries: [{ query_id: `q${i}`, query_text: 'SELECT 1' }],
+    }));
+    const result = buildAuroraQueryGroups('aurora_mysql', groups);
+    expect(result.map((g) => g.sourceTable)).toEqual(['wordpress.wp_posts', 'No source table']);
   });
 });

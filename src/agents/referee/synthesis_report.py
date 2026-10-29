@@ -73,7 +73,12 @@ from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.progress import say
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
-from src.shared.report_facts import analysis_overview_facts, mean_table_fit, table_fit_score
+from src.shared.report_facts import (
+    BLAME_GROUP_LABELS,
+    analysis_overview_facts,
+    mean_table_fit,
+    table_fit_score,
+)
 from src.shared.risk_severity import overall_risk_level
 from src.shared.row_counts import unknown_size_assumption
 from src.shared.signal_labels import signal_noun
@@ -113,13 +118,13 @@ AURORA_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
 # the relational engine by the assignment -- SHOW/SET/EXPLAIN, catalog
 # introspection) gets its own readable group, and a query that is not one of
 # those but still names only pseudo tables (``table_resolution.PSEUDO_TABLES``
-# -- "unknown", MySQL's dummy ``DUAL``) gets a group that says the collector,
-# not the query, is why. Neither is a real access pattern a reader should see
+# -- "unknown", MySQL's dummy ``DUAL``) gets a group that says the statement has
+# no source table. Neither is a real access pattern a reader should see
 # ranked as a "busiest" group -- every consumer that picks top/leading groups
 # (the deterministic summary, the grounding fallback summary,
 # ``build_effective_architecture``) excludes both exact strings.
 UTILITY_GROUP_LABEL = "Utility and session statements"
-UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
+UNRESOLVED_TABLE_GROUP_LABEL = "No source table"
 
 _RELATIONAL_REASON_MAX_CHARS = 180
 # The collector's own placeholder for a table it could not name (#483: some
@@ -3624,9 +3629,7 @@ def build_summary(
     # see ranked as a "busiest" group -- excluded before taking the top 3,
     # not just skipped if picked.
     full_names = [
-        g["group_name"]
-        for g in query_groups
-        if g.get("group_name") not in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL)
+        g["group_name"] for g in query_groups if g.get("group_name") not in BLAME_GROUP_LABELS
     ][:3]
     named_groups = _short_group_labels(full_names, _table_rps_weights(query_groups))
     if named_groups:

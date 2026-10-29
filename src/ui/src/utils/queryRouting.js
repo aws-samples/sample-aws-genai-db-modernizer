@@ -1,3 +1,4 @@
+import { displayTables } from './tableNames';
 // #822: the rows of the results page's query routing table, one per query of
 // the assessment (GET /assessments/{job_id}/query-journeys), so every query's
 // journey and "Why this engine" trace opens without schema design. Rows only
@@ -20,7 +21,7 @@ export function buildQueryRoutingRows(journeys, kindsById, engineLabels) {
     return {
       queryId: j.query_id,
       excerpt: queryExcerpt(j.source && j.source.query_text),
-      tables: (j.source && j.source.tables_accessed) || [],
+      tables: displayTables(j.source && j.source.tables_accessed, { short: false }),
       queryType: (j.source && j.source.query_type) || null,
       engine,
       engineName: engine ? (engineLabels[engine] || engine) : null,

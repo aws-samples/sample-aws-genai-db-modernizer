@@ -70,6 +70,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
+import { displayTables } from "../utils/tableNames";
 import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
@@ -1363,7 +1364,7 @@ const AnalysisResultsPage = memo(() => {
                 {
                   id: 'tables',
                   header: t('analysis-results.pattern-detail.tables'),
-                  cell: (item) => item.tables_accessed?.map(shortTable).join(', ') || '—',
+                  cell: (item) => displayTables(item.tables_accessed).join(', ') || '—',
                   width: 200
                 },
                 {
@@ -3034,7 +3035,7 @@ const AnalysisResultsPage = memo(() => {
                         },
                         {
                           label: 'Tables Accessed',
-                          value: (queryJourneyData?.source?.tables_accessed || []).join(', ') || '—'
+                          value: displayTables(queryJourneyData?.source?.tables_accessed, { short: false }).join(', ') || '—'
                         },
                         {
                           label: 'Frequency (per hour)',

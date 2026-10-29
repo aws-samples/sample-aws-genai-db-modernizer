@@ -118,3 +118,18 @@ test('the filter options are the distinct query types and engines the rows hold,
   });
   expect(queryRoutingFilterOptions([])).toEqual({ queryTypes: [], engines: [] });
 });
+
+// #1536: a statement that names no table carries the stored "unknown" placeholder; the
+// row says "No source table", and the text filter matches that wording, not "unknown".
+test('a placeholder table reads as no source table in the row and the filter', () => {
+  const none = [
+    { query_id: 'n1', source: { query_text: 'SET NAMES utf8', tables_accessed: ['unknown'] }, assignment: null },
+    { query_id: 'n2', source: { query_text: 'SELECT 1 FROM wp_posts', tables_accessed: ['wp_posts'] }, assignment: null },
+  ];
+  const rows = buildQueryRoutingRows(none, new Map(), labels);
+  expect(rows[0].tables).toEqual(['No source table']);
+  expect(rows[1].tables).toEqual(['wp_posts']);
+  const ids = (text) => filterQueryRoutingRows(rows, text, 'all').map(r => r.queryId);
+  expect(ids('no source')).toEqual(['n1']);
+  expect(ids('unknown')).toEqual([]);
+});
