@@ -603,6 +603,10 @@ def test_the_same_input_gives_the_same_cut() -> None:
     differ = {key for key in first.collection if first.collection[key] != third.collection[key]}
     assert differ <= {"job_id", "metadata"}
     first_meta, third_meta = first.collection["metadata"], third.collection["metadata"]
+    # collection_duration_seconds is run timing too, so a cut leaves it out (null) rather
+    # than carry a value that differs between runs.
+    assert first_meta["collection_duration_seconds"] is None
+    assert third_meta["collection_duration_seconds"] is None
     assert {k for k in first_meta if first_meta[k] != third_meta[k]} <= {"collection_timestamp"}
 
 
