@@ -1,0 +1,4068 @@
+{
+  "contract_version": "1.2",
+  "job_id": "099e6873",
+  "source_database": "wordpress",
+  "target_engine": "dynamodb",
+  "access_patterns": [
+    {
+      "pattern_id": "DDB-AP-1",
+      "pattern_group": "API key writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "description": "Record the last access time of an API key, throttled in the application. design_rps is the call rate from the source (248.3 calls per second); the application issues the UpdateItem only when the key's last written last_access, held per key_id in ElastiCache and also available from the ApiKeysByConsumerKey projection read during authentication, is more than 60 s old. DynamoDB therefore receives at most one write per key per 60 s, bounded at 3.88 writes per second table-wide (the 1.56% of source calls that change a row), each 2 WCU. The condition stays as a guard against out-of-order writers.",
+      "operation": "UpdateItem",
+      "table_name": "WpWoocommerceApiKeys",
+      "gsi_name": null,
+      "key_condition": "PK=key_id",
+      "design_rps": 248.2948,
+      "avg_items_returned": null,
+      "item_size_bytes": 1506,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(key_id) AND (attribute_not_exists(last_access) OR last_access < :last_access)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-2",
+      "pattern_group": "Tax rate class reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "description": "List all tax rate classes ordered by name. Replaces the source full table scan with one Query on the single TAX_RATE_CLASS item collection whose sort key starts with the class name, so items come back already in name order.",
+      "operation": "Query",
+      "table_name": "WpWcTaxRateClasses",
+      "gsi_name": null,
+      "key_condition": "PK=entity_type",
+      "design_rps": 37.9,
+      "avg_items_returned": 2.0007,
+      "item_size_bytes": 553,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "tax_rate_class_id",
+        "name",
+        "slug"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-3",
+      "pattern_group": "API key lookups",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "description": "Authenticate a REST request by consumer key. Query on the ApiKeysByConsumerKey GSI, whose INCLUDE projection carries every selected column plus last_access (used by the DDB-AP-1 throttle), so no base-table fetch is needed.",
+      "operation": "Query",
+      "table_name": "WpWoocommerceApiKeys",
+      "gsi_name": "ApiKeysByConsumerKey",
+      "key_condition": "PK=consumer_key",
+      "design_rps": 24.8264,
+      "avg_items_returned": 1.0001,
+      "item_size_bytes": 1275,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "key_id",
+        "user_id",
+        "permissions",
+        "consumer_key",
+        "consumer_secret",
+        "nonces",
+        "last_access"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-4",
+      "pattern_group": "Product lookup writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d"
+      ],
+      "source_tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "description": "Upsert the product lookup row. REPLACE INTO becomes one unconditional PutItem that overwrites the whole item keyed by product_id (the source reports 2 affected rows because MySQL deletes then inserts).",
+      "operation": "PutItem",
+      "table_name": "WpWcProductMetaLookup",
+      "gsi_name": null,
+      "key_condition": "PK=product_id",
+      "design_rps": 10.6944,
+      "avg_items_returned": null,
+      "item_size_bytes": 618,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-5",
+      "pattern_group": "Comment reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406"
+      ],
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "description": "Fetch one comment by its id with GetItem on the base table.",
+      "operation": "GetItem",
+      "table_name": "WpComments",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 7.9868,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 2326,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "comment_id",
+        "comment_post_id",
+        "comment_author",
+        "comment_author_email",
+        "comment_author_url",
+        "comment_author_ip",
+        "comment_date",
+        "comment_date_gmt",
+        "comment_content",
+        "comment_karma",
+        "comment_approved",
+        "comment_agent",
+        "comment_type",
+        "comment_parent",
+        "user_id"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-6",
+      "pattern_group": "Comment reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"
+      ],
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "description": "Count a post's comments with a given approval status. DynamoDB has no server-side COUNT, so this is a Query on the KEYS_ONLY CommentsByPostApproval GSI with Select=COUNT; the source examines 2.4 rows per call, so the count reads well under one 4 KB unit.",
+      "operation": "Query",
+      "table_name": "WpComments",
+      "gsi_name": "CommentsByPostApproval",
+      "key_condition": "PK=comment_post_id AND SK=comment_approved",
+      "design_rps": 7.9865,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 77,
+      "strongly_consistent": false,
+      "returned_attributes": [],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-7",
+      "pattern_group": "Comment writes",
+      "analysis_pattern_ids": [
+        "dynamodb-04"
+      ],
+      "query_ids": [
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+      ],
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "description": "Insert a new comment. PutItem guarded so an application-generated comment_id never overwrites an existing comment; DynamoDB propagates the item to CommentsByPostApproval.",
+      "operation": "PutItem",
+      "table_name": "WpComments",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 7.9865,
+      "avg_items_returned": null,
+      "item_size_bytes": 2326,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(comment_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-8",
+      "pattern_group": "Reserved stock writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
+      ],
+      "source_tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "description": "Release all stock reservations of an order. Query the order's item collection on the base table key order_id (key-scoped write anchor), then BatchWriteItem DeleteRequests for the returned product_id sort keys.",
+      "operation": "BatchWriteItem",
+      "table_name": "WpWcReservedStock",
+      "gsi_name": null,
+      "key_condition": "PK=order_id",
+      "design_rps": 4.5521,
+      "avg_items_returned": null,
+      "item_size_bytes": 172,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-9",
+      "pattern_group": "Action scheduler log writes",
+      "analysis_pattern_ids": [
+        "dynamodb-04"
+      ],
+      "query_ids": [
+        "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+      ],
+      "source_tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "description": "Append a log entry for a scheduled action. PutItem into the action's item collection with an application-generated, time-ordered log_id sort key.",
+      "operation": "PutItem",
+      "table_name": "WpActionschedulerLogs",
+      "gsi_name": null,
+      "key_condition": "PK=action_id AND SK=log_id",
+      "design_rps": 2.9139,
+      "avg_items_returned": null,
+      "item_size_bytes": 1188,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(log_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-10",
+      "pattern_group": "Download permission writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "description": "Reassign an order's download permissions to a customer. Query the order's item collection on the base table key order_id (key-scoped write anchor), then UpdateItem each returned permission_id to set user_id and user_email.",
+      "operation": "UpdateItem",
+      "table_name": "WpWoocommerceDownloadableProductPermissions",
+      "gsi_name": null,
+      "key_condition": "PK=order_id AND SK=permission_id",
+      "design_rps": 2.9135,
+      "avg_items_returned": null,
+      "item_size_bytes": 714,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(permission_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-11",
+      "pattern_group": "Comment meta reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+      ],
+      "source_tables": [
+        "wordpress.wp_commentmeta"
+      ],
+      "description": "Load metadata for a set of comments. One Query per comment_id in the IN list (issued in parallel) on the comment's item collection; the meta_id sort key returns rows in the source ORDER BY meta_id order.",
+      "operation": "Query",
+      "table_name": "WpCommentmeta",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 1.4733,
+      "avg_items_returned": 0.0,
+      "item_size_bytes": 1330,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "comment_id",
+        "meta_key",
+        "meta_value"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-12",
+      "pattern_group": "Post reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2"
+      ],
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "description": "Fetch one post by ID (SELECT * ... WHERE ID = ? LIMIT 1).",
+      "operation": "GetItem",
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "key_condition": "PK=id",
+      "design_rps": 320.775,
+      "avg_items_returned": 0.9885,
+      "item_size_bytes": 7526,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "id",
+        "post_author",
+        "post_date",
+        "post_date_gmt",
+        "post_content",
+        "post_title",
+        "post_excerpt",
+        "post_status",
+        "comment_status",
+        "ping_status",
+        "post_password",
+        "post_name",
+        "to_ping",
+        "pinged",
+        "post_modified",
+        "post_modified_gmt",
+        "post_content_filtered",
+        "post_parent",
+        "guid",
+        "menu_order",
+        "post_type",
+        "post_mime_type",
+        "comment_count"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-13",
+      "pattern_group": "Post meta writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"
+      ],
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "description": "Insert one post meta row as an item in the post's meta collection; the application generates meta_id and the sort key meta_key#meta_id.",
+      "operation": "PutItem",
+      "table_name": "WpPostmeta",
+      "gsi_name": null,
+      "key_condition": "PK=post_id AND SK=meta_key_meta_id",
+      "design_rps": 102.8969,
+      "avg_items_returned": null,
+      "item_size_bytes": 1619,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(meta_key_meta_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-14",
+      "pattern_group": "Order item meta writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "description": "Insert one order item meta row into the order item's meta collection; the application generates meta_id.",
+      "operation": "PutItem",
+      "table_name": "WpOrderItemmeta",
+      "gsi_name": null,
+      "key_condition": "PK=order_item_id AND SK=meta_key_meta_id",
+      "design_rps": 57.6677,
+      "avg_items_returned": null,
+      "item_size_bytes": 1625,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(meta_key_meta_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-15",
+      "pattern_group": "User lookups",
+      "analysis_pattern_ids": [
+        "dynamodb-07a"
+      ],
+      "query_ids": [
+        "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091"
+      ],
+      "source_tables": [
+        "wordpress.wp_usermeta"
+      ],
+      "description": "Load all meta for a set of users ordered by umeta_id: one Query per user_id in the IN list on the user's item collection, sort key META#<zero-padded umeta_id> preserves the source order.",
+      "operation": "Query",
+      "table_name": "WpUsers",
+      "gsi_name": null,
+      "key_condition": "PK=user_id AND SK begins_with 'META#'",
+      "design_rps": 28.5594,
+      "avg_items_returned": 21.0036,
+      "item_size_bytes": 1386,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "user_id",
+        "meta_key",
+        "meta_value"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-16",
+      "pattern_group": "Post meta writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ],
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "description": "Set meta_value for a post's meta key: Query the post's partition with SK begins_with '<meta_key>#' to find the matching item keys (one on average), then UpdateItem each one.",
+      "operation": "UpdateItem",
+      "table_name": "WpPostmeta",
+      "gsi_name": null,
+      "key_condition": "PK=post_id AND SK begins_with '<meta_key>#'",
+      "design_rps": 26.925,
+      "avg_items_returned": null,
+      "item_size_bytes": 1619,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(meta_key_meta_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-17",
+      "pattern_group": "User lookups",
+      "analysis_pattern_ids": [
+        "dynamodb-01",
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb"
+      ],
+      "source_tables": [
+        "wordpress.wp_users"
+      ],
+      "description": "Fetch one user profile by ID.",
+      "operation": "GetItem",
+      "table_name": "WpUsers",
+      "gsi_name": null,
+      "key_condition": "PK=user_id AND SK='PROFILE'",
+      "design_rps": 24.8267,
+      "avg_items_returned": 1.0001,
+      "item_size_bytes": 1303,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "user_id",
+        "user_login",
+        "user_pass",
+        "user_nicename",
+        "user_email",
+        "user_url",
+        "user_registered",
+        "user_activation_key",
+        "user_status",
+        "display_name"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-18",
+      "pattern_group": "Post writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+        "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+        "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9"
+      ],
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "description": "Set comment_count on one post by ID (SET comment_count = :c).",
+      "operation": "UpdateItem",
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "key_condition": "PK=id",
+      "design_rps": 20.9448,
+      "avg_items_returned": null,
+      "item_size_bytes": 7526,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-19",
+      "pattern_group": "Post reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d"
+      ],
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "description": "Fetch several posts by ID list (WHERE ID IN (...)) with BatchGetItem, up to 100 keys per call.",
+      "operation": "BatchGetItem",
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "key_condition": "PK=id",
+      "design_rps": 17.6174,
+      "avg_items_returned": 8.5906,
+      "item_size_bytes": 7526,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "id",
+        "post_author",
+        "post_date",
+        "post_date_gmt",
+        "post_content",
+        "post_title",
+        "post_excerpt",
+        "post_status",
+        "comment_status",
+        "ping_status",
+        "post_password",
+        "post_name",
+        "to_ping",
+        "pinged",
+        "post_modified",
+        "post_modified_gmt",
+        "post_content_filtered",
+        "post_parent",
+        "guid",
+        "menu_order",
+        "post_type",
+        "post_mime_type",
+        "comment_count"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-20",
+      "pattern_group": "Term meta reads",
+      "analysis_pattern_ids": [
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034"
+      ],
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "description": "Find meta_id for a term's meta key: Query the term's partition on the meta_key prefix of the sort key.",
+      "operation": "Query",
+      "table_name": "WpTermmeta",
+      "gsi_name": null,
+      "key_condition": "PK=term_id AND SK begins_with '<meta_key>#'",
+      "design_rps": 16.076,
+      "avg_items_returned": 0.3333,
+      "item_size_bytes": 1619,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "meta_id"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-21",
+      "pattern_group": "Term meta reads",
+      "analysis_pattern_ids": [
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417"
+      ],
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "description": "Load all meta for a set of terms; replaces the source full table scan with one Query per term_id in the IN list; the application orders the merged result by meta_id.",
+      "operation": "Query",
+      "table_name": "WpTermmeta",
+      "gsi_name": null,
+      "key_condition": "PK=term_id",
+      "design_rps": 7.5062,
+      "avg_items_returned": 0.8838,
+      "item_size_bytes": 1619,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "term_id",
+        "meta_key",
+        "meta_value"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-22",
+      "pattern_group": "Order item meta writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "description": "Set meta_value for an order item's meta key: Query the order item's partition on the meta_key prefix, then UpdateItem each matching item.",
+      "operation": "UpdateItem",
+      "table_name": "WpOrderItemmeta",
+      "gsi_name": null,
+      "key_condition": "PK=order_item_id AND SK begins_with '<meta_key>#'",
+      "design_rps": 5.8153,
+      "avg_items_returned": null,
+      "item_size_bytes": 1625,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(meta_key_meta_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-23",
+      "pattern_group": "Order item writes",
+      "analysis_pattern_ids": [
+        "dynamodb-07a"
+      ],
+      "query_ids": [
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d"
+      ],
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "description": "Insert one order item under its order; the application generates order_item_id.",
+      "operation": "PutItem",
+      "table_name": "WpOrderItems",
+      "gsi_name": null,
+      "key_condition": "PK=order_id AND SK=order_item_id",
+      "design_rps": 5.8149,
+      "avg_items_returned": null,
+      "item_size_bytes": 1291,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(order_item_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-24",
+      "pattern_group": "Term relationship reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01",
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a"
+      ],
+      "source_tables": [
+        "wordpress.wp_term_relationships"
+      ],
+      "description": "Existence check of one object to term taxonomy link by full primary key.",
+      "operation": "GetItem",
+      "table_name": "WpTermRelationships",
+      "gsi_name": null,
+      "key_condition": "PK=object_id AND SK=term_taxonomy_id",
+      "design_rps": 5.3587,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 59,
+      "strongly_consistent": false,
+      "returned_attributes": [],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-25",
+      "pattern_group": "Term meta writes",
+      "analysis_pattern_ids": [
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "description": "Key-scoped write: set meta_value for a term's meta key. The term_id partition key with the meta_key prefix of the sort key serves it as a Query plus UpdateItem per matching item.",
+      "operation": "UpdateItem",
+      "table_name": "WpTermmeta",
+      "gsi_name": null,
+      "key_condition": "PK=term_id AND SK begins_with '<meta_key>#'",
+      "design_rps": 5.3587,
+      "avg_items_returned": null,
+      "item_size_bytes": 1619,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(meta_key_meta_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-26",
+      "pattern_group": "User lookups",
+      "analysis_pattern_ids": [
+        "dynamodb-01",
+        "dynamodb-05"
+      ],
+      "query_ids": [
+        "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+      ],
+      "source_tables": [
+        "wordpress.wp_users"
+      ],
+      "description": "Fetch user profiles by ID list with BatchGetItem on (user_id, 'PROFILE').",
+      "operation": "BatchGetItem",
+      "table_name": "WpUsers",
+      "gsi_name": null,
+      "key_condition": "PK=user_id AND SK='PROFILE'",
+      "design_rps": 3.7347,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 1303,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "user_id",
+        "user_login",
+        "user_pass",
+        "user_nicename",
+        "user_email",
+        "user_url",
+        "user_registered",
+        "user_activation_key",
+        "user_status",
+        "display_name"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-27",
+      "pattern_group": "Scheduled action writes",
+      "analysis_pattern_ids": [
+        "dynamodb-04"
+      ],
+      "query_ids": [
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "description": "Insert one scheduled action; the source INSERT ... SELECT FROM DUAL WHERE (...) IS NULL guard is evaluated by the application before the put, and the put is conditional on a new action_id.",
+      "operation": "PutItem",
+      "table_name": "WpActionschedulerActions",
+      "gsi_name": null,
+      "key_condition": "PK=action_id",
+      "design_rps": 2.9139,
+      "avg_items_returned": null,
+      "item_size_bytes": 2838,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(action_id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-28",
+      "pattern_group": "Post writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e"
+      ],
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "description": "Insert one post; the application generates the ID.",
+      "operation": "PutItem",
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "key_condition": "PK=id",
+      "design_rps": 2.9139,
+      "avg_items_returned": null,
+      "item_size_bytes": 7526,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_not_exists(id)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-29",
+      "pattern_group": "Post reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+      ],
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "description": "Fetch a post by ID only when it has the given post_type: Query on the post's key with FilterExpression post_type = :t (at most one item, so the filter discards nothing beyond that item).",
+      "operation": "Query",
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "key_condition": "PK=id",
+      "design_rps": 1.9059,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 7526,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "id",
+        "post_author",
+        "post_date",
+        "post_date_gmt",
+        "post_content",
+        "post_title",
+        "post_excerpt",
+        "post_status",
+        "comment_status",
+        "ping_status",
+        "post_password",
+        "post_name",
+        "to_ping",
+        "pinged",
+        "post_modified",
+        "post_modified_gmt",
+        "post_content_filtered",
+        "post_parent",
+        "guid",
+        "menu_order",
+        "post_type",
+        "post_mime_type",
+        "comment_count"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-30",
+      "pattern_group": "Option reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+      ],
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "description": "Read an option's value by its name (get_option). GetItem on the option_name partition key with ProjectionExpression option_value; a missing item returns nothing, matching the source's empty result.",
+      "operation": "GetItem",
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 2275.0205,
+      "avg_items_returned": 0.28439762218258413,
+      "item_size_bytes": 1283,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "option_value"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-31",
+      "pattern_group": "Option reads",
+      "analysis_pattern_ids": [
+        "dynamodb-01"
+      ],
+      "query_ids": [
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "description": "Read an option's autoload flag by its name. GetItem on option_name with ProjectionExpression autoload.",
+      "operation": "GetItem",
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 303.6667,
+      "avg_items_returned": 0.07888652579582876,
+      "item_size_bytes": 1283,
+      "strongly_consistent": false,
+      "returned_attributes": [
+        "autoload"
+      ],
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-32",
+      "pattern_group": "Option writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2"
+      ],
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "description": "Update an existing option's value by name (update_option). UpdateItem SET option_value with a condition that the item exists, so an update of a missing option changes nothing, as in the source where most calls affect 0 rows; ConditionalCheckFailedException is treated as 0 rows affected.",
+      "operation": "UpdateItem",
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 73.4545,
+      "avg_items_returned": null,
+      "item_size_bytes": 1283,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": "attribute_exists(option_name)",
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-33",
+      "pattern_group": "Option writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715"
+      ],
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "description": "Insert or replace an option (add_option with ON DUPLICATE KEY UPDATE). Unconditional PutItem keyed by option_name writes option_value and autoload; the primary key makes the upsert native and keeps option_name unique without a sentinel item.",
+      "operation": "PutItem",
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 31.5087,
+      "avg_items_returned": null,
+      "item_size_bytes": 1283,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-34",
+      "pattern_group": "Option writes",
+      "analysis_pattern_ids": [
+        "dynamodb-03"
+      ],
+      "query_ids": [
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ],
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "description": "Delete an option by name (delete_option, transient expiry). DeleteItem on option_name.",
+      "operation": "DeleteItem",
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 23.9493,
+      "avg_items_returned": null,
+      "item_size_bytes": 1283,
+      "strongly_consistent": false,
+      "returned_attributes": null,
+      "condition_expression": null,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    }
+  ],
+  "table_definitions": [
+    {
+      "table_name": "WpActionschedulerLogs",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "partition_key": {
+        "attribute_name": "action_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "log_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "log_id",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_logs",
+          "source_column": "log_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "action_id",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_logs",
+          "source_column": "action_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "message",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_logs",
+          "source_column": "message",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "log_date_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_logs",
+          "source_column": "log_date_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "log_date_local",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_logs",
+          "source_column": "log_date_local",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 12910,
+      "item_size_bytes": 1188
+    },
+    {
+      "table_name": "WpCommentmeta",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_commentmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "comment_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "meta_id",
+          "type": "N",
+          "source_table": "wordpress.wp_commentmeta",
+          "source_column": "meta_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_id",
+          "type": "N",
+          "source_table": "wordpress.wp_commentmeta",
+          "source_column": "comment_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wordpress.wp_commentmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_value",
+          "type": "S",
+          "source_table": "wordpress.wp_commentmeta",
+          "source_column": "meta_value",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 0,
+      "item_size_bytes": 1330
+    },
+    {
+      "table_name": "WpComments",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "partition_key": {
+        "attribute_name": "comment_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "comment_id",
+          "type": "N",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_ID",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_post_id",
+          "type": "N",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_post_ID",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_author",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_author",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_author_email",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_author_email",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_author_url",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_author_url",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_author_ip",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_author_IP",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_date",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_date",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_date_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_date_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_content",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_content",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_karma",
+          "type": "N",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_karma",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_approved",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_approved",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_agent",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_agent",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_type",
+          "type": "S",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_type",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_parent",
+          "type": "N",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "comment_parent",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "user_id",
+          "type": "N",
+          "source_table": "wordpress.wp_comments",
+          "source_column": "user_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [
+        {
+          "gsi_name": "CommentsByPostApproval",
+          "partition_key": [
+            {
+              "attribute_name": "comment_post_id",
+              "attribute_type": "N"
+            }
+          ],
+          "sort_key": [
+            {
+              "attribute_name": "comment_approved",
+              "attribute_type": "S"
+            }
+          ],
+          "projection": "KEYS_ONLY",
+          "projected_attributes": null,
+          "sparse_attribute": null,
+          "item_count": 29651,
+          "item_size_bytes": 77
+        }
+      ],
+      "item_count": 29651,
+      "item_size_bytes": 2326
+    },
+    {
+      "table_name": "WpWcProductMetaLookup",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "partition_key": {
+        "attribute_name": "product_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "product_id",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "product_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "sku",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "sku",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "virtual",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "virtual",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "downloadable",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "downloadable",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "min_price",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "min_price",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "max_price",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "max_price",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "onsale",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "onsale",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "stock_quantity",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "stock_quantity",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "stock_status",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "stock_status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "rating_count",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "rating_count",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "average_rating",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "average_rating",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "total_sales",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "total_sales",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "tax_status",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "tax_status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "tax_class",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_product_meta_lookup",
+          "source_column": "tax_class",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 150,
+      "item_size_bytes": 618
+    },
+    {
+      "table_name": "WpWcReservedStock",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "partition_key": {
+        "attribute_name": "order_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "product_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "order_id",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_reserved_stock",
+          "source_column": "order_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "product_id",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_reserved_stock",
+          "source_column": "product_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "stock_quantity",
+          "type": "N",
+          "source_table": "wordpress.wp_wc_reserved_stock",
+          "source_column": "stock_quantity",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "timestamp",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_reserved_stock",
+          "source_column": "timestamp",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "expires",
+          "type": "S",
+          "source_table": "wordpress.wp_wc_reserved_stock",
+          "source_column": "expires",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 0,
+      "item_size_bytes": 172
+    },
+    {
+      "table_name": "WpWcTaxRateClasses",
+      "aggregate_pattern": "item_collection",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "partition_key": {
+        "attribute_name": "entity_type",
+        "attribute_type": "S"
+      },
+      "sort_key": {
+        "attribute_name": "name_sort",
+        "attribute_type": "S"
+      },
+      "attributes": null,
+      "entities": [
+        {
+          "entity_type": "TAX_RATE_CLASS",
+          "source_table": "wordpress.wp_wc_tax_rate_classes",
+          "pk_template": "TAX_RATE_CLASS",
+          "sk_template": "{name}#{tax_rate_class_id}",
+          "attributes": [
+            {
+              "name": "tax_rate_class_id",
+              "type": "N",
+              "source_table": "wordpress.wp_wc_tax_rate_classes",
+              "source_column": "tax_rate_class_id",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "name",
+              "type": "S",
+              "source_table": "wordpress.wp_wc_tax_rate_classes",
+              "source_column": "name",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "slug",
+              "type": "S",
+              "source_table": "wordpress.wp_wc_tax_rate_classes",
+              "source_column": "slug",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            }
+          ]
+        }
+      ],
+      "gsis": [],
+      "item_count": 2,
+      "item_size_bytes": 553
+    },
+    {
+      "table_name": "WpWoocommerceApiKeys",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "partition_key": {
+        "attribute_name": "key_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "key_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "key_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "user_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "user_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "description",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "description",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "permissions",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "permissions",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "consumer_key",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "consumer_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "consumer_secret",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "consumer_secret",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "nonces",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "nonces",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "truncated_key",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "truncated_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "last_access",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_api_keys",
+          "source_column": "last_access",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [
+        {
+          "gsi_name": "ApiKeysByConsumerKey",
+          "partition_key": [
+            {
+              "attribute_name": "consumer_key",
+              "attribute_type": "S"
+            }
+          ],
+          "sort_key": null,
+          "projection": "INCLUDE",
+          "projected_attributes": [
+            "user_id",
+            "permissions",
+            "consumer_secret",
+            "nonces",
+            "last_access"
+          ],
+          "sparse_attribute": null,
+          "item_count": 0,
+          "item_size_bytes": 1275
+        }
+      ],
+      "item_count": 0,
+      "item_size_bytes": 1506
+    },
+    {
+      "table_name": "WpWoocommerceDownloadableProductPermissions",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "partition_key": {
+        "attribute_name": "order_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "permission_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "permission_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "permission_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "download_id",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "download_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "product_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "product_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "order_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_key",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "order_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "user_email",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "user_email",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "user_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "user_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "downloads_remaining",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "downloads_remaining",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "access_granted",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "access_granted",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "access_expires",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "access_expires",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "download_count",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "source_column": "download_count",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 0,
+      "item_size_bytes": 714
+    },
+    {
+      "table_name": "WpActionschedulerActions",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "partition_key": {
+        "attribute_name": "action_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "action_id",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "action_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "hook",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "hook",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "status",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "scheduled_date_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "scheduled_date_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "scheduled_date_local",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "scheduled_date_local",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "priority",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "priority",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "args",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "args",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "schedule",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "schedule",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "group_id",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "group_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "attempts",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "attempts",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "last_attempt_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "last_attempt_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "last_attempt_local",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "last_attempt_local",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "claim_id",
+          "type": "N",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "claim_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "extended_args",
+          "type": "S",
+          "source_table": "wordpress.wp_actionscheduler_actions",
+          "source_column": "extended_args",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 12537,
+      "item_size_bytes": 2838
+    },
+    {
+      "table_name": "WpOrderItemmeta",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "order_item_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key_meta_id",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "meta_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+          "source_column": "meta_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_item_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+          "source_column": "order_item_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_value",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+          "source_column": "meta_value",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key_meta_id",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "string-format",
+            "format": "{meta_key}#{meta_id:020d}",
+            "source_format": null
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 244039,
+      "item_size_bytes": 1625
+    },
+    {
+      "table_name": "WpOrderItems",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "partition_key": {
+        "attribute_name": "order_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "order_item_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "order_item_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_order_items",
+          "source_column": "order_item_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_item_name",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_order_items",
+          "source_column": "order_item_name",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_item_type",
+          "type": "S",
+          "source_table": "wordpress.wp_woocommerce_order_items",
+          "source_column": "order_item_type",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "order_id",
+          "type": "N",
+          "source_table": "wordpress.wp_woocommerce_order_items",
+          "source_column": "order_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 24713,
+      "item_size_bytes": 1291
+    },
+    {
+      "table_name": "WpPostmeta",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "post_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key_meta_id",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "meta_id",
+          "type": "N",
+          "source_table": "wordpress.wp_postmeta",
+          "source_column": "meta_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_id",
+          "type": "N",
+          "source_table": "wordpress.wp_postmeta",
+          "source_column": "post_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wordpress.wp_postmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_value",
+          "type": "S",
+          "source_table": "wordpress.wp_postmeta",
+          "source_column": "meta_value",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key_meta_id",
+          "type": "S",
+          "source_table": "wordpress.wp_postmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "string-format",
+            "format": "{meta_key}#{meta_id:020d}",
+            "source_format": null
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 448688,
+      "item_size_bytes": 1619
+    },
+    {
+      "table_name": "WpPosts",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "partition_key": {
+        "attribute_name": "id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "N",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "ID",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_author",
+          "type": "N",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_author",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_date",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_date",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_date_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_date_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_content",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_content",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_title",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_title",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_excerpt",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_excerpt",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_status",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_status",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "comment_status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "ping_status",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "ping_status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_password",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_password",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_name",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_name",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "to_ping",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "to_ping",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "pinged",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "pinged",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_modified",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_modified",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ss",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_modified_gmt",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_modified_gmt",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "date-format",
+            "format": "YYYY-MM-DDTHH:mm:ssZ",
+            "source_format": "datetime"
+          },
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_content_filtered",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_content_filtered",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_parent",
+          "type": "N",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_parent",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "guid",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "guid",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "menu_order",
+          "type": "N",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "menu_order",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_type",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_type",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "post_mime_type",
+          "type": "S",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "post_mime_type",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "comment_count",
+          "type": "N",
+          "source_table": "wordpress.wp_posts",
+          "source_column": "comment_count",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 11990,
+      "item_size_bytes": 7526
+    },
+    {
+      "table_name": "WpTermRelationships",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_term_relationships"
+      ],
+      "partition_key": {
+        "attribute_name": "object_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "term_taxonomy_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "object_id",
+          "type": "N",
+          "source_table": "wordpress.wp_term_relationships",
+          "source_column": "object_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "term_taxonomy_id",
+          "type": "N",
+          "source_table": "wordpress.wp_term_relationships",
+          "source_column": "term_taxonomy_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "term_order",
+          "type": "N",
+          "source_table": "wordpress.wp_term_relationships",
+          "source_column": "term_order",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 801,
+      "item_size_bytes": 59
+    },
+    {
+      "table_name": "WpTermmeta",
+      "aggregate_pattern": "identifying_relationship",
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "term_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key_meta_id",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "meta_id",
+          "type": "N",
+          "source_table": "wordpress.wp_termmeta",
+          "source_column": "meta_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "term_id",
+          "type": "N",
+          "source_table": "wordpress.wp_termmeta",
+          "source_column": "term_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wordpress.wp_termmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_value",
+          "type": "S",
+          "source_table": "wordpress.wp_termmeta",
+          "source_column": "meta_value",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key_meta_id",
+          "type": "S",
+          "source_table": "wordpress.wp_termmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": {
+            "type": "string-format",
+            "format": "{meta_key}#{meta_id:020d}",
+            "source_format": null
+          },
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 0,
+      "item_size_bytes": 1619
+    },
+    {
+      "table_name": "WpUsers",
+      "aggregate_pattern": "item_collection",
+      "source_tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "partition_key": {
+        "attribute_name": "user_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "item_key",
+        "attribute_type": "S"
+      },
+      "attributes": null,
+      "entities": [
+        {
+          "entity_type": "PROFILE",
+          "source_table": "wordpress.wp_users",
+          "pk_template": "{ID}",
+          "sk_template": "PROFILE",
+          "attributes": [
+            {
+              "name": "user_id",
+              "type": "N",
+              "source_table": "wordpress.wp_users",
+              "source_column": "ID",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_login",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_login",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_pass",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_pass",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_nicename",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_nicename",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_email",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_email",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_url",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_url",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_registered",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_registered",
+              "join": null,
+              "calculation": null,
+              "transformation": {
+                "type": "date-format",
+                "format": "YYYY-MM-DDTHH:mm:ss",
+                "source_format": "datetime"
+              },
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_activation_key",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_activation_key",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_status",
+              "type": "N",
+              "source_table": "wordpress.wp_users",
+              "source_column": "user_status",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "display_name",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "display_name",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "item_key",
+              "type": "S",
+              "source_table": "wordpress.wp_users",
+              "source_column": "ID",
+              "join": null,
+              "calculation": null,
+              "transformation": {
+                "type": "string-format",
+                "format": "PROFILE",
+                "source_format": null
+              },
+              "denormalized": false,
+              "justification": null
+            }
+          ]
+        },
+        {
+          "entity_type": "META",
+          "source_table": "wordpress.wp_usermeta",
+          "pk_template": "{user_id}",
+          "sk_template": "META#{umeta_id}",
+          "attributes": [
+            {
+              "name": "umeta_id",
+              "type": "N",
+              "source_table": "wordpress.wp_usermeta",
+              "source_column": "umeta_id",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "user_id",
+              "type": "N",
+              "source_table": "wordpress.wp_usermeta",
+              "source_column": "user_id",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "meta_key",
+              "type": "S",
+              "source_table": "wordpress.wp_usermeta",
+              "source_column": "meta_key",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "meta_value",
+              "type": "S",
+              "source_table": "wordpress.wp_usermeta",
+              "source_column": "meta_value",
+              "join": null,
+              "calculation": null,
+              "transformation": null,
+              "denormalized": false,
+              "justification": null
+            },
+            {
+              "name": "item_key",
+              "type": "S",
+              "source_table": "wordpress.wp_usermeta",
+              "source_column": "umeta_id",
+              "join": null,
+              "calculation": null,
+              "transformation": {
+                "type": "string-format",
+                "format": "META#{umeta_id:020d}",
+                "source_format": null
+              },
+              "denormalized": false,
+              "justification": null
+            }
+          ]
+        }
+      ],
+      "gsis": [],
+      "item_count": 22,
+      "item_size_bytes": 1382
+    },
+    {
+      "table_name": "WpOptions",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "partition_key": {
+        "attribute_name": "option_name",
+        "attribute_type": "S"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "option_id",
+          "type": "N",
+          "source_table": "wordpress.wp_options",
+          "source_column": "option_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "option_name",
+          "type": "S",
+          "source_table": "wordpress.wp_options",
+          "source_column": "option_name",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "option_value",
+          "type": "S",
+          "source_table": "wordpress.wp_options",
+          "source_column": "option_value",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "autoload",
+          "type": "S",
+          "source_table": "wordpress.wp_options",
+          "source_column": "autoload",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 23163,
+      "item_size_bytes": 1283
+    }
+  ],
+  "unsupported_patterns": [],
+  "migration_notes": [],
+  "hot_partition_analysis": [
+    {
+      "table_name": "WpWoocommerceApiKeys",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 7.76,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.8,
+      "at_risk": false,
+      "contributing_patterns": [
+        "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWoocommerceApiKeys",
+      "gsi_name": "ApiKeysByConsumerKey",
+      "operation": "write",
+      "rcu_or_wcu_per_second": 7.76,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.8,
+      "at_risk": false,
+      "contributing_patterns": [
+        "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWoocommerceApiKeys",
+      "gsi_name": "ApiKeysByConsumerKey",
+      "operation": "read",
+      "rcu_or_wcu_per_second": 12.41,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.4,
+      "at_risk": false,
+      "contributing_patterns": [
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWcTaxRateClasses",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 18.95,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.6,
+      "at_risk": false,
+      "contributing_patterns": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWcProductMetaLookup",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 10.69,
+      "partition_limit": 1000.0,
+      "utilization_pct": 1.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpComments",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 3.99,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpComments",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 23.96,
+      "partition_limit": 1000.0,
+      "utilization_pct": 2.4,
+      "at_risk": false,
+      "contributing_patterns": [
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpComments",
+      "gsi_name": "CommentsByPostApproval",
+      "operation": "read",
+      "rcu_or_wcu_per_second": 3.99,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpComments",
+      "gsi_name": "CommentsByPostApproval",
+      "operation": "write",
+      "rcu_or_wcu_per_second": 7.99,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.8,
+      "at_risk": false,
+      "contributing_patterns": [
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWcReservedStock",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 2.28,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWcReservedStock",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 4.55,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.5,
+      "at_risk": false,
+      "contributing_patterns": [
+        "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpActionschedulerLogs",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 5.83,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.6,
+      "at_risk": false,
+      "contributing_patterns": [
+        "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWoocommerceDownloadableProductPermissions",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 1.46,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.0,
+      "at_risk": false,
+      "contributing_patterns": [
+        "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpWoocommerceDownloadableProductPermissions",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 2.91,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.3,
+      "at_risk": false,
+      "contributing_patterns": [
+        "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpCommentmeta",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 0.74,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.0,
+      "at_risk": false,
+      "contributing_patterns": [
+        "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 470.34,
+      "partition_limit": 3000.0,
+      "utilization_pct": 15.7,
+      "at_risk": false,
+      "contributing_patterns": [
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+        "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+        "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpPosts",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 190.87,
+      "partition_limit": 1000.0,
+      "utilization_pct": 19.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+        "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+        "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+        "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpPostmeta",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 13.46,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.4,
+      "at_risk": false,
+      "contributing_patterns": [
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpPostmeta",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 259.85,
+      "partition_limit": 1000.0,
+      "utilization_pct": 26.0,
+      "at_risk": false,
+      "contributing_patterns": [
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpOrderItemmeta",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 2.91,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpOrderItemmeta",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 126.97,
+      "partition_limit": 1000.0,
+      "utilization_pct": 12.7,
+      "at_risk": false,
+      "contributing_patterns": [
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpOrderItems",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 11.63,
+      "partition_limit": 1000.0,
+      "utilization_pct": 1.2,
+      "at_risk": false,
+      "contributing_patterns": [
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpUsers",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 128.52,
+      "partition_limit": 3000.0,
+      "utilization_pct": 4.3,
+      "at_risk": false,
+      "contributing_patterns": [
+        "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
+        "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+        "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpTermmeta",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 14.47,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.5,
+      "at_risk": false,
+      "contributing_patterns": [
+        "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+        "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpTermmeta",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 10.72,
+      "partition_limit": 1000.0,
+      "utilization_pct": 1.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpTermRelationships",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 2.68,
+      "partition_limit": 3000.0,
+      "utilization_pct": 0.1,
+      "at_risk": false,
+      "contributing_patterns": [
+        "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpActionschedulerActions",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 8.74,
+      "partition_limit": 1000.0,
+      "utilization_pct": 0.9,
+      "at_risk": false,
+      "contributing_patterns": [
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 1289.34,
+      "partition_limit": 3000.0,
+      "utilization_pct": 43.0,
+      "at_risk": false,
+      "contributing_patterns": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "WpOptions",
+      "gsi_name": null,
+      "operation": "write",
+      "rcu_or_wcu_per_second": 257.83,
+      "partition_limit": 1000.0,
+      "utilization_pct": 25.8,
+      "at_risk": false,
+      "contributing_patterns": [
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ],
+      "mitigation": null
+    }
+  ],
+  "trade_offs": [
+    {
+      "description": "The last_access update (query `0452bed2`, 248.3 calls per second at design load, 46.68% lock time in MySQL) is throttled in the application: it writes only when the key's last written last_access is more than 60 s old, using the per-key value cached in ElastiCache and the last_access now projected into ApiKeysByConsumerKey.",
+      "impact": "DynamoDB receives at most one write per API key per 60 s, bounded at 3.88 writes per second table-wide (the 1.56% of source calls that change a row) for 7.76 WCU/s instead of 496.6 WCU/s, a 64x cut that also removes the single-item worst case (0.8% of one partition's write limit instead of 49.7%). Because last_access is now projected, each real write also writes ApiKeysByConsumerKey once (7.76 WCU/s), which stays rare under the throttle. The access pattern keeps the 248.3 calls per second as its design rate because that is the measured call rate; the hot partition entries carry the throttled write rate. Row-lock waits disappear because each DynamoDB write is atomic per item, and last_access is at most 60 s behind the latest request, matching the source where 98% of updates change no row.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "target_tables": [
+        "WpWoocommerceApiKeys",
+        "ApiKeysByConsumerKey"
+      ],
+      "query_ids": [
+        "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "API key authentication by consumer_key (query `1794daed`) reads the ApiKeysByConsumerKey GSI with an INCLUDE projection of user_id, permissions, consumer_secret, nonces and last_access, so the lookup needs no base-table fetch.",
+      "impact": "ApiKeysByConsumerKey lags the WpWoocommerceApiKeys table until DynamoDB applies each write to it; a request using a key created in that window fails authentication, and the key-creation flow that must use the key at once reads the base item by key_id with a strongly consistent GetItem. consumer_key is not unique in the source, so no uniqueness sentinel is written.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "target_tables": [
+        "ApiKeysByConsumerKey"
+      ],
+      "query_ids": [
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The full table scan of tax rate classes (query `329367a2`, 37.9 reads per second) becomes one Query on a single TAX_RATE_CLASS item collection whose sort key is the class name followed by its id.",
+      "impact": "The 2-item list comes back in name order from one partition for 18.95 RCU/s, 0.6% of the partition limit. The unique slug is set only by the migration (no in-scope write changes it), so no sentinel item is needed; an admin flow that adds classes later writes a slug sentinel with attribute_not_exists in the same transaction. ElastiCache can hold the list if read volume grows further.",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "target_tables": [
+        "WpWcTaxRateClasses"
+      ],
+      "query_ids": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "DynamoDB has no server-side COUNT, so the approved-comment count per post (query `8c66eaee`) is served in scope by a KEYS_ONLY GSI CommentsByPostApproval (comment_post_id, comment_approved) queried with Select=COUNT instead of a maintained counter item.",
+      "impact": "Each count reads every matching index entry; the source examines 2.4 rows per call, so a count reads 2.4 index entries for 0.5 RCU. A counter item was not chosen because approval status changes happen in writes outside this workload, and a counter updated only on insert would drift. comment_approved is a mutable GSI key: each moderation change deletes and reinserts the index entry (2 index writes of 77 bytes). The count lags new comments until DynamoDB applies the write to the index.",
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "target_tables": [
+        "WpComments",
+        "CommentsByPostApproval"
+      ],
+      "query_ids": [
+        "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Reserved stock and download permissions are keyed by order_id with the product_id or permission_id as sort key, so the delete by order (query `77cd1ad7`) and the customer reassignment by order (query `2264704d`) read their items by key.",
+      "impact": "Each set-based statement becomes a Query on the order's items followed by a BatchWriteItem of deletes or one UpdateItem per permission. These are not atomic across items: a failed item is retried by the application, and both operations are idempotent, so a retry is safe.",
+      "source_tables": [
+        "wordpress.wp_wc_reserved_stock",
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "target_tables": [
+        "WpWcReservedStock",
+        "WpWoocommerceDownloadableProductPermissions"
+      ],
+      "query_ids": [
+        "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+        "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Auto-increment ids (comment_ID, log_id, meta_id) have no DynamoDB equivalent; the application generates them (a time-ordered numeric id) and writes with attribute_not_exists on the key.",
+      "impact": "Inserts no longer depend on a central sequence. Action scheduler logs are grouped per action_id with log_id as sort key, so the log of one action reads in time order.",
+      "source_tables": [
+        "wordpress.wp_comments",
+        "wordpress.wp_actionscheduler_logs",
+        "wordpress.wp_commentmeta"
+      ],
+      "target_tables": [
+        "WpComments",
+        "WpActionschedulerLogs",
+        "WpCommentmeta"
+      ],
+      "query_ids": [
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+        "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "TEXT and LONGTEXT columns (comment_content, message, meta_value, nonces) stay inline as string attributes.",
+      "impact": "Measured average rows are 552 bytes for wp_comments and 168 bytes for wp_actionscheduler_logs against the 400 KB item limit. wp_commentmeta and wp_woocommerce_api_keys hold 0 rows, so their 52,429-byte averages are the empty-table allocation, not stored values; the write path stores any single value above 350 KB in S3 and keeps a pointer attribute instead.",
+      "source_tables": [
+        "wordpress.wp_comments",
+        "wordpress.wp_actionscheduler_logs",
+        "wordpress.wp_commentmeta",
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "target_tables": [
+        "WpComments",
+        "WpActionschedulerLogs",
+        "WpCommentmeta",
+        "WpWoocommerceApiKeys"
+      ],
+      "query_ids": [
+        "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+        "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+        "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The comment meta read with an IN list of comment ids (query `65f7884e`) becomes one Query per comment id on the comment's item collection, issued in parallel.",
+      "impact": "Each comment's metadata returns in meta_id order, matching the source ORDER BY; results across comments are merged in the application in the order the ids were requested.",
+      "source_tables": [
+        "wordpress.wp_commentmeta"
+      ],
+      "target_tables": [
+        "WpCommentmeta"
+      ],
+      "query_ids": [
+        "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] DDB-AP-1 describes two sources for the throttle's last-written last_access: ElastiCache and the ApiKeysByConsumerKey projection. Each authenticated request already reads the projection (DDB-AP-3), so the ElastiCache copy looks redundant. Document one source of truth, or drop the cache dependency, to avoid running an extra store for this check.",
+      "impact": "[PE note] DDB-AP-1 describes two sources for the throttle's last-written last_access: ElastiCache and the ApiKeysByConsumerKey projection. Each authenticated request already reads the projection (DDB-AP-3), so the ElastiCache copy looks redundant. Document one source of truth, or drop the cache dependency, to avoid running an extra store for this check.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Only part of each table's attributes is listed (_attrs_sampled on WpComments, WpWcProductMetaLookup and WpWoocommerceDownloadableProductPermissions). Before migration, confirm that comment_approved (the GSI sort key) and user_id/user_email (set by DDB-AP-10) are mapped in the full attribute list.",
+      "impact": "[PE note] Only part of each table's attributes is listed (_attrs_sampled on WpComments, WpWcProductMetaLookup and WpWoocommerceDownloadableProductPermissions). Before migration, confirm that comment_approved (the GSI sort key) and user_id/user_email (set by DDB-AP-10) are mapped in the full attribute list.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] WpWcTaxRateClasses uses a constant partition key. That is fine at 2 items and 37.9 RPS. If tax class reads grow by orders of magnitude, cache the list in the application rather than sharding the partition.",
+      "impact": "[PE note] WpWcTaxRateClasses uses a constant partition key. That is fine at 2 items and 37.9 RPS. If tax class reads grow by orders of magnitude, cache the list in the application rather than sharding the partition.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] WpWcProductMetaLookup.sku is not unique in WooCommerce (it has a non-unique index), so not writing a sentinel is correct. Revisit this only if the business makes SKU uniqueness a rule.",
+      "impact": "[PE note] WpWcProductMetaLookup.sku is not unique in WooCommerce (it has a non-unique index), so not writing a sentinel is correct. Revisit this only if the business makes SKU uniqueness a rule.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] log_date_gmt is formatted with a 'Z' suffix but log_date_local is not. This is intentional and correct, but downstream consumers should know about it.",
+      "impact": "[PE note] log_date_gmt is formatted with a 'Z' suffix but log_date_local is not. This is intentional and correct, but downstream consumers should know about it.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Post meta, order item meta and term meta each become a table keyed by the parent id with a composite sort key `{meta_key}#{meta_id}`, so an update by parent id and meta key is a Query on the key prefix followed by one UpdateItem per matching item.",
+      "impact": "The single SQL UPDATE becomes two calls in the application (find the keys, then update them); WordPress allows repeated meta keys per parent, and the meta_id suffix keeps each row a separate item. The Query reads one item on average (rows_affected about 1).",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "WpPostmeta",
+        "WpOrderItemmeta",
+        "WpTermmeta"
+      ],
+      "query_ids": [
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226",
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The key-scoped term meta update (query `3c5c8a79`) names term_id and meta_key; term_id is the partition key and meta_key leads the sort key, rather than a separate partition key on meta_key.",
+      "impact": "meta_key has unknown cardinality and a small set of repeated values, so a partition key on it alone would concentrate writes on few values. Every in-scope term meta read and write pins term_id, so no GSI is needed. The source full table scan of query `50b46567` becomes one Query per term_id in its IN list.",
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "WpTermmeta"
+      ],
+      "query_ids": [
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+        "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+        "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "wp_users and wp_usermeta share one item collection in WpUsers keyed by user_id, with the profile under sort key PROFILE and each meta row under META#<zero-padded umeta_id>.",
+      "impact": "The profile lookup is a GetItem and the meta load is one Query per user that returns rows already in umeta_id order. The site has 1 user and 21 meta rows, so all user reads land on one partition at 128.5 read units per second at design load, 4.3% of the per-partition limit.",
+      "source_tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "target_tables": [
+        "WpUsers"
+      ],
+      "query_ids": [
+        "3a74580ede1af2d6447d882da446239b1064a42d7fbc76a62fdd302fcd7c6091",
+        "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+        "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Posts and post meta stay separate tables even though the analysis groups them, because no in-scope query reads them together: post reads fetch only wp_posts rows and post meta traffic is writes only.",
+      "impact": "Post meta writes (about 260 write units per second at design load) scale on their own table without touching post items. A future page render that needs a post and its meta issues a GetItem plus a Query.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "target_tables": [
+        "WpPosts",
+        "WpPostmeta"
+      ],
+      "query_ids": [
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Order items are stored under their order (partition key order_id, sort key order_item_id), and order item meta under its order_item_id.",
+      "impact": "Listing an order's items is a single Query on order_id. Order item meta writes address their parent by order_item_id, which they already carry.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "WpOrderItems",
+        "WpOrderItemmeta"
+      ],
+      "query_ids": [
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "DynamoDB has no AUTO_INCREMENT, so the application generates ID, meta_id, umeta_id, order_item_id and action_id before each insert, and every insert carries attribute_not_exists on its key.",
+      "impact": "An id generator (a counter item updated with an atomic ADD, or a time-ordered unique id) replaces the database sequence. The conditional put rejects a duplicate id instead of overwriting an existing row.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "target_tables": [
+        "WpPosts",
+        "WpPostmeta",
+        "WpOrderItems",
+        "WpOrderItemmeta",
+        "WpActionschedulerActions"
+      ],
+      "query_ids": [
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "TEXT and LONGTEXT columns stay inline: wp_posts averages 711 bytes per row, wp_actionscheduler_actions 587 bytes, wp_postmeta 144 bytes and order item meta 131 bytes, against the 400 KB item limit.",
+      "impact": "No S3 offload is needed for current content. wp_usermeta (16,478 bytes measured over 21 rows) and wp_termmeta (0 rows) report averages dominated by page overhead; a single meta_value or post_content above 400 KB fails the write, and the application moves such a value to S3 with a pointer attribute.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_usermeta",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "target_tables": [
+        "WpPosts",
+        "WpPostmeta",
+        "WpUsers",
+        "WpTermmeta",
+        "WpOrderItemmeta",
+        "WpOrderItems",
+        "WpActionschedulerActions"
+      ],
+      "query_ids": [
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The comment_count update rewrites a post item sized at 7,526 bytes by the schema rule, which bills 8 write units per update, 167.6 write units per second at design load.",
+      "impact": "Writing one counter costs as much as writing the whole post. The figure stays at 19.1% of the per-partition write limit, so the counter stays on the post item.",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "WpPosts"
+      ],
+      "query_ids": [
+        "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+        "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+        "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The scheduled action insert's `WHERE (SELECT ? FROM DUAL) IS NULL` guard carries a value the application computed beforehand, so the application evaluates it before issuing the PutItem.",
+      "impact": "No in-scope query reads actions by hook, status or schedule date, so WpActionschedulerActions has no GSI. A queue runner that claims due actions by status and date needs an index added when that read moves to DynamoDB.",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "target_tables": [
+        "WpActionschedulerActions"
+      ],
+      "query_ids": [
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The post lookup by ID and post_type (query `3440484f`) is a Query on the post key with a FilterExpression on post_type.",
+      "impact": "At most one item matches the key, so the filter reads one item and returns it or nothing; no index on post_type is needed.",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "WpPosts"
+      ],
+      "query_ids": [
+        "3440484f8b200bc76a5f5a513aabf6d2b4dbc0ea7917ebce457d5268d94bd290"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Cost, WpPosts writes: the comment_count UpdateItem is billed at 8 write units because the item is 7,526 bytes. At 167.6 write units per second, on-demand cost is roughly $270/month for one counter. The measured average post row is about 711 bytes, so the real bill may be about 1 write unit per update. If the large figure holds after migration, move comment_count to a small separate counter item (for example a WpPostCounters table keyed by id, or a sort-key split). That cuts the cost by about 8x.",
+      "impact": "[PE note] Cost, WpPosts writes: the comment_count UpdateItem is billed at 8 write units because the item is 7,526 bytes. At 167.6 write units per second, on-demand cost is roughly $270/month for one counter. The measured average post row is about 711 bytes, so the real bill may be about 1 write unit per update. If the large figure holds after migration, move comment_count to a small separate counter item (for example a WpPostCounters table keyed by id, or a sort-key split). That cuts the cost by about 8x.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Cost, WpPostmeta writes: about 260 write units per second is roughly $440/month on-demand at the 1,619-byte schema-rule size. Measured rows average 144 bytes, which would be 1 write unit each. Check the real item sizes after the first load before choosing provisioned capacity.",
+      "impact": "[PE note] Cost, WpPostmeta writes: about 260 write units per second is roughly $440/month on-demand at the 1,619-byte schema-rule size. Measured rows average 144 bytes, which would be 1 write unit each. Check the real item sizes after the first load before choosing provisioned capacity.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Cost, WpPosts reads: about 470 read units per second is roughly $150/month on-demand. Consider provisioned capacity with auto-scaling once the traffic shape is known. If posts are read far more often than they change, consider caching hot posts.",
+      "impact": "[PE note] Cost, WpPosts reads: about 470 read units per second is roughly $150/month on-demand. Consider provisioned capacity with auto-scaling once the traffic shape is known. If posts are read far more often than they change, consider caching hot posts.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] DDB-AP-29 (query `3440484f`): a GetItem plus a client-side post_type check costs the same as a Query with a FilterExpression, and keeps the code path the same as DDB-AP-12. This is optional.",
+      "impact": "[PE note] DDB-AP-29 (query `3440484f`): a GetItem plus a client-side post_type check costs the same as a Query with a FilterExpression, and keeps the code path the same as DDB-AP-12. This is optional.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] DDB-AP-27: the design says the source guard `(SELECT ? FROM DUAL) IS NULL` binds a value the application already computed. If the real production statement is Action Scheduler's 'unique action' subquery (no pending or in-progress action with the same hook, args and group), a check in the application is a race. That would need a sentinel item keyed by hook#args_hash#group, written in a TransactWriteItems with attribute_not_exists and deleted when the action completes. Confirm the guard's real form before cutover.",
+      "impact": "[PE note] DDB-AP-27: the design says the source guard `(SELECT ? FROM DUAL) IS NULL` binds a value the application already computed. If the real production statement is Action Scheduler's 'unique action' subquery (no pending or in-progress action with the same hook, args and group), a check in the application is a race. That would need a sentinel item keyed by hook#args_hash#group, written in a TransactWriteItems with attribute_not_exists and deleted when the action completes. Confirm the guard's real form before cutover.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] The Action Scheduler queue runner (claiming due actions by status and scheduled_date_gmt) is not in the captured workload. When it moves over, it will need an index whose partition key is not the low-cardinality status alone, for example a write-sharded status#shard key with scheduled_date_gmt as sort key.",
+      "impact": "[PE note] The Action Scheduler queue runner (claiming due actions by status and scheduled_date_gmt) is not in the captured workload. When it moves over, it will need an index whose partition key is not the low-cardinality status alone, for example a write-sharded status#shard key with scheduled_date_gmt as sort key.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] The WpUsers partition holds 1 user and 21 meta rows, so all user reads hit one key at 128.5 read units per second. That is fine at 4.3% of the per-partition limit, but recheck it if the site adds many logged-in users and read traffic grows a lot.",
+      "impact": "[PE note] The WpUsers partition holds 1 user and 21 meta rows, so all user reads hit one key at 128.5 read units per second. That is fine at 4.3% of the per-partition limit, but recheck it if the site adds many logged-in users and read traffic grows a lot.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Post and meta values larger than 400 KB: the application-side S3 offload described in the trade-offs needs a defined pointer attribute name and a migration-time check for oversized post_content and meta_value rows.",
+      "impact": "[PE note] Post and meta values larger than 400 KB: the application-side S3 offload described in the trade-offs needs a defined pointer attribute name and a migration-time check for oversized post_content and meta_value rows.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The table is keyed by option_name instead of the auto-increment option_id, because every in-scope read and write addresses an option by name.",
+      "impact": "Every query becomes a single-item GetItem, PutItem, UpdateItem or DeleteItem. The unique index on option_name becomes the primary key, so DynamoDB enforces uniqueness itself and no sentinel item or transaction is needed. option_id is kept as a plain attribute for lineage; DynamoDB has no auto-increment, so new options written after migration carry no option_id unless the application assigns one, and no in-scope query reads it.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "option_value (LONGTEXT) stays inline in the item: the measured average row is 360 bytes against the 400 KB item limit, and capacity is sized on the 1,283-byte schema estimate that counts the column at 1 KB.",
+      "impact": "A single option value larger than about 390 KB cannot be stored in one item. The write path stores such a value in Amazon S3 and writes the S3 object key in option_value with a marker, and the read path follows it; the migration checks MAX(LENGTH(option_value)) and moves any oversized row the same way.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Option reads use eventually consistent GetItem at 0.5 read unit per item, which keeps the read load at 1,289 read units per second at design rate.",
+      "impact": "A GetItem issued right after an update_option returns the previous value until DynamoDB replicates the write to the replica serving the read, within about one second. Callers that must see their own write in the same request set ConsistentRead=true on that GetItem, at twice the read cost.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The hot-partition check assumes the whole read load lands on one option name: 1,289 read units per second is 43% of the 3,000 per-key limit, and 258 write units per second is 25.8% of the 1,000 per-key limit.",
+      "impact": "Even if a single option such as the site URL receives every read, the key stays under the limit at ten times today's traffic. If one option's reads grow past 2,400 read units per second, put an ElastiCache cache in front of the option reads, as WordPress object caching already does.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "No index on autoload is created, because no in-scope query filters on it; the source's autoload index is dropped.",
+      "impact": "Loading all autoloaded options at once (the WordPress bootstrap query on autoload) is not in the observed workload. If that query is added, it needs a GSI keyed on autoload, sharded because the column has a handful of values, or a single cached bundle item maintained on write.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] Cost: on demand at design load, reads come to about 1,289 read units/s (~3.3B a month) and writes to about 258 write units/s (~670M a month). That is several hundred dollars a month, well over the $100 per-table threshold. Traffic is steady key-value traffic, so the team should compare provisioned capacity with auto scaling (or reserved capacity) against on-demand pricing.",
+      "impact": "[PE note] Cost: on demand at design load, reads come to about 1,289 read units/s (~3.3B a month) and writes to about 258 write units/s (~670M a month). That is several hundred dollars a month, well over the $100 per-table threshold. Traffic is steady key-value traffic, so the team should compare provisioned capacity with auto scaling (or reserved capacity) against on-demand pricing.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] DDB-AP-33 (add_option, ON DUPLICATE KEY UPDATE): an unconditional PutItem replaces the whole item, so upserting an existing option drops its migrated option_id. MySQL's ON DUPLICATE KEY UPDATE only touches the listed columns. If option_id lineage matters, use UpdateItem SET option_value, autoload (it upserts too) instead of PutItem. No in-scope query reads option_id, so this is optional.",
+      "impact": "[PE note] DDB-AP-33 (add_option, ON DUPLICATE KEY UPDATE): an unconditional PutItem replaces the whole item, so upserting an existing option drops its migrated option_id. MySQL's ON DUPLICATE KEY UPDATE only touches the listed columns. If option_id lineage matters, use UpdateItem SET option_value, autoload (it upserts too) instead of PutItem. No in-scope query reads option_id, so this is optional.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] DDB-AP-34 covers transient expiry deletes. Writing a TTL epoch attribute on transient options (_transient_* / _transient_timeout_*) would let DynamoDB delete expired transients with no write capacity charge, which takes part of the 24 deletes/s off the bill. Reads must still check expiry, because TTL deletion can lag.",
+      "impact": "[PE note] DDB-AP-34 covers transient expiry deletes. Writing a TTL epoch attribute on transient options (_transient_* / _transient_timeout_*) would let DynamoDB delete expired transients with no write capacity charge, which takes part of the 24 deletes/s off the bill. Reads must still check expiry, because TTL deletion can lag.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] About 72% of DDB-AP-30 calls and 92% of DDB-AP-31 calls return no item, but each miss still costs 0.5 read unit. A caching layer in front of option reads that also caches misses (as WordPress object caching already does) would cut both cost and the load on any single key.",
+      "impact": "[PE note] About 72% of DDB-AP-30 calls and 92% of DDB-AP-31 calls return no item, but each miss still costs 0.5 read unit. A caching layer in front of option reads that also caches misses (as WordPress object caching already does) would cut both cost and the load on any single key.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "[PE note] MySQL reports 0 affected rows when an UPDATE sets a value identical to the current one. DynamoDB's conditional UpdateItem succeeds in that case. Callers that branch on the affected-row count should not depend on that MySQL behavior.",
+      "impact": "[PE note] MySQL reports 0 affected rows when an UPDATE sets a value identical to the current one. DynamoDB's conditional UpdateItem succeeds in that case. Callers that branch on the affected-row count should not depend on that MySQL behavior.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb"
+    }
+  ],
+  "validation_passed": true,
+  "validation_failures": []
+}

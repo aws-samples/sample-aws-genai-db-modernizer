@@ -1,0 +1,3582 @@
+{
+  "contract_version": "1.0",
+  "job_id": "099e6873",
+  "source_database": "wordpress",
+  "target_engine": "aurora_mysql",
+  "migration_strategy": "carry_over",
+  "table_definitions": [
+    {
+      "table_name": "wp_actionscheduler_actions",
+      "columns": [
+        {
+          "name": "action_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "args",
+          "aurora_type": "VARCHAR(191)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "attempts",
+          "aurora_type": "INT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "claim_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "extended_args",
+          "aurora_type": "VARCHAR(8000)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "group_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "hook",
+          "aurora_type": "VARCHAR(191)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "last_attempt_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "last_attempt_local",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "priority",
+          "aurora_type": "TINYINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "schedule",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "scheduled_date_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "scheduled_date_local",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "status",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "action_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `args` ON `wp_actionscheduler_actions` (`args`);",
+        "CREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`, `claim_id`);",
+        "CREATE INDEX `group_id` ON `wp_actionscheduler_actions` (`group_id`);",
+        "CREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`, `status`, `scheduled_date_gmt`);",
+        "CREATE INDEX `last_attempt_gmt` ON `wp_actionscheduler_actions` (`last_attempt_gmt`);",
+        "CREATE INDEX `scheduled_date_gmt` ON `wp_actionscheduler_actions` (`scheduled_date_gmt`);",
+        "CREATE INDEX `status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`);",
+        "CREATE INDEX `hook_group_status_claim` ON `wp_actionscheduler_actions` (`hook`, `group_id`, `status`, `claim_id`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_actionscheduler_groups",
+      "columns": [
+        {
+          "name": "group_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "slug",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "group_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_actionscheduler_logs",
+      "columns": [
+        {
+          "name": "action_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "log_date_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "log_date_local",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "log_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "message",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "log_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `action_id` ON `wp_actionscheduler_logs` (`action_id`);",
+        "CREATE INDEX `log_date_gmt` ON `wp_actionscheduler_logs` (`log_date_gmt`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_comments",
+      "columns": [
+        {
+          "name": "comment_agent",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_approved",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_author",
+          "aurora_type": "TINYTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_author_email",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_author_IP",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_author_url",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_content",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_date",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_date_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_ID",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_karma",
+          "aurora_type": "INT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_parent",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_post_ID",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_type",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "comment_ID"
+      ],
+      "indexes": [
+        "CREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_date_gmt`, `comment_approved`);",
+        "CREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`);",
+        "CREATE INDEX `comment_date_gmt` ON `wp_comments` (`comment_date_gmt`);",
+        "CREATE INDEX `comment_parent` ON `wp_comments` (`comment_parent`);",
+        "CREATE INDEX `comment_post_ID` ON `wp_comments` (`comment_post_ID`);",
+        "CREATE INDEX `woo_idx_comment_type` ON `wp_comments` (`comment_type`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_options",
+      "columns": [
+        {
+          "name": "autoload",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "option_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "option_name",
+          "aurora_type": "VARCHAR(191)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "option_value",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "option_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `autoload` ON `wp_options` (`autoload`);",
+        "CREATE UNIQUE INDEX `option_name` ON `wp_options` (`option_name`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_postmeta",
+      "columns": [
+        {
+          "name": "meta_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_key",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_value",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "meta_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`);",
+        "CREATE INDEX `post_id` ON `wp_postmeta` (`post_id`);",
+        "CREATE INDEX `post_id_meta_key` ON `wp_postmeta` (`post_id`, `meta_key`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_posts",
+      "columns": [
+        {
+          "name": "comment_count",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "comment_status",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "guid",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "ID",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "menu_order",
+          "aurora_type": "INT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "ping_status",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "pinged",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_author",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_content",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_content_filtered",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_date",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_date_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_excerpt",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_mime_type",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_modified",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_modified_gmt",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_name",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_parent",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_password",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_status",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_title",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "post_type",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "to_ping",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "ID"
+      ],
+      "indexes": [
+        "CREATE INDEX `post_author` ON `wp_posts` (`post_author`);",
+        "CREATE INDEX `post_name` ON `wp_posts` (`post_name`);",
+        "CREATE INDEX `post_parent` ON `wp_posts` (`post_parent`);",
+        "CREATE INDEX `type_status_date` ON `wp_posts` (`post_type`, `post_status`, `post_date`, `ID`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_term_relationships",
+      "columns": [
+        {
+          "name": "object_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_order",
+          "aurora_type": "INT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_taxonomy_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "object_id",
+        "term_taxonomy_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `term_taxonomy_id` ON `wp_term_relationships` (`term_taxonomy_id`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_term_taxonomy",
+      "columns": [
+        {
+          "name": "count",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "description",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "parent",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "taxonomy",
+          "aurora_type": "VARCHAR(32)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_taxonomy_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "term_taxonomy_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `taxonomy` ON `wp_term_taxonomy` (`taxonomy`);",
+        "CREATE UNIQUE INDEX `term_id_taxonomy` ON `wp_term_taxonomy` (`term_id`, `taxonomy`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_termmeta",
+      "columns": [
+        {
+          "name": "meta_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_key",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_value",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "meta_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`);",
+        "CREATE INDEX `term_id` ON `wp_termmeta` (`term_id`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_terms",
+      "columns": [
+        {
+          "name": "name",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "slug",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_group",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "term_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "term_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `name` ON `wp_terms` (`name`);",
+        "CREATE INDEX `slug` ON `wp_terms` (`slug`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_usermeta",
+      "columns": [
+        {
+          "name": "meta_key",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_value",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "umeta_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "umeta_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`);",
+        "CREATE INDEX `user_id` ON `wp_usermeta` (`user_id`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_users",
+      "columns": [
+        {
+          "name": "display_name",
+          "aurora_type": "VARCHAR(250)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "ID",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_activation_key",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_email",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_login",
+          "aurora_type": "VARCHAR(60)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_nicename",
+          "aurora_type": "VARCHAR(50)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_pass",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_registered",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_status",
+          "aurora_type": "INT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_url",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "ID"
+      ],
+      "indexes": [
+        "CREATE INDEX `user_email` ON `wp_users` (`user_email`);",
+        "CREATE INDEX `user_login_key` ON `wp_users` (`user_login`);",
+        "CREATE INDEX `user_nicename` ON `wp_users` (`user_nicename`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_wc_admin_notes",
+      "columns": [
+        {
+          "name": "content",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "content_data",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "date_created",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "date_reminder",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "icon",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "image",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "is_deleted",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "is_read",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "is_snoozable",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "layout",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "locale",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "name",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "note_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "source",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "status",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "title",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "type",
+          "aurora_type": "VARCHAR(20)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "note_id"
+      ],
+      "indexes": [],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_wc_product_meta_lookup",
+      "columns": [
+        {
+          "name": "average_rating",
+          "aurora_type": "DECIMAL(3,2)",
+          "source_type": "decimal",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "downloadable",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "max_price",
+          "aurora_type": "DECIMAL(19,4)",
+          "source_type": "decimal",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "min_price",
+          "aurora_type": "DECIMAL(19,4)",
+          "source_type": "decimal",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "onsale",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "product_id",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "rating_count",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "sku",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "stock_quantity",
+          "aurora_type": "DOUBLE",
+          "source_type": "floating_point",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "stock_status",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "tax_class",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "tax_status",
+          "aurora_type": "VARCHAR(100)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "total_sales",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "virtual",
+          "aurora_type": "TINYINT(1)",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "product_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `downloadable` ON `wp_wc_product_meta_lookup` (`downloadable`);",
+        "CREATE INDEX `min_max_price` ON `wp_wc_product_meta_lookup` (`min_price`, `max_price`);",
+        "CREATE INDEX `onsale` ON `wp_wc_product_meta_lookup` (`onsale`);",
+        "CREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`);",
+        "CREATE INDEX `stock_quantity` ON `wp_wc_product_meta_lookup` (`stock_quantity`);",
+        "CREATE INDEX `stock_status` ON `wp_wc_product_meta_lookup` (`stock_status`);",
+        "CREATE INDEX `virtual` ON `wp_wc_product_meta_lookup` (`virtual`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_wc_reserved_stock",
+      "columns": [
+        {
+          "name": "expires",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_id",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "product_id",
+          "aurora_type": "BIGINT",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "stock_quantity",
+          "aurora_type": "DOUBLE",
+          "source_type": "floating_point",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "timestamp",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "order_id",
+        "product_id"
+      ],
+      "indexes": [],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_woocommerce_api_keys",
+      "columns": [
+        {
+          "name": "consumer_key",
+          "aurora_type": "CHAR(64)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "consumer_secret",
+          "aurora_type": "CHAR(43)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "description",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "key_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "last_access",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "nonces",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "permissions",
+          "aurora_type": "VARCHAR(10)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "truncated_key",
+          "aurora_type": "CHAR(7)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "key_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `consumer_key` ON `wp_woocommerce_api_keys` (`consumer_key`);",
+        "CREATE INDEX `consumer_secret` ON `wp_woocommerce_api_keys` (`consumer_secret`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_woocommerce_downloadable_product_permissions",
+      "columns": [
+        {
+          "name": "access_expires",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "access_granted",
+          "aurora_type": "DATETIME",
+          "source_type": "datetime",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "download_count",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "download_id",
+          "aurora_type": "VARCHAR(36)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "downloads_remaining",
+          "aurora_type": "VARCHAR(9)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_key",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "permission_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "product_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_email",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "user_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "permission_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`, `order_key`);",
+        "CREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`);",
+        "CREATE INDEX `order_id` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`);",
+        "CREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`, `user_id`, `downloads_remaining`, `access_expires`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_woocommerce_order_itemmeta",
+      "columns": [
+        {
+          "name": "meta_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_key",
+          "aurora_type": "VARCHAR(255)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "meta_value",
+          "aurora_type": "LONGTEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_item_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "meta_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`);",
+        "CREATE INDEX `order_item_id` ON `wp_woocommerce_order_itemmeta` (`order_item_id`);",
+        "CREATE INDEX `order_item_id_meta_key` ON `wp_woocommerce_order_itemmeta` (`order_item_id`, `meta_key`);"
+      ],
+      "foreign_keys": []
+    },
+    {
+      "table_name": "wp_woocommerce_order_items",
+      "columns": [
+        {
+          "name": "order_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_item_id",
+          "aurora_type": "BIGINT UNSIGNED",
+          "source_type": "integer",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_item_name",
+          "aurora_type": "TEXT",
+          "source_type": "text",
+          "script_derived": true,
+          "needs_judgment": false
+        },
+        {
+          "name": "order_item_type",
+          "aurora_type": "VARCHAR(200)",
+          "source_type": "string",
+          "script_derived": true,
+          "needs_judgment": false
+        }
+      ],
+      "primary_key": [
+        "order_item_id"
+      ],
+      "indexes": [
+        "CREATE INDEX `order_id` ON `wp_woocommerce_order_items` (`order_id`);"
+      ],
+      "foreign_keys": []
+    }
+  ],
+  "generated_ddl": "CREATE TABLE `wp_actionscheduler_actions` (\n  `action_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `args` VARCHAR(191),\n  `attempts` INT NOT NULL DEFAULT '0',\n  `claim_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `extended_args` VARCHAR(8000),\n  `group_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `hook` VARCHAR(191) NOT NULL,\n  `last_attempt_gmt` DATETIME DEFAULT NULL,\n  `last_attempt_local` DATETIME DEFAULT NULL,\n  `priority` TINYINT UNSIGNED NOT NULL DEFAULT '10',\n  `schedule` LONGTEXT,\n  `scheduled_date_gmt` DATETIME DEFAULT NULL,\n  `scheduled_date_local` DATETIME DEFAULT NULL,\n  `status` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`action_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_groups` (\n  `group_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `slug` VARCHAR(255) NOT NULL,\n  PRIMARY KEY (`group_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_logs` (\n  `action_id` BIGINT UNSIGNED NOT NULL,\n  `log_date_gmt` DATETIME DEFAULT NULL,\n  `log_date_local` DATETIME DEFAULT NULL,\n  `log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `message` TEXT NOT NULL,\n  PRIMARY KEY (`log_id`)\n);\n\nCREATE TABLE `wp_comments` (\n  `comment_agent` VARCHAR(255) NOT NULL DEFAULT '',\n  `comment_approved` VARCHAR(20) NOT NULL DEFAULT '1',\n  `comment_author` TINYTEXT NOT NULL,\n  `comment_author_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_IP` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_url` VARCHAR(200) NOT NULL DEFAULT '',\n  `comment_content` TEXT NOT NULL,\n  `comment_date` DATETIME NOT NULL,\n  `comment_date_gmt` DATETIME NOT NULL,\n  `comment_ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `comment_karma` INT NOT NULL DEFAULT '0',\n  `comment_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_post_ID` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_type` VARCHAR(20) NOT NULL DEFAULT 'comment',\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`comment_ID`)\n);\n\nCREATE TABLE `wp_options` (\n  `autoload` VARCHAR(20) NOT NULL DEFAULT 'yes',\n  `option_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `option_name` VARCHAR(191) NOT NULL DEFAULT '',\n  `option_value` LONGTEXT NOT NULL,\n  PRIMARY KEY (`option_id`)\n);\n\nCREATE TABLE `wp_postmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `post_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_posts` (\n  `comment_count` BIGINT NOT NULL DEFAULT '0',\n  `comment_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `guid` VARCHAR(255) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `menu_order` INT NOT NULL DEFAULT '0',\n  `ping_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `pinged` TEXT NOT NULL,\n  `post_author` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_content` LONGTEXT NOT NULL,\n  `post_content_filtered` LONGTEXT NOT NULL,\n  `post_date` DATETIME NOT NULL,\n  `post_date_gmt` DATETIME NOT NULL,\n  `post_excerpt` TEXT NOT NULL,\n  `post_mime_type` VARCHAR(100) NOT NULL DEFAULT '',\n  `post_modified` DATETIME NOT NULL,\n  `post_modified_gmt` DATETIME NOT NULL,\n  `post_name` VARCHAR(200) NOT NULL DEFAULT '',\n  `post_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_password` VARCHAR(255) NOT NULL DEFAULT '',\n  `post_status` VARCHAR(20) NOT NULL DEFAULT 'publish',\n  `post_title` TEXT NOT NULL,\n  `post_type` VARCHAR(20) NOT NULL DEFAULT 'post',\n  `to_ping` TEXT NOT NULL,\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_term_relationships` (\n  `object_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_order` INT NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`object_id`, `term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_term_taxonomy` (\n  `count` BIGINT NOT NULL DEFAULT '0',\n  `description` LONGTEXT NOT NULL,\n  `parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `taxonomy` VARCHAR(32) NOT NULL DEFAULT '',\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_termmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_terms` (\n  `name` VARCHAR(200) NOT NULL DEFAULT '',\n  `slug` VARCHAR(200) NOT NULL DEFAULT '',\n  `term_group` BIGINT NOT NULL DEFAULT '0',\n  `term_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_id`)\n);\n\nCREATE TABLE `wp_usermeta` (\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `umeta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`umeta_id`)\n);\n\nCREATE TABLE `wp_users` (\n  `display_name` VARCHAR(250) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_activation_key` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `user_login` VARCHAR(60) NOT NULL DEFAULT '',\n  `user_nicename` VARCHAR(50) NOT NULL DEFAULT '',\n  `user_pass` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_registered` DATETIME NOT NULL,\n  `user_status` INT NOT NULL DEFAULT '0',\n  `user_url` VARCHAR(100) NOT NULL DEFAULT '',\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_wc_admin_notes` (\n  `content` LONGTEXT NOT NULL,\n  `content_data` LONGTEXT,\n  `date_created` DATETIME NOT NULL,\n  `date_reminder` DATETIME,\n  `icon` VARCHAR(200) NOT NULL DEFAULT 'info',\n  `image` VARCHAR(200),\n  `is_deleted` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_read` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_snoozable` TINYINT(1) NOT NULL DEFAULT '0',\n  `layout` VARCHAR(20) NOT NULL DEFAULT '',\n  `locale` VARCHAR(20) NOT NULL,\n  `name` VARCHAR(255) NOT NULL,\n  `note_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `source` VARCHAR(200) NOT NULL,\n  `status` VARCHAR(200) NOT NULL,\n  `title` LONGTEXT NOT NULL,\n  `type` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`note_id`)\n);\n\nCREATE TABLE `wp_wc_product_meta_lookup` (\n  `average_rating` DECIMAL(3,2) DEFAULT '0.00',\n  `downloadable` TINYINT(1) DEFAULT '0',\n  `max_price` DECIMAL(19,4),\n  `min_price` DECIMAL(19,4),\n  `onsale` TINYINT(1) DEFAULT '0',\n  `product_id` BIGINT NOT NULL,\n  `rating_count` BIGINT DEFAULT '0',\n  `sku` VARCHAR(100) DEFAULT '',\n  `stock_quantity` DOUBLE,\n  `stock_status` VARCHAR(100) DEFAULT 'instock',\n  `tax_class` VARCHAR(100) DEFAULT '',\n  `tax_status` VARCHAR(100) DEFAULT 'taxable',\n  `total_sales` BIGINT DEFAULT '0',\n  `virtual` TINYINT(1) DEFAULT '0',\n  PRIMARY KEY (`product_id`)\n);\n\nCREATE TABLE `wp_wc_reserved_stock` (\n  `expires` DATETIME NOT NULL,\n  `order_id` BIGINT NOT NULL,\n  `product_id` BIGINT NOT NULL,\n  `stock_quantity` DOUBLE NOT NULL DEFAULT '0',\n  `timestamp` DATETIME NOT NULL,\n  PRIMARY KEY (`order_id`, `product_id`)\n);\n\nCREATE TABLE `wp_woocommerce_api_keys` (\n  `consumer_key` CHAR(64) NOT NULL,\n  `consumer_secret` CHAR(43) NOT NULL,\n  `description` VARCHAR(200),\n  `key_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `last_access` DATETIME,\n  `nonces` LONGTEXT,\n  `permissions` VARCHAR(10) NOT NULL,\n  `truncated_key` CHAR(7) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`key_id`)\n);\n\nCREATE TABLE `wp_woocommerce_downloadable_product_permissions` (\n  `access_expires` DATETIME,\n  `access_granted` DATETIME NOT NULL,\n  `download_count` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `download_id` VARCHAR(36) NOT NULL,\n  `downloads_remaining` VARCHAR(9),\n  `order_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `order_key` VARCHAR(200) NOT NULL,\n  `permission_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `product_id` BIGINT UNSIGNED NOT NULL,\n  `user_email` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED,\n  PRIMARY KEY (`permission_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_itemmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `order_item_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_items` (\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_item_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `order_item_name` TEXT NOT NULL,\n  `order_item_type` VARCHAR(200) NOT NULL DEFAULT '',\n  PRIMARY KEY (`order_item_id`)\n);\n\nCREATE INDEX `args` ON `wp_actionscheduler_actions` (`args`);\n\nCREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`, `claim_id`);\n\nCREATE INDEX `group_id` ON `wp_actionscheduler_actions` (`group_id`);\n\nCREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`, `status`, `scheduled_date_gmt`);\n\nCREATE INDEX `last_attempt_gmt` ON `wp_actionscheduler_actions` (`last_attempt_gmt`);\n\nCREATE INDEX `scheduled_date_gmt` ON `wp_actionscheduler_actions` (`scheduled_date_gmt`);\n\nCREATE INDEX `status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`);\n\nCREATE INDEX `hook_group_status_claim` ON `wp_actionscheduler_actions` (`hook`, `group_id`, `status`, `claim_id`);\n\nCREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);\n\nCREATE INDEX `action_id` ON `wp_actionscheduler_logs` (`action_id`);\n\nCREATE INDEX `log_date_gmt` ON `wp_actionscheduler_logs` (`log_date_gmt`);\n\nCREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_date_gmt`, `comment_approved`);\n\nCREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`);\n\nCREATE INDEX `comment_date_gmt` ON `wp_comments` (`comment_date_gmt`);\n\nCREATE INDEX `comment_parent` ON `wp_comments` (`comment_parent`);\n\nCREATE INDEX `comment_post_ID` ON `wp_comments` (`comment_post_ID`);\n\nCREATE INDEX `woo_idx_comment_type` ON `wp_comments` (`comment_type`);\n\nCREATE INDEX `autoload` ON `wp_options` (`autoload`);\n\nCREATE UNIQUE INDEX `option_name` ON `wp_options` (`option_name`);\n\nCREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`);\n\nCREATE INDEX `post_id` ON `wp_postmeta` (`post_id`);\n\nCREATE INDEX `post_id_meta_key` ON `wp_postmeta` (`post_id`, `meta_key`);\n\nCREATE INDEX `post_author` ON `wp_posts` (`post_author`);\n\nCREATE INDEX `post_name` ON `wp_posts` (`post_name`);\n\nCREATE INDEX `post_parent` ON `wp_posts` (`post_parent`);\n\nCREATE INDEX `type_status_date` ON `wp_posts` (`post_type`, `post_status`, `post_date`, `ID`);\n\nCREATE INDEX `term_taxonomy_id` ON `wp_term_relationships` (`term_taxonomy_id`);\n\nCREATE INDEX `taxonomy` ON `wp_term_taxonomy` (`taxonomy`);\n\nCREATE UNIQUE INDEX `term_id_taxonomy` ON `wp_term_taxonomy` (`term_id`, `taxonomy`);\n\nCREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`);\n\nCREATE INDEX `term_id` ON `wp_termmeta` (`term_id`);\n\nCREATE INDEX `name` ON `wp_terms` (`name`);\n\nCREATE INDEX `slug` ON `wp_terms` (`slug`);\n\nCREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`);\n\nCREATE INDEX `user_id` ON `wp_usermeta` (`user_id`);\n\nCREATE INDEX `user_email` ON `wp_users` (`user_email`);\n\nCREATE INDEX `user_login_key` ON `wp_users` (`user_login`);\n\nCREATE INDEX `user_nicename` ON `wp_users` (`user_nicename`);\n\nCREATE INDEX `downloadable` ON `wp_wc_product_meta_lookup` (`downloadable`);\n\nCREATE INDEX `min_max_price` ON `wp_wc_product_meta_lookup` (`min_price`, `max_price`);\n\nCREATE INDEX `onsale` ON `wp_wc_product_meta_lookup` (`onsale`);\n\nCREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`);\n\nCREATE INDEX `stock_quantity` ON `wp_wc_product_meta_lookup` (`stock_quantity`);\n\nCREATE INDEX `stock_status` ON `wp_wc_product_meta_lookup` (`stock_status`);\n\nCREATE INDEX `virtual` ON `wp_wc_product_meta_lookup` (`virtual`);\n\nCREATE INDEX `consumer_key` ON `wp_woocommerce_api_keys` (`consumer_key`);\n\nCREATE INDEX `consumer_secret` ON `wp_woocommerce_api_keys` (`consumer_secret`);\n\nCREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`, `order_key`);\n\nCREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`);\n\nCREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`, `user_id`, `downloads_remaining`, `access_expires`);\n\nCREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`);\n\nCREATE INDEX `order_item_id` ON `wp_woocommerce_order_itemmeta` (`order_item_id`);\n\nCREATE INDEX `order_item_id_meta_key` ON `wp_woocommerce_order_itemmeta` (`order_item_id`, `meta_key`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_order_items` (`order_id`);",
+  "app_layer_notes": [
+    {
+      "feature": "zero_date_default",
+      "source_object": "wp_posts, wp_comments, wp_users, wp_wc_admin_notes, wp_wc_reserved_stock, wp_woocommerce_downloadable_product_permissions, wp_actionscheduler_actions, wp_actionscheduler_logs",
+      "recommendation": "Load the data exactly as it is, zero dates included. Run the load session (AWS DMS target endpoint setting or the `mysqldump`/`mysql` import session) with a `sql_mode` that leaves out NO_ZERO_DATE, NO_ZERO_IN_DATE and the STRICT_* modes. Do not rewrite zero dates in the NOT NULL WordPress columns (wp_posts post_date_gmt and post_modified_gmt, wp_comments, wp_users, wp_wc_admin_notes, wp_wc_reserved_stock, wp_woocommerce_downloadable_product_permissions): WordPress core writes post_date_gmt = '0000-00-00 00:00:00' on purpose for drafts and auto-drafts, and wp_insert_post and the publish flow read that value as a floating date. Map zero dates to NULL only in the nullable Action Scheduler columns (last_attempt_gmt, last_attempt_local, scheduled_date_gmt, scheduled_date_local, log_date_gmt, log_date_local), and only after confirming that the installed Action Scheduler version treats NULL and zero the same way; otherwise keep the zero values there too. The cluster `sql_mode` does not stop new zero dates after cutover, because `wpdb::set_sql_mode()` removes NO_ZERO_DATE, NO_ZERO_IN_DATE and the STRICT modes from every WordPress session. WordPress supplies these date columns explicitly on insert, so the defaults dropped from the target DDL do not change normal application writes."
+    },
+    {
+      "feature": "sql_calc_found_rows",
+      "source_object": "wp_posts",
+      "recommendation": "No change needed for the migration. `SQL_CALC_FOUND_ROWS` is deprecated in MySQL 8.0, so custom plugin code that uses it should move to a separate `COUNT(*)` query."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_actions.last_attempt_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_actions.last_attempt_local",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_actions.scheduled_date_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_actions.scheduled_date_local",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_logs.log_date_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_actionscheduler_logs.log_date_local",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, so the target DDL uses DEFAULT NULL instead. Rows holding a zero date need a real date or NULL when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_comments.comment_date",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_comments.comment_date_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_posts.post_date",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_posts.post_date_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_posts.post_modified",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_posts.post_modified_gmt",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_users.user_registered",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_wc_admin_notes.date_created",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_wc_reserved_stock.expires",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_wc_reserved_stock.timestamp",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    },
+    {
+      "feature": "column_default",
+      "source_object": "wp_woocommerce_downloadable_product_permissions.access_granted",
+      "recommendation": "DEFAULT '0000-00-00 00:00:00' is a MySQL zero date, which Aurora MySQL does not accept, and the column is NOT NULL, so the target DDL drops it; set it by hand. Rows holding a zero date need a real date when the data is migrated."
+    }
+  ],
+  "optimizations": [
+    {
+      "category": "read_replica",
+      "target": "Aurora MySQL cluster (WooCommerce analytics queries)",
+      "recommendation": "Add one Aurora Replica and point the WooCommerce reports and admin analytics (queries `a0b655ea`, `fc99562b`, `cb3300c6`, `d99618ea`, `119b7fbf`) at the cluster reader endpoint, for example through a read/write split plugin such as HyperDB or LudicrousDB. Storefront reads and all writes stay on the writer endpoint.",
+      "rationale": "Query `a0b655ea` examines about 369,000 rows per call at 911 ms and query `fc99562b` examines about 83,000 rows at 215 ms. Moving these aggregation reports to a replica keeps their buffer pool and CPU use away from the storefront queries that run at 10 to 15 calls per second."
+    },
+    {
+      "category": "other",
+      "target": "wp_options, wp_postmeta, wp_term_* (object cache)",
+      "recommendation": "Run a persistent WordPress object cache on ElastiCache (Redis OSS or Valkey) so the autoloaded options (query `413c99e4`, 247 rows per call) and the per-post meta and term lookups (queries `4f024754`, `3dbc7d9a`, `d5ae7abb`) are served from cache after the first read.",
+      "rationale": "These are the highest-frequency reads in the workload (about 13 to 15 calls per second each) and return the same rows repeatedly. A persistent object cache removes most of them from Aurora."
+    },
+    {
+      "category": "partitioning",
+      "target": "wp_postmeta, wp_woocommerce_order_itemmeta",
+      "recommendation": "Do not partition. The largest tables hold about 449,000 and 244,000 rows (62 MB and 31 MB). Composite indexes on (post_id, meta_key) and (order_item_id, meta_key) address the observed lookups instead.",
+      "rationale": "Partitioning at this size adds DDL and query-planning cost without reducing rows examined, and MySQL partitioning does not support foreign keys."
+    },
+    {
+      "category": "other",
+      "target": "wp_posts queries using SQL_CALC_FOUND_ROWS",
+      "recommendation": "Keep WordPress core behavior on Aurora MySQL 3 (MySQL 8.0 compatible), where `SQL_CALC_FOUND_ROWS` and `FOUND_ROWS()` are deprecated but still work. Track the WordPress release that replaces them with a separate `COUNT(*)` query. For post-migration validation, expect query `12f856ea` to show a range scan on type_status_date plus a filesort, not an index-ordered read.",
+      "rationale": "Query `12f856ea` filters `post_type = ? AND post_status != ? AND post_status != ?` and sorts by post_date DESC, ID. The `!=` predicates make post_status a range, so the corrected type_status_date index narrows the scan to one post_type but cannot supply the post_date order: a filesort remains, and `SQL_CALC_FOUND_ROWS` still counts every matching row. Expected rows examined per call is about the number of rows of that post_type (bounded by the 11,990-row table), down from the observed 15,790. Queries `305e3eaa` and `d4bf16d6` use equality on post_status and get the post_date order from the index."
+    }
+  ],
+  "access_patterns": [
+    {
+      "pattern_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_postmeta; 4 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT SUM ( `meta__order_total` . `meta_value` ) AS `total_sales` , SUM ( `meta__order_shipping` . `meta_value` ) AS `total_shipping` , SUM ( `meta__order_tax` . `meta_value` ) AS `total_tax` , SUM ( `meta__order_shipping_tax` . `meta_value` ) AS `total_shipping_tax` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_postmeta` AS `meta__order_total` ON ( `posts` . `ID` = `meta__order_total` . `post_id` AND `meta__order_total` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_shipping` ON ( `posts` . `ID` = `meta__order_shipping` . `post_id` AND `meta__order_shipping` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_tax` ON ( `posts` . `ID` = `meta__order_tax` . `post_id` AND `meta__order_tax` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_shipping_tax` ON ( `posts` . `ID` = `meta__order_shipping_tax` . `post_id` AND `meta__order_shipping_tax` . `meta_key` = ? ) WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` .",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.030197,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "Filter predicate unknown; the collector did not record one for this query. Cannot confirm an index serves it or that a sequential scan is the expected plan. Confirm the predicate and whether an index should be added.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+      "description": "SELECT on wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups; filtered by slug, hook, status, claim_id; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `a` . `action_id` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `g` . `group_id` = `a` . `group_id` WHERE ? = ? AND `g` . `slug` = ? AND `a` . `hook` = ? AND `a` . `status` IN (...) AND `a` . `claim_id` = ? AND ( `a` . `hook` LIKE ? OR ( `a` . `extended_args` IS NULL AND `a` . `args` LIKE ? ) OR `a` . `extended_args` LIKE ? ) ORDER BY `a` . `scheduled_date_gmt` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "source_query_ids": [
+        "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf"
+      ],
+      "filter_columns": [
+        "slug",
+        "hook",
+        "status",
+        "claim_id"
+      ],
+      "sort_columns": [],
+      "index_used": "hook_status_scheduled_date_gmt",
+      "design_rps": 0.45478,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_woocommerce_order_items, wordpress.wp_woocommerce_order_itemmeta; filtered by post_type, post_status, order_item_type, meta_key, post_date; 2 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT SUM ( `order_item_meta__qty` . `meta_value` ) AS `order_item_count` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_woocommerce_order_items` AS `order_items` ON ( `posts` . `ID` = `order_items` . `order_id` ) AND ( `order_items` . `order_item_type` = ? ) INNER JOIN `wp_woocommerce_order_itemmeta` AS `order_item_meta__qty` ON ( `order_items` . `order_item_id` = `order_item_meta__qty` . `order_item_id` ) AND ( `order_item_meta__qty` . `meta_key` = ? ) WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` . `post_date` < ? AND `order_items` . `order_item_type` = ? GROUP BY YEAR ( `posts` . `post_date` ) , SQL_TSI_MONTH ( `posts` . `post_date` ) , SQL_TSI_DAY ( `posts` . `post_date` ) ORDER BY `post_date` ASC",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status",
+        "order_item_type",
+        "meta_key",
+        "post_date"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.030197,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy, wordpress.wp_term_relationships; filtered by taxonomy, object_id; 2 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy_id` WHERE `tt` . `taxonomy` IN (...) AND `tr` . `object_id` IN (...) ORDER BY `t` . `name` ASC",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "object_id"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 12.742998,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` != ? AND `wp_posts` . `post_status` != ? ) ) ORDER BY `wp_posts` . `post_date` DESC , `wp_posts` . `ID` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625"
+      ],
+      "filter_columns": [
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.288565,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+      "description": "SELECT on wordpress.wp_postmeta; filtered by post_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `post_id` , `meta_key` , `meta_value` FROM `wp_postmeta` WHERE `post_id` IN (...) ORDER BY `meta_id` ASC",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64"
+      ],
+      "filter_columns": [
+        "post_id"
+      ],
+      "sort_columns": [],
+      "index_used": "post_id",
+      "design_rps": 13.040324,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+      "description": "SELECT on wordpress.wp_postmeta; filtered by meta_key, post_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `meta_id` FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d"
+      ],
+      "filter_columns": [
+        "meta_key",
+        "post_id"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 14.550729,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_postmeta.meta_key, wp_postmeta.post_id); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+      "description": "OTHER on wordpress.wp_options",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_options`",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "source_query_ids": [
+        "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 1.436065,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+      "description": "SELECT on wordpress.wp_woocommerce_order_itemmeta; filtered by order_item_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `order_item_id` , `meta_key` , `meta_value` FROM `wp_woocommerce_order_itemmeta` WHERE `order_item_id` IN (...) ORDER BY `meta_id` ASC",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d"
+      ],
+      "filter_columns": [
+        "order_item_id"
+      ],
+      "sort_columns": [],
+      "index_used": "order_item_id",
+      "design_rps": 8.714433,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_termmeta, wordpress.wp_term_taxonomy, wordpress.wp_term_relationships; filtered by taxonomy, object_id, meta_key; 3 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` LEFT JOIN `wp_termmeta` ON ( `t` . `term_id` = `wp_termmeta` . `term_id` AND `wp_termmeta` . `meta_key` = ? ) INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy_id` WHERE `tt` . `taxonomy` IN (...) AND `tr` . `object_id` IN (...) AND ( ( `wp_termmeta` . `meta_key` = ? OR `wp_termmeta` . `meta_key` IS NULL ) ) ORDER BY `wp_termmeta` . `meta_value` + ? ASC , `t` . `name` ASC",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "object_id",
+        "meta_key"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 3.187002,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_parent, post_type",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_parent` = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86"
+      ],
+      "filter_columns": [
+        "post_parent",
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "post_parent",
+      "design_rps": 3.190694,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+      "description": "SELECT on wordpress.wp_options; filtered by autoload",
+      "operation": "SELECT",
+      "sql_text": "SELECT `option_name` , `option_value` FROM `wp_options` WHERE `autoload` = ?",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "source_query_ids": [
+        "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60"
+      ],
+      "filter_columns": [
+        "autoload"
+      ],
+      "sort_columns": [],
+      "index_used": "autoload",
+      "design_rps": 1.438194,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+      "description": "SELECT on wordpress.wp_woocommerce_order_itemmeta; filtered by order_item_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `meta_id` AS `meta_id` , `meta_key` , `meta_value` FROM `wp_woocommerce_order_itemmeta` WHERE `order_item_id` = ? ORDER BY `meta_id`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084"
+      ],
+      "filter_columns": [
+        "order_item_id"
+      ],
+      "sort_columns": [],
+      "index_used": "order_item_id",
+      "design_rps": 6.367882,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+      "description": "SELECT on wordpress.wp_postmeta; filtered by post_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `meta_id` AS `meta_id` , `meta_key` , `meta_value` FROM `wp_postmeta` WHERE `post_id` = ? ORDER BY `meta_id`",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6"
+      ],
+      "filter_columns": [
+        "post_id"
+      ],
+      "sort_columns": [],
+      "index_used": "post_id",
+      "design_rps": 4.803113,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "512f04288099c9814a913aae14c9aac9bfbdd56b82be78c7646704e9a0d185ce",
+      "description": "OTHER on wordpress.wp_woocommerce_api_keys",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_woocommerce_api_keys`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "source_query_ids": [
+        "512f04288099c9814a913aae14c9aac9bfbdd56b82be78c7646704e9a0d185ce"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.82735,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type, post_title, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT `p` . `ID` FROM `wp_posts` `p` WHERE `post_type` = ? AND `p` . `post_title` = ? AND `p` . `post_status` IN (...) ORDER BY `p` . `post_date_gmt` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "52da34b1e5fbf3bc61a81c08cf440630ccd96aa21066f7f52c68d4d76aad2867"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_title",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 2.873854,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type",
+      "operation": "SELECT",
+      "sql_text": "SELECT `post_name` FROM `wp_posts` WHERE `post_name` = ? AND `post_type` = ? AND `ID` != ? LIMIT ?",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 2.739618,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+      "description": "SELECT on wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups; filtered by action_id; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `a` . * , `g` . `slug` AS `group` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `a` . `group_id` = `g` . `group_id` WHERE `a` . `action_id` = ?",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "source_query_ids": [
+        "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e"
+      ],
+      "filter_columns": [
+        "action_id"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 3.590301,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+      "description": "SELECT on wordpress.wp_woocommerce_order_items; filtered by order_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `order_item_type` , `order_item_id` , `order_id` , `order_item_name` FROM `wp_woocommerce_order_items` WHERE `order_id` = ? ORDER BY `order_item_id`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "source_query_ids": [
+        "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+      ],
+      "filter_columns": [
+        "order_id"
+      ],
+      "sort_columns": [],
+      "index_used": "order_id",
+      "design_rps": 3.284236,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+      "description": "SELECT on wordpress.wp_actionscheduler_actions; filtered by hook, status",
+      "operation": "SELECT",
+      "sql_text": "SELECT `a` . `action_id` FROM `wp_actionscheduler_actions` `a` WHERE ? = ? AND `a` . `hook` = ? AND `a` . `status` IN (...) ORDER BY `a` . `scheduled_date_gmt` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions"
+      ],
+      "source_query_ids": [
+        "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616"
+      ],
+      "filter_columns": [
+        "hook",
+        "status"
+      ],
+      "sort_columns": [],
+      "index_used": "hook_status_scheduled_date_gmt",
+      "design_rps": 2.874144,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+      "description": "SELECT on wordpress.wp_woocommerce_order_itemmeta; filtered by meta_key, order_item_id",
+      "operation": "SELECT",
+      "sql_text": "SELECT `meta_id` FROM `wp_woocommerce_order_itemmeta` WHERE `meta_key` = ? AND `order_item_id` = ?",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc"
+      ],
+      "filter_columns": [
+        "meta_key",
+        "order_item_id"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 1.937338,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_woocommerce_order_itemmeta.meta_key, wp_woocommerce_order_itemmeta.order_item_id); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy; filtered by term_id; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `t` . * , `tt` . * FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `t` . `term_id` IN (...)",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+      ],
+      "filter_columns": [
+        "term_id"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 2.016609,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_term_taxonomy.term_id_taxonomy, wp_terms.PRIMARY); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_parent, post_type, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_parent` = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC , `wp_posts` . `ID` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c"
+      ],
+      "filter_columns": [
+        "post_parent",
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "post_parent",
+      "design_rps": 1.244595,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type, post_status, post_date; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT COUNT ( DISTINCTROW `posts` . `id` ) AS `count` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` . `post_date` < ? GROUP BY YEAR ( `posts` . `post_date` ) , SQL_TSI_MONTH ( `posts` . `post_date` ) , SQL_TSI_DAY ( `posts` . `post_date` ) ORDER BY `post_date` ASC",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status",
+        "post_date"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.030197,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_postmeta; 4 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `parent_meta__order_total` . `meta_value` AS `total_refund` , `parent_meta__order_shipping` . `meta_value` AS `total_shipping` , `parent_meta__order_tax` . `meta_value` AS `total_tax` , `parent_meta__order_shipping_tax` . `meta_value` AS `total_shipping_tax` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_postmeta` AS `parent_meta__order_total` ON ( `posts` . `post_parent` = `parent_meta__order_total` . `post_id` ) AND ( `parent_meta__order_total` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `parent_meta__order_shipping` ON ( `posts` . `post_parent` = `parent_meta__order_shipping` . `post_id` ) AND ( `parent_meta__order_shipping` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `parent_meta__order_tax` ON ( `posts` . `post_parent` = `parent_meta__order_tax` . `post_id` ) AND ( `parent_meta__order_tax` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `parent_meta__order_shipping_tax` ON ( `posts` . `post_parent` = `parent_meta__order_shipping_tax` . `post_id` ) AND (",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.030197,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "Filter predicate unknown; the collector did not record one for this query. Cannot confirm an index serves it or that a sequential scan is the expected plan. Confirm the predicate and whether an index should be added.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "7ebf84ab111bbc0d6f83fde78d7e195c120dd7686f89241e6478fefdd11d61ef",
+      "description": "OTHER on wordpress.wp_comments",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_comments`",
+      "source_tables": [
+        "wordpress.wp_comments"
+      ],
+      "source_query_ids": [
+        "7ebf84ab111bbc0d6f83fde78d7e195c120dd7686f89241e6478fefdd11d61ef"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.169525,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "a0eaf5312a583fe93b56c8c694d81007ae5a0e79e2b713b1f7651d2bda0b73b5",
+      "description": "OTHER on wordpress.wp_posts",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_posts`",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "a0eaf5312a583fe93b56c8c694d81007ae5a0e79e2b713b1f7651d2bda0b73b5"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.131956,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_terms; filtered by post_type, post_title, post_status, post_password, slug; 3 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `p` . `ID` FROM `wp_posts` `p` INNER JOIN `wp_term_relationships` `tr` ON `tr` . `object_id` = `p` . `ID` INNER JOIN `wp_term_taxonomy` `tt` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy_id` INNER JOIN `wp_terms` `t` ON `tt` . `term_id` = `t` . `term_id` AND `t` . `slug` = ? WHERE `post_type` = ? AND `p` . `post_title` = ? AND `p` . `post_status` IN (...) AND `p` . `post_password` = ? AND ( `p` . `post_title` LIKE ? OR `p` . `post_content` LIKE ? OR `p` . `post_password` LIKE ? ) ORDER BY `p` . `post_date_gmt` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_terms"
+      ],
+      "source_query_ids": [
+        "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_title",
+        "post_status",
+        "post_password",
+        "slug"
+      ],
+      "sort_columns": [],
+      "index_used": "slug",
+      "design_rps": 0.454734,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "d1671227c280b76415519d9cd822726dceea9ec18daa5ef501d9a51b7a82e588",
+      "description": "OTHER on wordpress.wp_wc_reserved_stock",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_wc_reserved_stock`",
+      "source_tables": [
+        "wordpress.wp_wc_reserved_stock"
+      ],
+      "source_query_ids": [
+        "d1671227c280b76415519d9cd822726dceea9ec18daa5ef501d9a51b7a82e588"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.120405,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "c81fa21d6b210e6a0a6e03fc3f5188d08c78938ac79a164758911b0ba05113fd",
+      "description": "OTHER on wordpress.wp_woocommerce_downloadable_product_permissions",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_woocommerce_downloadable_product_permissions`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "source_query_ids": [
+        "c81fa21d6b210e6a0a6e03fc3f5188d08c78938ac79a164758911b0ba05113fd"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.097118,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy; filtered by post_status, post_type, term_taxonomy_id, term_id; 3 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT COUNT ( DISTINCTROW `ID` ) FROM `wp_posts` `p` LEFT JOIN ( SELECT `object_id` FROM `wp_term_relationships` WHERE `term_taxonomy_id` IN (...) ) AS `exclude_join` ON `exclude_join` . `object_id` = `p` . `ID` INNER JOIN ( SELECT `object_id` FROM `wp_term_relationships` INNER JOIN `wp_term_taxonomy` USING ( `term_taxonomy_id` ) WHERE `term_id` IN (...) ) AS `include_join` ON `include_join` . `object_id` = `p` . `ID` WHERE ? = ? AND `p` . `post_status` = ? AND `p` . `post_type` = ? AND `exclude_join` . `object_id` IS NULL",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8"
+      ],
+      "filter_columns": [
+        "post_status",
+        "post_type",
+        "term_taxonomy_id",
+        "term_id"
+      ],
+      "sort_columns": [],
+      "index_used": "term_taxonomy_id",
+      "design_rps": 0.178623,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "3 indexes cover the same 1-column prefix (wp_term_relationships.term_taxonomy_id, wp_term_taxonomy.PRIMARY, wp_term_taxonomy.term_id_taxonomy); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "34f3e7563d77a268cd5a48f3df9df7b43699795e2af79ef2d5a7ee8ffdd8f2d9",
+      "description": "OTHER on wordpress.wp_postmeta",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_postmeta`",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "34f3e7563d77a268cd5a48f3df9df7b43699795e2af79ef2d5a7ee8ffdd8f2d9"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.111713,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy, wordpress.wp_term_relationships; filtered by taxonomy, object_id; 2 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT DISTINCTROW `t` . `term_id` , `tr` . `object_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy_id` WHERE `tt` . `taxonomy` IN (...) AND `tr` . `object_id` IN (...) ORDER BY `t` . `name` ASC",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "object_id"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 0.211528,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "f33fba2bc06e09310598d8ec1c8e79805064b1b47ae2d3d52d54634cdac4a019",
+      "description": "OTHER on wordpress.wp_wc_product_meta_lookup",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_wc_product_meta_lookup`",
+      "source_tables": [
+        "wordpress.wp_wc_product_meta_lookup"
+      ],
+      "source_query_ids": [
+        "f33fba2bc06e09310598d8ec1c8e79805064b1b47ae2d3d52d54634cdac4a019"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.089595,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy; filtered by taxonomy; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...) ORDER BY `t` . `name` ASC",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722"
+      ],
+      "filter_columns": [
+        "taxonomy"
+      ],
+      "sort_columns": [],
+      "index_used": "taxonomy",
+      "design_rps": 0.414051,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "91603b5bf10532c65d3876110eb2d65dcfa43b79f682739496d60ed82a9071ad",
+      "description": "OTHER on wordpress.wp_actionscheduler_logs",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_actionscheduler_logs`",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "source_query_ids": [
+        "91603b5bf10532c65d3876110eb2d65dcfa43b79f682739496d60ed82a9071ad"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.09713,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "519c47a0c8729eb1c2256dcfb3bf5253f2c809fdcd717d6920aa644981bac7b6",
+      "description": "OTHER on wordpress.wp_woocommerce_order_itemmeta",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_woocommerce_order_itemmeta`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "519c47a0c8729eb1c2256dcfb3bf5253f2c809fdcd717d6920aa644981bac7b6"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.101146,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "b065d0f32c1e6491039cf7a3ed2b48bed98783293749e636139aa1883fe6eb11",
+      "description": "OTHER on wordpress.wp_woocommerce_order_items",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_woocommerce_order_items`",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "source_query_ids": [
+        "b065d0f32c1e6491039cf7a3ed2b48bed98783293749e636139aa1883fe6eb11"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.09713,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` = ? AND `wp_posts` . `ID` NOT IN (...) AND `wp_posts` . `post_type` IN (...) AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 0.253322,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+      "description": "SELECT on wordpress.wp_postmeta; filtered by meta_key, post_id; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT COUNT ( * ) FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c"
+      ],
+      "filter_columns": [
+        "meta_key",
+        "post_id"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.356481,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_postmeta.meta_key, wp_postmeta.post_id); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy; filtered by post_status, post_type, term_taxonomy_id, term_id; 3 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT DISTINCTROW `ID` FROM `wp_posts` `p` LEFT JOIN ( SELECT `object_id` FROM `wp_term_relationships` WHERE `term_taxonomy_id` IN (...) ) AS `exclude_join` ON `exclude_join` . `object_id` = `p` . `ID` INNER JOIN ( SELECT `object_id` FROM `wp_term_relationships` INNER JOIN `wp_term_taxonomy` USING ( `term_taxonomy_id` ) WHERE `term_id` IN (...) ) AS `include_join` ON `include_join` . `object_id` = `p` . `ID` WHERE ? = ? AND `p` . `post_status` = ? AND `p` . `post_type` = ? AND `exclude_join` . `object_id` IS NULL AND `p` . `ID` NOT IN (...) LIMIT ?",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a"
+      ],
+      "filter_columns": [
+        "post_status",
+        "post_type",
+        "term_taxonomy_id",
+        "term_id"
+      ],
+      "sort_columns": [],
+      "index_used": "term_taxonomy_id",
+      "design_rps": 0.14015,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "3 indexes cover the same 1-column prefix (wp_term_relationships.term_taxonomy_id, wp_term_taxonomy.PRIMARY, wp_term_taxonomy.term_id_taxonomy); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "a35498ec1aa88e4a99d9f05d0d9bbd508d654e1cc0618decbee3abc5bfe91f09",
+      "description": "OTHER on wordpress.wp_termmeta",
+      "operation": "OTHER",
+      "sql_text": "SHOW FULL FIELDS FROM `wp_termmeta`",
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "source_query_ids": [
+        "a35498ec1aa88e4a99d9f05d0d9bbd508d654e1cc0618decbee3abc5bfe91f09"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.089595,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "No filter predicate: the statement reads no table rows, so no index serves it.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy, wordpress.wp_term_relationships; filtered by taxonomy, object_id; 2 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy_id` WHERE `tt` . `taxonomy` IN (...) AND `tr` . `object_id` IN (...)",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "source_query_ids": [
+        "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "object_id"
+      ],
+      "sort_columns": [],
+      "index_used": "PRIMARY",
+      "design_rps": 0.178623,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy; filtered by taxonomy, name; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...) AND `t` . `name` IN (...) LIMIT ?",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "name"
+      ],
+      "sort_columns": [],
+      "index_used": "name",
+      "design_rps": 0.233194,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_term_taxonomy.taxonomy, wp_terms.name); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e",
+      "description": "SELECT on unknown",
+      "operation": "SELECT",
+      "sql_text": "SELECT `FOUND_ROWS` ( )",
+      "source_tables": [
+        "unknown"
+      ],
+      "source_query_ids": [
+        "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.677593,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "None of this query's tables could be identified in the Aurora design (commonly the collector's own 'unknown' placeholder); no index can be resolved and this pattern cannot be load-tested.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": false,
+      "load_testable_reason": "None of this query's tables could be identified in the Aurora design (commonly the collector's own 'unknown' placeholder); no index can be resolved and this pattern cannot be load-tested."
+    },
+    {
+      "pattern_id": "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+      "description": "SELECT on wordpress.wp_postmeta, wordpress.wp_posts; filtered by meta_key, post_type, post_parent; 1 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT SUM ( `postmeta` . `meta_value` ) FROM `wp_postmeta` AS `postmeta` INNER JOIN `wp_posts` AS `posts` ON ( `posts` . `post_type` = ? AND `posts` . `post_parent` = ? ) WHERE `postmeta` . `meta_key` = ? AND `postmeta` . `post_id` = `posts` . `ID`",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915"
+      ],
+      "filter_columns": [
+        "meta_key",
+        "post_type",
+        "post_parent"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.167824,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_postmeta.meta_key, wp_posts.post_parent); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_postmeta, wordpress.wp_woocommerce_order_items; 4 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `posts` . `id` AS `refund_id` , `meta__refund_amount` . `meta_value` AS `total_refund` , `posts` . `post_date` AS `post_date` , `order_items` . `order_item_type` AS `item_type` , `meta__order_total` . `meta_value` AS `total_sales` , `meta__order_shipping` . `meta_value` AS `total_shipping` , `meta__order_tax` . `meta_value` AS `total_tax` , `meta__order_shipping_tax` . `meta_value` AS `total_shipping_tax` , SUM ( `order_item_meta__qty` . `meta_value` ) AS `order_item_count` FROM `wp_posts` AS `posts` INNER JOIN `wp_postmeta` AS `meta__refund_amount` ON ( `posts` . `ID` = `meta__refund_amount` . `post_id` AND `meta__refund_amount` . `meta_key` = ? ) LEFT JOIN `wp_woocommerce_order_items` AS `order_items` ON ( `posts` . `ID` = `order_items` . `order_id` ) INNER JOIN `wp_postmeta` AS `meta__order_total` ON ( `posts` . `ID` = `meta__order_total` . `post_id` AND `meta__order_total` . `meta_key` = ? ) LEFT JOIN `wp_postmeta` AS `meta__order_shipping` ON ( `posts` . `ID` = `meta__order_shipping` . `post_id` AND",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "source_query_ids": [
+        "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.060394,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "Filter predicate unknown; the collector did not record one for this query. Cannot confirm an index serves it or that a sequential scan is the expected plan. Confirm the predicate and whether an index should be added.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy; filtered by taxonomy, slug; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...) AND `t` . `slug` IN (...) ORDER BY `t` . `term_id` ASC LIMIT ?",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "4f9d2751c29cb0777dbc3770c92cc5b24381e9c2caf7d63978fff42f988642dc"
+      ],
+      "filter_columns": [
+        "taxonomy",
+        "slug"
+      ],
+      "sort_columns": [],
+      "index_used": "slug",
+      "design_rps": 0.178623,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_term_taxonomy.taxonomy, wp_terms.slug); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+      "description": "SELECT on wordpress.wp_postmeta; filtered by post_id, meta_key",
+      "operation": "SELECT",
+      "sql_text": "SELECT `meta_value` FROM `wp_postmeta` WHERE `post_id` = ? AND `meta_key` = ?",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "source_query_ids": [
+        "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594"
+      ],
+      "filter_columns": [
+        "post_id",
+        "meta_key"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.178611,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "2 indexes cover the same 1-column prefix (wp_postmeta.meta_key, wp_postmeta.post_id); confirm which one should serve this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.124491,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` != ? AND `wp_posts` . `post_status` != ? ) ) ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "fa687400c5fe6eda2b09e4d0c6dda70534ef7dd1b4471c5e7b0c09497a583cce"
+      ],
+      "filter_columns": [
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.087049,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type, post_status; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND ( ( `wp_posts` . `post_type` = ? AND ( `wp_posts` . `post_status` = ? ) ) ) GROUP BY `wp_posts` . `ID` ORDER BY `wp_posts` . `post_date` DESC",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 0.218356,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type, post_status; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) GROUP BY `wp_posts` . `ID` ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "c186dff756b764e27eee24482997ec9f6bbcae891097580079dacad7b9c3ac30"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 0.218692,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935",
+      "description": "SELECT on wordpress.wp_users, wordpress.wp_usermeta; filtered by meta_key; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `ID` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key` = ? AND `wp_usermeta` . `meta_value` LIKE ? ) ) ) ORDER BY `display_name` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "source_query_ids": [
+        "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935"
+      ],
+      "filter_columns": [
+        "meta_key"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.071042,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653",
+      "description": "SELECT on wordpress.wp_users, wordpress.wp_usermeta; filtered by meta_key; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `ID` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key` = ? AND `wp_usermeta` . `meta_value` LIKE ? ) ) ) ORDER BY `display_name` ASC",
+      "source_tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "source_query_ids": [
+        "05e0232d3850a4672d21c95cdebf907cd787cdd0353fff9adee1cd4009b5a653"
+      ],
+      "filter_columns": [
+        "meta_key"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.071042,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_woocommerce_order_items, wordpress.wp_woocommerce_order_itemmeta; filtered by post_type, post_status, order_item_type, meta_key, post_date; 2 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `order_items` . `order_item_name` AS `order_item_name` , SUM ( `order_item_meta_discount_amount` . `meta_value` ) AS `discount_amount` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_woocommerce_order_items` AS `order_items` ON ( `posts` . `ID` = `order_items` . `order_id` ) AND ( `order_items` . `order_item_type` = ? ) INNER JOIN `wp_woocommerce_order_itemmeta` AS `order_item_meta_discount_amount` ON ( `order_items` . `order_item_id` = `order_item_meta_discount_amount` . `order_item_id` ) AND ( `order_item_meta_discount_amount` . `meta_key` = ? ) WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` . `post_date` < ? AND `order_items` . `order_item_type` = ? GROUP BY YEAR ( `posts` . `post_date` ) , SQL_TSI_MONTH ( `posts` . `post_date` ) , SQL_TSI_DAY ( `posts` . `post_date` ) , `order_item_name` ORDER BY `post_date` ASC",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status",
+        "order_item_type",
+        "meta_key",
+        "post_date"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.030197,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d",
+      "description": "SELECT on wordpress.wp_actionscheduler_groups; filtered by slug",
+      "operation": "SELECT",
+      "sql_text": "SELECT `group_id` FROM `wp_actionscheduler_groups` WHERE `slug` = ?",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "source_query_ids": [
+        "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d"
+      ],
+      "filter_columns": [
+        "slug"
+      ],
+      "sort_columns": [],
+      "index_used": "slug",
+      "design_rps": 0.09713,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND ( ( `wp_posts` . `post_type` = ? AND ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? ) ) ) GROUP BY `wp_posts` . `ID` ORDER BY `wp_posts` . `post_date` DESC",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "c674aa12b3665c30c5aefb1c6f96f35b8d71ffe95f6a4d2769632d53db421347"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 0.102002,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_parent, post_type, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_parent` = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_title` ASC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "d8ba7aa10cff6283c53efd73611a20ce4602f7d95d3aeda0c024df5fdd792223"
+      ],
+      "filter_columns": [
+        "post_parent",
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "post_parent",
+      "design_rps": 0.043414,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+      "description": "SELECT on wordpress.wp_posts, wordpress.wp_woocommerce_order_items, wordpress.wp_woocommerce_order_itemmeta; filtered by post_type, post_status, order_item_type, meta_key, post_date; 2 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT SUM ( `order_item_meta__qty` . `meta_value` ) AS `order_item_count` FROM `wp_posts` AS `posts` INNER JOIN `wp_woocommerce_order_items` AS `order_items` ON ( `posts` . `ID` = `order_items` . `order_id` ) AND ( `order_items` . `order_item_type` = ? ) INNER JOIN `wp_woocommerce_order_itemmeta` AS `order_item_meta__qty` ON ( `order_items` . `order_item_id` = `order_item_meta__qty` . `order_item_id` ) AND ( `order_item_meta__qty` . `meta_key` = ? ) WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` . `post_date` < ? AND `order_items` . `order_item_type` = ?",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "source_query_ids": [
+        "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status",
+        "order_item_type",
+        "meta_key",
+        "post_date"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.035451,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `post_status` , COUNT ( * ) AS `num_posts` FROM `wp_posts` WHERE `post_type` = ? GROUP BY `post_status`",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "262f32b231ea64268fe70d0dcde3f4c89c93fba0c938e0eeff625df539eaaa97"
+      ],
+      "filter_columns": [
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.043727,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987",
+      "description": "SELECT on wordpress.wp_users, wordpress.wp_usermeta; filtered by meta_key; 1 join(s)",
+      "operation": "SELECT",
+      "sql_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `user_registered` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key` = ? AND `wp_usermeta` . `meta_value` LIKE ? ) ) ) ORDER BY `user_login` ASC",
+      "source_tables": [
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "source_query_ids": [
+        "f4fcc7f6ef237eb98ceebe18f53efbc90ce9cc76e15fc20c0010447b449a1987"
+      ],
+      "filter_columns": [
+        "meta_key"
+      ],
+      "sort_columns": [],
+      "index_used": "meta_key",
+      "design_rps": 0.035451,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type, post_status",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "be0d2e4c39889ce69ce1a879dac37cd4b33624200e3dea3599b72e1a3e82d3cf"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.043738,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263",
+      "description": "SELECT on wordpress.wp_terms, wordpress.wp_term_taxonomy; filtered by taxonomy; 1 join(s); aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT COUNT ( * ) FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...)",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "source_query_ids": [
+        "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+      ],
+      "filter_columns": [
+        "taxonomy"
+      ],
+      "sort_columns": [],
+      "index_used": "taxonomy",
+      "design_rps": 0.043021,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+      "description": "SELECT on wordpress.wp_wc_admin_notes; filtered by type, status, is_deleted; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT COUNT ( * ) FROM `wp_wc_admin_notes` WHERE ? = ? AND TYPE IN (...) AND STATUS IN (...) AND `is_deleted` = ?",
+      "source_tables": [
+        "wordpress.wp_wc_admin_notes"
+      ],
+      "source_query_ids": [
+        "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d"
+      ],
+      "filter_columns": [
+        "type",
+        "status",
+        "is_deleted"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.043414,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_type, post_status; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND ( ? = ? ) AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) GROUP BY `wp_posts` . `ID` ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "3d3b308b385cfc54b939406d23a85a0df689c48c05b5aa3ae901d382b5055d00"
+      ],
+      "filter_columns": [
+        "post_type",
+        "post_status"
+      ],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.043738,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": false,
+      "needs_judgment": true,
+      "judgment_reason": "No index leads with any filtered column; a sequential scan is expected. Confirm whether an index should be added for this pattern.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8",
+      "description": "SELECT on wordpress.wp_posts; filtered by post_name, post_type; aggregated",
+      "operation": "SELECT",
+      "sql_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? ) ) GROUP BY `wp_posts` . `ID` ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "source_query_ids": [
+        "620879e270f6234f50eb8c2188653359be6486f86612d1678214adbf786102d8"
+      ],
+      "filter_columns": [
+        "post_name",
+        "post_type"
+      ],
+      "sort_columns": [],
+      "index_used": "post_name",
+      "design_rps": 0.043727,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": true,
+      "load_testable_reason": null
+    },
+    {
+      "pattern_id": "3a5af258b286c55a86defe9dc509fee3e199c02019eb8faa10ce2d072ee1427a",
+      "description": "OTHER on unknown",
+      "operation": "OTHER",
+      "sql_text": "SET SESSION `SQL_BIG_SELECTS` = ?",
+      "source_tables": [
+        "unknown"
+      ],
+      "source_query_ids": [
+        "3a5af258b286c55a86defe9dc509fee3e199c02019eb8faa10ce2d072ee1427a"
+      ],
+      "filter_columns": [],
+      "sort_columns": [],
+      "index_used": "__seq_scan__",
+      "design_rps": 0.035451,
+      "source_latency_ms_p95": null,
+      "source_db_load_pct": null,
+      "script_derived": true,
+      "needs_judgment": false,
+      "judgment_reason": "None of this query's tables could be identified in the Aurora design (commonly the collector's own 'unknown' placeholder); no index can be resolved and this pattern cannot be load-tested.",
+      "in_scope": true,
+      "out_of_scope_reason": null,
+      "load_testable": false,
+      "load_testable_reason": "None of this query's tables could be identified in the Aurora design (commonly the collector's own 'unknown' placeholder); no index can be resolved and this pattern cannot be load-tested."
+    }
+  ],
+  "trade_offs": [
+    {
+      "description": "The source index type_status_date leads with ID, so it cannot serve filters on post_type and post_status. The target redefines it as (post_type, post_status, post_date, ID), the column order WordPress core defines.",
+      "impact": "Listings with equality on post type and status (queries `305e3eaa`, `d4bf16d6`) read only the matching rows in post_date order. Query `12f856ea` excludes statuses with `!=`, so it still scans every row of its post type and sorts them: rows examined drop from about 15,790 per call to about the row count of that post type, and a filesort remains. No application change is needed; the index name stays the same.",
+      "source_tables": [
+        "wp_posts"
+      ],
+      "target_tables": [
+        "wp_posts"
+      ],
+      "query_ids": [
+        "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+        "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+        "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c",
+        "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+        "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0"
+      ],
+      "engine": "Aurora MySQL"
+    },
+    {
+      "description": "Composite indexes are added on wp_postmeta (post_id, meta_key) and wp_woocommerce_order_itemmeta (order_item_id, meta_key), and on wp_actionscheduler_actions (hook, group_id, status, claim_id). The single-column indexes stay because they return rows already ordered by meta_id for the per-object meta loads.",
+      "impact": "Meta lookups by object and key read one row instead of 10 to 19 rows, and the WooCommerce sales reports join meta by key without scanning. Each insert into these tables maintains one more index, which costs little at the observed near-zero write rate. Storage grows by a few tens of MB.",
+      "source_tables": [
+        "wp_postmeta",
+        "wp_woocommerce_order_itemmeta",
+        "wp_actionscheduler_actions"
+      ],
+      "target_tables": [
+        "wp_postmeta",
+        "wp_woocommerce_order_itemmeta",
+        "wp_actionscheduler_actions"
+      ],
+      "query_ids": [
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+        "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+        "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+        "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+        "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf"
+      ],
+      "engine": "Aurora MySQL"
+    },
+    {
+      "description": "Reporting queries go to an Aurora Replica through the reader endpoint, and repeated option, meta and term reads go to an ElastiCache object cache. The schema stays a 1:1 carry-over of the WordPress and WooCommerce tables.",
+      "impact": "Report results on the replica can trail the writer by up to about 100 ms of replica lag, which does not affect sales totals shown in dashboards. Keeping the WordPress schema unchanged means plugins and core upgrades keep working with no code changes.",
+      "source_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_woocommerce_order_items",
+        "wp_woocommerce_order_itemmeta",
+        "wp_options"
+      ],
+      "target_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_woocommerce_order_items",
+        "wp_woocommerce_order_itemmeta",
+        "wp_options"
+      ],
+      "query_ids": [
+        "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+        "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+        "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60"
+      ],
+      "engine": "Aurora MySQL"
+    },
+    {
+      "description": "Zero dates are carried over unchanged under a load-session `sql_mode` that accepts them, and are not replaced with real dates or NULL in the NOT NULL WordPress columns.",
+      "impact": "Drafts keep their floating publish dates and WordPress behaves after cutover exactly as before. The target keeps holding zero dates, because WordPress removes the zero-date and strict modes from its own sessions, so reporting or ETL tools that read these columns must handle '0000-00-00 00:00:00'.",
+      "source_tables": [
+        "wp_posts",
+        "wp_comments",
+        "wp_users",
+        "wp_actionscheduler_actions",
+        "wp_actionscheduler_logs"
+      ],
+      "target_tables": [
+        "wp_posts",
+        "wp_comments",
+        "wp_users",
+        "wp_actionscheduler_actions",
+        "wp_actionscheduler_logs"
+      ],
+      "query_ids": [],
+      "engine": "Aurora MySQL"
+    },
+    {
+      "description": "[PE note] After cutover, confirm with EXPLAIN that the optimizer picks the new composites (post_id_meta_key, order_item_id_meta_key, hook_group_status_claim) and not the older single-column or hook_status_scheduled_date_gmt indexes. Run ANALYZE TABLE after the bulk load so the statistics are current.",
+      "impact": "[PE note] After cutover, confirm with EXPLAIN that the optimizer picks the new composites (post_id_meta_key, order_item_id_meta_key, hook_group_status_claim) and not the older single-column or hook_status_scheduled_date_gmt indexes. Run ANALYZE TABLE after the bulk load so the statistics are current.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "[PE note] Query `2389b8a0` (wp_terms join wp_term_taxonomy by term_id IN, about 2 calls/s) recorded about 11,800 full table scans and is not covered by this delta. The term tables are small and the query averages 0.29 ms, so this is not a blocker, but check that the term_taxonomy index on (term_id, taxonomy) came across in the carried-over DDL.",
+      "impact": "[PE note] Query `2389b8a0` (wp_terms join wp_term_taxonomy by term_id IN, about 2 calls/s) recorded about 11,800 full table scans and is not covered by this delta. The term tables are small and the query averages 0.29 ms, so this is not a blocker, but check that the term_taxonomy index on (term_id, taxonomy) came across in the carried-over DDL.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "[PE note] Report-to-replica routing: the WooCommerce Analytics/report queries (`a0b655ea`, `fc99562b`, `cb3300c6`, `d99618ea`, `119b7fbf`) are read-only. Check that the HyperDB or LudicrousDB rules send only those queries to the reader endpoint, and that admin write paths and read-after-write flows such as checkout and order status changes stay on the writer.",
+      "impact": "[PE note] Report-to-replica routing: the WooCommerce Analytics/report queries (`a0b655ea`, `fc99562b`, `cb3300c6`, `d99618ea`, `119b7fbf`) are read-only. Check that the HyperDB or LudicrousDB rules send only those queries to the reader endpoint, and that admin write paths and read-after-write flows such as checkout and order status changes stay on the writer.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "[PE note] Replica lag on Aurora is usually tens of milliseconds, but it can spike during heavy writer activity. The '100 ms' figure is typical, not a guarantee.",
+      "impact": "[PE note] Replica lag on Aurora is usually tens of milliseconds, but it can spike during heavy writer activity. The '100 ms' figure is typical, not a guarantee.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "[PE note] Index builds on wp_postmeta (about 449,000 rows) and wp_woocommerce_order_itemmeta (about 244,000 rows) are small. Create the indexes after the bulk load, not before, to shorten load time.",
+      "impact": "[PE note] Index builds on wp_postmeta (about 449,000 rows) and wp_woocommerce_order_itemmeta (about 244,000 rows) are small. Create the indexes after the bulk load, not before, to shorten load time.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "[PE note] Query `a0b655ea` (911 ms, about 369,000 rows examined) still aggregates many postmeta rows even with the composite index. The replica keeps that load off the storefront, and moving to WooCommerce HPOS / wc_order_stats-based analytics is the long-term fix at the application layer.",
+      "impact": "[PE note] Query `a0b655ea` (911 ms, about 369,000 rows examined) still aggregates many postmeta rows even with the composite index. The replica keeps that load off the storefront, and moving to WooCommerce HPOS / wc_order_stats-based analytics is the long-term fix at the application layer.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    }
+  ],
+  "validation_passed": true,
+  "validation_failures": []
+}
