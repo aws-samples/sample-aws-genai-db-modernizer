@@ -157,9 +157,9 @@ Cognito auth, Step Functions orchestration, S3 and DynamoDB storage); that path
 was retired in favor of running the tool directly where the user already is
 (see [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)).
 The CloudFormation templates, Docker images and deploy scripts for the hosted
-service are gone. Two CloudFormation templates remain for unrelated reasons:
-[`example-ci-runner-iam.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/example-ci-runner-iam.yaml),
-a sample for anyone standing up their own CI runner role, and
+service are gone, and CI needs no AWS role from this repository (the sample
+CI runner role was removed in [#1723](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1723)).
+One CloudFormation template remains from that path:
 [`automation.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/automation.yaml),
 which provisions a per-VPC SSM automation instance for the opt-in live
 collection path described in §2.2 and §7.1 (kept per a maintainer decision —

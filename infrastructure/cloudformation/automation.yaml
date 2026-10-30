@@ -6,8 +6,9 @@ Description: >-
   Includes VPC endpoints for SSM, Secrets Manager, and S3 — works in
   private subnets without NAT gateway or internet access.
 
-  Phase 0 decision: SecretsManager GetSecretValue is broad (all secrets in account).
-  Future improvement: scope to a naming prefix like "modernizer/*".
+  The instance reads database credentials only from RDS-managed master user
+  secrets (rds!db-... and rds!cluster-...) and from secrets named
+  <ProjectName>/...; list any other secret in AdditionalSecretArns.
 
 Parameters:
   VpcId:
@@ -51,11 +52,27 @@ Parameters:
   ProjectName:
     Type: String
     Default: modernizer
-    Description: Project identifier for resource naming
+    Description: >-
+      Project identifier for resource naming. The instance can also read the
+      secrets named <ProjectName>/... (for example modernizer/wordpress).
+
+  AdditionalSecretArns:
+    Type: CommaDelimitedList
+    Default: ''
+    # Empty, or Secrets Manager secret ARNs in a named region and account (no
+    # bare '*' or 'arn:*'). Written to hold whether the pattern is checked per
+    # element or on the whole comma-separated value.
+    AllowedPattern: '^$|^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[^,]+(,arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[^,]+)*$'
+    ConstraintDescription: Each entry must be a Secrets Manager secret ARN (arn:aws:secretsmanager:<region>:<account>:secret:<name>)
+    Description: >-
+      Optional full ARNs of other Secrets Manager secrets the instance may read,
+      for credentials that are neither RDS-managed nor named <ProjectName>/...
+      (IAM wildcards allowed; a secret ARN ends in -XXXXXX, so end a name with -*).
 
 Conditions:
   HasS3Bucket: !Not [!Equals [!Ref S3BucketName, '']]
   HasSubnet2: !Not [!Equals [!Ref SubnetId2, '']]
+  HasAdditionalSecrets: !Not [!Equals [!Join ['', !Ref AdditionalSecretArns], '']]
 
 Resources:
   # ============================================================
@@ -210,16 +227,34 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
-        # Phase 0: broad read on all secrets in account
-        # Future: scope to "modernizer/*" prefix
+        # The collector names one secret per database (src/tools/aws/ssm_executor.py
+        # fetches it on this instance). The API accepts an RDS-managed master user
+        # secret by name (rds!db-<id>, rds!cluster-<id>; src/api/README.md), and
+        # the project's own secrets live under <ProjectName>/. Secrets Manager
+        # appends -XXXXXX to every secret ARN, hence the trailing wildcard.
         - PolicyName: SecretsManagerRead
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: ReadCollectionSecrets
+                Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue  # pragma: allowlist secret
-                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*'  # pragma: allowlist secret
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/*'  # pragma: allowlist secret
+        - !If
+          - HasAdditionalSecrets
+          - PolicyName: SecretsManagerReadAdditional
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: ReadAdditionalSecrets
+                  Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue  # pragma: allowlist secret
+                  Resource: !Ref AdditionalSecretArns
+          - !Ref AWS::NoValue
         - !If
           - HasS3Bucket
           - PolicyName: S3ReadDdl

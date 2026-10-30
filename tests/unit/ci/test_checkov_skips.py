@@ -43,7 +43,6 @@ TEMPLATES = [
 ]
 #: CI still scans the example CI runner template, which is being removed
 #: (#1723); its skips are not part of the reviewed set.
-BEING_REMOVED = {REPO_ROOT / "infrastructure" / "cloudformation" / "example-ci-runner-iam.yaml"}
 
 DOCKERFILES = [
     REPO_ROOT / "infrastructure" / "docker" / "agent-load-test" / "Dockerfile",
@@ -161,7 +160,7 @@ def test_every_file_ci_scans_is_reviewed_here():
         REPO_ROOT / path
         for command in _ci_checkov_commands()
         for path in re.findall(r"-f\s+(\S+)", command)
-    } - BEING_REMOVED
+    }
     assert scanned
     assert scanned <= set(TEMPLATES) | set(DOCKERFILES), sorted(
         str(p) for p in scanned - set(TEMPLATES) - set(DOCKERFILES)
