@@ -543,6 +543,10 @@ no such field (ADR-008 Decision 1).
 If two in-flight PRs both touch a contract, whichever lands second
 regenerates the snapshot.
 
+### Renaming an id or an enum value
+
+A saved job keeps the spelling it was written with, and the contract version stamp does not cover it. A renamed or removed id or enum value needs a legacy-map entry in the same PR (a `status = "legacy"` engine file, a `penalty_aliases` entry, a kept `ReasonCode` member, `LEGACY_CAPABILITY_IDS`, or a MAJOR adapter). `tests/fixtures/old_jobs/<tag>/` holds a real job an older release wrote; `tests/contract/test_old_job_loads.py` loads it through the real read paths and fails when a stored engine id, access class, pattern key, catalog pattern id, capability or move reason code no longer resolves (it reads every JSON value by key name, so a new file in the fixture is covered). Other vocabularies are not checked. Convention: keep the fixture as the release wrote it; fix the code with a legacy map instead.
+
 ### The public `assess()` contract
 
 The library entry point's request and result (`src/assessment/models.py`, [docs/contracts/assess.md](docs/contracts/assess.md)) are versioned on their own (`CONTRACT_VERSION`) and promised to callers, so two guards in `tests/contract/` (run by `make test` and `ci/test.sh`) check them as a caller would:
