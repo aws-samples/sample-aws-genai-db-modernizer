@@ -666,8 +666,8 @@ def test_a_trigger_on_the_source_compatible_engine_defers_to_the_design_note(
         "note for each says what application work it needs."
     )
     assert risk["mitigation"] == (
-        "Before the Wave 1 gate, test each one on Aurora MySQL against the source's "
-        "behaviour and do the application work the schema design's note for it names."
+        "Test each one on Aurora MySQL against the source's behaviour and do the application "
+        "work the schema design's note for it names. See the Wave 1 gate in the roadmap."
     )
     text = f"{risk['description']} {risk['mitigation']}"
     for claim in ("does not change", "no application change", "needs application code"):
@@ -704,9 +704,9 @@ def test_a_feature_the_engine_family_does_not_carry_still_needs_application_code
         "it needs."
     )
     assert risk["mitigation"] == (
-        "Move the logic of the extension into the application before the Wave 1 gate, and "
-        "test the trigger on Aurora MySQL against the source's behaviour and do the "
-        "application work its note names, as the schema design's note for each says."
+        "Move the logic of the extension into the application, and test the trigger on "
+        "Aurora MySQL against the source's behaviour and do the application work its note "
+        "names, as the schema design's note for each says. See the Wave 1 gate in the roadmap."
     )
 
 

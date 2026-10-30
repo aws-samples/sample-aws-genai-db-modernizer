@@ -203,3 +203,79 @@ def cross_section_repeats(md: str) -> dict[str, int]:
         "aurora_consolidation_scores": aurora.count("(no unique value:"),
         "raw_utility_reason": aurora.count("utility/metadata statement"),
     }
+
+
+# #1510: each risk's remedy and each wave gate have one owner. The Risk register owns
+# a risk's mitigation; a mitigation strategy names the risk by id and adds only what the
+# register does not say. The roadmap owns a wave's gate: the risks to close before it are
+# listed there, and a mitigation that needs the gate points at it.
+REMEDY_PHRASE_WORDS = 4
+GATE_POINTER = re.compile(r"See the Wave \d+ gate in the roadmap\.")
+_GATE_STATED = re.compile(
+    r"\b(?:before|at|by|ahead of) (?:the |this )?Wave \d+(?:'s)? gate\b"
+    r"|\b(?:before|at|by|ahead of) this gate\b",
+    re.I,
+)
+
+
+def _phrases(text: str, n: int = REMEDY_PHRASE_WORDS) -> set[str]:
+    """Every run of ``n`` words of ``text`` (letters only, lowercased): the facts two
+    wordings of one remedy share however their sentences are cut or reordered."""
+    words = re.findall(r"[a-z]+", text.replace("\\", "").lower())
+    return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+def _open_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    risks = (report.get("risk_assessment") or {}).get("risks") or []
+    return [r for r in risks if isinstance(r, dict) and r.get("risk_id")]
+
+
+def remedy_restatements(report: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(risk id, strategy)`` for each mitigation strategy that names an open risk and
+    restates part of that risk's mitigation: they share a run of ``REMEDY_PHRASE_WORDS``
+    words. Not a sentence match, so a rewording that keeps a 4-word run of the remedy
+    ("Run the DynamoDB schema design to check ..." for "Run the DynamoDB schema design;
+    ...") counts, and so does a strategy that copies the mitigation whole. It misses a
+    rewording with no 4-word run in common, and a restatement that names no risk id."""
+    strategies = (report.get("risk_assessment") or {}).get("mitigation_strategies") or []
+    found = []
+    for r in _open_risks(report):
+        remedy = _phrases(str(r.get("mitigation") or ""))
+        for s in strategies:
+            if isinstance(s, str) and re.search(rf"\b{r['risk_id']}\b", s) and remedy & _phrases(s):
+                found.append((str(r["risk_id"]), s))
+    return found
+
+
+def gate_restatements(report: dict[str, Any]) -> list[str]:
+    """Every text in ``report.json`` outside a wave's own gate that states what is due
+    at a wave gate ("before the Wave 3 gate", "at the Wave 3 gate"): a risk's mitigation
+    or a mitigation strategy. The pointer ``GATE_POINTER`` refers to the gate and is not
+    a statement of it, and "before cutover" names no wave gate."""
+    ra = report.get("risk_assessment") or {}
+    texts = [str(r.get("mitigation") or "") for r in _open_risks(report)]
+    texts += [s for s in ra.get("mitigation_strategies") or [] if isinstance(s, str)]
+    return [t for t in texts if _GATE_STATED.search(GATE_POINTER.sub("", t))]
+
+
+def gate_risk_ids(report: dict[str, Any]) -> dict[int, set[str]]:
+    """wave number -> the risk ids its gate in ``migration_waves`` names."""
+    out: dict[int, set[str]] = {}
+    for w in report.get("migration_waves") or []:
+        if isinstance(w, dict) and isinstance(w.get("wave"), int):
+            out[w["wave"]] = set(re.findall(r"\bRISK-\d+\b", str(w.get("gate") or "")))
+    return out
+
+
+def remedy_copies(text: str, report: dict[str, Any], words: int = 7) -> list[str]:
+    """The open risks whose mitigation ``text`` (a rendered section other than the
+    register, such as Mitigation strategies or the executive report's Next steps)
+    prints: its first ``words`` words, compared with escapes, line breaks and
+    spacing ignored, so a wrapped PDF line still counts."""
+    flat = " ".join(text.replace("\\", "").split())
+    found = []
+    for r in _open_risks(report):
+        lead = " ".join(str(r.get("mitigation") or "").replace("\\", "").split()[:words])
+        if len(lead.split()) == words and lead in flat:
+            found.append(str(r["risk_id"]))
+    return found

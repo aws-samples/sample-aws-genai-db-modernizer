@@ -78,6 +78,7 @@ from .risks import (
     filtered_risks,
     resolved_risk_label,
     resolved_risks,
+    shared_mitigation_refs,
 )
 from .roadmap import _roadmap_md
 from .sources_of_truth import sources_of_truth_md
@@ -263,9 +264,10 @@ def _resolved_by_severity(facts: dict[str, Any]) -> str:
 def _mitigation_strategies_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Mitigation strategies" section (#1020).
 
-    A CRITICAL or HIGH risk's line repeats the mitigation its Risk register entry
-    prints; here it names the risk and refers to it (#1220). The executive report's
-    Next steps print the line whole: it has no register."""
+    Synthesis writes each line naming its risks by id, never restating the mitigation
+    the Risk register prints (#1510). A report written before that has a CRITICAL or
+    HIGH risk's line repeat its register entry's mitigation; here it names the risk
+    and refers to it (#1220)."""
     risk = report.get("risk_assessment") or {}
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
     if not strategies:
@@ -1003,8 +1005,9 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
             eng, _ = _risk_engine_and_body(r.get("description"))
             by_eng.setdefault(eng, []).append(r)
         out += [f"## Risk register ({facts.get('open_risk_count', 0)})", ""]
-        # #1410: a mitigation another risk above already states in full is named by it.
-        mitigated_by: dict[str, str] = {}
+        # #1410: a mitigation another risk already states in full is named by it; #1510:
+        # which one, from the one computation every deliverable reads.
+        mitigated_by = shared_mitigation_refs(report)
         for eng, items in by_eng.items():
             # #572: eng is the raw [engine] tag _risk_engine_and_body parsed off the
             # description (or "(general)") -- display_engine leaves "(general)" as is
@@ -1025,10 +1028,9 @@ def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> 
                 )
                 mitigation = str(r.get("mitigation") or "")
                 if mitigation and not _repeats(mitigation, body):
-                    if mitigation in mitigated_by:
-                        out.append(f"  - Mitigation: as for {mitigated_by[mitigation]}.")
+                    if rid in mitigated_by:
+                        out.append(f"  - Mitigation: as for {escaping.md_text(mitigated_by[rid])}.")
                     else:
-                        mitigated_by[mitigation] = escaping.md_text(rid)
                         out.append(
                             "  - Mitigation: " + said.line(escaping.md_text(mitigation), where)
                         )

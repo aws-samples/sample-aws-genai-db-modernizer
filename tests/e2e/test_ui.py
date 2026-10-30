@@ -25,6 +25,8 @@ import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
+from src.report.risks import shared_mitigation_refs
+from src.shared.migration_risk_rules import backfill_report_risks
 from tests.e2e.pipeline import PipelineResult
 from tests.placeholders import placeholder_leaks
 
@@ -1067,6 +1069,7 @@ def test_results_page_shows_the_same_risks_as_report_json(
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         by_severity = report["facts"].get("open_risks_by_severity") or {}
         risks = report["risk_assessment"]["risks"]
+        refs = shared_mitigation_refs(backfill_report_risks(report))
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
         page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
@@ -1081,6 +1084,11 @@ def test_results_page_shows_the_same_risks_as_report_json(
                 if risk.get("severity") == severity:
                     shown = page.get_by_text(str(risk["risk_id"]), exact=True)
                     assert shown.count() >= 1, (r.db, risk["risk_id"])
+                    # #1510: a mitigation an earlier risk states is "as for" it, as in
+                    # both reports (one computation, ``shared_mitigation_refs``).
+                    if risk["risk_id"] in refs:
+                        same = page.get_by_text(f"as for {refs[risk['risk_id']]}.")
+                        assert same.count() >= 1, (r.db, risk["risk_id"])
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

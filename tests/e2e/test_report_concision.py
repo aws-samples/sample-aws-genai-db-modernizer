@@ -17,15 +17,28 @@ import re
 import pytest
 
 from src.report.escaping import md_code, md_text
+from src.report.executive_report import (
+    _names_pattern,
+    card_mitigation,
+    table_names,
+    without_table_names,
+)
 from src.report.renderers import render_engineering_report_md
+from src.report.risks import _risk_engine_and_body, filtered_risks, shared_mitigation_refs
 from src.shared.gate_facts import GATE_TABLES_SHOWN
+from src.shared.migration_risk_rules import GATE_IDS_NAMED
+from tests.e2e.deliverable_figures import pdf_page_texts
 from tests.e2e.pipeline import PipelineResult
 from tests.report_concision import (
     bare_ids,
     cross_section_repeats,
+    gate_restatements,
+    gate_risk_ids,
     known_query_ids,
     md_sections,
     raw_labels,
+    remedy_copies,
+    remedy_restatements,
     repeated_paragraphs,
     repeated_sentences,
     repeated_statements,
@@ -198,3 +211,55 @@ def test_each_item_is_listed_in_one_section(run: PipelineResult) -> None:
         # The register entry it refers to prints that mitigation (or its own text says it).
         entry = register.split(f"**{rid}**", 1)[1].split("\n- **", 1)[0]
         assert "  - Mitigation: " in entry or md_text(mitigations[rid]) in entry, rid
+
+
+@pytest.mark.replay_stale
+def test_each_risk_remedy_and_wave_gate_is_stated_once(run: PipelineResult) -> None:
+    """#1510: the Risk register owns each risk's remedy and the roadmap owns each wave
+    gate. No mitigation strategy restates a remedy (``remedy_restatements``, a shared
+    phrase, not a sentence match); neither the engineering report's Mitigation strategies
+    nor the executive report's Next steps print one; no mitigation or strategy states a
+    wave gate, and each wave's gate names the risks to close before it. Marked
+    ``replay_stale``: the replay's saved report.json was synthesized before #1510 and its
+    stored strategies are rendered as written; fresh e2e-llm runs check it."""
+    report = json.loads(run.report_json().read_text())
+    assert remedy_restatements(report) == []
+    assert gate_restatements(report) == []
+    md = _md(run)
+    assert remedy_copies(section(md, "Mitigation strategies"), report) == []
+    pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
+    at = pdf.find("Next steps 1. ")
+    assert remedy_copies(pdf[at:] if at >= 0 else "", report) == []
+    _check_cards_state_what_strategies_name(report, pdf)
+    named = gate_risk_ids(report)
+    by_wave: dict[int, list[str]] = {}
+    for risk in report["risk_assessment"]["risks"]:
+        if risk.get("rule") and risk.get("wave") in named:
+            by_wave.setdefault(risk["wave"], []).append(risk["risk_id"])
+    for wave, ids in by_wave.items():
+        gate = report["migration_waves"][wave - 1]["gate"]
+        assert "before this gate" in gate, wave
+        if len(ids) <= GATE_IDS_NAMED:
+            assert set(ids) <= named[wave], (wave, ids)
+
+
+def _check_cards_state_what_strategies_name(report: dict, pdf: str) -> None:
+    """Every risk a mitigation strategy (so Next steps) names shows its mitigation on its
+    executive card (#1510): its Mitigation line, "as for" a card that does, or its own
+    description, which states it, still with table names taken out."""
+    strategies = " ".join(report["risk_assessment"].get("mitigation_strategies") or [])
+    named = set(re.findall(r"\bRISK-\d+\b", strategies))
+    names = _names_pattern(table_names(report))
+    refs = shared_mitigation_refs(report)
+    by_id = {r["risk_id"]: r for r in filtered_risks(report)}
+    for rid in sorted(named & set(by_id)):
+        risk = by_id[rid]
+        if not risk.get("mitigation"):
+            continue
+        line = card_mitigation(risk, names, refs)
+        if line and line.startswith("as for "):
+            assert refs[rid] in by_id, rid
+            risk, line = by_id[refs[rid]], card_mitigation(by_id[refs[rid]], names, refs)
+        stated = line or without_table_names(_risk_engine_and_body(risk["description"])[1], names)
+        lead = " ".join(stated.split()[:6])
+        assert lead and lead in pdf, (rid, lead)

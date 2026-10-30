@@ -11,9 +11,10 @@ computed here once; renderers only format the risk).
 
 Every risk carries ``rule`` (a key of :data:`RULES`), ``wave`` (the migration
 wave whose gate it must clear, or None), its ``affected_tables`` and
-``query_ids`` as evidence, and a mitigation that names that wave's gate.
-:func:`wave_gate_strategies` adds one mitigation-strategy line per wave that
-names the risks to close before its gate.
+``query_ids`` as evidence, and a mitigation that points at that wave's gate
+(``by_gate``: "See the Wave 3 gate in the roadmap."). :func:`add_migration_risks`
+ends each wave's gate in the roadmap with the risks to close before it (#1510:
+the roadmap owns the gate, so no mitigation or strategy states it again).
 
 The register stays short: one sync risk and one close-call risk per wave, the
 detail (engine pairs, tables, queries) in the engineering report's sources of
@@ -130,6 +131,8 @@ from src.shared.migration_risk_rules import (
     LISTED_ITEMS,
     RULES,
     RiskRule,
+    add_gate_lines,
+    by_gate,
     flagged_unservable_risks,
     last_risk_number,
     listed_items,
@@ -179,10 +182,6 @@ def _join(items: list[str]) -> str:
 
 def _names(engines: Iterable[str]) -> str:
     return _join([display_engine(e) for e in engines])
-
-
-def _gate(wave: int | None) -> str:
-    return f"Wave {wave} gate" if wave else "cutover"
 
 
 def _start(wave: int | None) -> str:
@@ -582,8 +581,10 @@ def _wave_sync_risk(
             f"them; this wave's gate brings in {mine}."
         )
     mitigation = (
-        f"Before Wave {n} starts, " + "; ".join(steps) + f". Compare the row counts on both "
-        f"sides at the {_gate(n)}."
+        f"Before Wave {n} starts, "
+        + "; ".join(steps)
+        + ". "
+        + by_gate("Compare the row counts on both sides", n)
     )
     return _risk(
         "sync.wave",
@@ -739,8 +740,11 @@ def _unservable_risks(ctx: _Context, query_traces: Mapping[str, Any] | None) -> 
                 f"{_n(len(qids), 'query', 'queries')} {'fits' if len(qids) == 1 else 'fit'} no "
                 f"analyzed engine and {'sits' if len(qids) == 1 else 'sit'} on {name} as a "
                 "fallback.",
-                f"Redesign these queries or accept {name} for them, then re-run the assignment "
-                f"review before the {_gate(wave)}.",
+                by_gate(
+                    f"Redesign these queries or accept {name} for them, then re-run the "
+                    "assignment review",
+                    wave,
+                ),
                 {t for q in qids for t in ctx.tables_of.get(q, ())},
                 qids,
                 wave,
@@ -775,8 +779,11 @@ def _cache_risks(
                 f"{_n(len(dropped), 'read', 'reads')} the plan meant to cache "
                 f"{'was' if len(dropped) == 1 else 'were'} dropped from the cache layer and "
                 f"{'goes' if len(dropped) == 1 else 'go'} to {target} uncached.",
-                f"Load-test these reads on {target} without the cache before the "
-                f"{_gate(wave)}, or add a cache design that serves them.",
+                by_gate(
+                    f"Load-test these reads on {target} without the cache, or add a cache "
+                    "design that serves them",
+                    wave,
+                ),
                 {t for q in dropped for t in ctx.tables_of.get(q, ())},
                 dropped,
                 wave,
@@ -798,9 +805,13 @@ def _cache_risks(
                 f"The cache design marks {_n(k, 'pattern', 'patterns')} unsupported; the "
                 "engineering report lists each one with its workaround under Target schemas by "
                 "engine.",
-                f"Serve {_these(k, 'pattern', 'patterns')} from {'its' if k == 1 else 'their'} owner engine or "
-                f"add {'it' if k == 1 else 'them'} to the cache design before the "
-                f"{_gate(wave)}, as the design's workaround for each says.",
+                by_gate(
+                    f"Serve {_these(k, 'pattern', 'patterns')} from "
+                    f"{'its' if k == 1 else 'their'} owner engine or add "
+                    f"{'it' if k == 1 else 'them'} to the cache design, as the design's "
+                    "workaround for each says",
+                    wave,
+                ),
                 {t for q in qids for t in ctx.tables_of.get(q, ())},
                 qids,
                 wave,
@@ -899,19 +910,22 @@ def _app_layer_risks(
                 )
                 steps.append(f"move the logic of the {things} into the application")
         if coded and carried:
-            mitigation = (
-                f"{steps[0][:1].upper()}{steps[0][1:]} before the {_gate(wave)}, and {steps[1]}, "
-                "as the schema design's note for each says."
+            mitigation = by_gate(
+                f"{steps[0][:1].upper()}{steps[0][1:]}, and {steps[1]}, as the schema "
+                "design's note for each says",
+                wave,
             )
         elif coded:
-            mitigation = (
-                f"Move the logic of each one into the application before the {_gate(wave)}, "
-                "as the schema design's note for it says."
+            mitigation = by_gate(
+                "Move the logic of each one into the application, as the schema design's "
+                "note for it says",
+                wave,
             )
         else:
-            mitigation = (
-                f"Before the {_gate(wave)}, test each one on {name} against the source's "
-                "behaviour and do the application work the schema design's note for it names."
+            mitigation = by_gate(
+                f"Test each one on {name} against the source's behaviour and do the "
+                "application work the schema design's note for it names",
+                wave,
             )
         out.append(
             _risk(
@@ -959,8 +973,11 @@ def _hot_partition_risks(
                 f"{_n(len(tables), 'design table has', 'design tables have')} a partition above "
                 f"80% of its throughput limit at the designed peak (the highest at "
                 f"{peak:g}%).",
-                f"Spread the load on these partitions before the {_gate(wave)} (write sharding "
-                "or a different partition key), and load-test them at peak.",
+                by_gate(
+                    "Spread the load on these partitions (write sharding or a different "
+                    "partition key), and load-test them at peak",
+                    wave,
+                ),
                 {s for t in tables for s in sources.get(t, set())},
                 qids,
                 wave,
@@ -1095,14 +1112,16 @@ def _redesign_risks(
                 "design.redesign",
                 engine,
                 description,
-                (
-                    f"Give each of {_these(k, 'query', 'queries')} the keys routing assumed in "
-                    f"the {name} design before the {_gate(wave)}, check a key with few or "
-                    "unknown distinct values for hot partitions, and serve none of them as a "
-                    "scan."
-                    if keys
-                    else f"Design {_these(k, 'query', 'queries')} in {name} as each one's "
-                    f"evidence says before the {_gate(wave)}, and serve none of them as a scan."
+                by_gate(
+                    (
+                        f"Give each of {_these(k, 'query', 'queries')} the keys routing "
+                        f"assumed in the {name} design, check a key with few or unknown "
+                        "distinct values for hot partitions, and serve none of them as a scan"
+                        if keys
+                        else f"Design {_these(k, 'query', 'queries')} in {name} as each "
+                        "one's evidence says, and serve none of them as a scan"
+                    ),
+                    wave,
                 ),
                 {t for q in queries for t in ctx.tables_of.get(q, ())},
                 queries,
@@ -1220,11 +1239,11 @@ def _carried_write_risks(
             f"{_join(intents)}. A table has one writer, so each moves with the other "
             "statements that write its table."
         )
-        mitigation = (
-            f"Before the {_gate(wave)}, design {_these(k, 'statement', 'statements')} in "
-            f"{name} for what {'it is' if k == 1 else 'they are'} for, the target's own way, "
-            "not as a copy of the source's set-based SQL; each statement's detail names the "
-            "approach."
+        mitigation = by_gate(
+            f"Design {_these(k, 'statement', 'statements')} in {name} for what "
+            f"{'it is' if k == 1 else 'they are'} for, the target's own way, not as a copy of "
+            "the source's set-based SQL; each statement's detail names the approach",
+            wave,
         )
         details = [
             carried_write_detail(
@@ -1340,16 +1359,22 @@ def build_migration_risks(
     return number_risks(risks, start_id)
 
 
-def add_migration_risks(risk_assessment: dict[str, Any], risks: list[dict[str, Any]]) -> None:
-    """Append ``risks`` to ``risk_assessment``: the open list, the overall level
-    and one wave-gate line per wave in ``mitigation_strategies``. In place."""
+def add_migration_risks(
+    risk_assessment: dict[str, Any],
+    risks: list[dict[str, Any]],
+    migration_waves: list[dict[str, Any]] | None = None,
+) -> None:
+    """Append ``risks`` to ``risk_assessment``: the open list and the overall level.
+    Each wave's gate in ``migration_waves`` ends with the risks to close before it
+    (#1510: the roadmap owns the gate); a risk no wave there holds gets its line in
+    ``mitigation_strategies``. In place."""
     if not risks:
         return
     risk_assessment["risks"] = [*(risk_assessment.get("risks") or []), *risks]
     risk_assessment["overall_risk_level"] = overall_risk_level(risk_assessment["risks"])
     risk_assessment["mitigation_strategies"] = [
         *(risk_assessment.get("mitigation_strategies") or []),
-        *wave_gate_strategies(risks),
+        *add_gate_lines(migration_waves, risks),
     ]
 
 

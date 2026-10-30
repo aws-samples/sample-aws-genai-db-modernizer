@@ -100,15 +100,16 @@ def test_each_sample_raises_its_migration_risks(run: PipelineResult) -> None:
         assert r["rule"] in RULES
         assert r["affected_tables"] and r["query_ids"], r["risk_id"]
         assert r["wave"] and f"Wave {r['wave']}" in r["mitigation"], r["risk_id"]
-    strategies = " ".join(report["risk_assessment"]["mitigation_strategies"])
+    # #1510: each wave's gate in the roadmap lists the risks to close before it.
+    gates = {w["wave"]: w["gate"] for w in report["migration_waves"]}
     per_wave = {w: sum(1 for r in risks if r["wave"] == w) for w in {r["wave"] for r in risks}}
     for r in risks:
-        # A wave with more risks than a strategy line names is counted (the cards carry
+        # A wave with more risks than a gate line names is counted (the cards carry
         # the ids, ``GATE_IDS_NAMED``): discourse's Wave 3 (6 risks) since #1362.
         if per_wave[r["wave"]] > GATE_IDS_NAMED:
-            assert f"the {per_wave[r['wave']]} Wave {r['wave']} risks" in strategies, r["risk_id"]
+            assert f"the {per_wave[r['wave']]} Wave {r['wave']} risks" in gates[r["wave"]]
         else:
-            assert r["risk_id"] in strategies, r["risk_id"]
+            assert r["risk_id"] in gates[r["wave"]], r["risk_id"]
 
 
 def test_the_sync_risk_agrees_with_the_wave_and_source_facts(run: PipelineResult) -> None:
@@ -432,6 +433,25 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     fresh_risks = [
         {**r, "mitigation": str(r["mitigation"]).split(" Start with the tables")[0]}
         for r in fresh_risks
+    ]
+    # #1510: a fresh mitigation points at its wave's gate; a stored one, written before,
+    # still states it. Those two are compared by the wave they name; every other text,
+    # the backfilled rule's included, must match as written.
+    assert len(backfilled) == len(fresh_risks)
+    reworded = {
+        i
+        for i, (b, f) in enumerate(zip(backfilled, fresh_risks, strict=True))
+        if f.get("rule") not in (None, "routing.flagged")
+        and "in the roadmap." in str(f["mitigation"])
+    }
+    for i in reworded:
+        b, f = backfilled[i], fresh_risks[i]
+        assert f"Wave {f['wave']}" in b["mitigation"] and b["wave"] == f["wave"], b["risk_id"]
+    backfilled = [
+        {**r, "mitigation": None} if i in reworded else r for i, r in enumerate(backfilled)
+    ]
+    fresh_risks = [
+        {**r, "mitigation": None} if i in reworded else r for i, r in enumerate(fresh_risks)
     ]
     assert [_as_stored(r) for r in backfilled] == [_as_stored(r) for r in fresh_risks]
     for b, f in zip(backfilled, fresh_risks, strict=True):

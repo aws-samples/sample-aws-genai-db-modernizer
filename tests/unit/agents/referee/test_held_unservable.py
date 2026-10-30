@@ -415,4 +415,5 @@ def test_synthesis_raises_the_held_query_as_a_risk_before_the_summary(store) -> 
     assert risk["severity"] == "MEDIUM" and risk["query_ids"] == ["q-hold"]
     assert risk["affected_tables"] == ["t"]
     assert report["facts"]["open_risk_count"] == len(report["risk_assessment"]["risks"])
-    assert any(risk["risk_id"] in s for s in report["risk_assessment"]["mitigation_strategies"])
+    # #1510: its wave's gate in the roadmap lists it.
+    assert any(risk["risk_id"] in str(w.get("gate")) for w in report["migration_waves"])

@@ -1348,8 +1348,6 @@ def build_risk_assessment(
     # target engine -> {query id: severity} for queries an anti-pattern's advice moved to
     # that engine but its design does not serve (reported as one gap risk per engine).
     coverage_gaps: dict[str, dict[str, str]] = {}
-    # #949: engines whose coverage gap is "not checked", because no design ran.
-    undesigned: set[str] = set()
 
     for engine, artifacts in data.engines.items():
         # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
@@ -1814,8 +1812,6 @@ def build_risk_assessment(
         # pattern" only because the design did not run.
         target_artifacts = data.engines.get(target)
         design_ran = bool(target_artifacts and target_artifacts.schema_design)
-        if not design_ran:
-            undesigned.add(target)
         risks.append(
             _coverage_gap_risk(
                 f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables, design_ran
@@ -1850,9 +1846,7 @@ def build_risk_assessment(
     return {
         "overall_risk_level": overall_risk_level(risks),
         "risks": risks,
-        "mitigation_strategies": _build_mitigation_strategies(
-            risks, assigned or set(data.engines), undesigned
-        ),
+        "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
         # Anti-pattern risks the effective assignment resolved (#221): kept for the
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
@@ -2577,8 +2571,9 @@ def _complementary_services(effective_engines: set[str]) -> list[str]:
 
 
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-# Migration-note object types that are database-side code the application must absorb.
-_DB_CODE_OBJECTS = ("procedure", "trigger", "view")
+# A mitigation that asks for a load test, however it is worded ("Load-test", "load
+# test", "load testing"): ``_assigned_engine_mitigation`` writes one, a model may too.
+_LOAD_TEST = re.compile(r"\bload[- ]?test", re.IGNORECASE)
 
 
 def _join_and(items: list[str]) -> str:
@@ -2624,17 +2619,16 @@ def _risk_scope(risk: dict) -> str:
     return f"{n} {'query' if n == 1 else 'queries'}" if n else "no table recorded"
 
 
-def _build_mitigation_strategies(
-    risks: list[dict], effective_engines: set[str], undesigned: set[str] | None = None
-) -> list[str]:
+def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str]) -> list[str]:
     """Mitigation strategies derived from the risks actually present (#222).
 
-    ``undesigned`` (#949) are the engines with no schema design: their coverage gap
-    is a check that did not run, so its strategy is to run the design.
-
-    The CRITICAL/HIGH risks come first, each with its engine, scope and own
-    mitigation; every other line names the risks, engines or objects it is about.
-    Only engines in ``effective_engines`` (the post-reality-check architecture) are
+    The Risk register owns each risk's mitigation (#1510): a strategy names a risk by
+    id and adds only what its entry does not say. The CRITICAL/HIGH risks come first,
+    by id, severity and engine; a risk whose mitigation is the whole strategy (a schema
+    design to run or to complete, application logic to build) is listed by id; the
+    other lines add an action (a load test, a home for unsupported patterns, a
+    blue-green rollout) and name the risks, engines or tables it is about. Only
+    engines in ``effective_engines`` (the post-reality-check architecture) are
     suggested as homes for unsupported patterns.
 
     Only risk-specific strategies: the list is empty when no risk is open (#645). The
@@ -2645,23 +2639,41 @@ def _build_mitigation_strategies(
         (r for r in risks if r.get("severity") in ("CRITICAL", "HIGH")),
         key=lambda r: (_SEVERITY_ORDER.get(r["severity"], 9), r.get("risk_id", "")),
     )
+    labelled: list[str] = []
+    unmitigated: list[str] = []
     for r in severe:
         engine = _tagged_engine(r)
         head = r.get("risk_id", "Risk")
         label = f"{r['severity']}, {display_name(engine)}" if engine else r["severity"]
-        mitigation = r.get("mitigation")
-        body = (
-            _sentence(mitigation)
-            if mitigation
-            else "no mitigation recorded; define one before cutover."
+        if r.get("mitigation"):
+            labelled.append(f"{head} ({label})")
+        else:
+            unmitigated.append(
+                severe_risk_strategy(
+                    head,
+                    label,
+                    _risk_scope(r),
+                    "no mitigation recorded; define one before cutover.",
+                )
+            )
+    if labelled:
+        strategies.append(
+            f"Apply the mitigation{'s' if len(labelled) > 1 else ''} of "
+            f"{_join_and(labelled)} first."
         )
-        strategies.append(severe_risk_strategy(head, label, _risk_scope(r), body))
+    strategies += unmitigated
+    severe_ids = {r.get("risk_id") for r in severe}
 
     by_type: dict[str, list[dict]] = {}
     for r in risks:
         by_type.setdefault(r.get("risk_type", ""), []).append(r)
 
-    perf = by_type.get("PERFORMANCE_DEGRADATION", [])
+    # A risk whose own mitigation is a load test needs no second line asking for one.
+    perf = [
+        r
+        for r in by_type.get("PERFORMANCE_DEGRADATION", [])
+        if not _LOAD_TEST.search(str(r.get("mitigation") or ""))
+    ]
     if perf:
         strategies.append(
             f"Load-test the queries behind {_join_and([r['risk_id'] for r in perf])} on "
@@ -2671,25 +2683,17 @@ def _build_mitigation_strategies(
 
     complexity = by_type.get("MIGRATION_COMPLEXITY", [])
     unsupported = [r for r in complexity if not r.get("coverage_gap")]
-    unchecked = [
-        r for r in complexity if r.get("coverage_gap") and _tagged_engine(r) in (undesigned or ())
-    ]
-    gaps = [r for r in complexity if r.get("coverage_gap") and r not in unchecked]
-    for r in unchecked:
-        n = len(r.get("query_ids") or [])
+    gaps = [r for r in complexity if r.get("coverage_gap")]
+    notes = by_type.get("OPERATIONAL_RISK", [])
+    # Their mitigation is the whole strategy: run a schema design (#949: a gap on an engine
+    # with no design is a check that did not run) or complete one, build an object's logic
+    # in the application. Listed by id; the register states each one.
+    referred = sorted(
+        str(r["risk_id"]) for r in [*gaps, *notes] if r.get("risk_id") not in severe_ids
+    )
+    if referred:
         strategies.append(
-            f"Run the {display_name(_tagged_engine(r) or '')} schema design to check the {n} "
-            f"{'query' if n == 1 else 'queries'} assigned to it ({r['risk_id']})."
-        )
-    if gaps:
-        n = sum(len(r.get("query_ids") or []) for r in gaps)
-        strategies.append(
-            f"Add in-scope access patterns for the {n} "
-            f"{'query' if n == 1 else 'queries'} the {_join_and(_engines_of(gaps))} schema "
-            f"{'design does' if len(gaps) == 1 else 'designs do'} not serve "
-            f"({', '.join(r['risk_id'] for r in gaps)}), or route "
-            f"{'it' if n == 1 else 'them'} to an engine that serves "
-            f"{'it' if n == 1 else 'them'}."
+            f"Apply the mitigation{'s' if len(referred) > 1 else ''} of {_join_and(referred)}."
         )
     if unsupported:
         n = len(unsupported)
@@ -2700,30 +2704,6 @@ def _build_mitigation_strategies(
             + f" ({', '.join(r['risk_id'] for r in unsupported)}) "
             + _join_or([f"in {s}" for s in _complementary_services(effective_engines)])
             + "."
-        )
-
-    notes = by_type.get("OPERATIONAL_RISK", [])
-    db_code = [r for r in notes if str(r.get("object_type", "")).lower() in _DB_CODE_OBJECTS]
-    other_notes = [r for r in notes if r not in db_code]
-    if db_code:
-        objects = _join_and(
-            [f"{r['object_type'].lower()} '{r.get('object_name', '')}'" for r in db_code]
-        )
-        strategies.append(
-            f"Re-implement the {objects} as application logic before migration "
-            f"({', '.join(r['risk_id'] for r in db_code)})."
-        )
-    if other_notes:
-        items = _join_and(
-            [
-                f"{r.get('object_name') or r.get('object_type') or 'migration note'} "
-                f"({r['risk_id']})"
-                for r in other_notes
-            ]
-        )
-        strategies.append(
-            f"Build the application-side {'replacement' if len(other_notes) == 1 else 'replacements'} "
-            f"for {items} before cutover."
         )
 
     if severe:

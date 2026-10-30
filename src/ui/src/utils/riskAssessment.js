@@ -103,3 +103,15 @@ export function mitigationRepeatsDescription(mitigation, description) {
   const d = norm(description);
   return Boolean(m) && d.includes(m);
 }
+
+/**
+ * The earlier risk whose mitigation `risk` shares word for word, or null (#1510): the
+ * results payload's `mitigation_refs` (src/report/risks.py `shared_mitigation_refs`),
+ * the one computation the engineering and executive reports read too, so all three
+ * say "as for" the same risk. This only looks it up.
+ */
+export function sharedMitigationRef(refs, risk) {
+  if (!refs || typeof refs !== 'object' || !risk || !risk.risk_id) return null;
+  const ref = refs[risk.risk_id];
+  return typeof ref === 'string' && ref ? ref : null;
+}

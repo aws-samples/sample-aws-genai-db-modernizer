@@ -10,8 +10,10 @@ and a backfilled one carry the same risk (ADR-032: one computation, the
 renderers only format it).
 
 :data:`RULES` is the one rule table (``Risk.rule`` is a key of it), and
-:func:`wave_gate_strategies` the one-line-per-wave gate strategies both
-paths write.
+:func:`wave_gate_lines` the one line per wave naming the risks to close before
+its gate, which both paths write into that wave's gate in the roadmap
+(:func:`add_gate_lines`, #1510); a risk's mitigation points at the gate
+(:func:`by_gate`) instead of stating it.
 
 Rules raised here (one severity constant each, a test per rule and kind):
 
@@ -43,6 +45,7 @@ rule                       severity  raised when
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -168,8 +171,13 @@ def listed_items(items: list[str]) -> str:
     return "; ".join(shown) + (f"; and {more} more" if more > 0 else "")
 
 
-def gate_of(wave: int | None) -> str:
-    return f"Wave {wave} gate" if wave else "cutover"
+def by_gate(action: str, wave: int | None) -> str:
+    """A rule risk's mitigation: ``action`` (no final stop), then a pointer to the gate
+    of its ``wave``, which the roadmap states and lists the risk under (#1510); a risk
+    in no wave has no gate, so it is due before cutover."""
+    if wave:
+        return f"{action}. See the Wave {wave} gate in the roadmap."
+    return f"{action} before cutover."
 
 
 def wave_number(wave: Mapping[str, Any]) -> int | None:
@@ -304,15 +312,15 @@ def _flagged_risk(
     )
     description = f"{head}{kinds} Review {'reason' if len(ordered) == 1 else 'reasons'}: {reasons}."
     steps = [
-        f"Before the {gate_of(wave)}, redesign {these(k, 'query', 'queries')} or accept "
-        f"{name} for {them(k)}. {_hints(engine, [c for c, _ in ordered], k)}"
+        f"Redesign {these(k, 'query', 'queries')} or accept {name} for {them(k)}. "
+        f"{_hints(engine, [c for c, _ in ordered], k)}"
     ]
     if held:
         steps.append(
             f"To move {'the held query' if held == 1 else 'a held query'}, change the pin in "
             "the assignment review."
         )
-    steps.append("Then re-run the assignment review.")
+    steps.append(by_gate("Then re-run the assignment review", wave))
     qids = [str(r["query_id"]) for r in rows]
     return make_risk(
         "routing.flagged",
@@ -344,19 +352,22 @@ def _gap_head(impact: str, k: int, name: str) -> str:
 
 def _gap_steps(impact: str, k: int, name: str) -> str:
     if impact == "blocks_move":
-        return (
-            f"Before the Wave 1 gate, replace {these(k, 'feature', 'features')} outside the "
-            f"database or remove {them(k)}, as each gap's reason says: the move cannot finish "
-            "while the source uses them."
+        return by_gate(
+            f"Replace {these(k, 'feature', 'features')} outside the database or remove "
+            f"{them(k)}, as each gap's reason says: the move cannot finish while the source "
+            "uses them",
+            1,
         )
     if impact == "needs_rewrite":
-        return (
-            "Before the Wave 1 gate, change the schema, the queries and the routines each gap "
-            f"names, as its reason says, and test them on {name}."
+        return by_gate(
+            "Change the schema, the queries and the routines each gap names, as its reason "
+            f"says, and test them on {name}",
+            1,
         )
-    return (
-        f"Before the Wave 1 gate, test the queries and objects each gap names on {name} and "
-        "compare their results with the source."
+    return by_gate(
+        f"Test the queries and objects each gap names on {name} and compare their results "
+        "with the source",
+        1,
     )
 
 
@@ -452,14 +463,14 @@ def number_risks(risks: list[dict[str, Any]], start_id: int) -> list[dict[str, A
     ]
 
 
-def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
-    """One mitigation-strategy line per wave: the risks to close before its gate,
-    by id up to ``GATE_IDS_NAMED``, else by count (the cards carry the ids)."""
+def _gate_groups(risks: list[dict[str, Any]]) -> list[tuple[int | None, str, str]]:
+    """``(wave, the risks, their labels)`` per wave, in wave order (no wave last): the
+    risks by id up to ``GATE_IDS_NAMED``, else by count (the cards carry the ids)."""
     by_wave: dict[int | None, list[dict[str, Any]]] = {}
     for r in risks:
         if r.get("rule") in RULES:
             by_wave.setdefault(r.get("wave"), []).append(r)
-    lines = []
+    out = []
     for wave in sorted(by_wave, key=lambda w: (w is None, w or 0)):
         items = by_wave[wave]
         ids = (
@@ -472,9 +483,66 @@ def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
             label = RULES[r["rule"]].label
             if label not in labels:
                 labels.append(label)
-        head = f"Before the Wave {wave} gate" if wave else "Before cutover"
-        lines.append(f"{head}, close {ids} ({join_words(labels)}).")
-    return lines
+        out.append((wave, ids, join_words(labels)))
+    return out
+
+
+def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
+    """One mitigation-strategy line per wave: the risks to close before its gate. A
+    wave the roadmap shows carries its line in its own gate instead (:func:`add_gate_lines`)."""
+    return [
+        f"{f'Before the Wave {wave} gate' if wave else 'Before cutover'}, close {ids} ({labels})."
+        for wave, ids, labels in _gate_groups(risks)
+    ]
+
+
+def wave_gate_lines(risks: list[dict[str, Any]]) -> dict[int, str]:
+    """wave number -> the sentence its gate in the roadmap ends with: the risks to close
+    before it (#1510). The roadmap owns it; a mitigation points at it (:func:`by_gate`)."""
+    return {
+        wave: f"Close {ids} before this gate ({labels})."
+        for wave, ids, labels in _gate_groups(risks)
+        if wave
+    }
+
+
+def _gate_with(wave: dict[str, Any], line: str, old: str | None) -> None:
+    """``wave``'s gate (and its ``gate_parts``, which join to it) ending with ``line``
+    instead of ``old``, the line written for its stored risks. In place."""
+    gate = str(wave.get("gate") or "")
+    parts = wave.get("gate_parts")
+    if old and gate.endswith(old):
+        gate = gate[: -len(old)].rstrip()
+        if isinstance(parts, list) and parts and not parts[-1].get("items"):
+            last = str(parts[-1].get("text") or "")[: -len(old)].rstrip()
+            parts[-1]["text"] = last
+            if not last and len(parts) > 1:
+                parts.pop()
+    text = f" {line}" if gate else line
+    wave["gate"] = gate + text
+    if isinstance(parts, list):
+        if parts and not parts[-1].get("items"):
+            parts[-1]["text"] = str(parts[-1].get("text") or "") + text
+        else:
+            parts.append({"text": text, "items": []})
+
+
+def add_gate_lines(
+    waves: list[Any] | None,
+    risks: list[dict[str, Any]],
+    stored: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Each wave's :func:`wave_gate_lines` sentence at the end of its gate in ``waves``
+    (in place; replacing the one written for the ``stored`` rule risks, if any), and
+    the strategy lines left for the risks no wave of ``waves`` holds: those with no
+    wave are due before cutover (:func:`wave_gate_strategies`)."""
+    by_number = {wave_number(w): w for w in waves or [] if isinstance(w, dict) and wave_number(w)}
+    lines = wave_gate_lines(risks)
+    old = wave_gate_lines(stored or [])
+    for n, line in lines.items():
+        if n in by_number:
+            _gate_with(by_number[n], line, old.get(n))
+    return wave_gate_strategies([r for r in risks if r.get("wave") not in by_number])
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +708,8 @@ def backfill_report_risks(report: dict[str, Any]) -> dict[str, Any]:
     the deliverables and the results payload read it through this, so it shows
     the same risk a new synthesis writes. The risks are numbered after the
     stored ones, the overall level only rises, the wave-gate lines are written
-    again over every rule risk, the facts block's risk counts are recounted
+    again over every rule risk (into each wave's gate, and a stored strategy
+    gate line is dropped, #1510), the facts block's risk counts are recounted
     (``report_facts.refresh_risk_facts``) and the summary states the new count
     and level (``_with_risk_summary``). A report that already carries a
     rule's risks, or raises none, comes back unchanged (the same object).
@@ -669,17 +738,20 @@ def backfill_report_risks(report: dict[str, Any]) -> dict[str, Any]:
     level = str(assessment.get("overall_risk_level") or "LOW")
     computed = overall_risk_level(numbered)
     strategies = list(assessment.get("mitigation_strategies") or [])
+    # #1510: each wave's gate lists its risks; a copy, the stored report is not changed.
+    waves = copy.deepcopy(report.get("migration_waves"))
+    left = add_gate_lines(waves, [*old_rule_risks, *numbered], old_rule_risks)
     out = {
         **report,
         "risk_assessment": {
             **assessment,
             "risks": risks,
             "overall_risk_level": max(level, computed, key=severity_rank),
-            "mitigation_strategies": _with_gate_lines(
-                strategies, wave_gate_strategies([*old_rule_risks, *numbered])
-            ),
+            "mitigation_strategies": _with_gate_lines(strategies, left),
         },
     }
+    if waves is not None:
+        out["migration_waves"] = waves
     _with_risk_summary(report, out, len(numbered))
     if isinstance(report.get("facts"), dict):
         out["facts"] = refresh_risk_facts(report["facts"], out)

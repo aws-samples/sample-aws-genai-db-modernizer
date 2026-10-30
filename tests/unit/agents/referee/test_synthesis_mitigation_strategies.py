@@ -5,8 +5,9 @@ deck quotes its first entry as "Specified mitigation". Both used to be template 
 picked by risk *type* ("Refactor stored procedures, triggers, and views ..." for any
 operational risk, the same load-test / blue-green / monitoring lines for every job).
 Each strategy must now name the risks, engines and tables it is about, the HIGH risks
-must come first with their own mitigation, and stored-procedure advice appears only
-when a migration note concerns a procedure, trigger or view. (The engineering report
+must come first, and stored-procedure advice appears only when a migration note
+concerns a procedure, trigger or view. #1510: the Risk register states each risk's
+mitigation, so a strategy names the risk by id and adds only what the register does not. (The engineering report
 repeating a mitigation that equals the description is a renderer concern: grounding
 needs the mitigation field even when it repeats the text.)
 """
@@ -65,12 +66,10 @@ WORDPRESS_LIKE = [
 EFFECTIVE = {"dynamodb", "elasticache", "aurora_mysql"}
 
 
-def test_high_risks_come_first_with_their_own_mitigation() -> None:
+def test_high_risks_come_first_by_id_not_by_their_mitigation() -> None:
     strategies = _build_mitigation_strategies(WORDPRESS_LIKE, EFFECTIVE)
-    assert strategies[0] == (
-        "RISK-001 (HIGH, ElastiCache; wordpress.wp_posts, "
-        "wordpress.wp_woocommerce_order_items): Pre-compute aggregates on write."
-    )
+    assert strategies[0] == "Apply the mitigation of RISK-001 (HIGH, ElastiCache) first."
+    assert not any("Pre-compute aggregates" in s for s in strategies)
 
 
 def test_no_stored_procedure_advice_without_a_procedure_trigger_or_view() -> None:
@@ -78,7 +77,7 @@ def test_no_stored_procedure_advice_without_a_procedure_trigger_or_view() -> Non
     joined = " ".join(strategies)
     assert "stored procedure" not in joined.lower()
     assert "trigger" not in joined.lower()
-    assert any("SQL_CALC_FOUND_ROWS pagination (RISK-004)" in s for s in strategies)
+    assert "Apply the mitigation of RISK-004." in strategies
 
 
 def test_procedure_note_names_the_procedure() -> None:
@@ -93,11 +92,8 @@ def test_procedure_note_names_the_procedure() -> None:
         )
     ]
     strategies = _build_mitigation_strategies(risks, EFFECTIVE)
-    assert any(
-        s == "Re-implement the procedure 'order report aggregation' as application logic "
-        "before migration (RISK-006)."
-        for s in strategies
-    )
+    # The note's object and logic are the risk's own text; the strategy names it.
+    assert "Apply the mitigations of RISK-004 and RISK-006." in strategies
 
 
 def test_unsupported_pattern_line_is_a_sentence_naming_risks_and_engines() -> None:
@@ -167,7 +163,11 @@ def test_risk_assessment_carries_the_migration_note_object() -> None:
     note = next(r for r in ra["risks"] if r["risk_type"] == "OPERATIONAL_RISK")
     assert note["object_type"] == "trigger"
     assert note["object_name"] == "audit_insert"
-    assert any("trigger 'audit_insert'" in s for s in ra["mitigation_strategies"])
+    assert (
+        note["mitigation"]
+        == "Implement as application logic: Write the audit row from the service."
+    )
+    assert f"Apply the mitigation of {note['risk_id']}." in ra["mitigation_strategies"]
 
 
 def test_coverage_gap_gets_its_own_line_not_the_unsupported_one() -> None:
@@ -182,10 +182,7 @@ def test_coverage_gap_gets_its_own_line_not_the_unsupported_one() -> None:
         )
     ]
     strategies = _build_mitigation_strategies(risks, EFFECTIVE)
-    assert (
-        "Add in-scope access patterns for the 2 queries the DynamoDB schema design does not "
-        "serve (RISK-006), or route them to an engine that serves them."
-    ) in strategies
+    assert "Apply the mitigations of RISK-004 and RISK-006." in strategies
     unsupported = next(s for s in strategies if "unsupported" in s)
     assert "RISK-006" not in unsupported
 

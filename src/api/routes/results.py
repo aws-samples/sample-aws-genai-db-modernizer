@@ -14,7 +14,7 @@ from src.report.engineering_report import brief_summary, summary_paragraphs
 from src.report.facts import report_facts
 from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
-from src.report.risks import NO_OPEN_RISKS_CAVEAT
+from src.report.risks import NO_OPEN_RISKS_CAVEAT, shared_mitigation_refs
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
@@ -122,6 +122,9 @@ def get_results(job_id: str = Depends(job_id_param)):
         "no_open_risks_caveat": NO_OPEN_RISKS_CAVEAT,
         # #1389: set for a report written before utility pins left the mean fit.
         "pin_rule_note": PIN_RULE_PREDATES_NOTE if report_predates_pin_rule(synthesis) else None,
+        # #1510: risk id -> the earlier risk whose mitigation it shares, the one the
+        # engineering and executive reports say "as for"; the results page does too.
+        "mitigation_refs": shared_mitigation_refs(synthesis),
     }
 
 

@@ -206,8 +206,9 @@ def test_a_mitigation_stated_above_is_named_by_its_risk(report: dict[str, Any]) 
     risks[1]["mitigation"] = risks[0]["mitigation"]
     register = section(render_engineering_report_md(report), "Risk register")
     assert register.count(f"  - Mitigation: {md_text(risks[0]['mitigation'])}") == 1
-    # The one printed first states it; the other names that risk.
-    first, second = sorted(risks[:2], key=lambda r: register.index(f"**{r['risk_id']}**"))
+    # #1510: the earlier one in the register's risk list states it and the other names
+    # it, in every deliverable (``shared_mitigation_refs``), whatever order each prints.
+    first, second = risks[:2]
     assert f"  - Mitigation: as for {first['risk_id']}." in register.splitlines()
     assert f"  - Mitigation: as for {second['risk_id']}." not in register.splitlines()
 
