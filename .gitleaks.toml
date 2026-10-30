@@ -12,6 +12,9 @@ paths = [
   '''\.secrets\.baseline''',
   '''\.gitlab-ci\.yml''',
   '''uv\.lock''',
+  # pytest-split's per-test timings: generated test ids only, whose parameters
+  # include the scanners' own fake credentials (#1718).
+  '''^\.test_durations$''',
   # Docs prose and the sample collections, but not the recorded sample run under
   # docs/examples/wordpress/sample-run/, which is scanned like any committed data (#1260).
   '''docs/[^/]+\.md''',
