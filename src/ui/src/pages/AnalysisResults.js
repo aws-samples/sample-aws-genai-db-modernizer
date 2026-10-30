@@ -60,7 +60,7 @@ import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
 import { buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
-import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
+import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
@@ -2478,6 +2478,7 @@ const AnalysisResultsPage = memo(() => {
                               const { engine, body } = splitRiskDescription(risk.description);
                               const showMitigation = risk.mitigation
                                 && !mitigationRepeatsDescription(risk.mitigation, body);
+                              const mitigationRef = sharedMitigationRef(resultsData?.mitigation_refs, risk);
                               const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
                               const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
                               return (
@@ -2501,7 +2502,10 @@ const AnalysisResultsPage = memo(() => {
                                     <Box fontSize="body-s"><ProseText text={body} /></Box>
                                     {showMitigation && (
                                       <Box fontSize="body-s" color="text-body-secondary">
-                                        <b>{t('analysis-results.risk-assessment.mitigation')}:</b> <ProseText text={risk.mitigation} />
+                                        <b>{t('analysis-results.risk-assessment.mitigation')}:</b>{' '}
+                                        {mitigationRef
+                                          ? t('analysis-results.risk-assessment.mitigation-as-for', { risk: mitigationRef })
+                                          : <ProseText text={risk.mitigation} />}
                                       </Box>
                                     )}
                                     {affectedTables.length > 0 && (

@@ -6,6 +6,7 @@ import {
   mitigationRepeatsDescription,
   riskHasContent,
   riskSeverityStatus,
+  sharedMitigationRef,
   splitRiskDescription,
 } from '../riskAssessment';
 
@@ -114,5 +115,17 @@ describe('mitigationRepeatsDescription (mirrors risks._repeats)', () => {
 
   it('is false for an empty mitigation', () => {
     expect(mitigationRepeatsDescription('', 'anything')).toBe(false);
+  });
+});
+
+describe('sharedMitigationRef (reads the payload\'s mitigation_refs, #1510)', () => {
+  const refs = { 'RISK-004': 'RISK-003' };
+  it('names the earlier risk a risk shares its mitigation with', () => {
+    expect(sharedMitigationRef(refs, { risk_id: 'RISK-004' })).toBe('RISK-003');
+  });
+  it('is null for the risk that states it, or with no refs', () => {
+    expect(sharedMitigationRef(refs, { risk_id: 'RISK-003' })).toBeNull();
+    expect(sharedMitigationRef(undefined, { risk_id: 'RISK-004' })).toBeNull();
+    expect(sharedMitigationRef(refs, {})).toBeNull();
   });
 });

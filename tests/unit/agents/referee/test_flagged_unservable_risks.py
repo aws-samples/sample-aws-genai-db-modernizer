@@ -69,7 +69,8 @@ def test_a_flagged_query_no_other_engine_takes_is_high_in_its_engines_wave() -> 
         hint = FLAG_REDESIGN_HINTS[category].rstrip(".").replace("the query", "each query")
         assert hint in risk["mitigation"]
     assert "the query" not in risk["mitigation"]
-    assert risk["mitigation"].startswith("Before the Wave 3 gate, redesign these queries")
+    assert risk["mitigation"].startswith("Redesign these queries")
+    assert risk["mitigation"].endswith("See the Wave 3 gate in the roadmap.")
     assert "pin" not in risk["mitigation"]
 
 
@@ -105,7 +106,8 @@ def test_one_risk_per_engine_with_each_engines_wave() -> None:
 
 def test_no_wave_reads_as_cutover() -> None:
     [risk] = flagged_unservable_risks({"flagged_unservable": [_row("f1")]}, {}, {})
-    assert risk["wave"] is None and risk["mitigation"].startswith("Before the cutover, ")
+    assert risk["wave"] is None
+    assert risk["mitigation"].endswith("Then re-run the assignment review before cutover.")
 
 
 def test_no_risk_without_flagged_queries() -> None:
@@ -232,12 +234,15 @@ def test_an_old_report_gets_the_risk_its_facts_imply() -> None:
     ]
     assert added[1]["affected_tables"] == ["db.b"]
     assert new["risk_assessment"]["overall_risk_level"] == "HIGH"
+    # #1510: the stored gate line leaves the strategies; each wave's gate lists its risks.
     assert new["risk_assessment"]["mitigation_strategies"] == [
         "Analysis line.",
-        "Before the Wave 1 gate, close RISK-003 (flagged queries no other engine takes).",
-        "Before the Wave 3 gate, close RISK-002 and RISK-004 (tables kept in sync and flagged "
-        "queries no other engine takes).",
         "After wave 3 (DynamoDB): compare the latency.",
+    ]
+    assert [w["gate"] for w in new["migration_waves"]] == [
+        "Close RISK-003 before this gate (flagged queries no other engine takes).",
+        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and flagged "
+        "queries no other engine takes).",
     ]
     # The facts block counts them, as a new synthesis would.
     facts = new["facts"]
@@ -270,9 +275,11 @@ def test_a_report_from_before_the_wave_gate_lines_gets_them_before_the_wave_chec
     new = backfill_report_risks(old)
     assert new["risk_assessment"]["mitigation_strategies"] == [
         "Analysis line.",
-        "Before the Wave 1 gate, close RISK-002 (flagged queries no other engine takes).",
-        "Before the Wave 3 gate, close RISK-003 (flagged queries no other engine takes).",
         "After wave 3 (DynamoDB): compare the latency.",
+    ]
+    assert [w["gate"] for w in new["migration_waves"]] == [
+        "Close RISK-002 before this gate (flagged queries no other engine takes).",
+        "Close RISK-003 before this gate (flagged queries no other engine takes).",
     ]
     assert new["risk_assessment"]["overall_risk_level"] == "HIGH"
 
@@ -299,12 +306,13 @@ def test_stored_gate_lines_with_other_labels_are_replaced_not_doubled() -> None:
     old["risk_assessment"]["mitigation_strategies"][
         1
     ] = "Before the Wave 3 gate, close RISK-002 (an older label)."
-    lines = backfill_report_risks(old)["risk_assessment"]["mitigation_strategies"]
-    assert [x for x in lines if x.startswith("Before the Wave 3 gate")] == [
-        "Before the Wave 3 gate, close RISK-002 and RISK-004 (tables kept in sync and flagged "
+    new = backfill_report_risks(old)
+    lines = new["risk_assessment"]["mitigation_strategies"]
+    assert lines == ["Analysis line.", "After wave 3 (DynamoDB): compare the latency."]
+    assert new["migration_waves"][-1]["gate"] == (
+        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and flagged "
         "queries no other engine takes)."
-    ]
-    assert lines[0] == "Analysis line." and lines[-1].startswith("After wave 3")
+    )
 
 
 # A real report main's code wrote before routing.flagged (contract 1.41, origin/main

@@ -141,13 +141,12 @@ def test_the_wave_risks_are_raised_and_the_summary_counts_them(store) -> None:
     level = result["risk_assessment"]["overall_risk_level"]
     noun = "risk" if len(risks) == 1 else "risks"
     assert f"{len(risks)} open migration {noun} (overall: {level})" in result["summary"]
+    # #1510: the wave's gate in the roadmap lists it; no strategy states the gate.
     strategies = result["risk_assessment"]["mitigation_strategies"]
-    gate_lines = [s for s in strategies if s.startswith("Before the Wave 2 gate, close ")]
-    assert len(gate_lines) == 1
-    assert sync[0]["risk_id"] in gate_lines[0]
-    # The wave gate line comes before the post-migration checks.
-    assert strategies.index(gate_lines[0]) < next(
-        i for i, s in enumerate(strategies) if s.startswith("After wave ")
+    assert not any("Wave 2 gate" in s for s in strategies)
+    wave = next(w for w in result["migration_waves"] if w["wave"] == 2)
+    assert wave["gate"].endswith(
+        f"Close {sync[0]['risk_id']} before this gate (tables kept in sync)."
     )
 
 

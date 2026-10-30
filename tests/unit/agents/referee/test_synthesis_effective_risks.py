@@ -257,15 +257,17 @@ class TestEliminatedEngineNeverATarget:
         )
 
 
+@pytest.mark.passes_on_main
 def test_surviving_opensearch_is_still_recommended(store) -> None:
     """No elimination: OpenSearch is part of the target, so it may be recommended."""
     _seed(store, eliminated=False)
     result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+    risks = result["risk_assessment"]["risks"]
+    # #1510: the register states the mitigation; the strategy names its risk.
+    [moved] = [r for r in risks if "OpenSearch Service" in str(r.get("mitigation"))]
     strategies = result["risk_assessment"]["mitigation_strategies"]
-    assert any("OpenSearch Service" in s for s in strategies)
-    text_search = next(
-        r for r in result["risk_assessment"]["risks"] if "text search" in r["description"]
-    )
+    assert any(moved["risk_id"] in s for s in strategies)
+    text_search = next(r for r in risks if "text search" in r["description"])
     assert "OpenSearch Ingestion" in text_search["mitigation"]
 
 

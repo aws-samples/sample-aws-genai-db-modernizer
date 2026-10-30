@@ -105,6 +105,7 @@ from .risks import (
     filtered_risks,
     resolved_risk_label,
     resolved_risks,
+    shared_mitigation_refs,
 )
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
@@ -172,6 +173,11 @@ L_OPEN = "Open risks"
 # A risk whose items the engineering report lists in full (``Risk.details``) and this
 # report leaves out (#1149 review: the sentence holds only here).
 RISK_DETAILS_POINTER = "The engineering report lists each one in full."
+# #1510: a card's Mitigation line when the mitigation is all table names or SQL, which
+# this report never prints: Next steps names the risk by id, so the card says where it is.
+RISK_MITIGATION_POINTER = (
+    "the engineering report gives it under this risk; it names the tables or SQL it changes."
+)
 L_RESOLVED = "Resolved by the assignment"
 L_NO_DECISIONS = "No pending engine choices."
 L_DECISIONS_REALITY = "Reality-check decisions"
@@ -1145,6 +1151,7 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             )
         )
         flow.append(_para(NO_OPEN_RISKS_CAVEAT, st["small"]))
+    refs = shared_mitigation_refs(report)
     for r in risks:
         eng, body = _risk_engine_and_body(r.get("description"))
         level_r = str(r.get("severity") or "-")
@@ -1163,11 +1170,9 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         what = without_table_names(body, names)
         if what:
             content.append(_para(what, st["body"]))
-        mitigation = r.get("mitigation")
-        if mitigation and not _repeats(mitigation, body):
-            m = without_table_names(mitigation, names)
-            if m:
-                content.append(_labelled("Mitigation", m, st["small"]))
+        m = card_mitigation(r, names, refs)
+        if m:
+            content.append(_labelled("Mitigation", m, st["small"]))
         # #1527: a design conflict's derived copies, their sync and its cost.
         for label, text in derived_copy_sync_pdf(report, r.get("risk_id")):
             content.append(_labelled(label, text, st["small"]))
@@ -1180,6 +1185,29 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         content += [_para(line, st["body"]) for line in resolved]
         flow += [_gap(10), _Panel(content, GREEN)]
     return flow
+
+
+def card_mitigation(risk: dict[str, Any], names: Any, refs: dict[str, str]) -> str | None:
+    """The Mitigation line of a risk's card on the Risks page, or None (#1510).
+
+    Next steps and the mitigation strategies name a risk by id and leave its remedy to
+    its card, so the card always states it or says where it is: the mitigation less
+    table names; "as for RISK-003" when an earlier risk's card states the same one
+    (``shared_mitigation_refs``, as the engineering report and the UI say); none when
+    the card's own text already states it (the description repeats it, and still does
+    once table names are gone); and ``RISK_MITIGATION_POINTER`` when nothing of it is
+    left without table names or SQL, which this report never prints."""
+    mitigation = " ".join(str(risk.get("mitigation") or "").split())
+    if not mitigation:
+        return None
+    body = _risk_engine_and_body(risk.get("description"))[1]
+    shown = without_table_names(mitigation, names)
+    if _repeats(mitigation, body) and shown and _repeats(shown, without_table_names(body, names)):
+        return None
+    rid = str(risk.get("risk_id") or "")
+    if rid in refs and not _repeats(mitigation, body):
+        return f"as for {refs[rid]}."
+    return shown or RISK_MITIGATION_POINTER
 
 
 def _resolved_high_lines(report: dict[str, Any], names: Any) -> list[str]:
@@ -1590,6 +1618,8 @@ def render_executive_report_pdf(
 
 __all__ = [
     "CLOSING_POINTER",
+    "RISK_MITIGATION_POINTER",
+    "card_mitigation",
     "COPYRIGHT",
     "FILENAME",
     "FOOTER",

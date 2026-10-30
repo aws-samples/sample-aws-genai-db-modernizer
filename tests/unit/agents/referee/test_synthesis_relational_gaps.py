@@ -10,7 +10,7 @@ from src.agents.referee.synthesis_handler import (
 )
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.facts import report_facts
-from src.shared.migration_risk_rules import GAP_RISK_SEVERITY
+from src.shared.migration_risk_rules import GAP_RISK_SEVERITY, wave_gate_lines
 from src.shared.report_facts import compute_report_facts
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import DB, JOB
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import store as seeded_store
@@ -55,6 +55,18 @@ def _without_risks(report: dict[str, Any]) -> dict[str, Any]:
     """The report less its risk register and what states it: the summary's risk
     count and the facts block's risk figures."""
     out = {k: v for k, v in report.items() if k not in _RISK_STATED}
+    # #1510: each wave's gate ends with the risks to close before it.
+    lines = wave_gate_lines(report["risk_assessment"]["risks"])
+    out["migration_waves"] = [
+        {
+            **w,
+            "gate": (
+                w["gate"].removesuffix(f" {lines[w['wave']]}") if w["wave"] in lines else w["gate"]
+            ),
+            "gate_parts": None,
+        }
+        for w in report["migration_waves"]
+    ]
     facts = {k: v for k, v in report["facts"].items() if k not in _RISK_FACTS}
     facts["waves"] = [
         {k: v for k, v in w.items() if k != "critical_high_risks"} for w in facts["waves"]

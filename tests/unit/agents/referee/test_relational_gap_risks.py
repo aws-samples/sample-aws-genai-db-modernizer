@@ -94,7 +94,8 @@ def test_one_wave_1_risk_per_impact_with_its_severity() -> None:
         "[aurora_postgresql] Wave 1: 1 relational gap blocks the move to Aurora PostgreSQL: "
         "Linked servers."
     )
-    assert blocks["mitigation"].startswith("Before the Wave 1 gate, replace this feature ")
+    assert blocks["mitigation"].startswith("Replace this feature outside the database ")
+    assert blocks["mitigation"].endswith("See the Wave 1 gate in the roadmap.")
     assert rewrite["description"].startswith(
         "[aurora_postgresql] Wave 1: 2 relational gaps need a rewrite before cutover to Aurora "
         "PostgreSQL: TOP row limits; T-SQL date and time functions."
@@ -213,10 +214,14 @@ def test_an_old_report_gets_the_gap_risks_its_facts_list() -> None:
         ("RISK-004", "relational.gaps", "MEDIUM"),
     ]
     assert new["risk_assessment"]["overall_risk_level"] == "HIGH"
+    # #1510: wave 1's gate in the roadmap lists them, the strategies do not.
     assert new["risk_assessment"]["mitigation_strategies"] == [
-        "Before the Wave 1 gate, close RISK-002, RISK-003 and RISK-004 (relational gaps).",
         "After wave 1 (Aurora PostgreSQL): compare the latency.",
     ]
+    assert new["migration_waves"][0]["gate"] == (
+        "Close RISK-002, RISK-003 and RISK-004 before this gate (relational gaps)."
+    )
+    assert "gate" not in old["migration_waves"][0]
     assert new["facts"]["open_risk_count"] == 4
     assert new["facts"]["open_risks_by_severity"] == {"HIGH": 1, "MEDIUM": 2, "LOW": 1}
     assert new["facts"]["waves"][0]["critical_high_risks"] == 1

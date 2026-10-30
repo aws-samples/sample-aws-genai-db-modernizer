@@ -17,6 +17,7 @@ __all__ = [
     "_risk_has_content",
     "_severity_counts_text",
     "filtered_risks",
+    "shared_mitigation_refs",
     "resolved_risk_label",
     "resolved_risks",
 ]
@@ -38,6 +39,30 @@ def _repeats(mitigation: Any, description: Any) -> bool:
     m = " ".join(str(mitigation or "").split()).casefold()
     d = " ".join(str(description or "").split()).casefold()
     return bool(m) and m in d
+
+
+def shared_mitigation_refs(report: dict[str, Any]) -> dict[str, str]:
+    """risk id -> the earlier open risk whose mitigation it shares word for word (#1510).
+
+    Two risks can carry the same mitigation (trailgear's two "Load-test the 1 flagged
+    query ..." risks). The first, in register order, states it; each later one says
+    "as for RISK-003" instead. Computed here once from ``report.json``: the engineering
+    report, the executive report and the results payload (``mitigation_refs``, which
+    the UI prints) all read this, so they refer to the same risk. A mitigation its own
+    description already states (``_repeats``) is not printed, so it is never the one
+    referred to."""
+    seen: dict[str, str] = {}
+    refs: dict[str, str] = {}
+    for r in filtered_risks(report):
+        rid = str(r.get("risk_id") or "")
+        mitigation = " ".join(str(r.get("mitigation") or "").split())
+        if not rid or not mitigation:
+            continue
+        if mitigation in seen:
+            refs[rid] = seen[mitigation]
+        elif not _repeats(mitigation, _risk_engine_and_body(r.get("description"))[1]):
+            seen[mitigation] = rid
+    return refs
 
 
 def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:

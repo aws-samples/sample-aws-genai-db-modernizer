@@ -491,6 +491,8 @@ def run_synthesis_deterministic(
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
+        # #1510: each wave's gate in the roadmap lists the risks to close before it.
+        migration_waves,
     )
     # #1076: the removed engines the customer runs today, from the one function the facts
     # block uses, so the summary states them as the deliverables do.

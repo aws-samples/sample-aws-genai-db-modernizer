@@ -641,14 +641,15 @@ class TestCoverageGapWithoutASchemaDesign:
 
 def test_the_strategy_for_a_gap_with_no_design_is_to_run_the_design() -> None:
     """#949: the next step for queries no design checked is the design itself, not
-    "add access patterns the design does not serve"."""
+    "add access patterns the design does not serve". #1510: the gap's register entry
+    states it; the strategy names the risk."""
     data = TestCoverageGapWithoutASchemaDesign._undesigned()
     strategies = build_risk_assessment(data)["mitigation_strategies"]
     gap = next(r for r in build_risk_assessment(data)["risks"] if r.get("coverage_gap"))
-    assert (
-        f"Run the DynamoDB schema design to check the 1 query assigned to it ({gap['risk_id']})."
-        in strategies
-    )
+    assert gap["mitigation"].startswith("Run the DynamoDB schema design;")
+    assert any(
+        s.startswith("Apply the mitigation") and gap["risk_id"] in s for s in strategies
+    ), strategies
     assert not any("schema design does not serve" in s for s in strategies)
 
 

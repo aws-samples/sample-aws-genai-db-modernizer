@@ -36,8 +36,9 @@ fi
 
 log "replay: external-mode e2e checks over $DB/$JOB"
 # -k external: the checks parametrized over the replayed job; the other e2e tests
-# run their own pipelines and belong to the deterministic shards.
+# run their own pipelines and belong to the deterministic shards. replay_stale: a check
+# of what synthesis writes, which the saved report.json predates (ci/README.md).
 E2E_ARTIFACT_ROOT="$ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
-  uv run pytest tests/e2e -m "e2e and not deterministic" -k external -p no:xdist --fail-on-skip \
+  uv run pytest tests/e2e -m "e2e and not deterministic and not replay_stale" -k external -p no:xdist --fail-on-skip \
   --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py \
   --junitxml="$OUT/replay-junit.xml" -q ${pw_args[@]+"${pw_args[@]}"}
