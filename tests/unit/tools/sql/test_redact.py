@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -446,3 +447,411 @@ def test_the_redaction_cache_is_bounded_by_size() -> None:
     cache.put(("z" * 500, "sqlserver", "query"), "z")  # too long to keep
     assert cache.get(("z" * 500, "sqlserver", "query")) is None
     assert _CACHE.max_chars <= 8_000_000
+
+
+ALL_ENGINES = ("mysql", "postgresql", "sqlserver", "oracle", "db2")
+# MySQL keeps a number glued to a word: an identifier may start with digits there.
+GLUING_ENGINES = ("postgresql", "sqlserver", "oracle", "db2")
+MARKS = {"mysql": "?", "postgresql": "$1", "sqlserver": "?", "oracle": ":1", "db2": "?"}
+
+
+_PLACEHOLDER_RE = re.compile(r"(?<![\w])[$:]\d+")
+_MAIN_REDACTIONS = [
+    ("mysql", "SELECT 41111.5#", "SELECT ?#"),
+    ("mysql", "SELECT 4111.$1", "SELECT ?.$1"),
+    ("mysql", "SELECT 0x1F.1$1", "SELECT ?.1$1"),
+    ("mysql", "SELECT 4111111111111111.5#", "SELECT ?#"),
+    ("mysql", "SELECT 0xDEADBEEF.5$", "SELECT ?.5$"),
+    ("mysql", "SELECT 1.5e3.2#", "SELECT ?.2#"),
+    ("mysql", "SELECT 4111.5$x", "SELECT ?.5$x"),
+    ("mysql", "SELECT 12$, 34#", "SELECT 12$, ?#"),
+    ("mysql", "SELECT 4111111111111111$", "SELECT 4111111111111111$"),
+    ("mysql", "SELECT 0x4111$", "SELECT 0x4111$"),
+    ("mysql", "SELECT a FROM t WHERE c = 4111111111111111", "SELECT a FROM t WHERE c = ?"),
+    ("mysql", "SELECT a FROM t WHERE c = 0x4111FF.2", "SELECT a FROM t WHERE c = ?.2"),
+    ("mysql", "SELECT $1984.37", "SELECT $1984.37"),
+    ("mysql", "SELECT $ 1984.37", "SELECT $ ?"),
+    ("mysql", "SELECT $4111.5", "SELECT $4111.5"),
+    ("mysql", "SELECT a FROM t ORDER BY 1, 2", "SELECT a FROM t ORDER BY 1, 2"),
+    ("mysql", "SELECT a FROM t GROUP BY 2, 3", "SELECT a FROM t GROUP BY 2, 3"),
+    ("mysql", "SELECT a FROM t ORDER BY 4111111111111111, 2", "SELECT a FROM t ORDER BY ?, 2"),
+    ("mysql", "SELECT a FROM t ORDER BY a DESC, 3", "SELECT a FROM t ORDER BY a DESC, 3"),
+    ("mysql", "SELECT 1.5e3", "SELECT ?"),
+    ("mysql", "SELECT .5", "SELECT ?"),
+    ("mysql", "SELECT 5.", "SELECT ?"),
+    (
+        "mysql",
+        "SELECT a FROM t WHERE c BETWEEN 1234 AND 5678",
+        "SELECT a FROM t WHERE c BETWEEN ? AND ?",
+    ),
+    ("mysql", "SELECT a FROM t LIMIT 10 OFFSET 20", "SELECT a FROM t LIMIT 10 OFFSET 20"),
+    ("mysql", "SELECT t0x1F, a.1 FROM t", "SELECT t0x1F, a.1 FROM t"),
+    ("mysql", "SELECT 4111.5#x", "SELECT ?#x"),
+    ("mysql", "SELECT 1e5#", "SELECT ?#"),
+    ("mysql", "SELECT 7$a", "SELECT 7$a"),
+    ("mysql", "SELECT 4111111111111111#1", "SELECT ?#?"),
+    ("postgresql", "SELECT 41111.5#", "SELECT $1.5#"),
+    ("postgresql", "SELECT 4111.$1", "SELECT $2.$1"),
+    ("postgresql", "SELECT 0x1F.1$1", "SELECT $1.1$1"),
+    ("postgresql", "SELECT 4111111111111111.5#", "SELECT $1.5#"),
+    ("postgresql", "SELECT 0xDEADBEEF.5$", "SELECT $1.5$"),
+    ("postgresql", "SELECT 1.5e3.2#", "SELECT $1.2#"),
+    ("postgresql", "SELECT 4111.5$x", "SELECT $1.5$x"),
+    ("postgresql", "SELECT 12$, 34#", "SELECT 12$, 34#"),
+    ("postgresql", "SELECT 4111111111111111$", "SELECT 4111111111111111$"),
+    ("postgresql", "SELECT 0x4111$", "SELECT 0x4111$"),
+    ("postgresql", "SELECT a FROM t WHERE c = 4111111111111111", "SELECT a FROM t WHERE c = $1"),
+    ("postgresql", "SELECT a FROM t WHERE c = 0x4111FF.2", "SELECT a FROM t WHERE c = $1.2"),
+    ("postgresql", "SELECT $1984.37", "SELECT $1984.37"),
+    ("postgresql", "SELECT $ 1984.37", "SELECT $ $1"),
+    ("postgresql", "SELECT $4111.5", "SELECT $4111.5"),
+    ("postgresql", "SELECT a FROM t ORDER BY 1, 2", "SELECT a FROM t ORDER BY 1, 2"),
+    ("postgresql", "SELECT a FROM t GROUP BY 2, 3", "SELECT a FROM t GROUP BY 2, 3"),
+    (
+        "postgresql",
+        "SELECT a FROM t ORDER BY 4111111111111111, 2",
+        "SELECT a FROM t ORDER BY $1, 2",
+    ),
+    ("postgresql", "SELECT a FROM t ORDER BY a DESC, 3", "SELECT a FROM t ORDER BY a DESC, 3"),
+    ("postgresql", "SELECT 1.5e3", "SELECT $1"),
+    ("postgresql", "SELECT .5", "SELECT $1"),
+    ("postgresql", "SELECT 5.", "SELECT $1"),
+    (
+        "postgresql",
+        "SELECT a FROM t WHERE c BETWEEN 1234 AND 5678",
+        "SELECT a FROM t WHERE c BETWEEN $1 AND $2",
+    ),
+    ("postgresql", "SELECT a FROM t LIMIT 10 OFFSET 20", "SELECT a FROM t LIMIT 10 OFFSET 20"),
+    ("postgresql", "SELECT t0x1F, a.1 FROM t", "SELECT t0x1F, a.1 FROM t"),
+    ("postgresql", "SELECT 4111.5#x", "SELECT $1.5#x"),
+    ("postgresql", "SELECT 1e5#", "SELECT 1e5#"),
+    ("postgresql", "SELECT 7$a", "SELECT 7$a"),
+    ("postgresql", "SELECT 4111111111111111#1", "SELECT 4111111111111111#1"),
+    ("sqlserver", "SELECT 41111.5#", "SELECT ?.5#"),
+    ("sqlserver", "SELECT 4111.$1", "SELECT ?.$1"),
+    ("sqlserver", "SELECT 0x1F.1$1", "SELECT ?.1$1"),
+    ("sqlserver", "SELECT 4111111111111111.5#", "SELECT ?.5#"),
+    ("sqlserver", "SELECT 0xDEADBEEF.5$", "SELECT ?.5$"),
+    ("sqlserver", "SELECT 1.5e3.2#", "SELECT ?.2#"),
+    ("sqlserver", "SELECT 4111.5$x", "SELECT ?.5$x"),
+    ("sqlserver", "SELECT 12$, 34#", "SELECT 12$, 34#"),
+    ("sqlserver", "SELECT 4111111111111111$", "SELECT 4111111111111111$"),
+    ("sqlserver", "SELECT 0x4111$", "SELECT 0x4111$"),
+    ("sqlserver", "SELECT a FROM t WHERE c = 4111111111111111", "SELECT a FROM t WHERE c = ?"),
+    ("sqlserver", "SELECT a FROM t WHERE c = 0x4111FF.2", "SELECT a FROM t WHERE c = ?.2"),
+    ("sqlserver", "SELECT $1984.37", "SELECT ?"),
+    ("sqlserver", "SELECT $ 1984.37", "SELECT ?"),
+    ("sqlserver", "SELECT $4111.5", "SELECT ?"),
+    ("sqlserver", "SELECT a FROM t ORDER BY 1, 2", "SELECT a FROM t ORDER BY 1, 2"),
+    ("sqlserver", "SELECT a FROM t GROUP BY 2, 3", "SELECT a FROM t GROUP BY 2, 3"),
+    ("sqlserver", "SELECT a FROM t ORDER BY 4111111111111111, 2", "SELECT a FROM t ORDER BY ?, 2"),
+    ("sqlserver", "SELECT a FROM t ORDER BY a DESC, 3", "SELECT a FROM t ORDER BY a DESC, 3"),
+    ("sqlserver", "SELECT 1.5e3", "SELECT ?"),
+    ("sqlserver", "SELECT .5", "SELECT ?"),
+    ("sqlserver", "SELECT 5.", "SELECT ?"),
+    (
+        "sqlserver",
+        "SELECT a FROM t WHERE c BETWEEN 1234 AND 5678",
+        "SELECT a FROM t WHERE c BETWEEN ? AND ?",
+    ),
+    ("sqlserver", "SELECT a FROM t LIMIT 10 OFFSET 20", "SELECT a FROM t LIMIT 10 OFFSET 20"),
+    ("sqlserver", "SELECT t0x1F, a.1 FROM t", "SELECT t0x1F, a.1 FROM t"),
+    ("sqlserver", "SELECT 4111.5#x", "SELECT ?.5#x"),
+    ("sqlserver", "SELECT 1e5#", "SELECT 1e5#"),
+    ("sqlserver", "SELECT 7$a", "SELECT 7$a"),
+    ("sqlserver", "SELECT 4111111111111111#1", "SELECT 4111111111111111#1"),
+    ("oracle", "SELECT 41111.5#", "SELECT :1.5#"),
+    ("oracle", "SELECT 4111.$1", "SELECT :1.$1"),
+    ("oracle", "SELECT 0x1F.1$1", "SELECT :1.1$1"),
+    ("oracle", "SELECT 4111111111111111.5#", "SELECT :1.5#"),
+    ("oracle", "SELECT 0xDEADBEEF.5$", "SELECT :1.5$"),
+    ("oracle", "SELECT 1.5e3.2#", "SELECT :1.2#"),
+    ("oracle", "SELECT 4111.5$x", "SELECT :1.5$x"),
+    ("oracle", "SELECT 12$, 34#", "SELECT 12$, 34#"),
+    ("oracle", "SELECT 4111111111111111$", "SELECT 4111111111111111$"),
+    ("oracle", "SELECT 0x4111$", "SELECT 0x4111$"),
+    ("oracle", "SELECT a FROM t WHERE c = 4111111111111111", "SELECT a FROM t WHERE c = :1"),
+    ("oracle", "SELECT a FROM t WHERE c = 0x4111FF.2", "SELECT a FROM t WHERE c = :1.2"),
+    ("oracle", "SELECT $1984.37", "SELECT $1984.37"),
+    ("oracle", "SELECT $ 1984.37", "SELECT $ :1"),
+    ("oracle", "SELECT $4111.5", "SELECT $4111.5"),
+    ("oracle", "SELECT a FROM t ORDER BY 1, 2", "SELECT a FROM t ORDER BY 1, 2"),
+    ("oracle", "SELECT a FROM t GROUP BY 2, 3", "SELECT a FROM t GROUP BY 2, 3"),
+    ("oracle", "SELECT a FROM t ORDER BY 4111111111111111, 2", "SELECT a FROM t ORDER BY :1, 2"),
+    ("oracle", "SELECT a FROM t ORDER BY a DESC, 3", "SELECT a FROM t ORDER BY a DESC, 3"),
+    ("oracle", "SELECT 1.5e3", "SELECT :1"),
+    ("oracle", "SELECT .5", "SELECT :1"),
+    ("oracle", "SELECT 5.", "SELECT :1"),
+    (
+        "oracle",
+        "SELECT a FROM t WHERE c BETWEEN 1234 AND 5678",
+        "SELECT a FROM t WHERE c BETWEEN :1 AND :2",
+    ),
+    ("oracle", "SELECT a FROM t LIMIT 10 OFFSET 20", "SELECT a FROM t LIMIT 10 OFFSET 20"),
+    ("oracle", "SELECT t0x1F, a.1 FROM t", "SELECT t0x1F, a.1 FROM t"),
+    ("oracle", "SELECT 4111.5#x", "SELECT :1.5#x"),
+    ("oracle", "SELECT 1e5#", "SELECT 1e5#"),
+    ("oracle", "SELECT 7$a", "SELECT 7$a"),
+    ("oracle", "SELECT 4111111111111111#1", "SELECT 4111111111111111#1"),
+    ("db2", "SELECT 41111.5#", "SELECT ?.5#"),
+    ("db2", "SELECT 4111.$1", "SELECT ?.$1"),
+    ("db2", "SELECT 0x1F.1$1", "SELECT ?.1$1"),
+    ("db2", "SELECT 4111111111111111.5#", "SELECT ?.5#"),
+    ("db2", "SELECT 0xDEADBEEF.5$", "SELECT ?.5$"),
+    ("db2", "SELECT 1.5e3.2#", "SELECT ?.2#"),
+    ("db2", "SELECT 4111.5$x", "SELECT ?.5$x"),
+    ("db2", "SELECT 12$, 34#", "SELECT 12$, 34#"),
+    ("db2", "SELECT 4111111111111111$", "SELECT 4111111111111111$"),
+    ("db2", "SELECT 0x4111$", "SELECT 0x4111$"),
+    ("db2", "SELECT a FROM t WHERE c = 4111111111111111", "SELECT a FROM t WHERE c = ?"),
+    ("db2", "SELECT a FROM t WHERE c = 0x4111FF.2", "SELECT a FROM t WHERE c = ?.2"),
+    ("db2", "SELECT $1984.37", "SELECT $1984.37"),
+    ("db2", "SELECT $ 1984.37", "SELECT $ ?"),
+    ("db2", "SELECT $4111.5", "SELECT $4111.5"),
+    ("db2", "SELECT a FROM t ORDER BY 1, 2", "SELECT a FROM t ORDER BY 1, 2"),
+    ("db2", "SELECT a FROM t GROUP BY 2, 3", "SELECT a FROM t GROUP BY 2, 3"),
+    ("db2", "SELECT a FROM t ORDER BY 4111111111111111, 2", "SELECT a FROM t ORDER BY ?, 2"),
+    ("db2", "SELECT a FROM t ORDER BY a DESC, 3", "SELECT a FROM t ORDER BY a DESC, 3"),
+    ("db2", "SELECT 1.5e3", "SELECT ?"),
+    ("db2", "SELECT .5", "SELECT ?"),
+    ("db2", "SELECT 5.", "SELECT ?"),
+    (
+        "db2",
+        "SELECT a FROM t WHERE c BETWEEN 1234 AND 5678",
+        "SELECT a FROM t WHERE c BETWEEN ? AND ?",
+    ),
+    ("db2", "SELECT a FROM t LIMIT 10 OFFSET 20", "SELECT a FROM t LIMIT 10 OFFSET 20"),
+    ("db2", "SELECT t0x1F, a.1 FROM t", "SELECT t0x1F, a.1 FROM t"),
+    ("db2", "SELECT 4111.5#x", "SELECT ?.5#x"),
+    ("db2", "SELECT 1e5#", "SELECT 1e5#"),
+    ("db2", "SELECT 7$a", "SELECT 7$a"),
+    ("db2", "SELECT 4111111111111111#1", "SELECT 4111111111111111#1"),
+]
+
+
+def _twice(sql: str, engine: str) -> str:
+    once = redact_literals(sql, engine)
+    assert redact_literals(once, engine) == once
+    return once
+
+
+class TestNumberLiteralsAreConsumedWhole:
+    """No digit of a number literal survives next to a placeholder, and a second pass changes nothing (#1715)."""
+
+    @pytest.mark.parametrize("engine", ALL_ENGINES)
+    @pytest.mark.parametrize(
+        "literal",
+        ["0x1F.1", "1.5e3.2", "1.5e+3.2", "0x1F.1e3", "0x1F1.5e3", ".5e3.2", "1e5.2.3"],
+    )
+    def test_hex_and_exponent_with_a_fraction_tail(self, engine: str, literal: str) -> None:
+        assert _twice(f"SELECT {literal}", engine) == f"SELECT {MARKS[engine]}"
+
+    @pytest.mark.parametrize("engine", ["mysql", "postgresql"])
+    @pytest.mark.parametrize("literal", ["0b101", "0b101.1"])
+    def test_binary_number_literals(self, engine: str, literal: str) -> None:
+        assert _twice(f"SELECT {literal}", engine) == f"SELECT {MARKS[engine]}"
+
+    def test_postgresql_reads_0b_in_either_case(self) -> None:
+        assert _twice("SELECT 0B101", "postgresql") == "SELECT $1"
+
+    @pytest.mark.passes_on_main  # a name, as on main
+    def test_mysql_0b_is_lower_case_only(self) -> None:
+        # ``0B101`` is a name on MySQL, like ``1_000``.
+        assert _twice("SELECT 0B101", "mysql") == "SELECT 0B101"
+
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    def test_0b_is_a_number_and_an_alias_elsewhere(self, engine: str) -> None:
+        # ``0b101`` reads as ``0 AS b101`` here; the alias holds the digits, so it goes too.
+        assert _twice("SELECT 0b101", engine) == f"SELECT {MARKS[engine]}"
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("engine", ALL_ENGINES)
+    @pytest.mark.parametrize(
+        "text", ["SELECT b'101'", "SELECT B'101'", "SELECT X'1F'", "SELECT x'1f'"]
+    )
+    def test_quoted_bit_and_hex_strings_lose_their_value(self, engine: str, text: str) -> None:
+        once = _twice(text, engine)
+        assert "101" not in once and "1F" not in once.upper().replace("X'", "")
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("engine", ALL_ENGINES)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT t0x1F FROM t",
+            "SELECT t0b101 FROM t",
+            "SELECT t0o17, t1_000 FROM t",
+            "SELECT a.t0x1F, col.1 FROM a",
+            "SELECT x.0x1F, x.0b101, b.0b1, x.0o17 FROM x",
+            "SELECT t.1e3, t.1_000, e3.2, schema.0x FROM t",
+            "SELECT a.1abc, a.4111111111111111abc FROM a",
+        ],
+    )
+    def test_identifiers_and_qualified_names_are_kept(self, engine: str, text: str) -> None:
+        assert redact_literals(text, engine) == text
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("engine", ["mysql"])
+    @pytest.mark.parametrize(
+        "name", ["0b2", "0xZZ", "1_000", "4111_1111", "4111111111111111abc", "0o17"]
+    )
+    def test_mysql_keeps_a_word_that_starts_with_digits(self, engine: str, name: str) -> None:
+        sql = f"SELECT {name} FROM t"
+        assert _twice(sql, engine) == sql
+
+    @pytest.mark.parametrize("literal", ["$1.5e3.2", "$1.5e3", "$1.5.2", "$ 19.99e2.5"])
+    def test_sqlserver_money_literal_with_a_tail(self, literal: str) -> None:
+        assert _twice(f"SELECT {literal}", "sqlserver") == "SELECT ?"
+
+
+class TestNonDecimalAndSeparatedNumbers:
+    """PostgreSQL 16 literals (``0o17``, ``_`` separators) and numbers glued to a word (#1715)."""
+
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            "4111_1111_1111_1111",
+            "0xFFFF_FFFF",
+            "0b1010_1010",
+            "0o17",
+            "0O1_7",
+            "1_000.5",
+            "1_000e1_0",
+            "1.000_000",
+            "1_000.5.2",
+        ],
+    )
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    def test_postgresql_16_literals_leave_no_digit(self, engine: str, literal: str) -> None:
+        once = _twice(f"WHERE c = {literal}", engine)
+        assert once == f"WHERE c = {MARKS[engine]}"
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("literal", ["4111_1111_1111_1111", "1_000", "0xFFFF_FFFF", "0o17"])
+    def test_mysql_keeps_them_as_names(self, literal: str) -> None:
+        sql = f"WHERE c = {literal}"
+        assert _twice(sql, "mysql") == sql
+
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    @pytest.mark.parametrize("word", ["abc", "x1", "days"])
+    def test_a_number_glued_to_a_word_is_a_number_and_an_alias(
+        self, engine: str, word: str
+    ) -> None:
+        once = _twice(f"WHERE c = 4111111111111111{word}", engine)
+        assert "4111" not in once
+        assert once.startswith(f"WHERE c = {MARKS[engine]}")
+        assert once.endswith(word)
+
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    def test_no_digit_stays_beside_the_placeholder(self, engine: str) -> None:
+        once = _twice("SELECT 0x1F.1abc", engine)
+        assert once == f"SELECT {MARKS[engine]} abc"
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    def test_a_number_before_a_dollar_or_hash_is_kept_whole(self, engine: str) -> None:
+        sql = "SELECT 12$, 34#"
+        assert _twice(sql, engine) == sql
+
+    @pytest.mark.passes_on_main  # what must not change
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    @pytest.mark.parametrize("text", ["SELECT 1ORDER BY ORDER BY 1", "SELECT 1EXEC X'a'"])
+    def test_a_number_glued_to_a_keyword_reads_the_same_on_a_second_pass(
+        self, engine: str, text: str
+    ) -> None:
+        _twice(text, engine)
+
+
+class TestMoneyGluedToAWord:
+    """SQL Server's money literal ends like a number token (#1715)."""
+
+    @pytest.mark.parametrize(
+        "literal,word",
+        [
+            ("$1.5", "x"),
+            ("$1.5e3", "x"),
+            ("$1.41111111", "abc"),
+            ("$4111111111111111", "abc"),
+            ("$4111111111111111", "ORDER BY a"),
+            ("$ 4111111111111111", "abc"),
+        ],
+    )
+    def test_the_whole_money_number_goes_and_the_word_stays(self, literal: str, word: str) -> None:
+        once = _twice(f"SELECT {literal}{word}", "sqlserver")
+        assert once == f"SELECT ? {word}"
+
+    @pytest.mark.parametrize("literal", ["$4111_1111_1111_1111", "$1.5e3.2", "$1984.37"])
+    def test_money_groups_and_tails(self, literal: str) -> None:
+        assert _twice(f"SELECT {literal}", "sqlserver") == "SELECT ?"
+
+
+class TestShorterReadingWhereADollarOrHashFollows:
+    """Digits main redacted stay redacted where a ``$`` or ``#`` follows the number (#1715)."""
+
+    @pytest.mark.passes_on_main  # what main already redacts or keeps
+    @pytest.mark.parametrize("engine", ["oracle", "db2"])
+    def test_decimal_before_a_hash(self, engine: str) -> None:
+        assert "41111" not in _twice("SELECT 41111.5#", engine)
+
+    @pytest.mark.passes_on_main  # what main already redacts or keeps
+    @pytest.mark.parametrize("engine", ["sqlserver", "db2"])
+    def test_decimal_before_a_dollar(self, engine: str) -> None:
+        assert "4111" not in _twice("SELECT 4111.$1", engine)
+
+    @pytest.mark.passes_on_main  # what main already redacts or keeps
+    def test_hex_before_a_dollar_on_postgresql(self) -> None:
+        once = _twice("SELECT 0x1F.1$1", "postgresql")
+        assert "x1F" not in once and "0x" not in once
+
+    @pytest.mark.passes_on_main  # what main already redacts or keeps
+    @pytest.mark.parametrize(("engine", "text", "main"), _MAIN_REDACTIONS)
+    def test_no_input_main_redacted_keeps_more_digits(
+        self, engine: str, text: str, main: str
+    ) -> None:
+        def kept(out: str) -> int:
+            return sum(ch.isdigit() for ch in _PLACEHOLDER_RE.sub("", out))
+
+        assert kept(redact_literals(text, engine)) <= kept(main), (engine, text)
+
+
+class TestPositionsAreKeptOrRedactedTogether:
+    """``ORDER BY``/``GROUP BY`` positions are kept up to the first replaced item, on both passes (#1715)."""
+
+    @pytest.mark.passes_on_main  # what main already redacts or keeps
+    @pytest.mark.parametrize("engine", ALL_ENGINES)
+    def test_positions_are_kept(self, engine: str) -> None:
+        sql = "SELECT a FROM t GROUP BY 2, 3 ORDER BY 1, 2 DESC"
+        assert _twice(sql, engine) == sql
+
+    @pytest.mark.parametrize(
+        ("engine", "marks"),
+        [
+            ("mysql", "?, ?"),
+            ("postgresql", "$1, $2"),
+            ("sqlserver", "?, ?"),
+            ("oracle", ":1, :2"),
+            ("db2", "?, ?"),
+        ],
+    )
+    def test_a_replaced_item_ends_the_positions(self, engine: str, marks: str) -> None:
+        # Pass one used to keep the 2 and pass two (``ORDER BY ?, 2``) redacted it.
+        assert _twice("SELECT a FROM t ORDER BY 0x1F, 2", engine) == (
+            f"SELECT a FROM t ORDER BY {marks}"
+        )
+
+    @pytest.mark.parametrize("engine", ALL_ENGINES)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT a FROM t ORDER BY 4111111111111111, 2",
+            "SELECT a FROM t ORDER BY a, 1.5, 2",
+            "SELECT a FROM t GROUP BY 0x101, 2",
+        ],
+    )
+    def test_both_passes_agree(self, engine: str, text: str) -> None:
+        assert "4111" not in _twice(text, engine)
+
+    @pytest.mark.parametrize("engine", GLUING_ENGINES)
+    def test_a_number_glued_to_a_word_is_no_position(self, engine: str) -> None:
+        once = _twice("SELECT a FROM t ORDER BY 0x1F,4111TOP", engine)
+        assert "4111" not in once
