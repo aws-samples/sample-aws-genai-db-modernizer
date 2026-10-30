@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.agents.schema_design.dynamodb_key_reconcile import GSI_LIMIT
 from src.agents.schema_design.group_merger import merge_failures, merge_group_drafts, merge_warnings
 from src.contracts.dynamodb_model_output import AccessPattern, TableDefinition
@@ -2226,3 +2228,289 @@ def test_a_renamed_key_attribute_is_renamed_in_returned_attributes():
         [table] = merged["table_definitions"]
         assert table["partition_key"]["attribute_name"] == "order_id", order
         assert _pattern(merged, "GetItem")["returned_attributes"] == ["order_id", "status"], order
+
+
+# ---------------------------------------------------------------------------
+# Prefixed vs plain id keys: a suggestion, never a rewrite (#855)
+# ---------------------------------------------------------------------------
+
+TOPICS = "discourse.topics"
+
+
+def _topics_entity(pk: str) -> dict:
+    return _entity("TOPIC", TOPICS, pk, "TOPIC", _attr("id", TOPICS))
+
+
+def _topic_read(pid: str, table: str) -> dict:
+    return _ap(pid, table, "Query", "PK=topic", source=TOPICS)
+
+
+def _reconcile_notes(drafts: list[dict]) -> tuple[list[dict], list[str]]:
+    from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
+    notes: list[str] = []
+    out, _ = reconcile_shared_tables(drafts, list(range(len(drafts))), notes=notes)
+    return out, notes
+
+
+def _suggestions(notes: list[str]) -> list[str]:
+    return [n for n in notes if "natural attribute" in n]
+
+
+class TestPrefixedVsPlainIdKeys:
+    def test_collections_that_differ_only_on_the_prefix_get_a_suggestion(self):
+        drafts = [
+            _draft(
+                [_collection("topics", "pk", "sk", _topics_entity("TOPIC#{id}"))],
+                [_topic_read("DDB-AP-1", "topics")],
+            ),
+            _draft(
+                [_collection("topic_posts", "pk", "sk", _topics_entity("{id}"))],
+                [_topic_read("DDB-AP-1", "topic_posts")],
+            ),
+        ]
+
+        out, notes = _reconcile_notes(drafts)
+
+        [note] = _suggestions(notes)
+        assert "TOPIC#{id}" in note and "{id}" in note
+        assert "group 0" in note and "group 1" in note
+        assert "not applied" in note
+        # A suggestion only: neither draft's template is rewritten.
+        assert out[0]["table_definitions"][0]["entities"][0]["pk_template"] == "TOPIC#{id}"
+        assert out[1]["table_definitions"][0]["entities"][0]["pk_template"] == "{id}"
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_a_single_table_folded_into_the_prefixed_collection_gets_no_suggestion(self):
+        # Rule 4 folds the single table into the collection: one form survives.
+        drafts = [
+            _draft(
+                [_single("topics", TOPICS, "topic_id", attrs=[_attr("topic_id", TOPICS, "id")])],
+                [_ap("DDB-AP-1", "topics", "GetItem", "PK=topic_id", source=TOPICS)],
+            ),
+            _draft(
+                [_collection("topic_posts", "pk", "sk", _topics_entity("TOPIC#{id}"))],
+                [_topic_read("DDB-AP-1", "topic_posts")],
+            ),
+        ]
+
+        _, notes = _reconcile_notes(drafts)
+
+        assert any("folded into topic_posts" in n for n in notes), notes
+        assert _suggestions(notes) == []
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_a_context_placeholder_folded_into_the_owner_gets_no_suggestion(self):
+        # The command asks context groups to key placeholders by the source primary
+        # key; the owner's collection keys the rows TOPIC#{id} and absorbs it. The
+        # collection's string PK (TOPIC#{id} is a string) against the placeholder's
+        # numeric id keeps rule 4 (_fold_singles) out: only the owner fold
+        # (_fold_into_owner_collections) gives the rows one home.
+        from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
+        owner = _collection("topic_posts", "pk", "sk", _topics_entity("TOPIC#{id}"))
+        owner["partition_key"] = _key("pk", "S")
+        drafts = [
+            _draft([owner], [_topic_read("DDB-AP-1", "topic_posts")]),
+            _draft(
+                [_single("topics", TOPICS, "id")],
+                [_ap("DDB-AP-1", "topics", "GetItem", "PK=id", source=TOPICS)],
+            ),
+        ]
+        notes: list[str] = []
+
+        reconcile_shared_tables(drafts, [0, 1], notes=notes, owners={"topics": 0})
+
+        assert any(
+            "group 1's context placeholder topics folded into owner group 0's table "
+            "topic_posts" in n
+            for n in notes
+        ), notes
+        assert not any(n.startswith("topics (group 1) folded into") for n in notes), notes
+        assert _suggestions(notes) == []
+
+    def test_an_owner_on_a_natural_key_names_the_gsi_the_placeholder_needs(self):
+        from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
+        slug = _entity("TOPIC", TOPICS, "TOPIC#{slug}", "TOPIC", _attr("slug", TOPICS, type_="S"))
+        drafts = [
+            _draft(
+                [_collection("topic_posts", "pk", "sk", slug)],
+                [_topic_read("DDB-AP-1", "topic_posts")],
+            ),
+            _draft(
+                [_single("topics", TOPICS, "id")],
+                [_ap("DDB-AP-1", "topics", "GetItem", "PK=id", source=TOPICS)],
+            ),
+        ]
+        failures: list[str] = []
+
+        reconcile_shared_tables(drafts, [0, 1], owners={"topics": 0}, failures=failures)
+
+        [failure] = failures
+        assert "keeps the source primary key reachable through a GSI" in failure
+
+    @pytest.mark.passes_on_main  # guards the fix the command and the hint name (#855)
+    def test_a_placeholder_reads_an_owner_on_a_natural_key_through_the_id_gsi(self):
+        ent = _entity(
+            "TOPIC",
+            TOPICS,
+            "TOPIC#{slug}",
+            "TOPIC",
+            _attr("slug", TOPICS, type_="S"),
+            _attr("id", TOPICS),
+        )
+        owner = _collection("topic_posts", "pk", "sk", ent, gsis=[_gsi("TopicsById", ["id"])])
+        placeholder = _single("topics", TOPICS, "id", gsis=[_gsi("TopicsById", ["id"])])
+        read = _ap("DDB-AP-1", "topics", "Query", "id = :id", gsi="TopicsById", source=TOPICS)
+        drafts = [
+            _draft([owner], [_topic_read("DDB-AP-1", "topic_posts")]),
+            _draft([placeholder], [read]),
+        ]
+
+        merged = merge_group_drafts(drafts, "dynamodb", [0, 1], owners={"topics": 0})
+
+        assert merge_failures(merged) == []
+        assert {ap["table_name"] for ap in merged["access_patterns"]} == {"topic_posts"}
+        _assert_every_pattern_is_served(merged)
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_an_owner_on_the_id_gets_no_natural_key_hint(self):
+        # A failure for another reason (the SK copies a column the placeholder lacks)
+        # keeps its message: the hint is only for an owner keyed off the id.
+        from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
+        entity = _entity(
+            "TOPIC",
+            TOPICS,
+            "{id}",
+            "C#{category_id}",
+            _attr("id", TOPICS),
+            _attr("category_id", TOPICS),
+        )
+        drafts = [
+            _draft(
+                [_collection("topic_posts", "pk", "sk", entity)],
+                [_topic_read("DDB-AP-1", "topic_posts")],
+            ),
+            _draft(
+                [_single("topics", TOPICS, "id")],
+                [_ap("DDB-AP-1", "topics", "GetItem", "PK=id", source=TOPICS)],
+            ),
+        ]
+        failures: list[str] = []
+
+        reconcile_shared_tables(drafts, [0, 1], owners={"topics": 0}, failures=failures)
+
+        [failure] = failures
+        assert "cannot be shown to serve" in failure
+        assert "reachable through a GSI" not in failure
+
+    def test_the_suggestion_is_the_same_in_every_draft_order(self):
+        from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
+        def draft(name: str, pk: str, spelled: str) -> dict:
+            entity = _entity("TOPIC", spelled, pk, "TOPIC", _attr("id", spelled))
+            return _draft(
+                [_collection(name, "pk", "sk", entity)],
+                [_ap("DDB-AP-1", name, "Query", "PK=topic", source=spelled)],
+            )
+
+        # Three groups, two of them on the plain form, spelling the source differently.
+        a = draft("t_a", "{id}", "public.topics")
+        b = draft("t_b", "TOPIC#{id}", "discourse.topics")
+        c = draft("t_c", "{id}", "discourse.topics")
+
+        def note(drafts: list[dict], groups: list[int]) -> list[str]:
+            notes: list[str] = []
+            reconcile_shared_tables(drafts, groups, notes=notes)
+            return _suggestions(notes)
+
+        first = note([a, b, c], [0, 1, 2])
+        assert len(first) == 1
+        assert "'TOPIC#{id}' (group 1, t_b); '{id}' (groups 0, 2, t_a, t_c)" in first[0]
+        assert note([c, b, a], [2, 1, 0]) == first
+        assert note([b, c, a], [1, 2, 0]) == first
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_forms_in_one_merged_table_get_no_suggestion(self):
+        # Same table name: the merge combines them, and reports contradictory
+        # templates itself. Only forms the merge keeps apart get the note.
+        drafts = [
+            _draft(
+                [_collection("topics", "pk", "sk", _topics_entity(pk))],
+                [_topic_read("DDB-AP-1", "topics")],
+            )
+            for pk in ("TOPIC#{id}", "{id}")
+        ]
+
+        assert _suggestions(_reconcile_notes(drafts)[1]) == []
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_the_same_key_form_gets_no_suggestion(self):
+        drafts = [
+            _draft(
+                [_collection(f"t_{i}", "pk", "sk", _topics_entity("TOPIC#{id}"))],
+                [_topic_read("DDB-AP-1", f"t_{i}")],
+            )
+            for i in range(2)
+        ]
+
+        assert _suggestions(_reconcile_notes(drafts)[1]) == []
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_two_different_prefixes_get_no_suggestion(self):
+        drafts = [
+            _draft(
+                [_collection(f"t_{i}", "pk", "sk", _topics_entity(pk))],
+                [_topic_read("DDB-AP-1", f"t_{i}")],
+            )
+            for i, pk in enumerate(("TOPIC#{id}", "T#{id}"))
+        ]
+
+        assert _suggestions(_reconcile_notes(drafts)[1]) == []
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_keys_on_different_columns_get_no_suggestion(self):
+        slug = _entity("TOPIC", TOPICS, "{slug}", "TOPIC", _attr("slug", TOPICS, type_="S"))
+        drafts = [
+            _draft(
+                [_collection("t_0", "pk", "sk", _topics_entity("TOPIC#{id}"))],
+                [_topic_read("DDB-AP-1", "t_0")],
+            ),
+            _draft([_collection("t_1", "pk", "sk", slug)], [_topic_read("DDB-AP-1", "t_1")]),
+        ]
+
+        assert _suggestions(_reconcile_notes(drafts)[1]) == []
+
+    @pytest.mark.passes_on_main  # guards what must not change (#855)
+    def test_one_group_with_both_forms_gets_no_suggestion(self):
+        drafts = [
+            _draft(
+                [
+                    _collection("t_0", "pk", "sk", _topics_entity("TOPIC#{id}")),
+                    _collection("t_1", "pk", "sk", _topics_entity("{id}")),
+                ],
+                [_topic_read("DDB-AP-1", "t_0"), _topic_read("DDB-AP-2", "t_1")],
+            ),
+            _draft(
+                [_single("users", "discourse.users", "user_id")],
+                [_ap("DDB-AP-1", "users", "GetItem", "PK=user_id", source="discourse.users")],
+            ),
+        ]
+
+        assert _suggestions(_reconcile_notes(drafts)[1]) == []
+
+    def test_the_merge_trace_carries_the_suggestion(self):
+        drafts = [
+            _draft(
+                [_collection(f"t_{i}", "pk", "sk", _topics_entity(pk))],
+                [_topic_read("DDB-AP-1", f"t_{i}")],
+            )
+            for i, pk in enumerate(("TOPIC#{id}", "{id}"))
+        ]
+        notes: list[str] = []
+
+        merge_group_drafts(drafts, "dynamodb", [0, 1], notes=notes)
+
+        assert len(_suggestions(notes)) == 1

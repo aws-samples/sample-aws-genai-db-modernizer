@@ -110,6 +110,12 @@ GSIs) go to the merge notes (``merge_reconciliation`` in ``design_trace.json``),
 trade-offs; each rewritten access pattern gets one ``(merged design: ...)``
 note in its ``key_condition``.
 
+Rows still in separate tables after these rules, keyed by the same source id
+with and without a prefix (``TOPIC#{id}`` vs ``{id}``), only get a suggestion
+in the merge notes: use one form, or a natural attribute the access patterns
+look up by (:func:`_suggest_natural_keys`, #855). The merge never rewrites the
+key for it.
+
 What is left (a table name used for different rows, a key no group can safely
 give up, sort-key templates over different columns, key attribute types that
 disagree, an item collection and a single-entity table that do not map, more
@@ -855,6 +861,78 @@ def _groups_text(refs: list[_Ref]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Prefixed vs plain id keys: a suggestion for review, never a rewrite (#855)
+# ---------------------------------------------------------------------------
+
+
+def _pk_forms(ref: _Ref) -> list[tuple[str, str, str, str]]:
+    """(source table, column, prefix, key as written) for each home of rows in ``ref``.
+
+    A single-entity table whose partition key copies one column is the plain
+    form, shown by its attribute name. An entity whose PK template is static
+    text then one ``{column}`` has that text as its prefix (empty for ``{id}``).
+    """
+    if _shape(ref.table) == "single":
+        base = _base_entity(ref.table)
+        name = _key_name(ref.table.get("partition_key"))
+        column = _direct_column(_attributes(ref.table).get(name or ""), base)
+        return [(base, column, "", str(name))] if column and _known(base) else []
+    forms: list[tuple[str, str, str, str]] = []
+    for entity in _dicts(ref.table.get("entities")):
+        written = str(entity.get("pk_template") or "")
+        head, tokens, tail = _template(canon_template(written, entity))
+        source = normalize_table_name(str(entity.get("source_table") or ""))
+        if _known(source) and len(tokens) == 1 and not tail:
+            forms.append((source, tokens[0], head, written))
+    return forms
+
+
+def _suggest_natural_keys(drafts: _Drafts) -> None:
+    """Note rows that groups still key by the same source id, with and without a prefix.
+
+    ``TOPIC#{id}`` in one group and ``{id}`` in another key the same rows by
+    the relational surrogate id in two forms. Which form fits, or whether a
+    natural attribute (an email, a slug) should be the key instead, depends
+    on the access patterns, so the merge only suggests it in its notes and
+    changes nothing (#855). Runs after the folds and alignments: forms they
+    already gave one table (rule 4, a context placeholder folded into its
+    owner's collection) are one design, so only forms in tables from different
+    groups with different names, which the merge keeps apart, get the note.
+    """
+    homes: dict[tuple[str, str], list[tuple[_Ref, str, str]]] = {}
+    for ref in drafts.refs():
+        for source, column, prefix, written in _pk_forms(ref):
+            homes.setdefault((source, column), []).append((ref, prefix, written))
+    for (source, column), found in sorted(homes.items()):
+        # Group, table and form order: the note reads the same in every draft order.
+        found.sort(key=lambda h: (h[0].group, h[0].name, h[2]))
+        prefixed = [h for h in found if h[1]]
+        plain = [h for h in found if not h[1]]
+        if not any(
+            p[0].pos != q[0].pos and p[0].name.casefold() != q[0].name.casefold()
+            for p in prefixed
+            for q in plain
+        ):
+            continue
+        # Prefixed forms first, then plain ones, each in the order sorted above.
+        forms: dict[str, list[_Ref]] = {}
+        for ref, _, written in prefixed + plain:
+            forms.setdefault(written, []).append(ref)
+        described = "; ".join(
+            f"'{written}' ({_groups_text(refs)}, {', '.join(dict.fromkeys(r.name for r in refs))})"
+            for written, refs in forms.items()
+        )
+        shown = _shown(source, *(h[0].table for h in found))
+        drafts.notes.append(
+            f"{shown}.{column}: design groups key these rows by the source id with and "
+            f"without a prefix: {described}. Suggestion, not applied: use one form for "
+            "these rows, and check whether their access patterns look them up by a natural "
+            "attribute (an email, a slug, a name or an external key) that is unique and "
+            "stable, which could be the key instead of the id"
+        )
+
+
+# ---------------------------------------------------------------------------
 # 2./3. Single-entity tables for the same rows
 # ---------------------------------------------------------------------------
 
@@ -1336,6 +1414,9 @@ def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> Non
         own_cols = _columns(_key_columns(ref.table, base))
         tokens = set(_TOKEN_RE.findall(canon_template(pk_tpl, entity)))
         tokens |= set(_TOKEN_RE.findall(canon_template(sk_tpl, entity)))
+        # The owner keys the rows on none of the placeholder's columns (a natural
+        # key, #855): the source primary key is reachable only through a GSI.
+        natural = bool(tokens) and not tokens & own_cols
         problems: list[str] = []
         for ap in drafts.patterns(ref):
             if not ap.get("gsi_name") and not tokens <= own_cols:
@@ -1345,6 +1426,13 @@ def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> Non
                     f"({_describe(*_table_key(ref.table))}), which {where} cannot be shown to "
                     "serve: put the pattern on a GSI of the placeholder, or design it on the "
                     "owner's entity key"
+                    + (
+                        "; the owner keys these rows on another attribute, so it keeps the "
+                        "source primary key reachable through a GSI on it, and the "
+                        "placeholder reads through a GSI with the same keys"
+                        if natural
+                        else ""
+                    )
                 )
         entity_attrs = {str(a.get("name")): a for a in _dicts(entity.get("attributes"))}
         placeholder_attrs = _attributes(ref.table)
@@ -1913,6 +2001,7 @@ def reconcile_shared_tables(
     _fold_into_owner_collections(state, owners or {})
     _align_collections(state)
     _reconcile_gsi_names(state)
+    _suggest_natural_keys(state)
     _flush_notes(state.drafts)
     if notes is not None:
         notes.extend(state.notes)
