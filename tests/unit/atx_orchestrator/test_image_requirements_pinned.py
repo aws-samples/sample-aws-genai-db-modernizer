@@ -107,3 +107,15 @@ def test_closure_follows_dependencies_and_extras() -> None:
     }
     assert rar.closure(lock, [Requirement("a")]) == {"a", "b"}
     assert rar.closure(lock, [Requirement("b[x]")]) == {"b", "c"}
+
+
+def test_the_image_python_matches_the_project_python() -> None:
+    """The code needs the project's Python (3.12 syntax); the image must run it (#1733)."""
+    text = (IMAGE / "Dockerfile.atx").read_text(encoding="utf-8")
+    base = re.search(r"^FROM .*?python:(\d+\.\d+)(?:-\S+?)?@sha256:[0-9a-f]{64}$", text, re.M)
+    assert base, "Dockerfile.atx: the python base image must be pinned by digest"
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    floor = re.match(r">=(\d+\.\d+)", pyproject["project"]["requires-python"])
+    assert floor
+    version_file = (REPO / ".python-version").read_text(encoding="utf-8").strip()
+    assert base[1] == floor[1] == version_file
