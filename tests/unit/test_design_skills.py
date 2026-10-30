@@ -84,3 +84,23 @@ def test_dynamodb_designer_lists_the_attributes_each_read_returns() -> None:
     assert "select list" in text
     assert "`[]` for a read that returns only key attributes" in text
     assert "follow-up #1509" not in text
+
+
+def test_dynamodb_designer_questions_the_surrogate_id() -> None:
+    """#855: a natural key per table, only on uniqueness evidence, with the id still reachable."""
+    skill = " ".join((SKILLS_DIR / "dynamodb-data-modeling.md").read_text().split())
+    assert "Question the surrogate id" in skill
+    assert "For each table, compare that id with the natural attribute its top patterns" in skill
+    # Uniqueness from the evidence the merge trusts (unique_keys_from_collector).
+    assert "`is_unique` true and no `predicate`" in skill and "`nullable: false`" in skill
+    assert "unique within the tenant" in skill
+    assert "silently overwrite another row" in skill
+    assert "keep the id reachable" in skill
+    assert "Record the choice and its reason in `trade_offs`" in skill
+    command_path = SKILLS_DIR.parents[1] / ".claude" / "commands" / "design-schema-dynamodb.md"
+    command = " ".join(command_path.read_text().split())
+    assert '"Question the surrogate id"' in command
+    for term in ("high-cardinality", "evenly distributed", "cannot be updated in place"):
+        assert term in command, term
+    assert "the owner keeps that id reachable" in command
+    assert "`--merge` never rewrites a key for this" in command

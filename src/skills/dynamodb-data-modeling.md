@@ -83,6 +83,7 @@ For each DynamoDB table:
 - List the top 3 patterns by `design_rps` that the table must serve
 - Derive the PK from the highest-RPS pattern's primary filter column
 - When the source tables carry a tenant column, lead every partition key with it (see "Tenant and authorization boundary" below) before applying the rule above
+- Question the surrogate id: the source keys rows by a generated id because its joins need one. For each table, compare that id with the natural attribute its top patterns look up by (an email, a slug, a name, an external key), as the PK rule above does, and serve the other lookups through a GSI. Key on the natural attribute only when it is high-cardinality, evenly distributed, stable (a key cannot be updated in place: a change is a delete and a put of every item under the key) and unique on the source's evidence: its `primary_key`, or an index with `is_unique` true and no `predicate` whose `columns` are all `nullable: false`. When the key leads with the tenant column (above), unique within the tenant is enough. Otherwise keep the id: a duplicate value makes a `PutItem` silently overwrite another row. When other groups read the table by the source id (their context placeholders are keyed by it), keep the id reachable: in the key, or through a GSI on it. Record the choice and its reason in `trade_offs`
 - Design the SK to serve the next most frequent patterns without requiring a GSI
 - Verify the chosen PK distributes writes evenly — flag any PK value that concentrates traffic (e.g. a status enum, a date bucket with low cardinality)
 
