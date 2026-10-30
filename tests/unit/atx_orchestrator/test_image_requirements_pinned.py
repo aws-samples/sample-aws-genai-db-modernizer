@@ -1,0 +1,109 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+"""The AWS Transform image installs pinned versions that match ``uv.lock`` (#1725).
+
+``requirements.txt`` is generated from ``requirements.in`` and the lock by
+``scripts/render_atx_requirements.py``; the SDK packages (not in the lock) are pinned
+by hand in ``requirements-sdk.txt``. The Dockerfile installs both files and nothing
+floating.
+"""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+from scripts import render_atx_requirements as rar
+
+REPO = Path(__file__).resolve().parents[3]
+IMAGE = REPO / "src" / "atx_orchestrator"
+PIN = re.compile(r"^([A-Za-z0-9._-]+)==([^\s;]+)")
+
+
+def _pins(path: Path) -> dict[str, str]:
+    pins = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = PIN.match(line)
+        if match:
+            pins[canonicalize_name(match[1])] = match[2]
+    return pins
+
+
+def test_requirements_txt_is_fresh_against_the_lock() -> None:
+    """A uv.lock or requirements.in change without a regeneration fails here."""
+    assert (IMAGE / "requirements.txt").read_text(encoding="utf-8") == rar.render()
+
+
+def test_every_line_is_an_exact_pin() -> None:
+    for path in (IMAGE / "requirements.txt", IMAGE / "requirements-sdk.txt"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#"):
+                assert PIN.match(line), f"{path.name}: not an exact pin: {line}"
+
+
+def test_pins_equal_the_locked_versions() -> None:
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    locked = {canonicalize_name(p["name"]): p["version"] for p in lock["package"] if "version" in p}
+    pins = _pins(IMAGE / "requirements.txt")
+    assert pins, "requirements.txt has no exact pins"
+    for name, version in pins.items():
+        assert locked[name] == version, f"{name}: image pins {version}, uv.lock has {locked[name]}"
+
+
+def test_every_direct_dependency_is_pinned_within_its_bounds() -> None:
+    pins = _pins(IMAGE / "requirements.txt")
+    direct = rar.direct_requirements((IMAGE / "requirements.in").read_text(encoding="utf-8"))
+    assert direct
+    for req in direct:
+        version = pins[canonicalize_name(req.name)]
+        assert req.specifier.contains(version), f"{req.name}=={version} outside {req.specifier}"
+
+
+def test_the_extras_of_a_direct_dependency_are_followed() -> None:
+    """pymongo[aws] needs pymongo-auth-aws; leaving it out breaks MONGODB-AWS auth."""
+    assert "pymongo-auth-aws" in _pins(IMAGE / "requirements.txt")
+
+
+def test_the_image_does_not_gain_packages_the_project_has() -> None:
+    """The closure of requirements.in, not the whole lock: no API server or load-test extras."""
+    pins = _pins(IMAGE / "requirements.txt")
+    for absent in ("fastapi", "redis", "opensearch-py", "pymssql", "sqlglot"):
+        assert absent not in pins
+
+
+def test_sdk_packages_are_exact_pins() -> None:
+    names = set(_pins(IMAGE / "requirements-sdk.txt"))
+    assert names == {
+        "agent-builder-sdk-aws-transform",
+        "agent-builder-agentic-mcp-aws-transform",
+        "agent-builder-types-aws-transform",
+        "agent-builder-mcp-client-aws-transform",
+    }
+
+
+def test_the_dockerfile_installs_the_pinned_files_and_nothing_floating() -> None:
+    text = (IMAGE / "Dockerfile.atx").read_text(encoding="utf-8")
+    assert "pip install --no-cache-dir -r requirements-sdk.txt -r requirements.txt" in text
+    assert "pip check" in text, "the build must fail on a dependency conflict"
+    for line in text.splitlines():
+        if "pip install" in line and "awscli" not in line:
+            assert " -r " in line, f"Dockerfile.atx installs without a pinned file: {line}"
+        assert ">=" not in line or line.lstrip().startswith("#"), line
+
+
+def test_closure_follows_dependencies_and_extras() -> None:
+    lock = {
+        "package": [
+            {"name": "a", "dependencies": [{"name": "b"}]},
+            {"name": "b", "optional-dependencies": {"x": [{"name": "c"}]}},
+            {"name": "c"},
+            {"name": "d"},
+        ]
+    }
+    assert rar.closure(lock, [Requirement("a")]) == {"a", "b"}
+    assert rar.closure(lock, [Requirement("b[x]")]) == {"b", "c"}

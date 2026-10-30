@@ -1,34 +1,66 @@
-# AWS Transform Agent SDK (pinned to avoid the v0.0.1 placeholder)
-agent-builder-sdk-aws-transform>=1.0.0
-agent-builder-agentic-mcp-aws-transform>=1.0.0
-agent-builder-types-aws-transform>=1.0.0
-agent-builder-mcp-client-aws-transform>=1.0.0
-
-# Project core dependencies (subset needed inside the container)
-# Full list lives in pyproject.toml — only runtime deps are listed here.
-# >=1.56: CacheConfig(tools_ttl=...) and the BedrockModel hooks RoleBedrockModel
-# overrides (src/shared/role_bedrock_model.py fails at import without them).
-# <2: those hooks are private. The import check catches a renamed hook, not a
-# kept one that stops being called, and CI tests only 1.56.0 (the lock file),
-# so a newer 1.x minor here is untested.
-strands-agents>=1.56.0,<2
-# LadybugDB — embedded graph DB backing the context-graph read-model that the
-# assessment-core and synthesis boundaries build + publish (graph_transport /
-# src.graph). Required in the agent image: without it, `from src.graph import
-# GraphStore` raises ModuleNotFoundError, build_and_publish_graph silently
-# no-ops, and no .lbug is ever produced. Pinned to match pyproject.toml.
-ladybug>=0.17.1
-pydantic>=2.12
-boto3>=1.34.0
-structlog>=23.2.0
-pyyaml>=6.0.1
-jinja2>=3.1.0
-# Executive report PDF (src/report/executive_report.py).
-reportlab>=4.2.0
-
-# Database connectors (needed by collector agent)
-mysql-connector-python>=9.1.0
-psycopg2-binary>=2.9.10
-
-# DocumentDB load test (optional — comment out if not needed)
-pymongo[aws]>=4.6.0
+# GENERATED from uv.lock by scripts/render_atx_requirements.py: do not edit by hand.
+# To change the image's dependencies, edit requirements.in and run
+#   uv run python scripts/render_atx_requirements.py --write
+# Every package is pinned to the version in uv.lock (#1725). The AWS Transform SDK
+# packages are pinned in requirements-sdk.txt: they are not in the lock.
+annotated-types==0.7.0
+anyio==4.14.2
+attrs==26.1.0
+boto3==1.43.97
+botocore==1.43.102
+certifi==2026.10.19
+cffi==2.0.0 ; platform_python_implementation != 'PyPy'
+charset-normalizer==3.4.7
+click==8.4.1
+colorama==0.4.6 ; sys_platform == 'win32'
+cryptography==50.0.0
+dnspython==2.9.0
+docstring-parser==0.18.0
+h11==0.16.0
+httpcore==1.0.9
+httpx-sse==0.4.3
+httpx==0.28.1
+idna==3.18
+jinja2==3.1.6
+jmespath==1.1.0
+jsonschema-specifications==2025.9.1
+jsonschema==4.26.0
+ladybug==0.20.4
+markupsafe==3.0.3
+mcp==1.30.0
+mysql-connector-python==26.7.0
+opentelemetry-api==1.45.1
+opentelemetry-instrumentation-threading==0.66b1
+opentelemetry-instrumentation==0.66b1
+opentelemetry-sdk==1.45.1
+opentelemetry-semantic-conventions==0.66b1
+packaging==26.3
+pillow==13.0.0
+psycopg2-binary==2.9.13
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pydantic-core==2.46.5
+pydantic-settings==2.14.2
+pydantic==2.13.5
+pyjwt==2.15.1
+pymongo-auth-aws==1.3.0
+pymongo==4.18.3
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pywin32==312 ; sys_platform == 'win32'
+pyyaml==6.0.3
+referencing==0.37.0
+reportlab==5.0.1
+rpds-py==2026.5.1
+s3transfer==0.19.0
+six==1.17.0
+sse-starlette==3.4.5
+starlette==1.3.1
+strands-agents==1.56.0
+structlog==26.1.0
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.8.0
+uvicorn==0.49.0
+watchdog==6.0.0
+wrapt==2.2.2
