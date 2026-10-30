@@ -90,17 +90,25 @@ Resources:
                   - "arn:aws:bedrock:us-*::foundation-model/*"
               - Sid: TransformAgentsApiPolicy
                 Effect: Allow
+                # Only the operations the agents call (#1736), pinned to the
+                # code by tests/unit/tools/aws/test_iam_templates.py:
+                #   - our own client calls in src/atx_orchestrator/: artifacts
+                #     (runtime/artifacts.py, runtime/hitl.py, core.py,
+                #     runtime/atx_store.py), job plan (runtime/job_plan.py),
+                #     job status (runtime/job_status.py via the SDK's
+                #     JobManager), agent instances and messaging (a2a.py,
+                #     startup.py, subagents/base.py), HITL tasks
+                #     (runtime/hitl.py);
+                #   - the SDK's own calls for every agent the image runs
+                #     (AgentRuntimeServer): RefreshAuthToken (background token
+                #     refresh), GetAgentInstance and UpdateAgentInstance (start
+                #     up), GetJob and UpdateJobStatus (ASSESSING to EXECUTING),
+                #     ListAgentInstances and StopAgent (subagent shutdown);
+                #   - the in-container agentic MCP tools the agents hand to
+                #     their model. Those no code or prompt uses are excluded
+                #     (src/atx_orchestrator/mcp_tools.py), so their actions are
+                #     not granted.
                 Action:
-                  # Enumerated from every agentic-framework client call the
-                  # orchestrator and its subagents make (src/atx_orchestrator/):
-                  # artifacts (hitl.py, artifacts.py, core.py, atx_store.py),
-                  # job plan (job_plan.py), job status (runtime/job_status.py
-                  # via the SDK's JobManager), agent instances and messaging
-                  # (a2a.py, startup.py, subagents/base.py), HITL tasks
-                  # (hitl.py), and the SDK's own background token refresh
-                  # (agent_builder_sdk/_auth_token_refresher.py, started by
-                  # AgentRuntimeServer — src/atx_orchestrator/app.py,
-                  # atx_entrypoint.py — for every agent in the fleet).
                   - transform-agents:RefreshAuthToken
                   - transform-agents:CreateArtifactUploadUrl
                   - transform-agents:CreateArtifactDownloadUrl
@@ -121,28 +129,12 @@ Resources:
                   - transform-agents:CreateHitlTask
                   - transform-agents:StartHitlTask
                   - transform-agents:GetHitlTask
-                  # StopAgent: the SDK registers this on every agent by
-                  # default. AgentRuntimeServer handles both the direct stop
-                  # request (agent_runtime_server.py:566) and the
-                  # orchestrator-stop event (notification/processors.py:115);
-                  # both paths call shutdown_subagent_instance, which calls
-                  # client.stop_agent (agent_lifecycle.py:142).
                   - transform-agents:StopAgent
-                  # The rest are tools the agentic MCP server
-                  # (agent-builder-agentic-mcp, started inside the container —
-                  # see Dockerfile.atx) exposes to the LLM under this role's
-                  # credentials (app.py:34, subagents/base.py:293 hand the
-                  # same boto3 client to the orchestrator and every subagent).
-                  # The orchestrator excludes no tools; subagents exclude only
-                  # invoke_agent, put_job_plan, update_job_status and
-                  # delete_job_plan_step. These six are reachable and not
-                  # covered by a call site above:
-                  - transform-agents:CreateWorklog
-                  - transform-agents:ListWorklogs
-                  - transform-agents:CloseHitlTask
-                  - transform-agents:ListHitlTasks
-                  - transform-agents:DeleteJobPlanStep
-                  - transform-agents:RetrieveFromKnowledgeBase
+                # "*": the service defines no resource type to scope to. Its
+                # requests carry the workspace, job and agent instance as
+                # request fields (requestContext), never as an ARN, and the
+                # Service Authorization Reference does not list the
+                # transform-agents prefix at all.
                 Resource: "*"
               - Sid: ECRAuthToken
                 Effect: Allow

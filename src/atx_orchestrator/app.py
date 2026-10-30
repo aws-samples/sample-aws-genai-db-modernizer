@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 
+from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
 from src.shared.bedrock_guardrail import guardrail_settings, require_valid_guardrail_config
 from src.shared.models import Role, resolve_model_id
 
@@ -48,6 +49,8 @@ def build_agent_factory():
             **guardrail_kwargs,
             # Wrap MCP client in a list as required by the SDK
             mcp_clients=[mcp_client] if mcp_client is not None else None,
+            # The role does not grant these tools' actions (#1736).
+            excluded_mcp_tool_names=set(UNUSED_MCP_TOOLS),
             model_id=model_id,
             region_name=os.environ.get("AWS_REGION", "us-east-1"),
         )

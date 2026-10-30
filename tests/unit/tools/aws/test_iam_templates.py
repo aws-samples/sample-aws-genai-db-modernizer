@@ -1,12 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""IAM least privilege in the automation template (#1723).
+"""IAM least privilege in the automation and AWS Transform templates (#1723, #1736).
 
 No AWS call: the template is decoded with cfn-lint's parser and its policy
 statements are read as data. The Secrets Manager scope is checked against the
 secret names the code really uses, and IAM wildcards in actions are expanded
 from botocore's API model, so ``secretsmanager:*`` cannot widen it unnoticed.
+The AWS Transform execution role's transform-agents actions are pinned to the
+calls the agents make; botocore has no model for that service, so its wildcards
+are expanded from the model the AWS Transform SDK ships.
 """
 
 from __future__ import annotations
@@ -198,3 +201,210 @@ def test_additional_secret_arns_rejects_wildcards(value):
 def test_additional_secret_arns_accepts_secret_arns(value):
     pattern = _template(AUTOMATION)["Parameters"]["AdditionalSecretArns"]["AllowedPattern"]
     assert re.fullmatch(pattern, value)
+
+
+# ---------------------------------------------------------------------------
+# pipeline/iam-roles.yaml: transform-agents (#1736)
+# ---------------------------------------------------------------------------
+
+IAM_ROLES = REPO_ROOT / "pipeline" / "iam-roles.yaml"
+ATX_SRC = REPO_ROOT / "src" / "atx_orchestrator"
+
+#: botocore has no transform-agents model; the AWS Transform SDK ships it
+#: (``agent_builder_sdk/botocore_models``, signing name ``transform-agents``).
+_TRANSFORM_AGENTS_MODEL = "transformagenticservice"
+
+#: transform-agents operations the SDK calls by itself, under the role, for
+#: every agent the image runs (agent-builder-sdk-aws-transform 1.1.0).
+_SDK_CALLS: dict[str, str] = {
+    "RefreshAuthToken": "_auth_token_refresher.py, started by AgentRuntimeServer",
+    "GetAgentInstance": "agent_lifecycle.get_agent_status, at AgentRuntimeServer start",
+    "UpdateAgentInstance": "agent_lifecycle.set_agent_running, at AgentRuntimeServer start",
+    "GetJob": "JobManager.get_job_status, from auto_transition_job_to_executing (default on)",
+    "UpdateJobStatus": "JobManager.transition_to_executing_if_assessing, same path",
+    "ListAgentInstances": "agent_lifecycle.get_subagent_instances, on orchestrator stop",
+    "StopAgent": "agent_lifecycle.shutdown_subagent_instance, on orchestrator stop",
+}
+
+#: SDK wrapper methods the code calls, and the operations each one makes.
+_SDK_WRAPPERS: dict[str, set[str]] = {
+    "update_status": {"UpdateAgentInstance"},  # AgentInstanceManager
+    "update_job_status": {"UpdateJobStatus"},  # JobManager
+    "download_artifact": {"CreateArtifactDownloadUrl"},  # ArtifactStore
+    "upload_artifact": {
+        "CreateArtifactUploadUrl",
+        "GetArtifactMetadata",
+        "CompleteArtifactUpload",
+    },  # ArtifactStore
+}
+
+#: Every tool the in-container agentic MCP server registers
+#: (agent-builder-agentic-mcp-aws-transform 1.0.2) and the operations it makes.
+#: The SDK hands each one to the agent's model unless the agent excludes it.
+_MCP_TOOL_OPERATIONS: dict[str, set[str]] = {
+    "invoke_agent": {"InvokeAgent"},
+    "get_agent_instance": {"GetAgentInstance"},
+    "update_agent_instance": {"UpdateAgentInstance"},
+    "stop_agent": {"StopAgent"},
+    "list_agent_instances": {"ListAgentInstances"},
+    "create_artifact_upload_url": {"CreateArtifactUploadUrl"},
+    "upload_artifact": {"GetArtifactMetadata"},  # uploads to a URL it is given
+    "complete_artifact_upload": {"CompleteArtifactUpload"},
+    "create_artifact_download_url": {"CreateArtifactDownloadUrl"},
+    "download_artifact": set(),  # downloads from a URL it is given
+    "list_artifacts": {"ListArtifacts"},
+    "get_artifact_metadata": {"GetArtifactMetadata"},
+    "copy_artifact": {"CopyArtifact"},
+    "create_hitl_task": {"CreateHitlTask"},
+    "get_hitl_task": {"GetHitlTask"},
+    "start_hitl_task": {"StartHitlTask"},
+    "close_hitl_task": {"CloseHitlTask"},
+    "list_hitl_tasks": {"ListHitlTasks"},
+    "retrieve_hitl_output_as_string": {"GetHitlTask", "CreateArtifactDownloadUrl"},
+    "create_s3_connector_hitl_task": {
+        "CreateArtifactUploadUrl",
+        "GetArtifactMetadata",
+        "CompleteArtifactUpload",
+        "CreateHitlTask",
+        "StartHitlTask",
+    },
+    "create_autoform_hitl_task": {
+        "CreateArtifactUploadUrl",
+        "GetArtifactMetadata",
+        "CompleteArtifactUpload",
+        "CreateHitlTask",
+        "StartHitlTask",
+    },
+    "create_autotable_hitl_task": {
+        "CreateArtifactUploadUrl",
+        "GetArtifactMetadata",
+        "CompleteArtifactUpload",
+        "CreateHitlTask",
+        "StartHitlTask",
+    },
+    "get_job": {"GetJob"},
+    "update_job_status": {"UpdateJobStatus"},
+    "create_worklog": {"CreateWorklog"},
+    "list_worklogs": {"ListWorklogs"},
+    "put_job_plan": {"PutJobPlan"},
+    "list_job_plan_steps": {"ListJobPlanSteps"},
+    "update_job_plan_step": {"UpdateJobPlanStep"},
+    "delete_job_plan_step": {"DeleteJobPlanStep"},
+    "retrieve_from_knowledge_base": {"RetrieveFromKnowledgeBase"},
+}
+
+
+@functools.cache
+def _transform_agents_operations() -> frozenset[str]:
+    """The service's operation names, from the model the SDK ships (no network)."""
+    import importlib.util
+
+    import botocore.loaders
+
+    spec = importlib.util.find_spec("agent_builder_sdk")
+    assert spec is not None and spec.origin, "agent-builder-sdk-aws-transform is not installed"
+    models = Path(spec.origin).parent / "botocore_models"
+    loader = botocore.loaders.Loader(extra_search_paths=[str(models)])
+    model = loader.load_service_model(_TRANSFORM_AGENTS_MODEL, "service-2")
+    assert model["metadata"]["signingName"] == "transform-agents"
+    return frozenset(model["operations"])
+
+
+def _snake(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def _expand_transform_agents(action: str) -> set[str]:
+    """``transform-agents:Get*`` and the like, expanded from the SDK's model."""
+    _, pattern = action.split(":", 1)
+    return {
+        f"transform-agents:{op}"
+        for op in _transform_agents_operations()
+        if fnmatch.fnmatchcase(op.lower(), pattern.lower())
+    }
+
+
+def _transform_agents_actions(role: str) -> set[str]:
+    resource = _template(IAM_ROLES)["Resources"][role]["Properties"]
+    out: set[str] = set()
+    for policy in resource.get("Policies", []):
+        for statement in _statements(policy["PolicyDocument"]):
+            for action in _as_list(statement["Action"]):
+                if action.lower().startswith("transform-agents:"):
+                    out |= _expand_transform_agents(action)
+    return out
+
+
+def _code_calls() -> set[str]:
+    """transform-agents operations the code in src/atx_orchestrator calls."""
+    by_snake = {_snake(op): op for op in _transform_agents_operations()}
+    out: set[str] = set()
+    for path in ATX_SRC.rglob("*.py"):
+        for name in re.findall(r"\.([a-z][a-z0-9_]*)\(", path.read_text(encoding="utf-8")):
+            if name in by_snake:
+                out.add(by_snake[name])
+            out |= _SDK_WRAPPERS.get(name, set())
+    return out
+
+
+def _reachable_operations() -> set[str]:
+    from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
+
+    mcp = set()
+    for tool, ops in _MCP_TOOL_OPERATIONS.items():
+        if tool not in UNUSED_MCP_TOOLS:
+            mcp |= ops
+    return _code_calls() | set(_SDK_CALLS) | mcp
+
+
+def test_the_execution_role_grants_only_the_transform_agents_calls_the_code_makes():
+    granted = _transform_agents_actions("AgentCoreExecutionRole")
+    needed = {f"transform-agents:{op}" for op in _reachable_operations()}
+    assert sorted(granted - needed) == [], "granted but never called"
+    assert sorted(needed - granted) == [], "called but not granted"
+
+
+@pytest.mark.passes_on_main  # main already grants every direct call
+def test_every_direct_call_is_granted():
+    granted = _transform_agents_actions("AgentCoreExecutionRole")
+    calls = {f"transform-agents:{op}" for op in _code_calls()}
+    assert calls, "the scan found no transform-agents call"
+    assert sorted(calls - granted) == []
+
+
+@pytest.mark.passes_on_main  # main lists no unknown action either
+def test_every_granted_transform_agents_action_exists():
+    template = _template(IAM_ROLES)
+    for role in ("AgentCoreExecutionRole", "AWSTransformAgentInvokeRole"):
+        for policy in template["Resources"][role]["Properties"].get("Policies", []):
+            for statement in _statements(policy["PolicyDocument"]):
+                for action in _as_list(statement["Action"]):
+                    if action.lower().startswith("transform-agents:"):
+                        assert _expand_transform_agents(action), action
+
+
+@pytest.mark.passes_on_main  # main already drops transform-agents from the invoke role
+def test_the_invoke_role_grants_no_transform_agents_action():
+    assert _transform_agents_actions("AWSTransformAgentInvokeRole") == set()
+
+
+@pytest.mark.passes_on_main  # checks this file's expansion helper, not src/
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("transform-agents:*", "transform-agents:CreateWorklog"),
+        ("transform-agents:List*", "transform-agents:ListWorklogs"),
+        ("transform-agents:*HitlTask", "transform-agents:CloseHitlTask"),
+    ],
+)
+def test_a_transform_agents_wildcard_is_expanded(action, expected):
+    assert expected in _expand_transform_agents(action)
+
+
+@pytest.mark.passes_on_main  # checks this file's scan helper against main's calls too
+def test_the_scan_maps_wrapper_and_client_calls():
+    calls = _code_calls()
+    # a client call (runtime/hitl.py) and an SDK wrapper (runtime/job_status.py)
+    assert {"CreateHitlTask", "UpdateJobStatus"} <= calls
+    # MCP-only and unused operations are not in the code
+    assert not {"CreateWorklog", "RetrieveFromKnowledgeBase", "PutMigrationPlan"} & calls

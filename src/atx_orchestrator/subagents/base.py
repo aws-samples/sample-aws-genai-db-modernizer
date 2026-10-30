@@ -23,6 +23,7 @@ import logging
 import re
 from collections.abc import Callable
 
+from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
 from src.shared.database_name import validate_database_name
 from src.shared.models import Role, resolve_model_id
 
@@ -331,6 +332,9 @@ def make_subagent_factory(
         return _Subagent(
             system_prompt=system_prompt,
             mcp_clients=[mcp_client] if mcp_client is not None else None,
+            # On top of the SDK's default exclusions (excluded_tool_names): the
+            # role does not grant these tools' actions (#1736).
+            excluded_mcp_tool_names=set(UNUSED_MCP_TOOLS),
             region_name=os.environ.get("AWS_REGION", "us-east-1"),
             model_id=model_id,
         )
