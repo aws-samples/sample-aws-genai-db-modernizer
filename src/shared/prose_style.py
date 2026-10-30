@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Plain-prose style list for customer deliverables (#1034).
 
 Customer deliverables (the engineering report, the PDF report, the UI-facing

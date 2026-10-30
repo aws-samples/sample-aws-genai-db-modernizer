@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1510: a risk named by id in Next steps has its mitigation on its executive card,
 and two risks that share one mitigation state it once, the same way everywhere.
 

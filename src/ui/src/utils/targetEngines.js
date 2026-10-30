@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The target databases the create-analysis form and the settings page offer, read from
  * the engine catalog's status (src/catalog/engines, ENGINE_STATUS in the generated

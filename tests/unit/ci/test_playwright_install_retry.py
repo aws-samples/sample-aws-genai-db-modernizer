@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/lib.sh playwright_install_with_retry (#1346): retry with backoff, then a fallback host."""
 
 from __future__ import annotations

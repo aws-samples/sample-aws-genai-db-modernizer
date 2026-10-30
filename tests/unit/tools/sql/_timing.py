@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Timing helpers for the scaling tests (#557, #1230).
 
 Absolute time budgets flake on slow or loaded CI runners, where the same

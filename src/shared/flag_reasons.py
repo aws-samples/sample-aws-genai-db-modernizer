@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer-facing wording for a model flag's reason category (#647, #629).
 
 One copy, read by the routing code (``src.agents.referee.model_flags``) and the

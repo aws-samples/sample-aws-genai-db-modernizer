@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Orchestrator abstraction — base class and shared types.
 
 Defines the Orchestrator ABC, PhaseScope dataclass, and PhasePrerequisiteError

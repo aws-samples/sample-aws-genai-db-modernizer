@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared write path for customer assignment overrides (ADR-028).
 
 One place builds the ``customer_modified`` next version from a set of per-query

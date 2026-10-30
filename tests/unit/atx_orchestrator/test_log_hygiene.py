@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """INFO-level logs must never carry customer-derived payload content (#143).
 
 ``extract_text`` and ``parse_invocation`` previously logged the raw A2A

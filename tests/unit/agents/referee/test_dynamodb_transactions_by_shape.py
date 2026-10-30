@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 3: DynamoDB supports ACID transactions; the score reflects shape (#493).
 
 A transaction is never a capability DynamoDB lacks: it is native for the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Queries no engine in the customer's engine scope can serve (#1329).
 
 ADR-031 Decision 2 Amendment 15, maintainer decision 2 on #1181: such a query is listed

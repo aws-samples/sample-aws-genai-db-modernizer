@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A migration target's table figures come from its routing, design or not (#949).
 
 The query is the unit everywhere (ADR-031): the tables an engine serves and the

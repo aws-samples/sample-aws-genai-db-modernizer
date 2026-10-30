@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py --llm-mode none --all`` never calls a model (#281).
 
 ``LocalOrchestrator._run_schema_design`` called ``run_schema_design_auto``

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality Check fixes shipped with the cache overlay (#296).
 
 - A mandatory (signal-override) engine protects only its mandatory queries.

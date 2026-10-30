@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every in-scope query is in exactly one owner query group, or the report says so (#226).
 
 Across the bundled samples (wordpress, discourse, trailgear, deterministic) and the

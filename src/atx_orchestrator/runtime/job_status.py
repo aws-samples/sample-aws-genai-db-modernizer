@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Job-level terminal-status transition for the AWS Transform orchestrator.
 
 The problem this solves: when the assessment pipeline finishes, the platform job

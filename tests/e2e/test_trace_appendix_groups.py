@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report's per-query appendix groups near-identical entries (#1108).
 
 Runs on the cached discourse job (the sample the rubric judge flagged at

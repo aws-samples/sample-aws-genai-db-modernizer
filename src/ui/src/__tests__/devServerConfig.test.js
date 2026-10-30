@@ -1,6 +1,9 @@
 /**
  * @jest-environment node
  */
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // `npm start` must hand webpack-dev-server 5 only options it accepts (#266).
 const { validate } = require('schema-utils');
 const schema = require('webpack-dev-server/lib/options.json');

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#713 review round 2 repro: a PE flag on wordpress moves one query after approval.
 
 The deterministic wordpress pipeline runs to the approved assignment (v2), the

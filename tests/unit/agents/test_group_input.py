@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The compact per-group DynamoDB schema design input (issue #272)."""
 
 from __future__ import annotations

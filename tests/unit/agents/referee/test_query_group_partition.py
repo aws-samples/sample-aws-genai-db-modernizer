@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The owners' query groups are a partition of the in-scope queries (#226).
 
 The cache layer owns no query: it fronts reads another engine serves. Its access

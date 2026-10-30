@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 'use strict';
 
 // Maps the webpack-dev-server 4 options in react-scripts 5.0.1's dev-server

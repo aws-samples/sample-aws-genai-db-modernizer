@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A group's trade-off never keeps two DynamoDB homes for one source table (#333).
 
 DynamoDB schema design always runs in groups. When two groups each give a source

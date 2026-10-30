@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report states each thing once, on every sample (#1170).
 
 The deterministic sections a rubric judge found repeating (the per-table risk

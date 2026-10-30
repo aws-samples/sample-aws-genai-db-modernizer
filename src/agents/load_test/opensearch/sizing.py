@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch cluster sizing for load testing.
 
 Derives cluster configuration from schema output and collector metrics.

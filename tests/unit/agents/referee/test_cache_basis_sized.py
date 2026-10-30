@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The read I/O basis holds when an engine is sized for part of the collection (#1197, #1374).
 
 The TCO sizes a kept DocumentDB for the queries it is assigned. Two things must not

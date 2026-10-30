@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Expression keys are flagged on every source engine that has them (#295).
 
 PostgreSQL is covered in ``test_expression_index_end_to_end.py``. The same
@@ -352,7 +355,7 @@ def _ddl_index(key_list: str, unique: str = "UNIQUE KEY") -> dict[str, Any]:
         database_name="db",
     )
     [index] = [i for i in table["indexes"] if i["index_name"] == "u_tenant_name"]
-    return index
+    return dict(index)
 
 
 @pytest.mark.parametrize(

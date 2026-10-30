@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Acceptable-set scoring for the assignment stages, and anti_pattern verdict scoring."""
 
 from __future__ import annotations

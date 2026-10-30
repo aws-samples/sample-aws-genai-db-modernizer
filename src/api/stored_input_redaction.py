@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Redact credentials from request inputs stored before #723.
 
 Before #723 the Assessments API copied ``connection.password`` into each job's

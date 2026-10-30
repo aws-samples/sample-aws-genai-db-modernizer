@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Render every customer deliverable from one synthesis report.
 
 Single entry point shared by the local scripts and the AWS Transform integration.

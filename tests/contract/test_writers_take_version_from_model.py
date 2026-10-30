@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Writers take ``contract_version`` from the model, never a literal (ADR-008 Decision 2, #974).
 
 A writer that passes ``contract_version="2.1"`` itself keeps writing ``2.1``

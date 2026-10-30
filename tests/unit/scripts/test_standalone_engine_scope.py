@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The standalone commands set, show and hold the customer's engine scope (#1574, item 6).
 
 ``/modernize`` passes ``--target-databases`` to ``run_assessment.py``; the standalone

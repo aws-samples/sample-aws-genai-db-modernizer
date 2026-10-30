@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """run_collect records the detected source engine (regression: hardcoded mysql)."""
 
 from __future__ import annotations

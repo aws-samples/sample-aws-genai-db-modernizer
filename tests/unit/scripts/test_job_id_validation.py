@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every local entry point that takes a job_id must reject a malformed or
 path-traversing one before writing any artifact, not only under
 MODERNIZER_CI_SANDBOX=1 (#508) -- the job_id counterpart to #420's

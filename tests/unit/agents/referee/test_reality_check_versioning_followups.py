@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality-check versioning follow-ups (#193, after #192's review).
 
 1. A forced run keeps the record of the run before it: every completed output is

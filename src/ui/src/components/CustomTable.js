@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 import {memo, useState, useEffect} from 'react';
 import { useTranslation } from 'react-i18next';
 import { getMatchesCountText, paginationLabels, pageSizePreference, EmptyState } from '../config/GlobalConfigurations';

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PR Evidence section is written from the diff and checked in CI (#1153)."""
 
 from __future__ import annotations

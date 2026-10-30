@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Package marker for atx_orchestrator tests.
 
 Intentionally does NOT guard the AWS Transform SDK (``agent_builder_sdk``) with a

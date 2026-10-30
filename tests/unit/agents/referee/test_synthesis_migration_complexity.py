@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration complexity remains a mode, with higher complexity breaking ties (#903)."""
 
 from __future__ import annotations

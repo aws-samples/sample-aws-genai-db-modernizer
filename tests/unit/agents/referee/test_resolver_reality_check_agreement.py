@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression test for #490: the reality check must never disagree with the
 resolver's own per-query engine fit.
 

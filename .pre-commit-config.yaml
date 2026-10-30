@@ -175,6 +175,18 @@ repos:
         stages: [commit-msg]
         pass_filenames: true
 
+  # Every source file carries the two-line SPDX license header (#1722); ci/lint.sh runs
+  # the same check over the whole tree. contrib/ is skipped by the script itself
+  # ([tool.license-headers] in pyproject.toml). Fix: scripts/license_headers.py --fix
+  - repo: local
+    hooks:
+      - id: license-headers
+        name: Source files carry the license header
+        entry: uv run python scripts/license_headers.py --check
+        language: system
+        files: \.(py|sh|js|jsx|mjs|cjs|ts|tsx|sql)$
+        pass_filenames: true
+
   # Pre-commit / CI linter-version alignment
   - repo: local
     hooks:

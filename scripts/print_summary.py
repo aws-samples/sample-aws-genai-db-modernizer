@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Print the text /modernize quotes at the approval gate and at completion.
 
 ``--gate`` prints the assignment block (engine table, consolidations, kept small engines,

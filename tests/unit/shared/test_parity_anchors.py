@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Parity anchors are labelled, never come from a write pattern, and the trace says so
 (#936; catalog PR C, #920).
 

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #269 round 2: `fallbackWithheldReason.js` ports `src/report/formatting.py`'s
  * `_FALLBACK_REASONS` table by hand (JS cannot import Python). This test reads

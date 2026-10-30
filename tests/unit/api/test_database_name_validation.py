@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The local API's assessment request models must reject a malformed or
 path-traversing database_name before anything is written, the same as the
 AWS Transform invocation path (#418) and the scripts/run_*.py CLI entry

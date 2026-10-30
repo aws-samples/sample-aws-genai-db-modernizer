@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalExecutionService reports a terminal/waiting status instead of RUNNING
 forever, and cancel actually records that the job stopped (#383).
 

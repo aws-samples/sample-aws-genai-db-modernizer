@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The migration risks each sample raises, in every deliverable (#950, ADR-032).
 
 Synthesis raises the risks the migration's shape carries from facts it already

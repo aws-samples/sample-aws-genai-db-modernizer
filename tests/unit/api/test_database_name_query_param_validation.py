@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Local API routes that take database_name (or filename, for delete_upload)
 as a plain query or path parameter -- not through AssessmentRequest /
 PrepareAssessmentRequest, which #420 already validates via a pydantic

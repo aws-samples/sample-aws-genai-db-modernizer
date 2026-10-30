@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade's query-shape facts (#796): joins, aggregation, subqueries, leading wildcards.
 
 Each fact is read from the sqlglot tree, so comments, string literals and

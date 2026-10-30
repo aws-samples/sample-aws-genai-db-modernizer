@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One facts layer for every synthesis deliverable (#615, ADR-032).
 
 Synthesis computes every customer-facing figure the deliverables print

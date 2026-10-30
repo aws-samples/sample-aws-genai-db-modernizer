@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // Jest (jsdom) setup, loaded automatically by react-scripts before each test file.
 //
 // react-router v7 uses TextEncoder/TextDecoder at module load. jsdom does not

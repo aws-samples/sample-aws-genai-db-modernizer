@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Zero-token replay of the saved real-model run (#1409): the transcript checks and
 # the external-mode e2e checks over its report.json, re-rendered by the current
 # code. No model call, no browser, about 15 seconds; needs only the `dev` extra.

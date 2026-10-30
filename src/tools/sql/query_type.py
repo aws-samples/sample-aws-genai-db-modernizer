@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one ``query_type`` rule for every collector (#1178).
 
 A collected statement's ``query_type`` (``SELECT``, ``INSERT``, ``UPDATE``,

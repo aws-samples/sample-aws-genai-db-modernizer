@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Issue #530: the deck's "Basis of the analysis" bullet said "0 tables mapped
 to a named target" on a run with no schema design, while slide 2's "Tables
 migrate" tile (and the migration roadmap) already said 8 tables migrate --

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every text and SQL heuristic over one adversarial corpus (#1411).
 
 Most of the Critical review findings on detector and prose-rewriter work were a

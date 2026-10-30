@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/judge.py reads a real PDF: page text and the slide title (the
 largest-font text). Lives under tests/e2e because pypdf ships in the e2e
 extra, which the unit-test job doesn't install."""

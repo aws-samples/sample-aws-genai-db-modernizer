@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Declaring the engines a source runs today (#963): parsing, merging, validation."""
 
 from __future__ import annotations

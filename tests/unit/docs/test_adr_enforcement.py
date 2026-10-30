@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every numbered ADR decision names the test that guards it (#623).
 
 An ADR that is only read does not stop the code drifting from it (ADR-031 was

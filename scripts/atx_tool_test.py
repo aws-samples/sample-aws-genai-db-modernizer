@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # ruff: noqa: E402 — imports are intentionally placed after env setup and banners
 """End-to-end test of the ATX `run_collect_triage_core` shared function.
 

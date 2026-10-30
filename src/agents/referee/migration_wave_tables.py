@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves: the tables each wave serves, their owners and the dual-read notes."""
 
 from __future__ import annotations

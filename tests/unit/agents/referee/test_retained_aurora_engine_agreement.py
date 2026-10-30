@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cross-deliverable agreement on the heterogeneous-source Aurora tie (#583/#586).
 
 ``migration_waves.build_migration_waves`` (wave 1) and ``synthesis_report.

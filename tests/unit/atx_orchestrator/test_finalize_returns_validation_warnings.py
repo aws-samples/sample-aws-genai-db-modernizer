@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``finalize_assignment_review`` surfaces the new version's warnings (ADR-029 Layer B, #704).
 
 The co-dependency-split ``WARNING [HIGH]`` strings the validator computes for an edited

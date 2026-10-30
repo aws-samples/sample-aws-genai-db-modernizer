@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The job's recorded engine scope, ``decisions/engine_scope.json`` (#1328).
 
 Every entry point that starts a job with ``target_databases`` (the API, the CLI, the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves: one builder per wave kind (Aurora move, cache, key-value, document,
 other target, search read model), and the merge of the key-value and document waves."""
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Statement filter for caller-supplied Cypher: only single, bounded read statements pass.
 
 LadybugDB does not expose a statement classifier to Python, so this is a

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The two small value types the SQL readings share: a table reference and a column use.
 
 They live apart from the facade so the regex-facts module (which the facade imports) can

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for collector-input resolution and WebApp-upload discovery.
 
 Two behaviours are pinned here:

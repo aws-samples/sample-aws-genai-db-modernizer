@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Two deterministic runs on the same input must give identical deliverables (#664).
 
 Compares the session's discourse run with a second, independent run

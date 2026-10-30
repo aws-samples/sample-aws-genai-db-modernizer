@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each kept engine is priced for the queries the final assignment gives it (#1195).
 
 The analysis estimates are made before routing, so each one sizes its engine for the

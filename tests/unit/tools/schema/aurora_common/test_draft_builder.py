@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the shared deterministic draft builder (ADR-028).
 
 build_pg_draft is the single source of truth used by both the automated

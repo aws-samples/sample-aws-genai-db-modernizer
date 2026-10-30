@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No collected literal value reaches an artifact or a result (#1625).
 
 SQL Server, Oracle and Db2 collections keep the text of real executions. Every ingest

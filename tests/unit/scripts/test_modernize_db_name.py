@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """/modernize derives a valid database name from any collection file name (#509).
 
 ``/modernize`` takes no database name: the scripts derive one from the collector

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one engine-scope setting, ``target_databases`` (#1328, decision 1 on #1181).
 
 One validation for every entry point: catalog ids, compared lower-cased and trimmed,

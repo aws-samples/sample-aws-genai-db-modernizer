@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Shared `i18nStrings` for every Cloudscape `CodeEditor` in this app (#478)
  * -- two today: the Results page's Aurora DDL viewer and its

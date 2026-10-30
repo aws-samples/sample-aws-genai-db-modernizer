@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assignment routes — read, override, and scope-narrow query assignments.
 
 Requirements: 14.1, 14.2, 3.2

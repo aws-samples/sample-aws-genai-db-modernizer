@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#835: a source database literally named ``sys`` (or ``mysql``) is not a
 system schema, so its application workload is not read as system/utility.
 Every consumer of ``is_engine_system_object`` gets the collected database."""

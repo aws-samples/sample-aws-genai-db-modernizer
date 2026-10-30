@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#801 review: the customer gate's rejection reads "it <phrase>", so every
 capability's phrase must read as what the query does or needs. A utility
 statement *is* one ("it is a utility or DDL statement"), never "it needs a

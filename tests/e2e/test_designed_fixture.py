@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The designed wordpress job's DynamoDB design is one a real run would produce (#1176).
 
 ``tests/e2e/designed_run.py`` builds the one deterministic job whose deliverables

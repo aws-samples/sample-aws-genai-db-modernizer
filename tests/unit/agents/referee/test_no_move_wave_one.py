@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A wave 1 that moves nothing is marked once and every consumer reads the mark (#1383).
 
 #1369 made wave 1 say "No move to Aurora" when the engine scope has no relational engine

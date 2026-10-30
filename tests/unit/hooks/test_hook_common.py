@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The splitter copy must agree with the one in ci/llm/run.py (#683)."""
 
 from __future__ import annotations

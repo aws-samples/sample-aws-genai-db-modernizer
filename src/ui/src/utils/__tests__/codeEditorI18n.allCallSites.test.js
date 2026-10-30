@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #478: every `<CodeEditor` in this app must pass
  * `codeEditorI18nStrings(t, ...)` as its `i18nStrings` prop, or Cloudscape's

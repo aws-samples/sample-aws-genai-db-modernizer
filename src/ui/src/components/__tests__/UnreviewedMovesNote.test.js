@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #746: the results page's one line for reality-check moves no model reviewed,
  * from report.json's facts.unreviewed_move_count -- the same line the

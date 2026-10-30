@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Verify live collector column order against a disposable PostgreSQL database.
 
 Set POSTGRES_INDEX_TEST_DSN to a local test database and run this module with

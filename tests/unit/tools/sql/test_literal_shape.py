@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``literal_shape``: the text of a statement with its literal values masked (#412).
 
 Two statements that differ only in a literal value share a shape; two that differ in

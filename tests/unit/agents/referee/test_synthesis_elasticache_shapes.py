@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ElastiCache designs must survive synthesis (issue #130).
 
 Each schema designer names its output after its target's own vocabulary, so

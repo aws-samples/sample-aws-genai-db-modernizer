@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the reality check handler LLM seam functions.
 
 Tests verify the three clean seam functions introduced to support the Skill Sync

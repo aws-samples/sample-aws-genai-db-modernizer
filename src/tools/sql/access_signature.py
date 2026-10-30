@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The access-pattern signature: what makes two collected statements one access pattern.
 
 A collection holds many statements that are the same access pattern written several

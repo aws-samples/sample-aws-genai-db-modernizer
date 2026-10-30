@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A live collector stores no literal value in its stage checkpoints (#1625).
 
 Each live collector saves its ``schema``, ``queries`` and ``aws_metrics`` stages to S3

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``build_tco_analysis`` must show a source baseline, or say it is unknown,
 instead of a bare 0.0 / 0% that reads as "the source costs nothing" (#380).
 

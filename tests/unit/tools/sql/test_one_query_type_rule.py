@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard: ``query_type`` has one rule, ``statement_query_type`` (#1178).
 
 Before #1178 six copies typed a collected statement -- a regex in

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An architectural pattern's example names only the engines the plan runs (#1574, item 1).
 
 The examples were static text naming DynamoDB, OpenSearch and ElastiCache whatever the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Thin AWS Transform orchestrator wrapping the DB modernization pipeline.
 
 The orchestrator itself is intentionally minimal — it holds the system prompt

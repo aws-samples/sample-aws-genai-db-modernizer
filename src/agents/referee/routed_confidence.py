@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routed confidence: how well each engine fits the work it was actually given (#152).
 
 ``analysis_confidence`` averages an engine's suitability over every table it

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one rule for product names in rendered deliverables (#954).
 
 A deliverable may not name another product: "ATX", "AWS Transform", or the

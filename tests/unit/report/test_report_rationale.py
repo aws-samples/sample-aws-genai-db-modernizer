@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-engine rationale reaches the reports readers (and the judge) open (#152).
 
 Synthesis builds it from the routed workload ("90% mean fit across 98 queries (22

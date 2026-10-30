@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An unresolved DynamoDB cross-group design conflict is an open risk (#426).
 
 ``dynamodb_merge.independent_homes`` records a source table two design groups each

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression test: reality-check executive-summary output must not depend on
 Python's per-process string hash seed (PYTHONHASHSEED).
 

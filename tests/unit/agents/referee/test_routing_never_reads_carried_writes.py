@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing never reads the carried writes or the write-intent catalog (#1362, ADR-031
 Decision 1 Amendment 9).
 

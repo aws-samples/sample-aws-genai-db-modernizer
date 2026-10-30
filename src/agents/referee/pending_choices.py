@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pending engine choices, one per table, and ``--auto``'s "decide for me" (#1003).
 
 Maintainer decision (2026-10-17, ADR-031 Decision 12 Amendment 10):

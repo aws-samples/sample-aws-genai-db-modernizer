@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for ``scripts/contract_schema_snapshot.py``'s canonicalization
 and classification engine (#574 review), against small synthetic models
 defined in this file rather than the 16 real contracts -- a failure here

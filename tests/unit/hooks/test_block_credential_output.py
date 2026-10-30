@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 7: a Bash call must not print a cloud credential helper's output (#1165)."""
 
 from __future__ import annotations

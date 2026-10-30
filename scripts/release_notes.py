@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The routing and contract changes a release carries (#1184).
 
 A change can move engines for the same input, or change a contract's shape, without a

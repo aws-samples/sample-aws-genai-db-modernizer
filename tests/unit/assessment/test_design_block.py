@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The stable design block of a designed ``assess()`` result (#1493).
 
 ``designs`` carries, per designed engine, the target tables, keys and indexes a caller

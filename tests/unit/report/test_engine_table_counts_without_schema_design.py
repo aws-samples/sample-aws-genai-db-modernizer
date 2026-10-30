@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Issue #524: the deck's and decision report's per-engine Scope column (now the
 engineering report's and the PDF report's) showed
 "0 source tables" for DynamoDB while the same deliverables' "Tables migrate"

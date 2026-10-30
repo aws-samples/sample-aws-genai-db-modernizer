@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Strands tools that wrap the existing deterministic pipeline.
 
 Each tool maps to a phase (or a group of phases) in the LocalOrchestrator.

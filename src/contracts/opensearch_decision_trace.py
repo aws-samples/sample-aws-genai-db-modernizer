@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch decision trace contract (``analysis-opensearch/decision-trace.json``).
 
 The OpenSearch analysis agent writes this trace beside ``analysis.json`` for

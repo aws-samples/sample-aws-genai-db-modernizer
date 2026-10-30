@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Contract 1.3 of the public ``assess()`` result (#1632), as a library caller reads it.
 
 - each ``summary.table_facts[].foreign_keys[]`` entry carries ``avg_children_per_parent``

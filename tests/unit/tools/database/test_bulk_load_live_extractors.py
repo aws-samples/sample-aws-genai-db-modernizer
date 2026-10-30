@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The live collectors read bulk loads the same way the offline parser does (#777).
 
 ``COPY t FROM STDIN`` (PostgreSQL) and ``LOAD DATA ... INTO TABLE t``

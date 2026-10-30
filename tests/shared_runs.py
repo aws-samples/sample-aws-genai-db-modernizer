@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Expensive sample runs, built once per test session and shared (#956).
 
 Several unit tests run the whole deterministic pipeline (or

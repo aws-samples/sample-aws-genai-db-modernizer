@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Debezium source connectors on Amazon MSK Connect (#1414).
 
 The data movement decisions recorded on #1412 (to become ADR-033) move data

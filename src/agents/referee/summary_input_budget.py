@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A fixed token budget for the executive-summary request (#762).
 
 Since #628 (payload parity) Bedrock and headless (Claude Code) reason over the

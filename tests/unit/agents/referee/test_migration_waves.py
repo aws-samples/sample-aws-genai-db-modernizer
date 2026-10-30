@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves (#321, reordering #225): the relational move comes first.
 
 Wave order: Aurora (the whole source database, carried over 1:1, skipped when

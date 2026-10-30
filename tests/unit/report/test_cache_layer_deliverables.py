@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The cache layer in the deliverables (#296).
 
 ElastiCache owns no query: every deliverable shows it as "Cache layer" with the

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Turn a run's model usage record into dollars (#1494).
 
     uv run python scripts/usage_cost.py <artifacts/<db>/<job>/_logs/model_usage.json>

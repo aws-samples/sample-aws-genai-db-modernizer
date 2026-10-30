@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Saved contract 1.3 ``assess()`` results read back with the same values (#1648).
 
 ``tests/fixtures/assess_results_v1_3/`` holds results written by the code released as

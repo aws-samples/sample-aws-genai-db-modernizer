@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each dialect's own comment, string and identifier forms, in the one span grammar (#1416).
 
 ``sql_spans`` is the one scanner behind ``code_text`` (the text facts),

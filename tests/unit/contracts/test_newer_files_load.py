@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A newer file, with a field this code does not know, still loads (ADR-008 Decision 5, #976).
 
 The models below used ``extra="forbid"``, so an older reader rejected a newer

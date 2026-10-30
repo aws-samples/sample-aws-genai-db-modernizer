@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reference cookbook — real use-case Cypher queries against a populated graph.
 
 Each test demonstrates a question you can answer with the graph.

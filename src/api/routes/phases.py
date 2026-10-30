@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Phase progression and resume routes.
 
 Requirements: 14.3, 14.4, 13.2

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/needs_llm_run.py: the deterministic gate for real-model runs."""
 
 from __future__ import annotations

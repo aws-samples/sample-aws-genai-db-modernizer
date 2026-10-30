@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for ddl_parser dialect support.
 
 Covers both MySQL (regression — the parser is used by mysql/mariadb/postgresql

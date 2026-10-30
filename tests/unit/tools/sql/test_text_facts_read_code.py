@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The text facts and the utility check read the statement as its engine runs it (#1415).
 
 Each used to scan the raw text, so a keyword inside a string literal or a comment read

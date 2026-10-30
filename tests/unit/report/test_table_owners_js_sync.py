@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The UI states the owner rule in the engineering report's words (#212).
 
 ``src/ui/src/locales/en.json`` carries the results page's copy of

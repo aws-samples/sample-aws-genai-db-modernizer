@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The public library entry point: ``assess(request) -> result``.
 
 >>> from src.assessment import AssessmentRequest, assess, load_collection

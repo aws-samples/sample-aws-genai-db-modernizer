@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each schema designer names its output after the target's own vocabulary.
 
 There is no single field meaning "a design exists". DynamoDB, Aurora

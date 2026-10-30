@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Proactive job-start operations for the AWS Transform orchestrator.
 
 The ATX platform invokes the orchestrator container when a job is created, but

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pending engine choices, one per table (#1003): the grouping, the picks and
 what an ``--auto`` decision keeps."""
 

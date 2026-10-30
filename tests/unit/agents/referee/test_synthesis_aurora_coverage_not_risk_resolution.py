@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora's own access patterns must not resolve an anti-pattern risk by
 "coverage" alone (#157 review, I2).
 

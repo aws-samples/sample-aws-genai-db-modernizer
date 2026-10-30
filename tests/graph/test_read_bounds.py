@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Read-only handles, query timeout, row cap and gating of the raw query endpoint."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression test for issue #470: concurrent first use of GraphStore raced
 ladybug's lazy, unsynchronized backend selection and could fail with
 "Could not find lbug C API shared library" from a losing thread.

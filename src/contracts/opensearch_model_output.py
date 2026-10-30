@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch schema design output contract.
 
 Defines the structured output that the OpenSearch schema design agent

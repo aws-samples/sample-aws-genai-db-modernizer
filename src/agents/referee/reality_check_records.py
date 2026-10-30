@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check records, derived from the move ledger (#218, #616).
 
 Every engine change the reality check makes is a Move (``move_ledger.apply``),

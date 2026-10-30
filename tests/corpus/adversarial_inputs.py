@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The shared adversarial input corpus for the text and SQL heuristics (#1411).
 
 Every SQL detector in the declared fact modules and every prose rewriter or guard

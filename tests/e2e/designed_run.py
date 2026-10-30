@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A deterministic job whose results page shows the schema-design panels (#987).
 
 The deterministic pipeline never runs schema design (it needs a model), so its

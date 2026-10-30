@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Locking reads through the whole deterministic pipeline (#838, review of #871).
 
 No bundled sample has a locking read, so this runs the wordpress sample with

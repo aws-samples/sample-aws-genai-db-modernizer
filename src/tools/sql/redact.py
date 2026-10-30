@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Literal redaction of collected SQL text (#1625).
 
 MySQL (``DIGEST_TEXT``) and PostgreSQL (``pg_stat_statements``) hand the collector

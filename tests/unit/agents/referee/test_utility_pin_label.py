@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A utility pin shows "pinned (utility)", not a percentage (#1373, maintainer
 decision on #1381, 2026-10-22).
 

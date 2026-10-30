@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #838: `sqlLocking.js` is the JavaScript copy of
  * `src/agents/referee/query_shape.py`'s `locking_clause`, the lock the ownership

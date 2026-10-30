@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the graph-backed query-journey read-model (graph.queries).
 
 These prove the graph serves the SAME per-query journey shape the WebApp report

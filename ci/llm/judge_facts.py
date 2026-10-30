@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Structured ground-truth facts for the rubric judge (``ci/llm/judge.py``).
 
 The judge used to see the first 8,000 characters of ``report.json`` (about

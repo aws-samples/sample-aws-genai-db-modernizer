@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess()`` keeps the caller's stdout clean: the phases' progress lines go to the
 ``src.assessment.progress`` logger instead (found by the library demo,
 ``docs/examples/library/demo_assess.py``).

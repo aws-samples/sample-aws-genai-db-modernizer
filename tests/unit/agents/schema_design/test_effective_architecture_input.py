@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each designer is told which engines the effective assignment runs (#213).
 
 Without it, a designer's ``unsupported_patterns`` workaround can name an engine the

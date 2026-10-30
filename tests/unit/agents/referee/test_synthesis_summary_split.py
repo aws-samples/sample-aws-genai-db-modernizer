@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The deterministic summary describes the whole split, not ``ranking[0]`` (#219).
 
 ``build_ranking`` orders engines by an analysis weight, so ``ranking[0]`` is not the

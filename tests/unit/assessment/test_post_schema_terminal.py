@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess()`` marks a statement the post-schema routing left terminal (#1497).
 
 A statement a design flags is moved by the post-schema routing to its best remaining

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PDF report states how the overall risk level is derived (#248)."""
 
 from __future__ import annotations

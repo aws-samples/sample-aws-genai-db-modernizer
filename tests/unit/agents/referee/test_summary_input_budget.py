@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive-summary request stays within a fixed token budget (#762).
 
 Since #628 Bedrock and headless (Claude Code) reason over the same

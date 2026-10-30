@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report lists each item once across its sections (#1220).
 
 #1410 and #1454 removed repeated paragraphs and sentences. What was left were items

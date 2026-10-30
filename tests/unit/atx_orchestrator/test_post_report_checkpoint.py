@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The orchestrator prompt's post-report checkpoint (ADR-029 Amendment 1, #753).
 
 ADR-029 Amendment 1 defers job completion: after the report the orchestrator asks whether the

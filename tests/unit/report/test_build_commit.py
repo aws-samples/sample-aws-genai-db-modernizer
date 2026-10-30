@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable names the code commit it was built from (#1166).
 
 One value per render (``report_facts.build_commit``), carried in each file's identity

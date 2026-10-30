@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each query scored as a redesigned target would serve it (ADR-031 Decision 2 Amendment 13, #1231).
 
 Routing used to score a query as the source runs it. A filter on a column with no index

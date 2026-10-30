@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A risk's mitigation is never a copy of its description (#252).
 
 DynamoDB unsupported patterns carry only ``pattern_type`` and ``recommendation``, so

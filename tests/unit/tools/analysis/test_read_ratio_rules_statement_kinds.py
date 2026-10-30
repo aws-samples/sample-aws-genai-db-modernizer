@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """How a locking read, an UPDATE and a DELETE count in each read-ratio rule (#1392).
 
 Since #1391 a table profile counts a write exactly when ``write_groups.written_tables``

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#381 review: Reality Check must not resurrect the #381 losing Aurora engine.
 
 Triage selects both ``aurora_mysql`` and ``aurora_postgresql`` for a

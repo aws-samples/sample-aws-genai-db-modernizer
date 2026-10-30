@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Render the WordPress sample's deliverables into the built docs site.
 
 By default it renders the recorded model run committed under

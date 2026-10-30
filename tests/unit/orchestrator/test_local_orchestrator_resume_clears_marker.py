@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalOrchestrator.resume clears a stale scripts/run_*.py failure marker
 for the phase it is about to (re)run (#517 round-1 review, I3): an
 API-driven resume succeeding (or even just starting, here) is itself

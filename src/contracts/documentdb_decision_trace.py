@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB decision trace contract (``analysis-documentdb/decision-trace.json``).
 
 The DocumentDB analysis agent writes this trace beside ``analysis.json`` for

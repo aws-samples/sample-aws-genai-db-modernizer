@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every ``decisions/`` file maps to exactly one contract (#1328, review of #1355).
 
 ``decisions/`` holds the job's recorded approvals, ``DecisionRecord`` (#1257), and the

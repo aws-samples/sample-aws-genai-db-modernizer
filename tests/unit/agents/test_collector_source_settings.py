@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every collection path reads and keeps the source's string settings (#1482).
 
 The collection scripts read ``@@GLOBAL.sql_mode`` (MySQL, MariaDB) and

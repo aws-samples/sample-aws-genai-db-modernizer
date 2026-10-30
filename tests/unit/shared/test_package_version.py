@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The runtime-reported package version comes from installed metadata, not a
 literal (#391) -- so it can never drift from the git tag hatch-vcs derived it
 from at build time.

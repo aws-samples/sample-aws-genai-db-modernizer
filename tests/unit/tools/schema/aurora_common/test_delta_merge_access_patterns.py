@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Access patterns are derived by the merge, not written by the model (#156).
 
 Aurora is the only target whose access patterns can be *projected* rather than

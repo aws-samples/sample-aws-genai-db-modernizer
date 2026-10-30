@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DynamoDB multi-table provisioner."""
 
 from unittest.mock import MagicMock, patch

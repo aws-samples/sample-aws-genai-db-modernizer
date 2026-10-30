@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pending contract version bumps (#1158, ADR-008 Decision 8).
 
 ``scripts/bump_contract.py`` writes a pending file that declares a bump kind;

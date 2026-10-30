@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable states what each engine's cost was sized for (#1195, ADR-032).
 
 Synthesis records each kept engine's sizing on its ``tco_analysis.cost_breakdown`` row;

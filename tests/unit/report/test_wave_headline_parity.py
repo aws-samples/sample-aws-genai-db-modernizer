@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The results page's wave plan prints the same wave headline as the reports (#957).
 
 ``src/ui/src/utils/migrationWaves.js`` formats each wave's headline (the count

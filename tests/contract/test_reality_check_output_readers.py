@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every reader of a reality-check output takes the lineage's record (#193, #215).
 
 A completed run is kept under ``reality-check/v<N>/output.json`` and

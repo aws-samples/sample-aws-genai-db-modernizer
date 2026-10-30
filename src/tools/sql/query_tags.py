@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Leading comment tags of a collected query (#1180).
 
 Applications and drivers often open a statement with a comment naming the code

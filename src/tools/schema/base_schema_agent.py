@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """
 Base Schema Design Agent — shared PE review loop, retry logic, and graceful fallback.
 

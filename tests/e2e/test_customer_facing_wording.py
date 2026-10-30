@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No internal wording reaches a customer-facing artifact (#572, extends #406).
 
 #406 fixed one specific leak: a bare issue tag (``#167``) surviving in a

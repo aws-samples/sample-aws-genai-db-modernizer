@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Fail when a test pins a contract's current version (#1158 follow-up).
 
 ``scripts/resolve_contract_versions.py`` moves a contract's version after the last

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check Pass 3 and 4: architectural patterns and recommendations."""
 
 from __future__ import annotations

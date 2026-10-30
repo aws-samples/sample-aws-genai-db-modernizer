@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A customer's engine scope (ADR-031 Decision 2 Amendment 14, #1327).
 
 The candidates are Decision 2 step 1's, limited to the scope. When the scope leaves

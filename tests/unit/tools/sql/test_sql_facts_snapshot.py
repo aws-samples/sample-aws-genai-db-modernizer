@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade's per-query query-shape facts match the committed snapshot (#796).
 
 A sqlglot bump or a facade change that alters any query's facts fails here;

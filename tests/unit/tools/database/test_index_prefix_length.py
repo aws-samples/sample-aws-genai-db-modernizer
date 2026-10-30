@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An index's prefix length (MySQL ``SUB_PART``) reaches the collected contract (#1623)."""
 
 from __future__ import annotations

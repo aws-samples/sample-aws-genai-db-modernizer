@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the customer-facing report renderers (Increment 2).
 
 The renderers (``render_engineering_report_md`` and the PDF report's sections)

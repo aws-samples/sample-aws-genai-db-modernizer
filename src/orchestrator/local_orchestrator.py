@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Local orchestrator — filesystem-backed, no cloud dependencies.
 
 Enforces the same phase ordering as the Step Functions state machine.

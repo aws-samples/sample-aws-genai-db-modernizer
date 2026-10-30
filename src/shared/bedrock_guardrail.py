@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Optional Amazon Bedrock Guardrail for every Bedrock-mode model call (#144).
 
 Off by default. Set ``BEDROCK_GUARDRAIL_ID`` and ``BEDROCK_GUARDRAIL_VERSION``

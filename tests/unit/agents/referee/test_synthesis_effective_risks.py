@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Risks and mitigations follow the effective (post-reality-check) architecture (#202).
 
 The reality check can eliminate an engine and fold its workload into another one

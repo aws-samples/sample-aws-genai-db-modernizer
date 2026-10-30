@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #393 / #269: ports ``src/report/formatting.py``'s ``fallback_withheld_reason``
  * (and its ``_FALLBACK_REASONS`` table) so the Results page names the same

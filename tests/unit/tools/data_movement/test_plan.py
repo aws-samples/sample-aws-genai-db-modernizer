@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The data movement plan generator on hand-built jobs (#1413).
 
 Each case builds the smallest finished job that reaches one rule of

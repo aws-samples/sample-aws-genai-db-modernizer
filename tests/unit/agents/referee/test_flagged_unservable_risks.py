@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1148: the risk register raises the flagged queries no other kept engine takes.
 
 ``flagged_unservable`` (#888, #1033) lists the queries a review flagged that

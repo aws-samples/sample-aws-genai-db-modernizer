@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The design view shows the draft's column defaults, not the collector's (#611).
 
 The model designs a delta for the draft DDL, so each column line must agree with

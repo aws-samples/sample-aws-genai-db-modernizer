@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Engine-neutral query facts read from SQL text: one detector per fact (#491).
 
 A detector here reports a fact about one query -- never a score, never an

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 6: no hand edits of a contract's version default or Version History (#1408)."""
 
 from __future__ import annotations

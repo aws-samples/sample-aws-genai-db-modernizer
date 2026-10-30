@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Check a DynamoDB design's source columns against the collector's schema (#1431).
 
 A direct attribute (one with no ``join`` and no ``calculation``) is copied from a

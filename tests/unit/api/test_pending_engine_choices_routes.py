@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The assignment routes present pending engine choices per table and accept a
 pick per table, or "decide for me" (#1003)."""
 

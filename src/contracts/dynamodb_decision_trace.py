@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB decision trace contract (``analysis-dynamodb/decision-trace.json``).
 
 The DynamoDB analysis agent writes this trace beside ``analysis.json`` for

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No deliverable states a saving for an engine the source does not run (#949).
 
 wordpress (MySQL), discourse (PostgreSQL) and trailgear (SQL Server) each run one

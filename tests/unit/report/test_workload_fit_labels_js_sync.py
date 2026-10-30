@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``src/ui/src/utils/workloadFitLabels.js`` must match ``src/shared/workload_fit_labels.py``
 (bug: Deliverables present a fit score as a confidence percentage).
 

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1003: the assignment review's per-table engine choices, and the results
  * page's line for them. Cloudscape components are plain DOM stand-ins; the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/e2e-llm.sh records the judge first and keeps its test steps inside the job budget (#1593).
 
 A scoped discourse run once spent 18 minutes on the report tests and 32 on the UI

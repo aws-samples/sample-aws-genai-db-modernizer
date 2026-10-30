@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/pre_merge.py: the parsing and verdict logic behind ci/pre_merge.sh."""
 
 from __future__ import annotations

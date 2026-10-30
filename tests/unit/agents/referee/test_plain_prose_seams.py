@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model-written customer prose passes the plain-prose style list at its seam (#1034).
 
 Each LLM seam that writes customer prose replaces dashes mechanically and sends

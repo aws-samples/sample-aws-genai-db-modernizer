@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every call that strips SQL comments and literals names the source engine (#1114).
 
 MySQL ``#`` comments and PostgreSQL ``$$`` strings change what is code and what is

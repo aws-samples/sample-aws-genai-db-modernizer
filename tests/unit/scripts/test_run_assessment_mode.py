@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py --mode`` records the experience mode at creation (#246).
 
 The state file is created by run_assessment.py, so /modernize used to edit

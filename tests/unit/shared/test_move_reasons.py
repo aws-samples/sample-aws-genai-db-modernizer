@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one renderer of a Move's reason (#339): plain English, display names, no codes."""
 
 from __future__ import annotations

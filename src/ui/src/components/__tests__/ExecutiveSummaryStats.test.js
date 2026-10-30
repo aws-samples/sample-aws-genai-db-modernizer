@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1028: the executive summary's tiles. The access-pattern (query) count sits
  * just below the database name, and a cost or savings tile whose figure is not

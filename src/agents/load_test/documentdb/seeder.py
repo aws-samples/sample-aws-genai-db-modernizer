@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB seeder for load testing.
 
 Implements :class:`BaseSeeder` for DocumentDB. Generates synthetic documents

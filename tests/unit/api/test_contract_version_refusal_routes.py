@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A stored artifact at another contract MAJOR reaches the user as a 409 (#971).
 
 ``LocalS3Service`` and the assessment summaries used to catch every exception

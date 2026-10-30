@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Contract schema snapshot (#574).
 
 ``src/contracts/`` has versioned contracts twice without bumping

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared ADR-031 Decision 2 tie-break for an exact top-score tie (#503).
 
 ADR-031 Decision 2: "On an exact tie, the source-compatible relational

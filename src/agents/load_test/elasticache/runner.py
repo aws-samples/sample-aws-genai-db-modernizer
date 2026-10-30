@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """k6 subprocess runner for ElastiCache/Valkey load tests.
 
 Uses xk6-redis extension for native Redis protocol support in k6.

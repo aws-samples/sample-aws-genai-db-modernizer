@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model flags are evidence; the shared scorer decides (ADR-031 Decision 11, #647).
 
 A model may flag queries it judges an engine unable to serve

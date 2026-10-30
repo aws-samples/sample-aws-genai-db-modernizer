@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for DocumentDB analysis agent — per-pattern isolation + vertical."""
 
 from __future__ import annotations

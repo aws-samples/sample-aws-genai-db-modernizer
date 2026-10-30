@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A customer's engine scope end to end (ADR-031 Decision 2 Amendment 14, #1327).
 
 On wordpress (a MySQL source) and trailgear (SQL Server), triage runs with a scope

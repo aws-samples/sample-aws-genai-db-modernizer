@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#381 review round 2: drop the losing Aurora engine from post-schema routing's
 active engine set.
 

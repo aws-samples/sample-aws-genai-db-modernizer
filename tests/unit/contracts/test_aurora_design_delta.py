@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Aurora design delta contract is small, versioned and strict (issue #273)."""
 
 from __future__ import annotations

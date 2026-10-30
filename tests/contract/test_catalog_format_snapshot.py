@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The rule catalog's TOML format stays backwards compatible within 0.x (#1647).
 
 ``tests/contract/catalog_format_snapshot.json`` records, per file kind under

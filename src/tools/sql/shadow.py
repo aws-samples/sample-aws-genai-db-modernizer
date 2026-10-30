@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cross-check of the sqlglot and regex table references (#557, #553).
 
 The sqlglot facade's answer (:mod:`src.tools.sql.facade`) drives the

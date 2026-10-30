@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Referee-Synthesis subagent for AWS Transform (modernizer-atx-v2).
 
 Maps to AGENT_TYPE='referee-synthesis'. Reads every artifact the pipeline has

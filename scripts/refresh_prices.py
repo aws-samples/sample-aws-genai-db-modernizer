@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Refresh the engine price table from the public AWS Price List bulk files (#1196).
 
 ``src/catalog/prices.toml`` is the one dated table of us-east-1 on-demand list prices

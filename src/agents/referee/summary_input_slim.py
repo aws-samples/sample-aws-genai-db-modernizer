@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Drop what the executive-summary instruction never reads from its request (#1064).
 
 ``prepare_synthesis_llm_input`` hands the model the deterministic synthesis

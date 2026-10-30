@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One "too few queries to keep an engine" threshold in routing (#493).
 
 The #493 review counted five: ``MIN_QUERIES_THRESHOLD``,

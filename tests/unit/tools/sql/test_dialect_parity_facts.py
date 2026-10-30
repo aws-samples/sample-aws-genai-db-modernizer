@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engine-neutral facts behind the Aurora dialect credits and the text-search class
 (catalog PR C, #920).
 

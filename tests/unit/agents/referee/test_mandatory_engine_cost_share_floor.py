@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A mandatory engine with a tiny workload share and a high fixed cost is not
 exempt from the cost review forever (#167).
 

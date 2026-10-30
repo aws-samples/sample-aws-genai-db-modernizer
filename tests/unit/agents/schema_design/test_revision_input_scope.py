@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A schema revision's designer inputs are narrowed to the engine's scope (#1524)."""
 
 from __future__ import annotations

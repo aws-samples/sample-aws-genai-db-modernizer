@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """`.claude/settings.ci.json` must allowlist every script a headless /modernize run invokes.
 
 This is a tripwire for the CI permission allowlist: valid JSON, every

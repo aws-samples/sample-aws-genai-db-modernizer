@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer-facing labels for the cache overlay's read shapes (#296, #663).
 
 One table for every deliverable that names a cached read's ``cache_pattern``:

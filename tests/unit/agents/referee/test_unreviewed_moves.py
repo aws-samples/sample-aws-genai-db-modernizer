@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality-check moves no model reviewed, in every deliverable (#746 review).
 
 A consolidation review batch with no usable verdict (a call error, or, since

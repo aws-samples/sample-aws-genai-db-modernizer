@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Redact credentials stored by Assessments API versions before #723.
 
 Older versions copied a submitted ``connection.password`` into each job's

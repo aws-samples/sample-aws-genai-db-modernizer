@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Build an :class:`~src.assessment.models.AssessmentResult` from a job's artifacts.
 
 One function per block of the result (:func:`build_statements`,

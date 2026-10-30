@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The relational-move gap rules are data (#471): strict files, one place, rendered."""
 
 from __future__ import annotations

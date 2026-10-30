@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB's key patterns require their key, read from the SQL facts (#920, PR B).
 
 The catalog review found DynamoDB detectors that do not test what their ``why``

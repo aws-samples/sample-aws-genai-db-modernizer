@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Post-Schema Router Output Contract.
 
 Defines the output of the deterministic post-schema router: queries a model

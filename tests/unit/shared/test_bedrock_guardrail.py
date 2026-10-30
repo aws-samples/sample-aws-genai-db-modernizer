@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The optional Bedrock Guardrail (#144): off by default, on for every call.
 
 Tests never call a real model: Bedrock clients are replaced by fakes and the

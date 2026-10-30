@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """SQL-text tools shared across collectors, detectors and parsers.
 
 - :mod:`src.tools.sql.normalize`: the collector digest normalization step (#556).

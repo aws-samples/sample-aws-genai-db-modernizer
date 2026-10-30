@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``load_collection`` reads the collection scripts' raw output for ``assess()`` (#1487)."""
 
 from __future__ import annotations

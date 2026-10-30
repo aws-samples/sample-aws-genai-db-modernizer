@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """scripts/check_version_pins.py: a resolved bump needs no hand edit in the tests (#1226)."""
 
 from __future__ import annotations

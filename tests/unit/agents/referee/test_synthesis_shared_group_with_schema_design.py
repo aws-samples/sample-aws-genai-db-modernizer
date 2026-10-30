@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A query group with a real, non-relational schema design that shares a
 source table with Aurora-assigned queries (#478).
 

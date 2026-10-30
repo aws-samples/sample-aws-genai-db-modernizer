@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary's three parts: recommendation, risk, decision (#1403, ADR-032).
 
 The executive summary leads with what an executive reader acts on, in plain language:

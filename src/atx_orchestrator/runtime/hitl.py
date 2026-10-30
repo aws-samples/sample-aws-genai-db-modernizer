@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Raise and read Human-In-The-Loop (HITL) tasks on the AWS Transform platform.
 
 The assignment-review gate (ADR-028) needs the customer to review, and optionally

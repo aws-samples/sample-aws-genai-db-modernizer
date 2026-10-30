@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """k6 subprocess runner for OpenSearch load tests.
 
 Uses k6's built-in http module to call the OpenSearch REST API.

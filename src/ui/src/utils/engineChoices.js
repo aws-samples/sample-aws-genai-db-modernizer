@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #1003: the assignment review's per-table engine choices. The API sends the open
 // ties grouped per table (`pending_choices`, built once on the server by
 // src/agents/referee/pending_choices.py); the page only collects the customer's

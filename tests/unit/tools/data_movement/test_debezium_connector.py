@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Debezium source connectors on MSK Connect (#1414, ADR-033): config and stacks.
 
 No AWS call: the templates are checked with cfn-lint's Python API, and the

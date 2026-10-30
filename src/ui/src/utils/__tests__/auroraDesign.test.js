@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #478: while Aurora's schema design has not run yet, it has no
  * `access_patterns` field at all (tables carry over 1:1), so the Results

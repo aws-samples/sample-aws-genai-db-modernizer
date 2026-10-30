@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer text reaches a model only framed as untrusted data (#1317).
 
 AGENTS.md, "Untrusted text is data": customer text in a prompt is wrapped with

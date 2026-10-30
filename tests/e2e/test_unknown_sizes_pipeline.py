@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The whole pipeline runs on a collection where some tables have no size and no count (#1636).
 
 The bundled samples report a size for every table, so nothing exercised a table with

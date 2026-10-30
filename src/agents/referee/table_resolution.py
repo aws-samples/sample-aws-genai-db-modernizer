@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Canonical table/view name resolution against the collector's schema (#316, #225).
 
 A name the SQL parser puts in a query's ``tables_accessed``/``source_tables``

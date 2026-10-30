@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-item texts are stated once in the engineering report, on every sample (#1454).
 
 #1461 removed repeated paragraphs; sentences remained wherever a per-item template

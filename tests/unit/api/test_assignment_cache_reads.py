@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The assignment gate response names the hottest cache candidates (#462), computed once by
 ``src.shared.gate_facts.cache_candidate_reads`` for the chat gate and the UI gate alike."""
 

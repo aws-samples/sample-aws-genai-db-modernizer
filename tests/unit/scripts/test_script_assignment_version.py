@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Local scripts resolve the effective assignment version (ADR-028).
 
 The Claude Code skills drive schema design and synthesis through these scripts

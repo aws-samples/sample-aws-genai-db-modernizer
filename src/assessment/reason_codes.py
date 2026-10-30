@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing's internal reason codes, mapped onto the public ``reason_code`` list.
 
 Routing records why every engine change happened as a Move with an internal

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Version and feature gaps for the relational move (#471), deterministic, no model.
 
 Wave 1 moves the relational workload to one Aurora engine: the source-compatible one

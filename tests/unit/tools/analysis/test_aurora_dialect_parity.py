@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora MySQL and Aurora PostgreSQL credited for the SQL features both have
 (catalog PR C, #920; review X4 and item 12).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The DynamoDB decision trace is a versioned contract (ADR-008 Decision 1, #973).
 
 ``analysis-dynamodb/decision-trace.json`` used to be a plain dict: a renamed field

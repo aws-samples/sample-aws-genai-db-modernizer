@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB hot-partition / capacity check, shared by Bedrock and external mode.
 
 ``src/skills/dynamodb-data-modeling.md`` only lets a design report

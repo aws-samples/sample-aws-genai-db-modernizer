@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Build one ``DataMovementPlan`` per migration wave from a finished job (#1413).
 
 Pure and deterministic: :func:`build_plans` reads only the dicts it is given (the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalExecutionService.job_status / delete_job_artifacts -- the backend
 for DELETE /assessments/{job_id}/artifacts (#529), which deletes a finished
 local job's artifact folder and orchestrator marker from disk.

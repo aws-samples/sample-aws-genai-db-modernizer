@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Consolidation records describe the moves the reality check actually made (#218).
 
 The wordpress run (headless validation, job cf163e54) wrote records that did not

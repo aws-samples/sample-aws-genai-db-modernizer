@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report's per-query decision-trace appendix (#339).
 
 ``report.json``'s ``query_traces`` holds the full trace of every query whose

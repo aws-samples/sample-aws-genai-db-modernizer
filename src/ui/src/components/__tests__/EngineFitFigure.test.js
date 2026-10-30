@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1291: the pattern analysis page labels the cache layer's average "Avg cache fit"
  * and states the shared cache fit definition; an owning engine keeps "Avg workload

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """render_deliverables turns one synthesis report into every customer deliverable."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Maintenance and DDL statements name the table they act on (#483).
 
 ``ALTER TABLE t``, ``DROP TABLE t``, ``TRUNCATE t``, ``ANALYZE t``, ``DESCRIBE t`` and

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 import { Trend, Counter } from 'k6/metrics';
 
 export function createPatternMetrics(queryId) {

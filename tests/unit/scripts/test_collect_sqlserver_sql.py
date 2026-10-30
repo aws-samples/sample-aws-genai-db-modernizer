@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Static checks on scripts/collect-sqlserver.sql's query-patterns section.
 
 Regression for #386: sys.dm_exec_query_stats keeps one row per cached

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Integration test: validates graduated scoring produces honest differentiation."""
 
 from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg

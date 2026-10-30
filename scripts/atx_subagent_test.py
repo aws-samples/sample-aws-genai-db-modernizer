@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # ruff: noqa: E402 — imports are intentionally placed after env setup and banners
 """Local test of the consolidated assessment-core subagent (ADR-025, ADR-026).
 

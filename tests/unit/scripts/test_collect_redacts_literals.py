@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every collection ingest writes no literal value to disk (#1625).
 
 A collector output handed in as the collection (or one saved before #1625) can hold

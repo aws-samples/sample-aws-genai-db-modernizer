@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every figure the rubric judge's facts block shares with the report's own
 facts layer (``report.json`` ``facts``, ADR-032) is the same number (#952).
 

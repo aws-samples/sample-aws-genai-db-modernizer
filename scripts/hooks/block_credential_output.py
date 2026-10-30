@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Bash): refuse a call that prints a cloud credential helper's output (#1165).
 
 A Bash call's output lands in the session log, so a helper that prints credentials

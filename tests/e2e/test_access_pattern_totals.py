@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The access-pattern totals the results page shows are one fact (#792, ADR-032).
 
 On a designed wordpress job (DynamoDB, cache layer and Aurora MySQL designs, no model), the

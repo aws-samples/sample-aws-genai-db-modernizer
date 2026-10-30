@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PDF report's risk posture line counts every severity (#270).
 
 With the overall-risk rule from #248 (the highest open severity),

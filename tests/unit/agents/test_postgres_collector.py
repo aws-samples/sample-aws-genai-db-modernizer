@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the PostgreSQL collector's native type map and index methods."""
 
 from src.agents.collector.postgres_collector import _PG_TYPE_MAP, _build_tables

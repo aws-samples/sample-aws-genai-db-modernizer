@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The synthetic SQL Server sample (``trailgear``, #618) reaches the routing
 paths only a heterogeneous source can reach.
 

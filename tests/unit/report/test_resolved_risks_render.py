@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Risks the assignment resolved are visible in the deliverables (#221).
 
 ``risk_assessment.resolved_risks`` records analysis risks whose queries the effective

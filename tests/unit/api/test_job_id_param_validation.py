@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every local API route that takes job_id as a path parameter must reject
 an invalid one with 422 before any artifact is read, listed, written, or
 deleted (#508) -- the same property #420/#505 established for

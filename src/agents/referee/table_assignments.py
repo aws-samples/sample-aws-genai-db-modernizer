@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Table-level assignments derived from the per-query routing, and the retained Aurora engine."""
 
 from __future__ import annotations

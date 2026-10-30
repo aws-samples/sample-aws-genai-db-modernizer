@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A recorded PE review flags a wordpress query, and the reroute runs end to end (#740).
 
 The live path of a PE-review routing flag (#629) -- the reviewer's

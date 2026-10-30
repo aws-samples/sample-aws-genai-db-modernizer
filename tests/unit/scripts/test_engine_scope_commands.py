@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Claude Code commands and skills carry the customer's engine scope (#1574).
 
 A tripwire on the command text, in the style of ``test_modernize_command.py``: the real

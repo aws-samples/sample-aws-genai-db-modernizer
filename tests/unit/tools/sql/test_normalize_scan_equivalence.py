@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``normalize._scan`` reads its spans from ``sql_spans``, and masks what it masked (#1451).
 
 ``_reference_scan`` is the scanner as it was before: its own state machine with its own

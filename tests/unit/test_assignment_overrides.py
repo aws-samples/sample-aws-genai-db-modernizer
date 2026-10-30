@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared customer-override write path (ADR-028).
 
 Locks the one helper both the web route and the ATX gate call: it must bump the

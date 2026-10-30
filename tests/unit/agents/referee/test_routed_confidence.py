@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routed confidence (#152): the fit of the work an engine was actually given.
 
 #490: the fit this module reports is now the resolver's own score

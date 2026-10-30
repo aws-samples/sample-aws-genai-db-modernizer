@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Live and offline collections read the same query text the same way (#795).
 
 Every live collector (MySQL, MariaDB, PostgreSQL, SQL Server, Oracle, and the

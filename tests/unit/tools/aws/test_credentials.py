@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-004 Decision 2: one credential manager for same-account and cross-account (#702).
 
 Same-account uses the task role as is (no STS call); cross-account calls AssumeRole with the

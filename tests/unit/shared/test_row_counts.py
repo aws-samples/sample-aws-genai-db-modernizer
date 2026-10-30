@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A table's row count and size keep three states: a number, a real 0, unknown (#1636).
 
 ``src.shared.row_counts`` is the one place the per-engine rule lives. These cases are

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What the relational-move gap check finds on each bundled sample (#471).
 
 The check is deterministic (no model), so a headless run of a sample finds the same

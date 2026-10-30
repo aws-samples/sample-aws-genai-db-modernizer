@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Abstract base class for the ArtifactStore storage interface."""
 
 from __future__ import annotations

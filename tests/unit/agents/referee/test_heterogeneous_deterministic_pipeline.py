@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#381 review (blocker): the AdventureWorks SQL Server fixture must run through
 the FULL deterministic pipeline -- triage, every analysis agent, assignment
 resolution, reality check, and synthesis -- and the resulting report.json must

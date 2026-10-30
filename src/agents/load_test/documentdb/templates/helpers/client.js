@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // xk6-mongo client setup for DocumentDB.
 //
 // Connection uses MONGODB-AWS authentication: the xk6-mongo extension is built

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The queries and the distinct query patterns they make (#1146): one line, from the facts.
 
 Two queries are one query pattern when they read or write the same rows the same way:

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Headless /modernize run + deliverable checks + quality judge.
 # Usage: ci/e2e-llm.sh <chat|ui|both> <wordpress|discourse>
 #

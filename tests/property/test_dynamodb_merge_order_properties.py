@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The DynamoDB group-draft merge does not depend on draft order (issue #809).
 
 DynamoDB schema design runs in parallel groups, and the merge reconciles what

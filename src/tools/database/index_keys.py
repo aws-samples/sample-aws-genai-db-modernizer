@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Expression index keys, as the collectors report them (#295).
 
 Every catalog the collectors read reports one row per index key, and an

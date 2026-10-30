@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An engine the customer runs today and the plan retires has its own statement (#1076).
 
 ``metadata.engines_in_use`` (#963) says which engines the application already runs. When the

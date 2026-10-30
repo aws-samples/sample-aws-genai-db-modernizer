@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Write-group members their engine serves poorly, and how the target serves them (#1362).
 
 A table has one writer (ADR-031 Decision 1 Amendment 9), so a write group can carry a

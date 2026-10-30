@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 from src.contracts.schema_design_input import ForeignKeyAction
 from src.tools.schema.aurora_common.constraint_translator import (
     fk_on_delete_clause,

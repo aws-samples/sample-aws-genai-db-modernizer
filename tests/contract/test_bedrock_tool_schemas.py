@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every answer model we send to Bedrock as a tool schema is one Bedrock accepts (#1281).
 
 A Strands agent built with ``structured_output_model=M`` sends ``M`` to Bedrock

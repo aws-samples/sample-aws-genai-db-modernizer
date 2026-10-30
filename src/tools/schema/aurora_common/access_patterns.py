@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Derive Aurora access patterns deterministically from the observed query log.
 
 Every other engine's schema designer *authors* its access patterns with the LLM,

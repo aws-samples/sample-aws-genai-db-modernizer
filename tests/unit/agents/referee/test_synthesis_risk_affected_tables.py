@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unsupported-pattern, migration-note and coverage-gap risks name their tables (#252).
 
 Unsupported-pattern risks always had ``affected_tables: []`` although their queries'

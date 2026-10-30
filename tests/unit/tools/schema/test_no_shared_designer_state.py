@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The schema designer modules hold no mutable path state (#1054).
 
 Group designs run in parallel threads, so anything a designer reads its input

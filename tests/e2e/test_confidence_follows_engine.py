@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A query's confidence is its score on the engine it ends on, everywhere (#1373).
 
 The reality check consolidates queries off engines it removes. Each such query's

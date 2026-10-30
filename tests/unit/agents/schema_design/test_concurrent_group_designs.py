@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Concurrent group schema designs each read only their own input (#1054).
 
 ``run_schema_design_auto`` designs a split engine's groups in parallel threads.

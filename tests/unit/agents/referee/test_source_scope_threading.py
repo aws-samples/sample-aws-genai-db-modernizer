@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#835: every consumer of the system-object rule gets the collected database.
 
 Each consumer runs on a collector whose database is literally named ``sys``

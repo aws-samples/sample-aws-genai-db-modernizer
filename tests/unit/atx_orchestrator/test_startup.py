@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the proactive welcome message and its server-lifecycle hook.
 
 Two behaviours are pinned here:

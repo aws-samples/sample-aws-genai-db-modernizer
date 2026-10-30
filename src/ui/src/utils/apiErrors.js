@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Build the Error a failed (non-2xx) API request should resolve with (#548
  * round 2 review item 3). The API returns the real, customer-facing reason in

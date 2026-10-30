@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#370 recheck: ``designed_and_not_designed_engines`` must not require
 ``assigned_queries`` to exist at all.
 

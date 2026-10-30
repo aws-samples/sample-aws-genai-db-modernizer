@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``fallback_owner`` must agree with the resolver's own score, on real
 pipeline artifacts (#549 round-2 review).
 

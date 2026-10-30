@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the #572 customer-facing wording guard.
 
 Extends the #406 guard (which only checked a bare issue tag survived in a

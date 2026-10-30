@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Persist the built graph (.lbug) through the artifact store abstraction.
 
 The graph is a materialized view of S3 artifacts. Persisting the built file

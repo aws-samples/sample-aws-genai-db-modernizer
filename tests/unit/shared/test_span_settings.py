@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The span grammar, the digest scan and redaction read the source's string settings (#1482).
 
 MySQL and MariaDB read ``--`` as a comment only before a space or a control character,

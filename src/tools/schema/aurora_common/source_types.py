@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Map a PostgreSQL or MySQL source ``data_type`` to an Aurora type (issue #274).
 
 The normalized type (``type_map``) is lossy (``integer`` covers INT and BIGINT)

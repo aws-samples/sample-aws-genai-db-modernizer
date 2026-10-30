@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality Check input/output assignment versions (issue #189).
 
 Reality Check runs once per assignment lineage: it consolidates the newest

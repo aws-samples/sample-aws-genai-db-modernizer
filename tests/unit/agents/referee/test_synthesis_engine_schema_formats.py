@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis reads every engine's schema output format.
 
 ElastiCache emits ``key_designs`` and Aurora emits ``table_definitions`` with no

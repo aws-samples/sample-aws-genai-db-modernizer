@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Two guards on the schema design trace contract (#1258).
 
 1. ``routing_flags`` stays declared on the model. The post-schema router reads the PE

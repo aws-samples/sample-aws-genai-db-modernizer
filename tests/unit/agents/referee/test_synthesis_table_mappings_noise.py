@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``build_table_mappings`` must not count a schema design's own hallucinated
 "source table" as a mapped table (#380).
 

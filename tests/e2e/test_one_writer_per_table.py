@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#992: a table has one writer on every sample; its replicas are stated everywhere.
 
 ADR-031 Amendment 9 (maintainer decision, 2026-10-17): all of a table's write

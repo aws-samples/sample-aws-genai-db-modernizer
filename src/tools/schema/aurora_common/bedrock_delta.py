@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bedrock-side delta design for both Aurora agents (issue #273).
 
 Same contract as the external path: the designer gets the compact design view

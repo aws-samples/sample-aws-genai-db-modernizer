@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query decision traces synthesis writes into report.json (#339).
 
 ``src.shared.query_trace.query_trace_digest`` traces every query of the

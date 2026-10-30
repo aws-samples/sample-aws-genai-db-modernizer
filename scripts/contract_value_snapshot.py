@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Published value-set snapshot (#975, ADR-008 Decision 3).
 
 ``scripts/contract_schema_snapshot.py`` (#574) catches a field-shape change

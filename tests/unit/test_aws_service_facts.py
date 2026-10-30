@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard against stale AWS service facts in prompts, skills, commands and code (#627).
 
 Each entry pairs a pattern that used to appear in a prompt, skill or catalog

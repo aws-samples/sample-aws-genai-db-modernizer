@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pure-function schema revision verifier.
 
 Provides a set of composable check functions that validate a proposed schema

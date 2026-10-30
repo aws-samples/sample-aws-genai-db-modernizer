@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The transform core's Reality Check LLM mode (ADR-026 Decision 4, #708).
 
 ADR-026 Decision 4 keeps the external LLM mode out of the transform core: the core reads

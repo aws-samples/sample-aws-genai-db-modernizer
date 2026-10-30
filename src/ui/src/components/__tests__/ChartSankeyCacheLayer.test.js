@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #330: the assignment Sankey (ChartSankey.js) omitted the ElastiCache
  * cache layer entirely -- it was only ever mentioned in a caption below the

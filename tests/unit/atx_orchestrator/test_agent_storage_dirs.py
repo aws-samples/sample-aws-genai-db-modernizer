@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every agent type needs a storage directory, and that directory must be writable.
 
 Three lists have to agree for a phase to start at all:

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Architectural patterns follow the final assignment (#202 review, root cause A).
 
 The reality check detected its patterns before the LLM corrections, the re-run Aurora

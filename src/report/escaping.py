@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Centralized output escaping for customer-facing deliverables.
 
 Threat model finding R3 (``docs/security/atx-threat-model.md``): the Markdown

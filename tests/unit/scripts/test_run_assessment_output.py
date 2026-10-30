@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py`` keeps stdout short when it is not a terminal (#278).
 
 On the discourse sample the script used to print ~108 KB of progress to

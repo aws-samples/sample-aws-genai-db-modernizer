@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What must never reach a public artifact or fixture (#1463).
 
 Two scans over text, used by ``ci/llm/run.py collect-job`` (the whole-job upload) and

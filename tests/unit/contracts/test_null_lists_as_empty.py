@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An explicit ``null`` for an optional list reads as empty in the ElastiCache contract (#1675).
 
 The ElastiCache designer's first answer was rejected, and the whole design asked for

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Generate the WordPress DynamoDB schema-design fixture *from the contract*.
 
 The load-test contract integration tests

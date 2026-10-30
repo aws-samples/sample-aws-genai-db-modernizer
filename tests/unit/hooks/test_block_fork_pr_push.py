@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 8: no push to the upstream repository from a worktree checked out for a fork PR (#1165)."""
 
 from __future__ import annotations

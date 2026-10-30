@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Mocked unit tests for the SSM automation-instance provisioning helpers.
 
 These exercise `discover_cluster`, `ensure_automation_machine` and

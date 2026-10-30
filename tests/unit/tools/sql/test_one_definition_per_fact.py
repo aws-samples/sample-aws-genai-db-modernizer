@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each query fact has one definition, and every reader uses it (#893, ADR-031 Decision 8).
 
 #491 moved every routing and analysis detector into ``src.tools.sql.query_facts``

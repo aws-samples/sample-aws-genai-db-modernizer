@@ -178,6 +178,11 @@ init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
 
+# scripts/license_headers.py (#1722): directories that keep their own license and
+# provenance, so the SPDX header check and fix skip them.
+[tool.license-headers]
+exclude = ["contrib/"]
+
 [tool.bandit]
 exclude_dirs = ["tests", "scripts/ci-database", "contrib"]
 # B608: SQL injection — suppressed inline with nosec B608 where applicable

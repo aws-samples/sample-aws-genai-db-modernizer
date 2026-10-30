@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared risk-severity counting (#536 round-1 review suggestion).
 
 ``src.report.risks`` (the posture line), the retired deck (the Risk

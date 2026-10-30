@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1536: a statement that names no table reads "No source table" in every deliverable.
 
 The stored values stay as they are (``tables_accessed: ["unknown"]``, and the group name

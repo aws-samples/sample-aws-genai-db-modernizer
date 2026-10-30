@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema split CLI rejects single-pass Aurora engines before writing groups."""
 
 from __future__ import annotations

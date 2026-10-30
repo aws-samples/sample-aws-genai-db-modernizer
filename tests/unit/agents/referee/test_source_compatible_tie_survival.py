@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Phase 1 keeps the source-compatible engine when it scores at least as well (#600).
 
 ADR-031 Decision 2 gives an exact tie to the source-compatible Aurora engine.

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Re-place a waived count when its table's writes move (#1151).
 
 ADR-031 Decision 2 Amendment 12 (#377) lets a key-scoped ``COUNT`` pass an engine's

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each designer is told how its engine serves the write-group members it fits poorly (#1362).
 
 A table has one writer (ADR-031 Decision 1 Amendment 9), so its write group can carry a

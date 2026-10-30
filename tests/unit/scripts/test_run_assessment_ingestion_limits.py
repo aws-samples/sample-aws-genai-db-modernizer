@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py``'s collect phase enforces upload size/row caps (#142).
 
 A pathological or oversized offline collection must be rejected with a clear

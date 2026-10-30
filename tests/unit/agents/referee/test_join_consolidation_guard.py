@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Review of #375, finding B2: the reality check never moves a join onto
 DynamoDB from a non-Aurora engine, unless a denormalised design is
 explicitly proposed (no such mechanism exists yet, so this is

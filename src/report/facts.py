@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one reader of ``report.json``'s ``facts`` block (#615, ADR-032).
 
 Every deliverable reads the figures it prints from here and only formats

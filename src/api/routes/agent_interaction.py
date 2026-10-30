@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Agent interaction routes — questions, answers, and answer validation.
 
 Requirements: 14.5, 14.6, 14.7

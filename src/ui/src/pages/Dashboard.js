@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 //##-- React Events
 import { useState, useEffect, memo, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Map normalized source column types to Aurora PostgreSQL native types.
 
 The collector already normalizes every source column into a 14-value

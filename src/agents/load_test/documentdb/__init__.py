@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB load test engine components."""
 
 from src.agents.load_test.documentdb.provisioner import DocumentDBProvisioner

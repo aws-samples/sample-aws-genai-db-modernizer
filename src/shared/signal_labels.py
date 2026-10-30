@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Short plural nouns for triage signals, for prose such as "led by full-text search".
 
 Used by the ranking rationale (#152). The old deck kept its own forms

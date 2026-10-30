@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model prose cites a query by its report label, never by a bare id (#1321).
 
 A designer or a model summary can name a query by its hash or a prefix of it

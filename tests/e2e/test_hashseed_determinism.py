@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The deterministic pipeline must give the same analysis, assignment and
 Reality Check result whatever the Python hash seed (#186, #288, #449).
 

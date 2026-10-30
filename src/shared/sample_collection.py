@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Resolve a sample collection path on a fresh clone (#331).
 
 The bundled sample collections ship only as ``docs/examples/<name>/<name>.zip``

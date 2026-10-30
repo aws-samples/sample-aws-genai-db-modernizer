@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-017 Decision 4: score weights are per-target configurable (#703).
 
 The rule, not the table of numbers (the numbers in the ADR are stale, #701): each target's

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for GraphStore — embedded graph database wrapper."""
 
 from src.graph.store import GraphStore

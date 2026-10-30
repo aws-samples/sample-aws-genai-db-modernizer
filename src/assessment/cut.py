@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cut an ``assess()`` result down to some of its tables, to assess that piece again
 (#1633, contract 1.3).
 

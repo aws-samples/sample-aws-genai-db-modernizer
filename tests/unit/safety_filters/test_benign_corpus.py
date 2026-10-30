@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Benign-input corpus for the safety filters (#1161).
 
 ``secret_guard`` (refuses or warns about credentials) and ``prose_style`` (rewrites or

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #269: when a generated executive summary is replaced by its deterministic
  * fallback, the UI must say so -- `summaryFallbackInfo` is the one place that

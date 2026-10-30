@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // Per-query custom k6 metrics.
 //
 // Each access pattern gets its own latency Trend and request/error Counters

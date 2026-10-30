@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Design per access pattern, not per statement (#1602).
 
 A large workload repeats one access pattern in many statement shapes: the same

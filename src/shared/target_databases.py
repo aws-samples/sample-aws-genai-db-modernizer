@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one engine-scope setting, ``target_databases`` (#1328, decision 1 on #1181).
 
 A customer may limit the engines a job considers. The setting has one name and one

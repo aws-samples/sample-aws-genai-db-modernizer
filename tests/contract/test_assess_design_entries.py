@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The design block's published standard covers every designed engine (#1513).
 
 docs/contracts/assess-design-block.md defines an entry for each of the six engines the

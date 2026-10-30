@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``--auto``'s "decide for me" rule for a pending engine choice (#1003).
 
 Maintainer decision (2026-10-17): per table, in order, the higher unrounded

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Abstract base classes for engine-specific load test components."""
 
 from abc import ABC, abstractmethod

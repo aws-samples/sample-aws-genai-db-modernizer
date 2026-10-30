@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every bundled sample's executive-summary request fits its token budget (#1064).
 
 The per-list cap (``summary_input_budget``) can only shrink lists. A request

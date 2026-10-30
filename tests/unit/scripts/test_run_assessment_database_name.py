@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The name a script run gives the database never changes its routing (#1572).
 
 ``--db`` and the name ``--db-from-file-name`` (``/modernize``) derives from the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report's placeholder check flags leaked values, not prose (#987)."""
 
 from __future__ import annotations

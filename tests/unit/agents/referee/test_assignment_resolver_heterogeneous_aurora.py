@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#381: the assignment resolver collapses two competing Aurora engines
 (aurora_mysql, aurora_postgresql) to exactly one for a source with no Aurora
 dialect of its own (SQL Server, Oracle, DB2).

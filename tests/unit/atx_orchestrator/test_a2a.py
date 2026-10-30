@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for src.atx_orchestrator.a2a.
 
 Exercises the ``invoke_and_wait`` primitive and the module's private helpers

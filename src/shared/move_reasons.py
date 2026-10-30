@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Plain-English reasons for the move ledger (#339, #616).
 
 The one renderer of a :class:`~src.contracts.move_ledger.Move`'s reason: the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#568 review of #562 (Important 2): the merged DynamoDB/DocumentDB wave's
 ``table_count`` is the union of both engines' served tables; crediting that
 union to every engine in ``engines`` double counted.

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Close calls in the engineering report and the PDF report (#730).
 
 ``facts.close_calls`` groups the queries an engine won by less than the

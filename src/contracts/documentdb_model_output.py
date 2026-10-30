@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB schema design output contract.
 
 Defines the structured output that the DocumentDB schema design agent

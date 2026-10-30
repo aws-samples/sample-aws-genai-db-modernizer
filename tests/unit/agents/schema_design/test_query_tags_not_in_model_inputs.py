@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Query tags never reach a schema designer's model input (#1180).
 
 ``QueryPattern.query_tags`` is the caller's join key to its own code, customer text

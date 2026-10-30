@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis passes triage's per-query capabilities into the fallback list (#729).
 
 ``query_traces.unservable`` records the capabilities a fallback query needs

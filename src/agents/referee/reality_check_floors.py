@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check justification floors: a mandatory engine must earn its cost.
 
 A signal override keeps an engine through Phase 1 and Phase 2. The floors are

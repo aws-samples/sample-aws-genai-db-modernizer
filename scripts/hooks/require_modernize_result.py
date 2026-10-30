@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Stop hook (headless): a ``/modernize --auto`` run never ends its turn with nothing running
 and no ``MODERNIZE_RESULT`` line (#1574).
 

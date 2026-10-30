@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared validation for the ``database_name`` identifier used to build artifact paths.
 
 Every entry point that turns a caller-supplied ``database_name`` into an

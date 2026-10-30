@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A tests/e2e test that is not marked deterministic may not reach a ``pytest.skip``.
 
 The headless e2e-llm run executes ``pytest tests/e2e -m "e2e and not deterministic"

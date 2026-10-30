@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Plain-prose style list (#1034): sources and saved model-run text.
 
 - The rule catalog (the ``why``/``concerns``/``engine_hint`` text risks and the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#132: the executive summary prompt must not assert schema design happened
 when it was skipped, or forbid the model from saying so.
 

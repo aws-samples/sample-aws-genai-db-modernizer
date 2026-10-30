@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The public ``assess()`` contract against the shape recorded at its last release (#1184).
 
 Two snapshots, one per era (#1641):

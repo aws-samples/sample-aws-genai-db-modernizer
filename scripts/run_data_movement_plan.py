@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Write one data movement plan per migration wave for a finished local job (#1413).
 
 Reads the job's latest synthesis report, its assignment, the collector output and

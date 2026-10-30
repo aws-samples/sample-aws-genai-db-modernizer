@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared downstream helpers in assignment_versioning (ADR-028).
 
 Schema design and synthesis must read the effective assignment (v2 when

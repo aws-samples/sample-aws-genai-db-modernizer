@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A dropped candidate engine is never a saving (#949).
 
 The reality check and synthesis priced every engine the plan analysed and then

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Property: a table's write group moves as one (#992, ADR-031 Amendment 9).
 
 Whatever the statements and their scores, the first assignment puts every

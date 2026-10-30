@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Stop hook (interactive sessions): remind which real-model runs the diff needs (#731).
 
 Runs ``ci/needs_llm_run.py`` over the files this branch changed since its

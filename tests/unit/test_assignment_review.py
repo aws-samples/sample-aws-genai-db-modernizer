@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assignment-review render/parse/diff round-trip (ADR-028).
 
 The editable surface must round-trip: rendering an assignment then parsing and

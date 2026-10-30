@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One product name: "Database Modernizer Assessment Tool" (#954).
 
 No rendered deliverable may carry "ATX", "AWS Transform" or the standalone word

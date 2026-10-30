@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Null-safe reads of schema design fields for synthesis (#757, #1094).
 
 Synthesis reads ``schema_output.json`` as a raw dict, without validating it against

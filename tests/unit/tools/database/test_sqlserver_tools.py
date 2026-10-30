@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for SQLServerRemoteCollector and helpers.
 
 Mocks SSMExecutor so no AWS calls are made. Each method is tested for:

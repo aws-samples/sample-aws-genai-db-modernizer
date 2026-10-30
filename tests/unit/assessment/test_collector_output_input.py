@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A collector output (contract 3.x) is accepted as input, but its derived facts are
 never the caller's: the parser reads every statement again (#1182)."""
 

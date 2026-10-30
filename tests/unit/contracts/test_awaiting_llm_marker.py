@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality-check ``awaiting_llm.json`` marker is a versioned contract (ADR-008 Decision 1, #1267).
 
 The marker was a plain dict, ``{"status": "awaiting_llm", "input_key": ...}`` while an

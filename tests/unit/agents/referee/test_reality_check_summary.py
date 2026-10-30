@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality-check executive summary must describe the final assignment (#236).
 
 The summary is written before the LLM corrections, the re-run Aurora absorption, the

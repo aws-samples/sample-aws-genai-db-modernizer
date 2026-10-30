@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every collection ingest drops sample rows and states how many (#387).
 
 A collector output or raw collection written before #387 may carry table rows

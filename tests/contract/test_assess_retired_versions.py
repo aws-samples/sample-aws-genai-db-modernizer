@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Contract versions 1.0, 1.1 and 1.2 are retired (#1641): ``assess()`` supports 1.3 only.
 
 Those versions were initial development versions during the beta, and the release that

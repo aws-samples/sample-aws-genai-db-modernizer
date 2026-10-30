@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Engine capability facts shared by cross-engine scoring (#477).
 
 Lives next to ``migration_wave_engines.py`` (engine roles) because this is the

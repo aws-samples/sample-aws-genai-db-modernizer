@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The request model refuses what ``assess()`` cannot run (#1182)."""
 
 from __future__ import annotations

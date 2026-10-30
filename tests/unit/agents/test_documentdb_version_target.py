@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#627 review: DocumentDB version facts in the analysis trace and PE review.
 
 The trace labels each window function by what DocumentDB actually offers for

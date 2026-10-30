@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The pattern catalog (ADR-031 Decision 8, #492): strict loading, generated constants.
 
 ``src/catalog/patterns/<pattern_type>.toml`` is the one place a pattern's per-engine

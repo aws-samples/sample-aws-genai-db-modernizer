@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The typed request and result of :func:`src.assessment.assess` (contract 1.3).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,

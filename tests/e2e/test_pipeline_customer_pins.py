@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A customer pin keeps its engine, but never pulls a query onto it for the pin's sake (#860).
 
 The first reality check leaves OpenSearch out of the plan on discourse and

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Migration map's owner is the wave plan's owner (#212 review).
 
 ADR-032 (#1169): "kept in sync" has one definition, the wave plan's, and ADR-031

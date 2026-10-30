@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An older collector output's row counts are read again by the per-engine rule (#1636).
 
 CollectorOutputContract's MAJOR bump for #1636 lets ``Table.row_count`` be None. An

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Rules the reality check's passes share: engine costs, eligibility and ties.
 
 Phase 1 (``reality_check_settle``), Phase 2 (``reality_check_place``) and the

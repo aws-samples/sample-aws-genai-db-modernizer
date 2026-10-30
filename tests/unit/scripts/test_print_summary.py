@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``scripts/print_summary.py`` prints the gate block and the final summary (#1307).
 
 /modernize quotes its stdout verbatim instead of composing the text, so it must be

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """CollectorInput 3.1 (#963): an optional ``engines_in_use`` declaration."""
 
 from __future__ import annotations

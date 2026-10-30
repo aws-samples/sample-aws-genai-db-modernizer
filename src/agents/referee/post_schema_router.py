@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Post-Schema Router — Deterministic routing of unsupported queries.
 
 After schema design, some queries are reported as unsupported by their assigned

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora schema design and routing share one utility-statement definition (#778).
 
 Schema design used its own skip list (``design_view._NON_DESIGN_STATEMENT``) that

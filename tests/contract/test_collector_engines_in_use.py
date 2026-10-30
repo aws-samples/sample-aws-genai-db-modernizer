@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``metadata.engines_in_use`` (collector contract 3.2, #949).
 
 The AWS database engines the application already runs today next to its source. Only

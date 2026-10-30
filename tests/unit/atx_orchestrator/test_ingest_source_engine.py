@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The library ingest records the source engine ``detect_source_engine`` reads (#1177).
 
 ``core.ingest_offline_collection`` used to guess on its own ("postgres" in the

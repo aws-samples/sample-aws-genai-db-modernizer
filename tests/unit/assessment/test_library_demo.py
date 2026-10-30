@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The library demo (``docs/examples/library/demo_assess.py``) keeps working.
 
 It runs the demo as a reader would, on the WordPress sample, and checks each printed

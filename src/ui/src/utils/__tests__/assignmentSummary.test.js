@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #250: the Assignment review hero must name the database and the workload size
  * whether or not the reality check carries an LLM-written executive summary.

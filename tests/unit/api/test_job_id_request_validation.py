@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """AssessmentRequest.job_id must reject a malformed or path-traversing
 value the same way database_name does (#420/#505), before it reaches
 LocalExecutionService.start_execution's

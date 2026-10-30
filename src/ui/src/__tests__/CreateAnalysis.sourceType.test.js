@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1177: the offline upload's source-type dropdown defaults to "Detect from file"
  * (value ``auto``): the collector reads the engine from the collection's own

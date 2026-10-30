@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Close calls (#730): queries an engine won by a small margin over another
 engine the plan keeps, and how the customer moves them.
 

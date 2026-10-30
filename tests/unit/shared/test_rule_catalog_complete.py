@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 8 guard: the rule catalog is complete for every engine (#639).
 
 Decision 8 puts routing rules in one pattern-first, engine-neutral catalog

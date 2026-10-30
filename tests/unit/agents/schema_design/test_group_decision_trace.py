@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Grouped DocumentDB and OpenSearch designs load their own decision trace (#1060).
 
 A single-pass design hands the designer the engine's analysis decision trace.

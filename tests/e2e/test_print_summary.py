@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The gate block and final summary /modernize quotes, on real deterministic jobs (#1307).
 
 ``scripts/print_summary.py`` prints both from the artifacts. They mirror the UI at its depth,

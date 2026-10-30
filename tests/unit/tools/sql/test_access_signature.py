@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The access-pattern signature (``src.tools.sql.access_signature``, #1104 review).
 
 Equal signatures are one access pattern: the same statement collected twice, copies

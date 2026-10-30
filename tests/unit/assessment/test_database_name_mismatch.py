@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess()``'s ``database_name`` only names the run: the result is the same
 whatever name the caller picks (#1572), and an ambiguous name is refused."""
 

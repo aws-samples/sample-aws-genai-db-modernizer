@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Check that every commit in a range has an acceptable author (#1408).
 
     uv run python scripts/check_commit_authors.py --range origin/main..HEAD

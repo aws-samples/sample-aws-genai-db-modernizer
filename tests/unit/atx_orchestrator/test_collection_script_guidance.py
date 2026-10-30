@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every AWS Transform surface names a collection script for every source engine (#741).
 
 The project ships one read-only collection script per supported source engine

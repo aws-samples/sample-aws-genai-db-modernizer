@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Refuse a request that carries a database password or other secret (ADR-004 Decision 5, #723).
 
 Database credentials live in a secrets manager (for example AWS Secrets Manager) and a

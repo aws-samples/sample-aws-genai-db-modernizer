@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Size and row-count ceilings for an uploaded collection, enforced before
 ingestion (#142).
 

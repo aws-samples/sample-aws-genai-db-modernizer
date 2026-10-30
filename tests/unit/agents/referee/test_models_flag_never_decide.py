@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 11 guard: a model's flag is evidence; the scorer decides (#647).
 
 A model may flag queries an engine cannot serve (``ModelFlag``). It can never

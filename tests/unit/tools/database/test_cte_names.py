@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """CTE names defined by WITH are query-local, never tables (#682)."""
 
 import pytest

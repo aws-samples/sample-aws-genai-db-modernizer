@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A structured-output call that asks again is logged with its reason (#1675).
 
 Strands asks the model again for its structured output in two cases: the answer

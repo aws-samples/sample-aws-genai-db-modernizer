@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The rule catalog's TOML format, recorded so it stays backwards compatible (#1647).
 
 Callers read the catalog's TOML files (``src/catalog/``) directly. Its *values* (fit

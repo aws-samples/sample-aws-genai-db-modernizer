@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Local execution service — the API's only execution backend (hosted Step Functions
 service retired, #175)."""
 

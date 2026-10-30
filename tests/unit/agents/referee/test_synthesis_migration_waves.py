@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis writes ``migration_waves`` to report.json deterministically (#225).
 
 End to end through ``run_synthesis_deterministic``: the roadmap is built from

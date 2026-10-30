@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assignment-stage adapter: stage a case into a store, run the agent, extract result.
 
 The assignment agent is rule-based (no Bedrock), so this is deterministic.

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The subagent return value must satisfy the SDK's AgentResult contract.
 
 ``AsyncBaseSubagent.process_message_async`` is annotated ``-> AgentResult`` and

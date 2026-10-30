@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The gate block and final summary /modernize quotes mirror the UI, from facts (#1307, ADR-032).
 
 The snapshots under ``snapshots/`` pin the full printed text of one synthetic job. After an

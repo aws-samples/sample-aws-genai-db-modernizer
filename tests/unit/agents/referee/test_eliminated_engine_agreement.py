@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cross-deliverable agreement on "eliminated engine" (#235).
 
 Before this fix, an engine left with only out-of-scope queries after the reality

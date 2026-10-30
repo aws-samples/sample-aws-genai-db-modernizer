@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Collected queries grouped by access pattern (#1146).
 
 The maintainer rule (recorded on #1104 and #1146): two statements are one access

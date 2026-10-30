@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1321: a backtick span in report prose renders as inline code. Synthesis
  * writes a query cited by id as its label ("query `8c66eaee`"); the engineering

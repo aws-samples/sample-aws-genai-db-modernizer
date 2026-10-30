@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Small DynamoDB designs that pass ``DynamoDBModelOutputContract`` (#1186).
 
 For merge and reconcile tests: drafts built here are valid, so a merger change

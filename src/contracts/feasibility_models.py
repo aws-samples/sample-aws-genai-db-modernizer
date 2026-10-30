@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Feasibility-review finding contract (ADR-029 Layer C).
 
 The post-gate feasibility reviewer emits structured findings describing why a

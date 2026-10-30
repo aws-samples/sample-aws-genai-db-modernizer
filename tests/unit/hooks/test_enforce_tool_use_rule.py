@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 4: the tool-use rule at the call, derived from .claude/settings.ci.json."""
 
 from __future__ import annotations

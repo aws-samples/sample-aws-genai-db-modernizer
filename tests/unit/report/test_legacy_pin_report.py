@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A report.json written before utility pins left the mean fit (#1389).
 
 Its stored figures count the pins and its traces show their scores; the

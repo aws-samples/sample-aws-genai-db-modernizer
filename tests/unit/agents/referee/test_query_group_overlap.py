@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A query is listed as served by one query group, its owner's (#1522).
 
 After #226 the cache layer's groups stand apart; three other ways a query could still be

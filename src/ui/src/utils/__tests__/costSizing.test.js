@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1195 (ADR-032): the results page's cost cards state what each engine's figure
  * was sized for, as the facts layer states it (facts.engines[].cost_sizing), in the

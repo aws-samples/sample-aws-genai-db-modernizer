@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The output contract every written ``schema_output.json`` must pass (#1186).
 
 Every writer of ``schema-<engine>/v<N>/schema_output.json`` calls

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB cost / hot-partition check shared by Bedrock and external mode (issue #198).
 
 The skill only lets ``validation_passed`` be true once

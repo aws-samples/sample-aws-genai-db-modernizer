@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared FastAPI dependencies for routes that take an artifact-path
 identifier as a plain query or path parameter, rather than through a
 request body model.

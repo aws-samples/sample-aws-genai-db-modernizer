@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The released-contract guard for the public ``assess()`` contract (#1184), on small
 synthetic models: one case per rule.
 

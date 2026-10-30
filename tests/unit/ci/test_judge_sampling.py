@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/judge.py: the judge model is pinned and recorded, each run takes
 several samples and reports the per-criterion median, and a saved main
 ``judge.json`` can be compared per criterion (#952).

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py --all`` renders the deliverables after synthesis.
 
 The CLI (``--llm-mode none``) and Bedrock (``--llm-mode bedrock``) runs used to

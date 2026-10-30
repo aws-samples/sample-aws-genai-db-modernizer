@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each scripts/run_*.py entry point records a durable failure marker on
 _error() or an unhandled exception, and schema design / synthesis record the
 assignment-review gate as passed (#517) -- including the round-1 review

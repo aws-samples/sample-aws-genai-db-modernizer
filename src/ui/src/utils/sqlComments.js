@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Linear-time SQL comment stripping: the JavaScript copy of
  * `src/shared/sql_comments.py`'s `strip_leading_comments` (#814), so the UI and

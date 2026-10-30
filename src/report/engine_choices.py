@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Which queries tie between engines, and which moved after the customer's approval."""
 
 from __future__ import annotations

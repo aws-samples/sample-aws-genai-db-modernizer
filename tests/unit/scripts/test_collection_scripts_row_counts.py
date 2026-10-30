@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Static checks on the row counts the collection scripts and live collectors read (#1636).
 
 Each script reads a table's count from its source's catalogue, never from the table

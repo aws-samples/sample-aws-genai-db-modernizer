@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engine scope setting through the Assessments API, on wordpress (#1328).
 
 A job is started with ``POST /api/v1/assessments`` and its ``target_databases``; the

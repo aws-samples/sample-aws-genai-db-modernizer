@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report shows unresolved engine ties (#503) -- the same
 per-query fact the approval gate already shows from
 ``QueryAssignment.tied_engines``.

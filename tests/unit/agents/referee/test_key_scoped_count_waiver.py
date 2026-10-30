@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#377: a key-scoped COUNT passes DynamoDB's aggregation gate when its table's writes
 are on DynamoDB (ADR-031 Decision 2 Amendment 12, maintainer decision 2026-10-19).
 

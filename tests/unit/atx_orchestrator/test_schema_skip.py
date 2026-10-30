@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for marking unselected schema-design engines as skipped (STOPPED).
 
 Pins the WebApp progress-panel fix: engines that had no in-scope queries routed

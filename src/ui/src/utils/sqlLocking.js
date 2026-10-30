@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The locking clause of a SQL read: the JavaScript copy of
  * `src/agents/referee/query_shape.py`'s `locking_clause` (#838), the lock the

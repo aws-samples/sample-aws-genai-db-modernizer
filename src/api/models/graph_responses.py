@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pydantic response models for curated graph query endpoints."""
 
 from pydantic import BaseModel

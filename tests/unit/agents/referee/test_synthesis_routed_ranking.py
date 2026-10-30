@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis ranking follows the routed workload (#152).
 
 ``analysis_confidence`` (the all-analyzed-tables average) stays for audit; every

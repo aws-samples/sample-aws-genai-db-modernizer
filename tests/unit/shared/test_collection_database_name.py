@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one rule that turns a collection file name into a database name (#1096)."""
 
 from __future__ import annotations

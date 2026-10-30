@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable names one product, "Database Modernizer Assessment Tool" (#954).
 
 The guard covers each file of the deliverables folder (#987: the executive report, the

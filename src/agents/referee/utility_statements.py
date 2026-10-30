@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Utility and metadata statements are excluded from engine routing (#327).
 
 A declared fact module (ADR-031 Decision 8, #893): the utility-statement fact is

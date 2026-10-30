@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Orchestrator agent factory for AWS Transform.
 
 Provides ``build_agent_factory`` for the ``orchestrator`` AGENT_TYPE. The

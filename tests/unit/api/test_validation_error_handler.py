@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.api.main's RequestValidationError handler must never echo the
 rejected value back in a 422 response.
 

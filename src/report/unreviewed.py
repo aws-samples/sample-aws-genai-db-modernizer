@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality-check moves no model reviewed (#746): one plain line, when any.
 
 The consolidation validator reviews moved queries in batches; a batch with no

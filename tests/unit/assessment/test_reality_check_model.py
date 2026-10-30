@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``deterministic=False`` runs the reality check's model review, through the same
 model entry points the pipeline uses; here they are patched (tests never call a model)."""
 

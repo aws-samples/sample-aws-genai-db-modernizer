@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the A2A-wired variants in ``src.atx_orchestrator.tools``.
 
 These test ``run_assessment_core_via_a2a`` without any network or SDK --

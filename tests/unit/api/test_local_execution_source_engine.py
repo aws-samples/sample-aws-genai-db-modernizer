@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalExecutionService reports the real source engine for script-run jobs.
 
 Jobs started by the local scripts and Claude Code skills have no ``_meta.json``.

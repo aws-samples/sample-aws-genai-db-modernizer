@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The cache-layer engines and the hot-read floor, declared once (#398).
 
 A cache-layer engine fronts hot reads and owns no query. This set is the single

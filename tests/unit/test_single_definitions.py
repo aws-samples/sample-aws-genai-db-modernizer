@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One definition of each fact the #493 catalog review found twice, and no dead copies.
 
 ``TargetDatabase`` existed in both analysis contracts with different

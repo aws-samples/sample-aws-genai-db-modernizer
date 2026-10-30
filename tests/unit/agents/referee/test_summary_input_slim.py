@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What the executive-summary request drops, and what it must keep (#1064)."""
 
 from __future__ import annotations

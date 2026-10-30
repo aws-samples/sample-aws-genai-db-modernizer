@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Conditional writes come from a structured field, not prose (issue #810).
 
 The DynamoDB merge never replaces a key that a group's conditional write

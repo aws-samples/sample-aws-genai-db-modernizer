@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Deterministic schema-design arithmetic (#626).
 
 The schema-design skills used to ask the model to compute ``design_rps``, row

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ATX schema/synthesis default to the resolved assignment version, not v1 (issue #189).
 
 When a caller omits ``assignment_version``, the subagents pass ``None`` and the

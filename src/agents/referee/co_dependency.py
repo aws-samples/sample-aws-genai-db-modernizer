@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Co-dependency groups: queries joined closely enough to move between engines as one."""
 
 from __future__ import annotations

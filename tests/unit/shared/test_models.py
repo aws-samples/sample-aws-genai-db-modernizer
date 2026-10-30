@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Named-role model config and per-family request shapes (#624).
 
 Every model call in ``src/`` resolves its model through a role in

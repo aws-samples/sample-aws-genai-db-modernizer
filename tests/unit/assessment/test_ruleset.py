@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``ruleset_hash`` names the rules a result came from (#1182)."""
 
 from __future__ import annotations

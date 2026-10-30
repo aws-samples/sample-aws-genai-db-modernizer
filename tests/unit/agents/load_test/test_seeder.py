@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DynamoDB contract-aware seeder."""
 
 from unittest.mock import MagicMock, patch

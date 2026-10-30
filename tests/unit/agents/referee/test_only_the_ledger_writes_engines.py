@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard test: only the move ledger writes a query's engine or tie (#616, ADR-031 Amendment 3).
 
 Every change of a query's engine (``assigned_engine``) or of its unresolved

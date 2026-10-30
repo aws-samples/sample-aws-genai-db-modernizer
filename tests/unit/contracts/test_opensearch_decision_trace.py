@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The OpenSearch decision trace is a versioned contract (ADR-008 Decision 1, #1189).
 
 ``analysis-opensearch/decision-trace.json`` was a plain dict: no ``contract_version``,

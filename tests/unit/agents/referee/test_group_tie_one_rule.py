@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#833: one rule for a co-dependency group's tie when its members disagree.
 
 ADR-031 Decisions 4 and 12: a group moves as one unit, so it has one tie.

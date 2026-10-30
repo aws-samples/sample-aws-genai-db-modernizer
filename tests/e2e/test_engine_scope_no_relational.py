@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A scope with no relational engine end to end (#1369).
 
 On wordpress (a MySQL source), triage runs with a scope of DynamoDB alone and the rest of

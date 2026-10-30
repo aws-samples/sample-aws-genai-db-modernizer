@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the routing snapshot diff logic (#497).
 
 ``tests/e2e/routing_snapshot.py`` has no module-level dependency on the ``e2e``

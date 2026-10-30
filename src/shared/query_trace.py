@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query decision trace, built once from the move ledger (#339).
 
 Why a query ended on engine X and not Y: its first assignment with every

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Context graph layer — embedded LadybugDB for assessment relationship queries."""
 
 from __future__ import annotations

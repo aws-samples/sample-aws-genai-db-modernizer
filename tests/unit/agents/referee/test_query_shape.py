@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``query_shape.is_single_table_crud``: the single-table CRUD fact (#690).
 
 The fact ``aurora-anti-05`` ("no-relational-need") is documented on: "all

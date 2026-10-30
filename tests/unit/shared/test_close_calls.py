@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Close calls: queries whose runner-up is a kept engine a few points behind (#730).
 
 The reality check keeps deciding for the customer (ADR-031 Decision 7), but a

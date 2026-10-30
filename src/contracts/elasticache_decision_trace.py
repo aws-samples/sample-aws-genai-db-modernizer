@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ElastiCache decision trace contract (``analysis-elasticache/decision-trace.json``).
 
 The ElastiCache analysis agent writes this trace beside ``analysis.json``. It

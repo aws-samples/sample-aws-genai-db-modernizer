@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Oracle literal variants merge into one query shape in the offline parser (#412).
 
 ``V$SQL.SQL_ID`` hashes the exact SQL text, so a collection made before the script

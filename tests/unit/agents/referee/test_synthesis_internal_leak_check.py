@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``check_summary_internal_leaks`` catches an internal JSON field/section name
 leaked into a customer-facing executive summary (#380), independently of
 ``check_summary_grounding``'s table/engine attribution check.

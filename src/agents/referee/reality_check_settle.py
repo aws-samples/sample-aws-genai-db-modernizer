@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check Phase 1: settle which engines earn a place (#502).
 
 An engine is removed when the other committed engines can serve its queries,

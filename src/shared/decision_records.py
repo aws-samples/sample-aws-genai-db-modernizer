@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Read a ``decisions/<name>.json`` record the one way (#1257).
 
 ``scripts/check_decision.py``, ``is_assignment_reviewed`` and, through it, the local

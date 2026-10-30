@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality check's revised-assignment write keeps the gate honest (ADR-029 Layer B, #704).
 
 ``write_reality_check_result`` must recompute ``co_dependency_groups`` and

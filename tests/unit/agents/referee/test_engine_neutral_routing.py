@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1081: the engine-specific routing branches read catalog data, not engine names.
 
 Each test changes the catalog fact a branch reads (the module constant built from the

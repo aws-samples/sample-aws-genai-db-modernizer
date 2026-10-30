@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pending contract version bumps (#1158, ADR-008 Decision 8).
 
 Parallel pull requests used to claim the same ``contract_version`` (four PRs held

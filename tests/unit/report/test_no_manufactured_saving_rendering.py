@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The deliverables state a retirement saving only for an engine the source runs today (#949).
 
 ``tco_analysis.retired_engine_savings`` (synthesis contract 1.25) lists the engines the

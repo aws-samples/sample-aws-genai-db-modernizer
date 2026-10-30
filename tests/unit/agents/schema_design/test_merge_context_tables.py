@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The merge honours the split's table ownership and refuses dangling references (#1243).
 
 ``--split`` makes each source table primary in one group (its owner) and gives the

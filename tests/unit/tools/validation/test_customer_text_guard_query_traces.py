@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The customer-text guard on report.json's ``query_traces`` (#339).
 
 A trace mixes machine fields (engine ids, rule codes, pass and actor codes,

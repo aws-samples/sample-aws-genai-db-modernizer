@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Compact view of an Aurora design for the model (issue #273).
 
 The model decides only Aurora-level changes on top of the deterministic draft,

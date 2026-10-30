@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Anti-pattern risks follow the queries to the engine they are assigned to (#221).
 
 An analysis anti-pattern says "engine E is a poor fit for these queries". The

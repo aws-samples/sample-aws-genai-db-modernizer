@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A wave's gate as structured parts (#1028).
 
 The results page collapses each table list in a wave's gate to an inline

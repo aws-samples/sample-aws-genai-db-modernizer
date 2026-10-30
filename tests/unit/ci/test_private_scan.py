@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/private_scan.py: what must not reach a public artifact or fixture (#1463)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Build the anti_pattern benchmark cases and their blind review sheets (#1084).
 
 A case is one bundled sample and one catalog anti-pattern that can decide an

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Search file contents inside this repository (a read-only `grep` substitute).
 
 Headless Claude Code sessions do not always expose a Grep tool, and the CI

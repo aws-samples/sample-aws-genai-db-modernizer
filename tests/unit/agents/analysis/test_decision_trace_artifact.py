@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-017 Decision 3: the decision trace is a separate artifact next to ``analysis.json`` (#703).
 
 Every analysis agent writes ``decision-trace.json`` beside ``analysis.json``, and the trace is

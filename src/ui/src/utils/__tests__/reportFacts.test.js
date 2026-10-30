@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #615 (ADR-032): the UI formats the wave table figures synthesis computed
  * once (report.json `facts`), and falls back to the wave's own fields only

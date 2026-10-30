@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The headless PE review step: request written, answer applied, flags recorded (#1059).
 
 ``run_pe_review.py`` writes one review request per design (per group for

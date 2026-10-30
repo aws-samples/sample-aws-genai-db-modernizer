@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The comment/literal/identifier scans run in linear time and answer what their regexes did (#886).
 
 ``unsupported_pattern.strip_comments_and_literals`` and ``query_shape``'s quoted

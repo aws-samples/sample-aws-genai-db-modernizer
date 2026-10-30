@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Strands Bedrock model every role builds (see ``src/shared/models.py``).
 
 Strands answers a structured-output turn that ended without the output tool by

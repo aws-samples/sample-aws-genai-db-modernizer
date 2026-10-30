@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The webkit system packages are cached, and e2e-llm uses the shared install helpers (#1375)."""
 
 from __future__ import annotations

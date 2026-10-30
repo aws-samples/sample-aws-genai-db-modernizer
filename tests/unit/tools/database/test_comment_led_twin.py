@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A commented statement routes like its uncommented twin (#1178).
 
 A sample with every query added a second time behind leading comments, run in this

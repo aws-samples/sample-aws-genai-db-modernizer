@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """
 Vertical fixture: SaaS platform with 4 tables representing the full spread of
 OpenSearch workload classifications.

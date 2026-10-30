@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pick one Aurora engine when both Aurora engines are candidates (#288, #381).
 
 Shared by assignment resolution and the Reality Check correction passes so they

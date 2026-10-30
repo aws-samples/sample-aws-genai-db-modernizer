@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The effective engine set a schema design call is told about (#213).
 
 A designer writes ``unsupported_patterns`` workarounds, trade-offs and notes that can

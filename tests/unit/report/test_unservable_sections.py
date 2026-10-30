@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Queries that cannot be served as designed, in every deliverable (#729, #888).
 
 ``facts.unservable`` lists each query a fallback rule placed because no

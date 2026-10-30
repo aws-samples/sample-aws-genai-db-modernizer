@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``break_tie`` -- ADR-031 Decision 2's shared engine tie-break (#503).
 
 Exercises the three rules directly, so the resolver's ``break_owner_tie``

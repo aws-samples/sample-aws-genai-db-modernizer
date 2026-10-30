@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#331: a sample collection path works on a fresh clone with no manual unzip.
 
 Only ``docs/examples/<name>/<name>.zip`` is tracked (the extracted ``.json`` is

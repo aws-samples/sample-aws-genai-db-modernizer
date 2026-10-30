@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #723 (ADR-004 Decision 5): the Create Analysis form names the database
  * credentials by reference -- an AWS Secrets Manager ARN or name -- and never

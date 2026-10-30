@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Sources of truth and replicas (#992, ADR-031 Amendment 9).
 
 A table's writes land on one engine, its source of truth; another engine that

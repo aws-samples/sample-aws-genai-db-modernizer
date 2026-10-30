@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assert the four wiring points that register Aurora MySQL as a schema designer."""
 
 from src.atx_orchestrator.core import IMPLEMENTED_SCHEMA_DESIGNERS, _design_shape

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch schema design agent — orchestrator with PE review loop.
 
 Mirrors the DocumentDB schema agent pattern:

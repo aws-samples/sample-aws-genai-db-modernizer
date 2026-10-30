@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Zero-token replay of a saved real-model run (#1409).
 
 A real-model run (``ci/e2e-llm.sh``) costs about $4 and ten minutes, so it cannot

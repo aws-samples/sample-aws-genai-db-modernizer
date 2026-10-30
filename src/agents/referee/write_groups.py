@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A table's write group: all of its write paths share one engine (ADR-031 Amendment 9, #992).
 
 Maintainer decision (2026-10-17): a table has one source of truth. Every

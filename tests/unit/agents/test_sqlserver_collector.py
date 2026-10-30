@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for SQL Server collector orchestrator and handler dispatch."""
 
 from unittest.mock import MagicMock, patch

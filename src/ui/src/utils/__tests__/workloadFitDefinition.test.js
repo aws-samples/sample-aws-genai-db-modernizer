@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The plain-language workload-fit definition appears once in every UI
  * deliverable that shows the routing fit score (bug: Deliverables present a

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The engine catalog's generated tables (#492) replace hand-kept copies without
  * changing a single value. Each literal below is the table as it stood on main before

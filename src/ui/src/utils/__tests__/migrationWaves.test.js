@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #957: the results page's wave plan prints each wave's headline exactly as the
  * decision and engineering reports do (src/report/roadmap.py's

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Skipped placeholders: what is stored when there is nothing to design or synthesize.
 
 A schema design for an engine with nothing assigned to it, a merge whose every

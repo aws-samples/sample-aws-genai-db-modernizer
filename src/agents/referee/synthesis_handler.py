@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Referee-Synthesis agent handler — produces the modernization report.
 
 Reads all pipeline artifacts (triage, collector, analysis, schema design)

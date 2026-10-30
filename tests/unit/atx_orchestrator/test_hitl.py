@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Runtime HITL transport for the assignment-review gate (ADR-028 amendment).
 
 These exercise the two halves of the transport against a stubbed Agentic API

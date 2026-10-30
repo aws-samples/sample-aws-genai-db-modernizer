@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1143: the Assignment review page reads the source engine from the collector
  * payload (`metadata.source_database.engine`) and hands it to the locking-read

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The retired settings API is gone (#437).
 
 ``/api/v1/settings`` held an in-memory copy of the retired hosted deployment's

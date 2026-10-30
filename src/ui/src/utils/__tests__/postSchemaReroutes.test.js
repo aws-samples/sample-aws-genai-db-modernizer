@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #629 / #713 review round 3: the assignment gate marks a row the post-schema
  * router moved after approval, not only reality-check moves.

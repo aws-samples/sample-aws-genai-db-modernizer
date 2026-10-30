@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``replay_stale`` takes a check off the saved-fixture replay only (#1510).
 
 A check of what synthesis writes holds on every fresh run, deterministic or model, but

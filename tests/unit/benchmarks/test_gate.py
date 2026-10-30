@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The routing-quality gate on the answer-key benchmark (#952, ADR-030).
 
 The judge grades the deliverables, not the engine choice; this gate is what

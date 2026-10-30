@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Resolution flow: local cache -> download -> build+upload (self-healing).
 
 Every handle handed to a read endpoint is read-only; building uses a separate,

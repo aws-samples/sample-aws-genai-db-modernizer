@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing regression guard (see ``tests/e2e/routing_baseline.py``).
 
 Fails when an owner share, the source-compatible share or the cache call share

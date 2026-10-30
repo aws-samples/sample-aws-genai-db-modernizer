@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assign the numbers of pending contract version bumps (#1158, ADR-008 Decision 8).
 
 Run after the last rebase onto main, before the pull request enters the merge queue:

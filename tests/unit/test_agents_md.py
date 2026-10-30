@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """AGENTS.md / CLAUDE.md stay accurate and never contradict the headless commands (#300).
 
 Claude Code loads CLAUDE.md (which imports AGENTS.md) in every session,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``docs/contracts/artifacts.md`` lists exactly the declared artifacts (#1192).
 
 The page mirrors the three lists of ``src/shared/contract_versioning.py``: the

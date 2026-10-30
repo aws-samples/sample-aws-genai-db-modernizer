@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the consolidated analysis runner (ADR-024).
 
 ``run_all_analyses`` replaces the six per-engine analysis subagents: it runs

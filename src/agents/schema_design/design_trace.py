@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Write and read the schema design trace through its contract (#1258, ADR-008 Decision 2).
 
 ``design_trace.json`` and ``design_trace_group_<G>.json`` are versioned contracts

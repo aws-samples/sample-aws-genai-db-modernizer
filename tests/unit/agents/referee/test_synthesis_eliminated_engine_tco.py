@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An eliminated engine's own analysed cost reaches ``tco_analysis`` (#380).
 
 ``data.engines`` has already dropped every engine the reality check

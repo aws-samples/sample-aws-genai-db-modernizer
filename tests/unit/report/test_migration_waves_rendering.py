@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves across the deliverables (#225).
 
 Synthesis writes ``migration_waves`` to report.json deterministically from the

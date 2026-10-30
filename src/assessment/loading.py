@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Load a collection for ``assess()`` from the collection scripts' raw output.
 
 The scripts write text, often with a header line before the JSON object (for example

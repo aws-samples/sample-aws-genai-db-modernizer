@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB's variant-attribute fits test an access pattern, not a column count (#920).
 
 ``product-catalog``, ``polymorphic-data`` and ``content-management`` describe a real

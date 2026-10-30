@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Engine buckets for the migration-waves sequencing rule (#225).
 
 Single source of truth for which engines play which role in the wave

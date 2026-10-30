@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for ci/llm/token_usage.py: per-phase token usage from a headless transcript (#676)."""
 
 from __future__ import annotations

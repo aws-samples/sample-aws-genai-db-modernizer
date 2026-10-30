@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The single eliminated-engine rule (#235), in one place.
 
 Before this module existed, the reality-check handler and the UI counted ANY

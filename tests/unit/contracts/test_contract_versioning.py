@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Readers check the stored ``contract_version`` (ADR-008 Decision 4, #971).
 
 A reader accepts any MINOR of the MAJOR its model declares and refuses a

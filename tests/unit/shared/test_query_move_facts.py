@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """How many queries move to a new engine, as report facts (#1020, ADR-032).
 
 The executive report's "Queries moved" tile is a total, so it is a fact:

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A post-schema move redesigns only the parts it changed (#1650).
 
 The deterministic wordpress run is approved (v2) and DynamoDB is designed on it by the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Three query-text detectors run in linear time and answer what their old regex did (#902).
 
 Each was one regex that is super-linear on long hostile text, run on the raw

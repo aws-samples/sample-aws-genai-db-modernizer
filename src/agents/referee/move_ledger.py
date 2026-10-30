@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The move ledger (#616): one function records every engine change of a query.
 
 ``apply`` is the single place a routing pass sets a query's engine: it records

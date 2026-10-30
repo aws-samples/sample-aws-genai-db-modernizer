@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The normalizer runs in linear time (#557 review round 2).
 
 The trailing-word check used ``re.search(r"([A-Za-z_]+)\\s*\\Z", text)``,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.shared.job_status: the durable side effects scripts/run_*.py (and
 LocalOrchestrator.resume, for I3) use to keep LocalExecutionService's
 _infer_status from reporting a script-driven job as RUNNING or WAITING

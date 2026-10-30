@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The schema designers see each access pattern once (#1146).
 
 Statements collected several ways (another projection, other literals, another IN-list

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Linear-time SQL comment stripping (#808).
 
 A regex that repeats a comment alternation, such as

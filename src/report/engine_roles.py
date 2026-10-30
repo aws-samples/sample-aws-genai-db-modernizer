@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each target engine's role in the architecture (owner, cache, search read model).
 
 The rule lives in the facts layer (``src.shared.report_facts.engine_role``,

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run the database modernization assessment pipeline.
 
 By default, runs collect → triage → analysis → assignment → reality-check and STOPS.

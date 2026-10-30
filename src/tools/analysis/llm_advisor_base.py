@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Generic LLM Advisor base class with group-splitting for large workloads.
 
 All engine-specific LLM advisors inherit from this base class. It provides:

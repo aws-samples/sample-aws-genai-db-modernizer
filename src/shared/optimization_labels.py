@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Display strings for Aurora ``Optimization.category`` (#587 round 3).
 
 A real-model run (schema design present) showed the raw category code --

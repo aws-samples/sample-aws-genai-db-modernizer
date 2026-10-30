@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for scripts/run_schema_design.py::run_external.
 
 Verifies the Aurora branches describe the deterministic script-first draft

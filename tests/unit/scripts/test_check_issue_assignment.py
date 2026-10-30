@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for scripts/check_issue_assignment.py.
 
 No test calls the network: every ``gh`` invocation goes through

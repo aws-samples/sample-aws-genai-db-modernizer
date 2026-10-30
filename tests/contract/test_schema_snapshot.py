@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Contract schema snapshot guard (#574).
 
 ``scripts/validate_contracts.py`` and the rest of ``tests/contract/`` check

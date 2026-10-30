@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``src/ui/src/utils/optimizationLabels.js`` must match
 ``OPTIMIZATION_DISPLAY_NAMES`` (#587 round 3).
 

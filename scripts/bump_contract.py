@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Declare a pending contract version bump (#1158, ADR-008 Decision 8).
 
     uv run python scripts/bump_contract.py <contract> minor|major --reason "..." [--issue N]

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for ingestion size/row caps (#142).
 
 A pathological or oversized offline collection can drive excessive memory,

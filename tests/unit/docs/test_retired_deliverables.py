@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Nothing in the repository points at a retired deliverable (#987).
 
 The decision report HTML, the interactive analysis report HTML and the UI's

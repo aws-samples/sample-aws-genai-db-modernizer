@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Counts that appear in more than one deliverable say what they count.
 
 The rubric judge on the wordpress validation runs read several pairs of numbers as

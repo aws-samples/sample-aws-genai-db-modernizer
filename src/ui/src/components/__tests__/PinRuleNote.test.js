@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1389: the results page says once that a report predates the pin rule; the text
  * comes from the /results payload, the component only shows it when it is set.

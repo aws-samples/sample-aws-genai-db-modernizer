@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every analysis writer takes ``contract_version`` from the model (#974, ADR-008 Decision 2).
 
 Each analysis agent used to pass ``contract_version="2.1"`` itself, so a

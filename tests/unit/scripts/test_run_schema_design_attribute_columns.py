@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``--merge`` then ``--finalize`` flag unknown DynamoDB source columns (#1431).
 
 This is the path ``/modernize`` takes in external mode: group drafts, ``--merge``,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every collector path keeps a row count unknown when the source has none (#1636).
 
 Before #1636 the offline builder clamped every count with ``max(row_count or 0, 0)``,

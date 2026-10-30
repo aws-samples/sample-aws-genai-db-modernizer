@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The queries and the distinct query patterns they make, as report facts (#1146, ADR-032).
 
 Synthesis groups the in-scope queries into distinct query patterns in ``query_pattern_groups``

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every artifact read checks the stored ``contract_version`` (ADR-008 Decision 4, #971).
 
 ``src/shared/contract_versioning.py`` holds the one check: same MAJOR (any MINOR)

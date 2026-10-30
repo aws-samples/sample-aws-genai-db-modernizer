@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared validation for the ``job_id`` identifier used to build artifact paths.
 
 Every entry point that turns a caller-supplied ``job_id`` into an artifact

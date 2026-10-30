@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The offline parser reads table references through the sqlglot facade (#553).
 
 ``parse_offline_collection`` used to take ``tables_accessed`` from the regex

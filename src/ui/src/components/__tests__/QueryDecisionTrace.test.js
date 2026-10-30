@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #339: the query journey's "Why this engine" section renders the decision
  * trace from `GET .../graph/queries/{query_id}/trace` (QueryTraceResponse).

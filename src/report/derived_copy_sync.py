@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The stream sync of DynamoDB derived copies, printed where its overlap risk sits (#1527).
 
 ``facts.derived_copy_sync`` (``src.agents.referee.derived_copy_sync``, ADR-032) lists

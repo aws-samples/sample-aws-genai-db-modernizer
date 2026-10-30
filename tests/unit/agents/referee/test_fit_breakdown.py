@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The routing scorer's own account of a score (#1603, ``explain=True``).
 
 ``score_query_for_engine(..., explain=True)`` returns the arithmetic it ran, as a fit

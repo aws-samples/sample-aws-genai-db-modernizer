@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The results page shows the first SHORT_ID_CHARS characters of a close call's query id.
 
 On discourse (337 close calls) 5 characters gave 2 visible prefix collisions; 6 gives none.

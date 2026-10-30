@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Canonical, AWS-branded display names for the engines synthesis can target.
 
 Single source of truth for turning an engine id (``aurora_mysql``) into the name a

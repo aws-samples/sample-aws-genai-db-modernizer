@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """run_standard's external-mode output must report the path the handler actually writes."""
 
 from __future__ import annotations

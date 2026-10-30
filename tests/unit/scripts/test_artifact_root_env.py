@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``--artifact-root`` falls back to ``ARTIFACT_DIR`` (#395).
 
 Every script that writes local artifacts hard-coded ``default="./artifacts"``

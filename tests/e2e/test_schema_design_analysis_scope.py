@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each schema designer's analysis input stays inside its own assignment (#162).
 
 The collector input of a design call holds only the tables and queries assigned to its

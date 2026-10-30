@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer deliverables carry no item of the plain-prose style list (#1034).
 
 The style list (``src.shared.prose_style``) holds the machine-writing tells kept

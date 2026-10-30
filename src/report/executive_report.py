@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Executive report -- the landscape C-suite briefing PDF (#1020).
 
 ``executive-report.pdf`` is a short landscape deck for the people deciding

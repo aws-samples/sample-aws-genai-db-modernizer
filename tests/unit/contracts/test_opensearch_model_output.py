@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The OpenSearch ``AccessPattern.opensearch_dsl`` must never carry a
 top-level ``inner_hits`` key.
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Deterministic end-to-end run: pipeline with no LLM -> deliverables -> browser and
 # PDF checks -> UI smoke -> help site checks.
 # Usage: ci/e2e.sh [extra pytest args]     (needs: uv, node 22, playwright browsers,

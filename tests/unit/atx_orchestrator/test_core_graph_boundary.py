@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the assessment-core / synthesis graph build-and-publish boundary.
 
 ``run_assessment_core`` and ``run_synthesis_core`` each build + publish the

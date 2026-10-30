@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cap the size of every request body the API accepts (#723).
 
 The API only takes small JSON bodies (assessment requests, settings, answers, overrides);

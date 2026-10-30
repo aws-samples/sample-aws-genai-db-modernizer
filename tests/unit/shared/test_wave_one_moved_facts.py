@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What later waves move off wave 1's Aurora engine, as a report fact (#1284, ADR-032).
 
 Wave 1's rationale said "N of these tables and views are mapped to a target engine

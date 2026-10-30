@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#156: a source DEFAULT the Aurora DDL dropped or rewrote reaches every deliverable.
 
 The schema merge writes one deterministic ``column_default`` app-layer note per

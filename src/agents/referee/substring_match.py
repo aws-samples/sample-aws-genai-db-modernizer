@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The leading-wildcard LIKE as an unindexed substring match (#493, option C).
 
 One engine-neutral fact, read from the facts layer

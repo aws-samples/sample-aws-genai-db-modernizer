@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ElastiCache (Valkey/Redis) seeder for load testing.
 
 Seeds Redis key designs from the schema output into the provisioned

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable states the date of the list prices behind its cost figures (#1196).
 
 Each estimate records the price table it was priced from: the analysis estimates and,

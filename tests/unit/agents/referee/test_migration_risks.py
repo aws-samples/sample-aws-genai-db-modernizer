@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#950: migration risks raised from the facts synthesis already computes.
 
 One positive and one negative case per rule in ``migration_risks.RULES`` (and

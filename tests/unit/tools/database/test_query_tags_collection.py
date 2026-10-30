@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Collectors fill ``QueryPattern.query_tags`` the same way (#1180).
 
 The offline parser keeps the leading comment tags of every row merged into a

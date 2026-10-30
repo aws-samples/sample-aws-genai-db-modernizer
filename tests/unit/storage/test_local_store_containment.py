@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalArtifactStore must refuse to read, write, or list anything outside
 its own base_dir, as defence in depth behind the route-level
 database_name/job_id/filename validators (#420/#505/#508). CodeQL's

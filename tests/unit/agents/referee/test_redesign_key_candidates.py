@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The redesign trace names why each candidate key was refused (#1361, follow-up 1 of #1359).
 
 ADR-031 Decision 2 Amendment 13 reads each query after redesign: a column it filters on

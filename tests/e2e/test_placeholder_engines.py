@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 9 on real pipeline output (see tests/unit/agents/referee/test_placeholder_engines.py).
 
 Neptune and Keyspaces are placeholders: on every bundled sample, triage defers them, nothing

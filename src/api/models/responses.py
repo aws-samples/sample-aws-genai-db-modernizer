@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Response models for the Database Modernizer Assessment API."""
 
 from pydantic import BaseModel

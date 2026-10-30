@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The post-schema router treats a query's unresolved tie as the reality check does (#811).
 
 ADR-031 Decision 12 makes the tie, not the placeholder's pick, the fact the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The package version is derived from the git tag, never hand-edited (#391).
 
 Two things are proved here:

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality check settles engines with one shared rule (ADR-031 Decision 7).
 
 An engine is removed when the committed engines can serve its queries, judged

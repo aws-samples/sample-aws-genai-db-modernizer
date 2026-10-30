@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Build a collector output contract from a parsed offline collection (#1177).
 
 Every ingest path that turns a raw collection-script file into

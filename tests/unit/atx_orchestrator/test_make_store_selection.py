@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """make_store() picks the ATX backend when STORAGE_BACKEND=atx, else S3/local."""
 
 from __future__ import annotations

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Bash): no push to another repository from a fork PR's worktree (#1165).
 
 ``gh pr checkout`` of a contributor's fork PR leaves the branch's ``remote`` and

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A triage.json saved before #493 still gates correctly (review of #911).
 
 ``text_pattern_match`` was called ``inverted_index`` until #493. Saved assessments keep

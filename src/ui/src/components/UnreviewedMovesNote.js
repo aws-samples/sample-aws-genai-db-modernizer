@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 import { memo } from 'react';
 import Alert from "@cloudscape-design/components/alert";
 import { unreviewedMoveCountOf } from "../utils/reportFacts";

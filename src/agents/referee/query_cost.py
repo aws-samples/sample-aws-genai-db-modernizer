@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each query's own cost dimension on each engine (ADR-031 Decision 5, #494).
 
 The cost dimension of a classified query's score on an engine is that query's own

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The skipped placeholders are contracts of their own (#1023).
 
 Three writers stored a placeholder at a contract file path that was not that

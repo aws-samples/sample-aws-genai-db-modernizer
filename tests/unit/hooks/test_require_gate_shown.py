@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 5: no schema design before the approval gate is in the chat (#1401, #1626)."""
 
 from __future__ import annotations

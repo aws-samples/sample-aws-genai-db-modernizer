@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared Aurora access-pattern contract (#157).
 
 Identical for both Aurora dialects — nothing about this model is MySQL- or

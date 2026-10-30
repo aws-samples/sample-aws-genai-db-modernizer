@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The cache layer's "Avg cache fit" on the pattern analysis page is the routed figure (#1325).
 
 The page used to print the analysis phase's average over every table the cache engine rated. The

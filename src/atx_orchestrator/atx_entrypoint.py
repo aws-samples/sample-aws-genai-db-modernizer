@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Single entrypoint for every AWS Transform agent in this image (modernizer-atx-v2).
 
 Sibling to core-modernizer's ``src/agents/entrypoint.py``, which dispatches

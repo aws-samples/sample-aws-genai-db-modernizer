@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #1536: "No source table" instead of the "unknown" placeholder, with the stored value kept.
 import { NO_SOURCE_TABLE, displayGroupName, displayTables } from '../tableNames';
 

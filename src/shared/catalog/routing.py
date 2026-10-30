@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The routing half of the rule catalog that is neither an engine nor a pattern (#921).
 
 Three files, loaded into strict Pydantic models like the rest of the catalog (an unknown,

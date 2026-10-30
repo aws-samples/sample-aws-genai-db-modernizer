@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An uploaded collector output is read as a stored one is, before it is stamped (#1636).
 
 ``run_collect.py``, ``run_assessment.py`` and the library ingest

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run the full modernizer pipeline with no LLM, the way a developer would locally."""
 
 from __future__ import annotations

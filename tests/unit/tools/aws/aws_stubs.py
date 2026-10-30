@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Botocore-stubbed clients for the AWS tool tests (no network, no credentials)."""
 
 from __future__ import annotations

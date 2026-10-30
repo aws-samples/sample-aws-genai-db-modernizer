@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The single-pass external schema design request, written so Read can page it (#1103).
 
 Grouped inputs (``input_group_<G>.json``) are capped at ``MAX_GROUP_INPUT_CHARS``

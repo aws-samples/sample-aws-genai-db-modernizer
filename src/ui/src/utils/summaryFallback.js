@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Whether a generated executive summary was replaced by its deterministic
  * fallback, and the warnings to show when it was (#269).

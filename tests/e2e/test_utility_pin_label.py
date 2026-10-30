@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A utility pin shows "pinned (utility)", and the mean fits leave pins out (#1373).
 
 Maintainer decision on #1381 (2026-10-22): a query the first assignment pins as a

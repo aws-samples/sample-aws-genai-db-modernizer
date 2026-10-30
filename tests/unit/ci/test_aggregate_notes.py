@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/aggregate_notes.py: grouping recurring judge notes across saved
 runs, on small synthetic judge.json files. No model is called."""
 

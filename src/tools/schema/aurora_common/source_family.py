@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Classify the source database engine and pick a migration strategy.
 
 The collector reports the source engine in its metadata. We only need to know

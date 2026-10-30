@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1071: the offline upload form asks which other AWS databases the application runs
  * today, with a multi-select of the catalog's active engines, and the request carries the

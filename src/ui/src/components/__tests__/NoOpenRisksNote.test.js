@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #996: the results page's no-open-risks sentence, the one the engineering and
  * executive reports print. The text comes from the /results payload; the

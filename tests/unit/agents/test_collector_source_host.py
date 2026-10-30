@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The collector keeps the buffer-cache hit ratio and the host's CPU and memory (#1197).
 
 The offline parser computes the instance-wide buffer-cache figures from every

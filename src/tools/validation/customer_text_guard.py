@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard against internal wording leaking into customer-facing text (#572).
 
 Extends the #406 guard -- which only checked that a bare issue tag (``#167``)

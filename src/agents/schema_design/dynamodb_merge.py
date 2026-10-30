@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB group-draft reconciliation (issues #223, #229).
 
 DynamoDB schema design always runs split -> per-group drafts -> merge. Groups

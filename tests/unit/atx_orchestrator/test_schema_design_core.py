@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema-design absence is classified using the source engine.
 
 Upstream's ``run_schema_design`` dispatches on ``target_type`` alone. It now

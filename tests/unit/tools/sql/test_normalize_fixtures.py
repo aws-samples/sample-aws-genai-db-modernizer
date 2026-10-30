@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Sweep both sample fixtures through ``normalize_digest_text`` and check
 the ``truncated`` flag against ground truth (PR #560 review round 1,
 Important 2).

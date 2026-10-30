@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A digest of the artifacts a graph is built from (#847).
 
 The effective assignment version says which assignment the graph was built

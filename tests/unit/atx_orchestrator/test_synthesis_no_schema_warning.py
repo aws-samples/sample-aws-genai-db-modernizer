@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """run_synthesis_core's post-synthesis guards once databases list workload engines (#281).
 
 Synthesis now lists every engine with assigned queries in

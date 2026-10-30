@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #462: the assignment gate page lists the hottest cache candidates under the Query flow, the
  * same compact list the chat gate prints (`cache_reads` of the assignments response; the UI

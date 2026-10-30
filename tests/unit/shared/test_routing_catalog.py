@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The rule data #921 moved out of code into the catalog keeps its values (no routing change),
 except where a later issue changed one on purpose (#984: full text and upserts get the
 same Aurora bonus on both engines).

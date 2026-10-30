@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Aurora PostgreSQL and MySQL decision traces are versioned contracts (ADR-008 Decision 1, #1190).
 
 ``analysis-aurora_postgresql/decision-trace.json`` and ``analysis-aurora_mysql/decision-trace.json``

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The catalog format guard (#1647), against temporary copies of the catalog.
 
 Each test copies ``src/catalog/`` to a temporary directory, records its format, changes

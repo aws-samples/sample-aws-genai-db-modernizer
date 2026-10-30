@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1149: the risk register raises the relational move's version and feature gaps.
 
 ``facts.relational_gaps`` (#471, #1079) lists each gap the relational move to

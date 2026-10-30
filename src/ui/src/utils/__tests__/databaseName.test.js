@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #510: the Create Analysis form validates the database name with the same
  * rule the API enforces (src/shared/database_name.py), so an invalid name is

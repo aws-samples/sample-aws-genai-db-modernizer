@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """run_report renders the deliverables into the job's deliverables folder."""
 
 from __future__ import annotations

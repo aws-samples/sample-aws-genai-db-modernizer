@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #724: the target-database checkboxes come from the engine catalog's status. Active
  * engines (both Aurora engines among them) can be ticked; Neptune and Keyspaces are

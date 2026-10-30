@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Gate pull requests on a closing issue link assigned to the PR author.
 
 Used by ``.github/workflows/issue-assignment-gate.yml`` (``on: pull_request``,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#517 round-2 review, N1 (critical): mark_assignment_reviewed must never
 write a partial .meta/<job_id>.json when none exists yet.
 

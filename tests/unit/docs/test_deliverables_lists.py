@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every place that lists the customer deliverables names the same set.
 
 The set is the one ``scripts/run_report.py`` writes to

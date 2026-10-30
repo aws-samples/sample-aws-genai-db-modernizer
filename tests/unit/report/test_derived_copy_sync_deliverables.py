@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The derived copies' stream sync is printed where its overlap risk sits (#1527).
 
 The engineering report and the executive report PDF print ``facts.derived_copy_sync`` under

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The cache layer's cost figure must be justified from the overlay's own
 facts (the hot-read floor, #304/#296, and the combined traffic that cleared
 it), not stated on its own with no explanation (review of #375)."""
