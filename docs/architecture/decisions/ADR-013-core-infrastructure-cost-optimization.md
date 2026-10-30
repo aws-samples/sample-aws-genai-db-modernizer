@@ -62,7 +62,7 @@ ECR repository uses KMS encryption (via shared key) and immutable image tags ins
 
 All cfn-nag warnings must be resolved with real security implementations, not suppressions. The only pre-approved suppression is W28 (explicit resource naming) when following the project naming convention for cross-stack references.
 
-*Superseded (#700): the remaining templates also suppress W5 and W29 (`infrastructure/cloudformation/automation.yaml`), W13 (`infrastructure/cloudformation/example-ci-runner-iam.yaml`) and W11 (`pipeline/iam-roles.yaml`). The `cfn-nag` hook in `.pre-commit-config.yaml` has no `--fail-on-warnings`, runs the scan through `find -exec ... \;` (exit 0 even when a scan fails), and its `files:` pattern never scans `pipeline/iam-roles.yaml`.*
+*Superseded (#700): the remaining templates also suppress W5 and W29 (`infrastructure/cloudformation/automation.yaml`), W13 (`infrastructure/cloudformation/example-ci-runner-iam.yaml`, removed in #1723) and W11 (`pipeline/iam-roles.yaml`). The `cfn-nag` hook in `.pre-commit-config.yaml` has no `--fail-on-warnings`, runs the scan through `find -exec ... \;` (exit 0 even when a scan fails), and its `files:` pattern never scans `pipeline/iam-roles.yaml`.*
 
 ## Enforcement
 
