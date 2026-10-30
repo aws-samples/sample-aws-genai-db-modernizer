@@ -238,60 +238,109 @@ _SDK_WRAPPERS: dict[str, set[str]] = {
     },  # ArtifactStore
 }
 
-#: Every tool the in-container agentic MCP server registers
-#: (agent-builder-agentic-mcp-aws-transform 1.0.2) and the operations it makes.
-#: The SDK hands each one to the agent's model unless the agent excludes it.
-_MCP_TOOL_OPERATIONS: dict[str, set[str]] = {
-    "invoke_agent": {"InvokeAgent"},
-    "get_agent_instance": {"GetAgentInstance"},
-    "update_agent_instance": {"UpdateAgentInstance"},
-    "stop_agent": {"StopAgent"},
-    "list_agent_instances": {"ListAgentInstances"},
-    "create_artifact_upload_url": {"CreateArtifactUploadUrl"},
-    "upload_artifact": {"GetArtifactMetadata"},  # uploads to a URL it is given
-    "complete_artifact_upload": {"CompleteArtifactUpload"},
-    "create_artifact_download_url": {"CreateArtifactDownloadUrl"},
-    "download_artifact": set(),  # downloads from a URL it is given
-    "list_artifacts": {"ListArtifacts"},
-    "get_artifact_metadata": {"GetArtifactMetadata"},
-    "copy_artifact": {"CopyArtifact"},
-    "create_hitl_task": {"CreateHitlTask"},
-    "get_hitl_task": {"GetHitlTask"},
-    "start_hitl_task": {"StartHitlTask"},
-    "close_hitl_task": {"CloseHitlTask"},
-    "list_hitl_tasks": {"ListHitlTasks"},
-    "retrieve_hitl_output_as_string": {"GetHitlTask", "CreateArtifactDownloadUrl"},
-    "create_s3_connector_hitl_task": {
-        "CreateArtifactUploadUrl",
-        "GetArtifactMetadata",
-        "CompleteArtifactUpload",
-        "CreateHitlTask",
-        "StartHitlTask",
-    },
-    "create_autoform_hitl_task": {
-        "CreateArtifactUploadUrl",
-        "GetArtifactMetadata",
-        "CompleteArtifactUpload",
-        "CreateHitlTask",
-        "StartHitlTask",
-    },
-    "create_autotable_hitl_task": {
-        "CreateArtifactUploadUrl",
-        "GetArtifactMetadata",
-        "CompleteArtifactUpload",
-        "CreateHitlTask",
-        "StartHitlTask",
-    },
-    "get_job": {"GetJob"},
-    "update_job_status": {"UpdateJobStatus"},
-    "create_worklog": {"CreateWorklog"},
-    "list_worklogs": {"ListWorklogs"},
-    "put_job_plan": {"PutJobPlan"},
-    "list_job_plan_steps": {"ListJobPlanSteps"},
-    "update_job_plan_step": {"UpdateJobPlanStep"},
-    "delete_job_plan_step": {"DeleteJobPlanStep"},
-    "retrieve_from_knowledge_base": {"RetrieveFromKnowledgeBase"},
-}
+#: Every tool the in-container agentic MCP server registers, each one reviewed
+#: (#1736): exposed to the model, so its actions are granted, unless it is in
+#: ``src.atx_orchestrator.mcp_tools.UNUSED_MCP_TOOLS``. A tool a new server
+#: version adds fails ``test_every_agentic_mcp_tool_has_a_decision`` until it
+#: is listed here, after deciding whether to expose or exclude it.
+_REVIEWED_MCP_TOOLS = frozenset(
+    {
+        "invoke_agent",
+        "get_agent_instance",
+        "update_agent_instance",
+        "stop_agent",
+        "list_agent_instances",
+        "create_artifact_upload_url",
+        "upload_artifact",
+        "complete_artifact_upload",
+        "create_artifact_download_url",
+        "download_artifact",
+        "list_artifacts",
+        "get_artifact_metadata",
+        "copy_artifact",
+        "create_hitl_task",
+        "get_hitl_task",
+        "start_hitl_task",
+        "close_hitl_task",  # clears stale approval tasks from the Tasks tab
+        "list_hitl_tasks",  # finds them after a resume
+        "retrieve_hitl_output_as_string",
+        "create_s3_connector_hitl_task",
+        "create_autoform_hitl_task",
+        "create_autotable_hitl_task",
+        "get_job",
+        "update_job_status",
+        "create_worklog",  # the job's Worklogs tab
+        "list_worklogs",
+        "put_job_plan",
+        "list_job_plan_steps",
+        "update_job_plan_step",
+        "delete_job_plan_step",  # excluded
+        "retrieve_from_knowledge_base",  # read-only product answers
+    }
+)
+
+#: The AWS Transform packages the image installs, pinned in one file that CI
+#: installs too, so the tool list read below is the image's.
+_SDK_REQUIREMENTS = ATX_SRC / "requirements-sdk.txt"
+
+#: Run in a fresh interpreter: importing the server registers its tools and
+#: configures logging, which must not leak into this test process. For each
+#: registered tool it lists every method or function name the tool calls,
+#: following calls into the server package's own functions.
+_MCP_PROBE = """
+import ast, asyncio, inspect, json, textwrap, types
+from agent_builder_agentic_mcp.server import mcp
+
+def names(fn, seen):
+    fn = inspect.unwrap(fn)
+    if fn in seen:
+        return set()
+    seen.add(fn)
+    out = set()
+    for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(fn)))):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            out.add(node.func.attr)
+        elif isinstance(node.func, ast.Name):
+            out.add(node.func.id)
+            target = fn.__globals__.get(node.func.id)
+            if isinstance(target, types.FunctionType) and target.__module__.startswith(
+                "agent_builder_agentic_mcp"
+            ):
+                out |= names(target, seen)
+    return out
+
+tools = asyncio.run(mcp.list_tools())
+manager = mcp._tool_manager
+print(json.dumps({t.name: sorted(names(manager.get_tool(t.name).fn, set())) for t in tools}))
+"""
+
+
+@functools.cache
+def _mcp_tool_operations() -> dict[str, frozenset[str]]:
+    """Each tool the installed agentic MCP server registers, and its operations."""
+    import json
+    import subprocess  # nosec B404 -- runs this interpreter on a fixed script
+    import sys
+
+    done = subprocess.run(  # nosec B603 -- fixed argv, no shell
+        [sys.executable, "-I", "-c", _MCP_PROBE],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, (
+        "agent-builder-agentic-mcp-aws-transform is not importable; install "
+        f"{_SDK_REQUIREMENTS.relative_to(REPO_ROOT)}:\n{done.stderr[-2000:]}"
+    )
+    by_snake = {_snake(op): op for op in _transform_agents_operations()}
+    calls: dict[str, list[str]] = json.loads(done.stdout.strip().splitlines()[-1])
+    return {
+        tool: frozenset(by_snake[n] for n in names if n in by_snake)
+        for tool, names in calls.items()
+    }
 
 
 @functools.cache
@@ -350,8 +399,8 @@ def _code_calls() -> set[str]:
 def _reachable_operations() -> set[str]:
     from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
 
-    mcp = set()
-    for tool, ops in _MCP_TOOL_OPERATIONS.items():
+    mcp: set[str] = set()
+    for tool, ops in _mcp_tool_operations().items():
         if tool not in UNUSED_MCP_TOOLS:
             mcp |= ops
     return _code_calls() | set(_SDK_CALLS) | mcp
@@ -408,3 +457,40 @@ def test_the_scan_maps_wrapper_and_client_calls():
     assert {"CreateHitlTask", "UpdateJobStatus"} <= calls
     # MCP-only and unused operations are not in the code
     assert not {"CreateWorklog", "RetrieveFromKnowledgeBase", "PutMigrationPlan"} & calls
+
+
+def test_every_agentic_mcp_tool_has_a_decision():
+    installed = set(_mcp_tool_operations())
+    assert sorted(installed - _REVIEWED_MCP_TOOLS) == [], "new tool: expose or exclude it"
+    assert sorted(_REVIEWED_MCP_TOOLS - installed) == [], "tool gone: drop it here"
+
+
+def test_every_excluded_tool_is_a_registered_one():
+    from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
+
+    assert UNUSED_MCP_TOOLS <= set(_mcp_tool_operations())
+
+
+@pytest.mark.passes_on_main  # checks this file's probe, not src/
+def test_the_probe_follows_a_tool_into_its_helpers():
+    ops = _mcp_tool_operations()
+    assert ops["create_worklog"] == {"CreateWorklog"}
+    # create_autoform_hitl_task -> create_hitl_task_with_json_input -> upload_...
+    assert {"CreateArtifactUploadUrl", "CreateHitlTask", "StartHitlTask"} <= ops[
+        "create_autoform_hitl_task"
+    ]
+    assert ops["download_artifact"] == frozenset()  # downloads from a URL it is given
+
+
+@pytest.mark.passes_on_main  # the pins are unchanged; CI now installs them
+def test_the_installed_aws_transform_packages_match_the_image_pins():
+    from importlib.metadata import version
+
+    pins = {}
+    for line in _SDK_REQUIREMENTS.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            name, pinned = line.split("==")
+            pins[name] = pinned
+    assert "agent-builder-agentic-mcp-aws-transform" in pins
+    assert {name: version(name) for name in pins} == pins

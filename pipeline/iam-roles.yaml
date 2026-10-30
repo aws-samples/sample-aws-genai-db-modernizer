@@ -105,9 +105,9 @@ Resources:
                 #     up), GetJob and UpdateJobStatus (ASSESSING to EXECUTING),
                 #     ListAgentInstances and StopAgent (subagent shutdown);
                 #   - the in-container agentic MCP tools the agents hand to
-                #     their model. Those no code or prompt uses are excluded
-                #     (src/atx_orchestrator/mcp_tools.py), so their actions are
-                #     not granted.
+                #     their model (the last five below). delete_job_plan_step
+                #     is excluded (src/atx_orchestrator/mcp_tools.py), so
+                #     DeleteJobPlanStep is not granted.
                 Action:
                   - transform-agents:RefreshAuthToken
                   - transform-agents:CreateArtifactUploadUrl
@@ -130,6 +130,18 @@ Resources:
                   - transform-agents:StartHitlTask
                   - transform-agents:GetHitlTask
                   - transform-agents:StopAgent
+                  # Only through the agentic MCP tools, kept for what the
+                  # customer sees in AWS Transform: the job's Worklogs tab
+                  # (create_worklog, list_worklogs), clearing stale approval
+                  # tasks from the Tasks tab, since the code does not close a
+                  # superseded BLOCKING task itself (close_hitl_task,
+                  # list_hitl_tasks), and read-only AWS Transform product
+                  # answers (retrieve_from_knowledge_base).
+                  - transform-agents:CreateWorklog
+                  - transform-agents:ListWorklogs
+                  - transform-agents:CloseHitlTask
+                  - transform-agents:ListHitlTasks
+                  - transform-agents:RetrieveFromKnowledgeBase
                 # "*": the service defines no resource type to scope to. Its
                 # requests carry the workspace, job and agent instance as
                 # request fields (requestContext), never as an ARN, and the

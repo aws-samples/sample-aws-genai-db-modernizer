@@ -4,7 +4,7 @@
 """The agents do not hand the unused agentic MCP tools to their model (#1736).
 
 Each of those tools calls a transform-agents action that
-``pipeline/iam-roles.yaml`` no longer grants, so a model that called one would
+``pipeline/iam-roles.yaml`` does not grant, so a model that called one would
 get an access error. ``tests/unit/tools/aws/test_iam_templates.py`` pins the
 role's actions to what stays reachable.
 """
@@ -18,15 +18,10 @@ from src.atx_orchestrator.app import build_agent_factory
 from src.atx_orchestrator.mcp_tools import UNUSED_MCP_TOOLS
 
 
-def test_the_unused_tools_are_the_six_the_role_dropped():
-    assert UNUSED_MCP_TOOLS == {
-        "close_hitl_task",
-        "list_hitl_tasks",
-        "create_worklog",
-        "list_worklogs",
-        "delete_job_plan_step",
-        "retrieve_from_knowledge_base",
-    }
+def test_only_delete_job_plan_step_is_excluded():
+    # The Worklogs, HITL close/list and knowledge-base tools stay: they back
+    # parts of AWS Transform the customer sees (#1736 review).
+    assert UNUSED_MCP_TOOLS == {"delete_job_plan_step"}
 
 
 def test_the_orchestrator_excludes_the_unused_tools():
