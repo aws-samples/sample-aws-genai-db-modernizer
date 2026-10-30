@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from src.agents.referee.tie_break import DECIDED_BY_RULES, DECIDED_BY_UNROUNDED_SCORE
 from src.report.engine_choices import pending_choices_md
 from src.report.engineering_report import _SaidOnce
 from src.report.escaping import md_text
@@ -255,17 +256,58 @@ def test_the_detail_text_round_trips() -> None:
     assert split_carried_write_detail("A trade-off title, nothing else") is None
 
 
-def test_pending_choices_with_the_same_tie_sentence_state_it_once(report: dict[str, Any]) -> None:
-    tie = "DocumentDB and DynamoDB each score 78 at the whole-point resolution routing compares"
-    a, b = (
-        _choice("a_table", "0.48", "{engine} serves 10 queries, so choosing it adds one"),
-        _choice("b_table", "0.05", "{engine} serves 20 queries, so choosing it adds one"),
+def test_pending_choices_state_the_scores_once_in_the_table(report: dict[str, Any]) -> None:
+    """#1558: the table owns the scores; a subsection neither restates the tie nor
+    repeats the score pair in its pick."""
+    a = _choice("a_table", "0.48", "{engine} serves 10 queries, so choosing it adds one")
+    a["why_tied"] = (
+        "DocumentDB and DynamoDB each score 78 at the whole-point resolution routing "
+        "compares, so no routing rule picks one. Before rounding: DocumentDB 78.20, "
+        "DynamoDB 77.72."
     )
-    a["why_tied"] = f"{tie}, so no rule picks one. Before rounding: DocumentDB 78.20."
-    b["why_tied"] = f"{tie}, so no rule picks one. Before rounding: DynamoDB 78.95."
-    report["pending_engine_choices"] = [a, b]
-    md = "\n".join(pending_choices_md(report))
-    assert repeated_statements(md) == []
-    assert md.count(tie) == 1
-    assert "The tie is the same as for `a_table`. Before rounding: DynamoDB 78.95." in md
-    assert "Before rounding: DocumentDB 78.20." in md
+    a["decide_for_me_rule"] = "unrounded_score"
+    a["decide_for_me_reason"] = "DocumentDB scores higher before rounding (78.20 against 77.72)."
+    report["pending_engine_choices"] = [a]
+    lines = pending_choices_md(report)
+    md = "\n".join(lines)
+    sub = md.split("\n### ", 1)[1]
+    assert "78.20" in md.split("\n### ", 1)[0]  # the table row states it
+    assert "78.20" not in sub and "77.72" not in sub
+    assert "Before rounding:" not in md
+    assert "no routing rule picks one" not in sub
+    assert "- Decide for me: DocumentDB, the higher score before rounding." in lines
+    # Each option keeps its own trade-off.
+    assert any(ln.startswith("- DocumentDB: documentdb serves 10 queries") for ln in lines)
+
+
+def test_the_unrounded_score_rule_is_the_routing_codes_constant() -> None:
+    """The renderer cannot import agents (ADR-032), so it spells the rule; this pins
+    the spelling to ``tie_break.DECIDED_BY_UNROUNDED_SCORE``."""
+    from src.agents.referee.tie_break import DECIDED_BY_UNROUNDED_SCORE
+    from src.report.engine_choices import _decide_line
+
+    reason = "REASON"
+    line = _decide_line(
+        {
+            "decide_for_me_engine": "documentdb",
+            "decide_for_me_rule": DECIDED_BY_UNROUNDED_SCORE,
+            "decide_for_me_reason": reason,
+        }
+    )
+    assert line == "- Decide for me: DocumentDB, the higher score before rounding."
+
+
+# Main prints the reason for every rule, so this guards behaviour it already has.
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "rule",
+    [r for r in (*DECIDED_BY_RULES, "", "a_rule_not_yet_known") if r != DECIDED_BY_UNROUNDED_SCORE],
+)
+def test_a_pick_keeps_its_reason_unless_the_unrounded_score_decided(
+    report: dict[str, Any], rule: str
+) -> None:
+    a = _choice("a_table", "0.48", "{engine} serves 10 queries, so choosing it adds one")
+    a["decide_for_me_rule"] = rule
+    a["decide_for_me_reason"] = "The reason, with no pair."
+    report["pending_engine_choices"] = [a]
+    assert "- Decide for me: The reason, with no pair." in pending_choices_md(report)

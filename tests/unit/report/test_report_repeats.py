@@ -501,15 +501,33 @@ def test_a_pending_choice_worded_as_an_earlier_one_refers_to_it(report: dict[str
     report["facts"].update(pending_choice_count=3, pending_choice_query_count=3)
     lines = pending_choices_md(report)
     text = "\n".join(lines)
-    assert "The same tie and options as `a`." in lines
+    assert "Same trade-offs and pick as `a`." in lines
     assert text.count("Serves 682 settled queries.") == 1
-    # The third differs in its tie and pick; its matching options refer back.
+    # The third differs in its pick; its matching options refer back.
     assert "- DocumentDB: as for `a`." in lines and "- DynamoDB: as for `a`." in lines
-    assert "Both score 75." in lines and "- Decide for me: DynamoDB by 0.25." in lines
+    assert "- Decide for me: DynamoDB by 0.25." in lines
     # Every table keeps its heading and its queries.
     for t in "abc":
         assert f"- Queries: `q-{t}`" in lines
         assert any(ln.startswith(f"### `{t}` (1 query)") for ln in lines)
+
+
+def test_a_back_reference_points_only_at_a_table_that_states_its_options(
+    report: dict[str, Any],
+) -> None:
+    """#1558: `c` matches `b`, but `b` itself points at `a` for its options, so `c`
+    points at `a` too (one hop), never at `b`."""
+    report["pending_engine_choices"] = [
+        _choice("a", "Both score 78.", "Lower by 0.05.", "DynamoDB by 0.05."),
+        _choice("b", "Both score 75.", "Lower by 0.05.", "DynamoDB by 0.25."),
+        _choice("c", "Both score 70.", "Lower by 0.05.", "DynamoDB by 0.25."),
+    ]
+    report["facts"].update(pending_choice_count=3, pending_choice_query_count=3)
+    lines = pending_choices_md(report)
+    assert not [ln for ln in lines if ln.startswith("Same trade-offs and pick as `b`")]
+    assert "- DocumentDB: as for `a`." in lines
+    assert "- Decide for me: DynamoDB by 0.25." in lines
+    assert "\n".join(lines).count("as for `b`") == 0
 
 
 def test_the_blame_group_labels_match_synthesis() -> None:

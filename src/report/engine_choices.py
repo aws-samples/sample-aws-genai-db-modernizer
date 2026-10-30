@@ -56,6 +56,17 @@ def _bare_table(table: Any) -> str:
     return str(table or "?").rsplit(".", 1)[-1]
 
 
+def _decide_line(choice: dict[str, Any]) -> str:
+    """The "Decide for me" bullet. A pick made on the unrounded score names the engine
+    and the rule only: the scores are in the section's table (#1558). Any other rule
+    keeps its reason: the ``tie_break`` reasons hold no score pair, but the
+    ``settled_workload`` one holds a count pair (settled queries per engine)."""
+    engine = escaping.md_text(display_engine(str(choice.get("decide_for_me_engine", ""))))
+    if choice.get("decide_for_me_rule") == "unrounded_score":
+        return f"- Decide for me: {engine}, the higher score before rounding."
+    return f"- Decide for me: {escaping.md_text(choice.get('decide_for_me_reason') or '')}"
+
+
 def pending_choices_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report section for the pending engine choices, one per table
     (#1003); empty without any."""
@@ -86,15 +97,15 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
             f"| {escaping.md_cell(display_engine(str(c.get('decide_for_me_engine', ''))))} |"
         )
     out.append("")
-    # #1410: a table whose tie and options read word for word as an earlier table's
-    # refers to it instead of printing them again.
+    # #1558: the table above owns each tied engine's scores, so a table's subsection
+    # does not state the tie again (``why_tied`` restates the lead and the scores) and
+    # "Decide for me" names its engine without the score pair. #1410: a table whose
+    # options and pick read word for word as an earlier table's refers to it.
     stated: dict[tuple[str, ...], str] = {}
     option_stated: dict[str, str] = {}
-    why_stated: dict[str, str] = {}
     for c in choices:
         ids = c.get("query_ids") or []
         table = f"`{escaping.md_code(_bare_table(c.get('table')))}`"
-        why = escaping.md_text(c.get("why_tied") or "")
         options = [
             (
                 escaping.md_text(display_engine(str(e.get("engine", "")))),
@@ -103,21 +114,14 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
             for e in c.get("options") or []
             if isinstance(e, dict)
         ]
-        decide = f"- Decide for me: {escaping.md_text(c.get('decide_for_me_reason') or '')}"
+        decide = _decide_line(c)
         out += [f"### {table} ({len(ids)} {plural_noun(len(ids), 'query', 'queries')})", ""]
-        key = (why, *(f"{name}: {text}" for name, text in options), decide)
+        key = (*(f"{name}: {text}" for name, text in options), decide)
         if key in stated:
-            out += [f"The same tie and options as {stated[key]}.", ""]
+            # Only the trade-offs and the pick match; the scores are in the table above.
+            out += [f"Same trade-offs and pick as {stated[key]}.", ""]
         else:
-            stated[key] = table
-            # #1454: tables tied at the same score and engines share the tie sentence;
-            # a later one refers to the first and keeps its own figures.
-            lead, _, rest = why.partition(". ")
-            if rest and lead in why_stated:
-                why = f"The tie is the same as for {why_stated[lead]}. {rest}"
-            elif rest:
-                why_stated[lead] = table
-            out += [why, ""]
+            refers = False
             for name, text in options:
                 line = f"{name}: {text}"
                 # #1454: an option whose first sentence reads as an earlier table's
@@ -125,8 +129,10 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
                 lead, _, rest = text.partition(". ")
                 head = f"{name}: {lead}"
                 if text and line in option_stated:
+                    refers = True
                     out.append(f"- {name}: as for {option_stated[line]}.")
                 elif rest and head in option_stated:
+                    refers = True
                     out.append(f"- {name}: as for {option_stated[head]}. {rest}")
                 else:
                     option_stated.setdefault(line, table)
@@ -134,6 +140,10 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
                         option_stated.setdefault(head, table)
                     out.append(f"- {line}")
             out.append(decide)
+            # A later table points only at a table that states its options in full,
+            # never at one that itself points elsewhere.
+            if not refers:
+                stated[key] = table
         out.append("- Queries: " + ", ".join(f"`{escaping.md_code(str(qid))}`" for qid in ids))
         out.append("")
     return out
