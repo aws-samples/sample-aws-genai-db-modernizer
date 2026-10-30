@@ -12,7 +12,7 @@
 Database Modernizer Assessment consists of multiple components:
 
 - Backend (Python): Agents, API server, orchestrator
-- Frontend (TypeScript/React): React UI
+- Frontend (JavaScript/React): React UI
 - Contracts (Pydantic models): Shared data structures
 - Infrastructure (CloudFormation/Docker): Deployment configurations
 - Documentation: Design docs, specifications, guides
@@ -161,12 +161,7 @@ from contracts.collector_output import CollectorOutputContract
 
 **TypeScript Generation:**
 
-```bash
-# Generate TypeScript types from Pydantic models
-python scripts/generate_types.py \
-  --input src/contracts/ \
-  --output src/ui/src/types/contracts.ts
-```
+Generating TypeScript types from the Pydantic models was planned but never built: the UI is JavaScript and reads the API's JSON responses. The JSON schemas under `docs/contracts/schemas/` describe only the `assess()` request and result, for library callers.
 
 ### Documentation
 
@@ -179,7 +174,7 @@ python scripts/generate_types.py \
 **Source code in src/contracts/:**
 
 - Pydantic models (actual implementation)
-- Used by backend and frontend (via TypeScript generation)
+- Used by the backend; the frontend sees them as the API's JSON
 
 ## Release Strategy
 
