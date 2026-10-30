@@ -129,8 +129,8 @@ class ElastiCacheSeeder(BaseSeeder):
                     import random
 
                     for j in range(min(10, count)):
-                        lat = 40.0 + random.uniform(-1, 1)  # nosec B311
-                        lon = -74.0 + random.uniform(-1, 1)  # nosec B311
+                        lat = 40.0 + random.uniform(-1, 1)  # nosec B311 -- synthetic coordinates
+                        lon = -74.0 + random.uniform(-1, 1)  # nosec B311 -- synthetic coordinates
                         pipe.geoadd(key, (lon, lat, f"location_{j}"))
                 case _:
                     pipe.set(key, f"value_{i}")

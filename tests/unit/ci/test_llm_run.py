@@ -14,10 +14,10 @@ messages, `permission_denials` entries, nested `usage` fields).
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import subprocess  # nosec B404 -- runs this repo's own scripts/binaries with fixed argv
-import xml.etree.ElementTree as ET  # nosec B405 -- builds/writes synthetic JUnit fixtures; defusedxml.ElementTree has no builder/writer API, only parsing, and ci/llm/run.py (the code under test) already parses with defusedxml
 from pathlib import Path
 
 import pytest
@@ -419,12 +419,22 @@ def test_cli_check_transcript_failure_prints_error_json_and_exits_one(
 
 def _write_junit(path: Path, cases: list[tuple[str, str, bool]]) -> None:
     """cases: list of (classname, name, failed)."""
-    root = ET.Element("testsuite")
-    for classname, name, failed in cases:
-        tc = ET.SubElement(root, "testcase", classname=classname, name=name, time="0.01")
-        if failed:
-            ET.SubElement(tc, "failure", message="boom")
-    ET.ElementTree(root).write(path)
+    path.write_text(_junit_xml(cases), encoding="utf-8")
+
+
+def _junit_xml(cases: list[tuple[str, str, bool]] | list[tuple[str, str, bool, str]]) -> str:
+    """A JUnit document written as text: defusedxml only parses, and the standard
+    library's ElementTree is deliberately not imported here (unsafe-parser rule)."""
+    out = ["<testsuite>"]
+    for classname, name, failed, *rest in cases:
+        kind = rest[0] if rest else "failure"
+        body = f'<{kind} message="boom"/>' if failed else ""
+        out.append(
+            f'<testcase classname="{html.escape(classname)}" name="{html.escape(name)}" time="0.01">'
+            f"{body}</testcase>"
+        )
+    out.append("</testsuite>")
+    return "".join(out)
 
 
 def test_parse_junit_counts_buckets_by_classname(tmp_path: Path) -> None:
@@ -445,12 +455,12 @@ def test_parse_junit_counts_buckets_by_classname(tmp_path: Path) -> None:
     assert buckets["ui"] == {"total": 0, "failed": 0}
 
 
+@pytest.mark.passes_on_main
 def test_parse_junit_counts_treats_error_as_failed(tmp_path: Path) -> None:
     path = tmp_path / "junit.xml"
-    root = ET.Element("testsuite")
-    tc = ET.SubElement(root, "testcase", classname="tests.e2e.test_ui", name="test_smoke")
-    ET.SubElement(tc, "error", message="boom")
-    ET.ElementTree(root).write(path)
+    path.write_text(
+        _junit_xml([("tests.e2e.test_ui", "test_smoke", True, "error")]), encoding="utf-8"
+    )
     buckets = run.parse_junit_counts(path)
     assert buckets["ui"] == {"total": 1, "failed": 1}
 

@@ -84,11 +84,11 @@ def check_coverage(
                     cost_delta=None,
                     suggested_resolutions=[
                         f"Add an access pattern that covers query '{qid}'.",
-                        (  # nosemgrep: string-concat-in-list
+                        (  # nosemgrep: string-concat-in-list -- intentional multi-line string
                             f"Verify that the schema agent processed query '{qid}' "
                             "and did not inadvertently drop it."
                         ),
-                        (  # nosemgrep: string-concat-in-list
+                        (  # nosemgrep: string-concat-in-list -- intentional multi-line string
                             "If the query is genuinely unsupported by this engine, "
                             "mark it as out-of-scope in the schema output."
                         ),
@@ -255,7 +255,7 @@ def check_conflicts(
                     affected_tables=[],
                     cost_delta=None,
                     suggested_resolutions=[
-                        (  # nosemgrep: string-concat-in-list
+                        (  # nosemgrep: string-concat-in-list -- intentional multi-line string
                             f"Run schema design for '{target_engine}' to incorporate the "
                             "reassigned pattern."
                         ),
@@ -280,7 +280,7 @@ def check_conflicts(
                     affected_tables=[],
                     cost_delta=None,
                     suggested_resolutions=[
-                        (  # nosemgrep: string-concat-in-list
+                        (  # nosemgrep: string-concat-in-list -- intentional multi-line string
                             f"Re-run the schema design step for '{target_engine}' to incorporate "
                             f"the reassigned pattern '{pattern_id}'."
                         ),
@@ -324,7 +324,7 @@ def check_cost_delta(
         VerificationIssue(
             category="cost",
             severity="warning",
-            message=(  # nosemgrep: string-concat-in-list
+            message=(  # nosemgrep: string-concat-in-list -- intentional multi-line string
                 f"Estimated monthly cost increased by {pct_display}% "
                 f"(${previous_cost:,.2f} → ${current_cost:,.2f}), "
                 f"exceeding the {threshold_display:.0f}% threshold."

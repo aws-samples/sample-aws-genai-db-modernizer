@@ -63,7 +63,7 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
 
     def __init__(self, region: str = "us-east-1") -> None:
         self.region = region
-        self.env = SandboxedEnvironment(  # nosemgrep: python.lang.security.audit.autoescape-disabled
+        self.env = SandboxedEnvironment(  # nosemgrep: python.lang.security.audit.autoescape-disabled -- sandboxed environment renders k6 JavaScript, not HTML
             loader=FileSystemLoader(str(TEMPLATES_DIR)),
             keep_trailing_newline=True,
             # Generating JS code, not HTML — autoescaping would corrupt output
@@ -97,7 +97,8 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
             "primary_key_field": seed_info.get("primary_key_field", "primary_id"),
             "primary_key_count": seed_info["primary_key_count"],
         }
-        return str(template.render(**context))  # nosemgrep: direct-use-of-jinja2
+        # nosemgrep: direct-use-of-jinja2 -- renders our own k6 template in a sandboxed environment
+        return str(template.render(**context))
 
     def generate_main(
         self, scenarios: list[dict[str, Any]], duration_minutes: int, warmup_seconds: int
@@ -130,7 +131,7 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
             )
 
         return str(
-            template.render(  # nosemgrep: direct-use-of-jinja2
+            template.render(  # nosemgrep: direct-use-of-jinja2 -- renders our own k6 template in a sandboxed environment
                 scenarios=enriched,
                 duration=f"{duration_minutes}m",
                 warmup_seconds=warmup_seconds,

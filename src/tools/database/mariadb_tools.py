@@ -100,7 +100,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
             LIMIT {limit}
-        """)  # nosec B608
+        """)  # nosec B608 -- extra_cols fixed; min_executions and limit are int defaults
 
         patterns = []
         reader = LiveQueryReader("mariadb", "mariadb_tools")

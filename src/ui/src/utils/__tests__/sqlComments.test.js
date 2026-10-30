@@ -12,7 +12,7 @@ import path from 'path';
 import { stripLeadingComments } from '../sqlComments';
 import { engineOptionsForQuery } from '../assignmentSummary';
 
-// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path built from the repo's own tree, not input
 const CASES_PATH = path.resolve(__dirname, '../../../../../tests/unit/shared/sql_comment_cases.json');
 const CASES = JSON.parse(fs.readFileSync(CASES_PATH, 'utf8'));
 

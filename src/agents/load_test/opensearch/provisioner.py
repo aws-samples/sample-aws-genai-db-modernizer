@@ -255,7 +255,7 @@ class OpenSearchProvisioner(BaseProvisioner):
             if not processing:
                 return
 
-            time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep
+            time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep -- intentional polling interval
 
         raise TimeoutError(
             f"OpenSearch domain {domain_name} not active after {timeout_minutes} minutes"

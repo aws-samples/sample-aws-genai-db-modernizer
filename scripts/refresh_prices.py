@@ -424,7 +424,8 @@ def _download(service: str) -> list[str]:
     # Certificate-verified TLS to the one fixed public host (the audit rule flags any
     # HTTPSConnection; this one sets its context explicitly).
     context = ssl.create_default_context()
-    conn = http.client.HTTPSConnection(PRICE_LIST_HOST, timeout=300, context=context)  # nosemgrep
+    # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected -- fixed public host, certificate-verified context
+    conn = http.client.HTTPSConnection(PRICE_LIST_HOST, timeout=300, context=context)
     try:
         conn.request("GET", OFFER_PATH.format(service=service, region=REGION))
         resp = conn.getresponse()

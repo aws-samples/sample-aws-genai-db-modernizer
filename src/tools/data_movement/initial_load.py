@@ -293,13 +293,13 @@ class SqlSourceReader:
     dialect: SqlDialect
 
     def count(self, table: str) -> int:
-        sql = f"SELECT COUNT(*) AS n FROM {self.dialect.table(table)}"  # nosec B608
+        sql = f"SELECT COUNT(*) AS n FROM {self.dialect.table(table)}"  # nosec B608 -- identifiers pass _IDENTIFIER and are quoted by SqlDialect
         rows = self.conn.query(sql, ())
         return int(rows[0]["n"]) if rows else 0
 
     def key_bounds(self, table: str, column: str) -> tuple[Any, Any]:
         col = self.dialect.quote(column)
-        sql = f"SELECT MIN({col}) AS lo, MAX({col}) AS hi FROM {self.dialect.table(table)}"  # nosec B608
+        sql = f"SELECT MIN({col}) AS lo, MAX({col}) AS hi FROM {self.dialect.table(table)}"  # nosec B608 -- identifiers pass _IDENTIFIER and are quoted by SqlDialect
         rows = self.conn.query(sql, ())
         return (rows[0]["lo"], rows[0]["hi"]) if rows else (None, None)
 
@@ -311,7 +311,7 @@ class SqlSourceReader:
         ph = self.dialect.placeholder
         # Identifiers are allowlisted and quoted; step and total are bound parameters.
         sql = (
-            f"SELECT {cols} FROM (SELECT {cols}, ROW_NUMBER() OVER (ORDER BY {cols}) "  # nosec B608
+            f"SELECT {cols} FROM (SELECT {cols}, ROW_NUMBER() OVER (ORDER BY {cols}) "  # nosec B608 -- identifiers allowlisted and quoted; step and total are bound
             f"AS dm_rn FROM {self.dialect.table(table)}) dm_sample "
             f"WHERE MOD(dm_rn, {ph}) = 0 AND dm_rn < {ph} ORDER BY {cols}"
         )
@@ -329,7 +329,7 @@ class SqlSourceReader:
             text, p = _render(self.dialect, key_columns, clause)
             where.append(text)
             params.extend(p)
-        sql = f"SELECT * FROM {self.dialect.table(table)}"  # nosec B608
+        sql = f"SELECT * FROM {self.dialect.table(table)}"  # nosec B608 -- identifiers pass _IDENTIFIER and are quoted by SqlDialect
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += f" ORDER BY {self.dialect.columns(key_columns)} LIMIT {self.dialect.placeholder}"
@@ -615,7 +615,7 @@ class PostgresSlotCapture:
             return
         tables = ", ".join(self._dialect.table(t) for t in self.tables)
         # DDL takes no parameters: the names are allowlisted and quoted.
-        self.conn.query(f"CREATE PUBLICATION {pub} FOR TABLE {tables}", ())  # nosec B608
+        self.conn.query(f"CREATE PUBLICATION {pub} FOR TABLE {tables}", ())
         self._created_publication = True
 
     def _check_existing(self, pub_row: Mapping[str, Any], wanted: set[tuple[str, str]]) -> None:
@@ -703,7 +703,7 @@ class PostgresSlotCapture:
             dropped.append(f"replication slot {self.slot_name}")
         if self._created_publication:
             pub = self._dialect.quote(self.publication_name)
-            self.conn.query(f"DROP PUBLICATION {pub}", ())  # nosec B608
+            self.conn.query(f"DROP PUBLICATION {pub}", ())
             self._created_publication = False
             dropped.append(f"publication {self.publication_name}")
         return dropped
@@ -937,7 +937,7 @@ class SqlSourceCatalog:
             else "udt_name AS ut, "
         )
         sql = (
-            "SELECT table_schema AS s, table_name AS t, column_name AS c, "  # nosec B608
+            "SELECT table_schema AS s, table_name AS t, column_name AS c, "  # nosec B608 -- only placeholders are joined; schema and table names are bound
             "ordinal_position AS p, data_type AS d, " + extra + "is_nullable AS n, "
             "character_maximum_length AS l, numeric_precision AS np, numeric_scale AS ns, "
             "datetime_precision AS dp, collation_name AS co "

@@ -13,7 +13,7 @@ import path from 'path';
 import { lockingClause, sourceEngineOf } from '../sqlLocking';
 import { engineOptionsForQuery } from '../assignmentSummary';
 
-// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path built from the repo's own tree, not input
 const CASES_PATH = path.resolve(
   __dirname,
   '../../../../../tests/unit/agents/referee/locking_clause_cases.json',

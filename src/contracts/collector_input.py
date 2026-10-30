@@ -228,7 +228,7 @@ class CollectorInput(BaseModel):
                     "database_name": "production",
                     "mode": "live",
                     "live_config": {
-                        "secret_arn": "arn:aws:secretsmanager:us-east-1:123456789:secret:mydb-creds",  # nosec B105  # pragma: allowlist secret
+                        "secret_arn": "arn:aws:secretsmanager:us-east-1:123456789:secret:mydb-creds",  # nosec B105 -- example Secrets Manager ARN in the schema example, not a credential  # pragma: allowlist secret
                         "automation_instance_id": "i-0abc123def456789",
                     },
                     "aws_config": {

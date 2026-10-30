@@ -398,7 +398,8 @@ def is_primary_key_index(idx: AgentIndex, table: AgentTable) -> bool:
         return True
     pk = [c.lower() for c in table.primary_key or []]
     cols = [c.lower() for c in idx.columns]
-    if not pk or not idx.is_unique or idx.predicate:  # nosemgrep: is-function-without-parentheses
+    # nosemgrep: is-function-without-parentheses -- field, not a method
+    if not pk or not idx.is_unique or idx.predicate:
         return False
     return cols == pk or (idx.index_name.lower().endswith("_pkey") and set(cols) == set(pk))
 
@@ -608,7 +609,8 @@ def rendered_key(
     index: AgentIndex, dialect: Dialect, columns: list[ColumnDDL]
 ) -> tuple[bool, list[int | None] | None]:
     """Whether the draft keeps ``index`` UNIQUE, and its Aurora MySQL key prefixes (#1623)."""
-    unique = bool(index.is_unique)  # nosemgrep: is-function-without-parentheses
+    # nosemgrep: is-function-without-parentheses -- field, not a method
+    unique = bool(index.is_unique)
     if dialect is not MYSQL:
         return unique, None
     kind = rendered_method(index, MYSQL, columns)  # #1596: FULLTEXT/SPATIAL take no prefix
@@ -843,7 +845,8 @@ def _index_sql(
                     ),
                 }
             )
-        unique = bool(idx.is_unique)  # nosemgrep: is-function-without-parentheses
+        # nosemgrep: is-function-without-parentheses -- field, not a method
+        unique = bool(idx.is_unique)
         where_sql = None
         if idx.predicate:
             reason = ""

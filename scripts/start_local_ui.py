@@ -149,7 +149,7 @@ def check_port_available(port: int) -> bool:
 
 def _run_npm(cmd: list[str], cwd: Path, env: dict[str, str]) -> None:
     try:
-        proc = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        proc = subprocess.run(  # nosec B603 -- fixed npm argv from this script, no shell # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600
         )
     except subprocess.TimeoutExpired as exc:
@@ -226,7 +226,7 @@ def start_api(artifact_root: Path, log_dir: Path) -> subprocess.Popen:
     env["ARTIFACT_DIR"] = str(artifact_root)
     log_path = log_dir / "api.log"
     with open(log_path, "ab") as log_file:
-        return subprocess.Popen(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        return subprocess.Popen(  # nosec B603 -- this interpreter running uvicorn on 127.0.0.1, fixed argv # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             [
                 sys.executable,
                 "-m",
@@ -248,7 +248,7 @@ def start_api(artifact_root: Path, log_dir: Path) -> subprocess.Popen:
 def start_serve(serve_bin: Path, log_dir: Path) -> subprocess.Popen:
     log_path = log_dir / "serve.log"
     with open(log_path, "ab") as log_file:
-        return subprocess.Popen(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        return subprocess.Popen(  # nosec B603 -- the UI's own serve binary, fixed argv # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             [str(serve_bin), "-s", "build", "-l", UI_LISTEN, "--no-clipboard"],
             cwd=UI_DIR,
             stdout=log_file,

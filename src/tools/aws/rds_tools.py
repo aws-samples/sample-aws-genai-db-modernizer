@@ -241,7 +241,9 @@ def get_performance_insights_queries(
                         if full_text and len(full_text) > len(sql_map[sql_id]["query_text"]):
                             sql_map[sql_id]["query_text"] = full_text
                         break
-            except Exception:  # nosec B110
+            except (
+                Exception
+            ):  # nosec B110 -- optional full text; keep the truncated text from describe_dimension_keys
                 pass  # Keep truncated text from describe_dimension_keys
 
         # Step 3: Get wait events (available for MySQL)

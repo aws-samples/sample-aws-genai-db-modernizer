@@ -44,7 +44,7 @@ def _stamp_agent(
         "MERGE (a:Agent {id: $id}) SET a.name = $name, a.phase = $phase",
         {"id": agent_id, "name": agent_name, "phase": phase},
     )
-    store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query
+    store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query -- Cypher text from internal catalog names; values are bound parameters
         f"UNWIND $rows AS r MATCH (n:{from_label} {{id: r.nid}}), (a:Agent {{id: $aid}}) "
         "MERGE (n)-[:PRODUCED_BY]->(a)",
         {"rows": [{"nid": nid} for nid in node_ids], "aid": agent_id},

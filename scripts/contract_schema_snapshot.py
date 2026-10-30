@@ -826,7 +826,7 @@ def evaluate_against_released(released: Mapping[str, Any], actual: dict[str, Any
 
 def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProcess[Any]:
     # Fixed git subcommands; refs and paths are separate arguments, never a shell.
-    return subprocess.run(  # nosec B603 B607
+    return subprocess.run(  # nosec B603 B607 -- fixed argv, git resolved from PATH
         ["git", "-C", str(repo), *args], capture_output=True, text=text, check=False
     )
 

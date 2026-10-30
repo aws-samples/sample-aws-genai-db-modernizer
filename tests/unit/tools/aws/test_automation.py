@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from botocore.exceptions import ClientError
 
 from src.tools.aws import automation
@@ -241,3 +242,59 @@ class TestAddIngressRule:
             pass
         else:
             raise AssertionError("expected ClientError to propagate")
+
+
+class TestWaitForSsm:
+    """An access or credential error stops the wait; a not-yet-online instance retries."""
+
+    @patch("src.tools.aws.automation.time.sleep")
+    @patch("src.tools.aws.automation.boto3")
+    def test_access_denied_propagates_instead_of_waiting(self, mock_boto3, mock_sleep):
+        ssm = MagicMock()
+        mock_boto3.client.return_value = ssm
+        ssm.describe_instance_information.side_effect = _client_error(
+            "AccessDeniedException", "no", "DescribeInstanceInformation"
+        )
+
+        try:
+            automation._wait_for_ssm("i-1", "us-east-1")
+        except ClientError as exc:
+            assert exc.response["Error"]["Code"] == "AccessDeniedException"
+        else:
+            raise AssertionError("expected AccessDenied to propagate")
+        assert ssm.describe_instance_information.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("src.tools.aws.automation.time.sleep")
+    @patch("src.tools.aws.automation.boto3")
+    def test_expired_credentials_propagate(self, mock_boto3, mock_sleep):
+        ssm = MagicMock()
+        mock_boto3.client.return_value = ssm
+        ssm.describe_instance_information.side_effect = _client_error(
+            "ExpiredToken", "expired", "DescribeInstanceInformation"
+        )
+
+        try:
+            automation._wait_for_ssm("i-1", "us-east-1")
+        except ClientError:
+            pass
+        else:
+            raise AssertionError("expected ExpiredToken to propagate")
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.passes_on_main
+    @patch("src.tools.aws.automation.time.sleep")
+    @patch("src.tools.aws.automation.boto3")
+    def test_not_yet_online_retries_until_online(self, mock_boto3, mock_sleep):
+        ssm = MagicMock()
+        mock_boto3.client.return_value = ssm
+        ssm.describe_instance_information.side_effect = [
+            {"InstanceInformationList": []},
+            _client_error("InvalidInstanceId", "not registered yet", "DescribeInstanceInformation"),
+            {"InstanceInformationList": [{"PingStatus": "Online"}]},
+        ]
+
+        automation._wait_for_ssm("i-1", "us-east-1")
+
+        assert ssm.describe_instance_information.call_count == 3
+        assert mock_sleep.call_count == 2

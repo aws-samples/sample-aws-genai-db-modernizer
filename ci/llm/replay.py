@@ -79,10 +79,22 @@ ALLOWED_PATH_PREFIXES = (PLACEHOLDER_CWD, PLACEHOLDER_HOME, PLACEHOLDER_TMP)
 # or write, never a file this module opens (hence the B108 marks).
 _SEG = r"[^/\s\"'\\]+"
 _PATH_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(rf"(?:/private)?/var/folders/{_SEG}/{_SEG}/T(?=/|\b)"), "/tmp"),  # nosec B108
-    (re.compile(r"/private/tmp(?=/|\b)"), "/tmp"),  # nosec B108
-    (re.compile(rf"/tmp/claude-{_SEG}"), PLACEHOLDER_TMP),  # nosec B108
-    (re.compile(rf"/tmp/cc-socks/{_SEG}"), f"{PLACEHOLDER_TMP}/agent.sock"),  # nosec B108
+    (
+        re.compile(rf"(?:/private)?/var/folders/{_SEG}/{_SEG}/T(?=/|\b)"),
+        "/tmp",  # nosec B108 -- path pattern, never opened
+    ),
+    (
+        re.compile(r"/private/tmp(?=/|\b)"),
+        "/tmp",  # nosec B108 -- path pattern, never opened
+    ),
+    (
+        re.compile(rf"/tmp/claude-{_SEG}"),  # nosec B108 -- path pattern, never opened
+        PLACEHOLDER_TMP,
+    ),
+    (
+        re.compile(rf"/tmp/cc-socks/{_SEG}"),  # nosec B108 -- path pattern, never opened
+        f"{PLACEHOLDER_TMP}/agent.sock",
+    ),
     (re.compile(r"(?<![\w.-])/tmp/(?!claude(?=/|\b))"), f"{PLACEHOLDER_TMP}/"),
     (re.compile(rf"/(?:Users|home)/(?!user(?=/|\b)){_SEG}"), PLACEHOLDER_HOME),
     (re.compile(r"(?<![\w.-])/root(?=/|\b)"), PLACEHOLDER_HOME),

@@ -339,6 +339,6 @@ class LocalS3Service:
             except ContractVersionError:
                 raise  # a refusal reaches the user as a 409, never a missing design
             except Exception as exc:
-                print(f"[schema-designs] Skipping {rel_path}: {exc}")  # nosec B112
+                logger.warning("[schema-designs] Skipping %s: %s", rel_path, exc)
 
         return designs

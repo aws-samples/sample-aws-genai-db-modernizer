@@ -411,7 +411,10 @@ def run_server(agent_factory, default_storage_dir: str, *, is_orchestrator: bool
     import argparse
 
     parser = argparse.ArgumentParser(description="AWS Transform Subagent")
-    parser.add_argument("--host", default="0.0.0.0")  # nosec B104
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",  # nosec B104 -- container entrypoint; the runtime reaches the server on the container interface (Dockerfile.atx EXPOSE 8080)
+    )
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--storage-dir", default=default_storage_dir)
     parser.add_argument(

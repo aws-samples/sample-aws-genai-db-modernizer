@@ -1077,7 +1077,7 @@ OPTIONAL_ISOLATION_FLAGS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def detect_optional_flags(claude_bin: str) -> list[str]:
     try:
-        proc = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        proc = subprocess.run(  # nosec B603 -- fixed argv (claude --help), no shell # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             [claude_bin, "--help"],
             capture_output=True,
             text=True,
@@ -1174,7 +1174,7 @@ def call_claude_cli(
         *detect_optional_flags(claude_bin),
     ]
     try:
-        proc = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        proc = subprocess.run(  # nosec B603 -- argv list built above, prompt on stdin, no shell # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             cmd, input=prompt, capture_output=True, text=True, timeout=300
         )
     except (OSError, subprocess.TimeoutExpired) as exc:

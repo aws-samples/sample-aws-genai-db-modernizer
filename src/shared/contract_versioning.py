@@ -572,7 +572,7 @@ def _schema_output_targets() -> list[tuple[str, str]]:
         # The module name is built from a catalog engine id, never from input.
         names = [
             n
-            # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+            # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import -- module comes from the contract registry, never input
             for n in vars(importlib.import_module(module))
             if n.endswith("ModelOutputContract")
         ]
@@ -591,7 +591,7 @@ def _registry() -> tuple[tuple[re.Pattern[str], str], ...]:
 def _import(target: str) -> type[BaseModel]:
     module, name = target.split(":")
     # ``target`` is a registry entry above, never input.
-    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import -- module comes from the contract registry, never input
     cls: type[BaseModel] = getattr(importlib.import_module(module), name)
     return cls
 
