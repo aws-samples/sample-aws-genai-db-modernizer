@@ -10,7 +10,14 @@ from ci.llm import private_scan, replay
 _SLACK = "xoxb-" + "123456789012-1234567890123-" + "abcdefghijklmnopqrstuvwx"
 _GOOGLE = "AIza" + "A" * 35
 _AZURE = "AccountKey=" + "A" * 86 + "=="
-_JWT = "eyJhbGciOiJIUzI1NiJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuv"
+_JWT = (
+    "eyJ"
+    + "hbGciOiJIUzI1NiJ9"
+    + ".eyJ"
+    + "zdWIiOiIxMjM0NTY3ODkwIn0"
+    + "."
+    + "abcdefghijklmnopqrstuv"
+)
 _BARE = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7r"  # pragma: allowlist secret
 _SESSION = (
     '"aws_session_token": "' + "FwoGZXIvYXdzEBYaDabcdefghijklmnop" + '"'  # pragma: allowlist secret
