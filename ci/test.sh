@@ -22,6 +22,15 @@ source "$(dirname "$0")/lib.sh"
 if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
   export HYPOTHESIS_PROFILE="${HYPOTHESIS_PROFILE:-ci}"
 fi
+# Coverage (--cov) uses Python's sys.monitoring tracer (PEP 669) unless
+# COVERAGE_CORE says otherwise: the same line coverage at about 1.1x the
+# uncovered run time, against 2.2x for the default tracer (#1718). Branch
+# coverage would need the default tracer on 3.12; this repo measures lines only.
+for arg in "$@"; do
+  case "$arg" in
+    --cov|--cov=*) export COVERAGE_CORE="${COVERAGE_CORE:-sysmon}"; break ;;
+  esac
+done
 shard_args=()
 if [ -n "${TEST_SHARD:-}" ]; then
   case "$TEST_SHARD" in

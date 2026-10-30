@@ -42,6 +42,24 @@ _SESSION = (
         "AKIA" + "QWERTYUIOPASDFGH",  # pragma: allowlist secret
         "-----BEGIN RSA PRIVATE" + " KEY-----",  # pragma: allowlist secret
     ],
+    # Named ids: test ids are written to .test_durations and CI logs, and the raw
+    # values would reassemble the credential shapes this file splits (#1718).
+    ids=[
+        "postgres-dsn",
+        "mysql-url",
+        "json-password",
+        "env-password",
+        "api-key",
+        "slack-token",
+        "google-key",
+        "azure-connection-string",
+        "jwt",
+        "bare-secret",
+        "aws-session-token",
+        "bearer-token",
+        "aws-access-key",
+        "private-key-header",
+    ],
 )
 def test_secret_findings_catch_each_credential_shape(text: str) -> None:
     findings = private_scan.secret_findings(f"line one\n{text}\n")
@@ -105,7 +123,11 @@ def test_identity_findings_leave_ordinary_text_alone(text: str) -> None:
     assert private_scan.identity_findings(text) == []
 
 
-@pytest.mark.parametrize("text", ["dba@customer-corp.com", "bucket-123456789012-logs", _SESSION])
+@pytest.mark.parametrize(
+    "text",
+    ["dba@customer-corp.com", "bucket-123456789012-logs", _SESSION],
+    ids=["email", "account-id-in-name", "aws-session-token"],
+)
 def test_save_scans_job_files_with_both_scans(text: str) -> None:
     assert replay.job_private_data(text)
 

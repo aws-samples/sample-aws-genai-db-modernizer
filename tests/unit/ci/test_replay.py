@@ -225,7 +225,11 @@ def test_save_keeps_the_synthesis_files_the_trimmed_transcript_and_the_run(
     assert _CWD not in (dest / "transcript.jsonl").read_text()
 
 
-@pytest.mark.parametrize("leak", [_FAKE_KEY, "/opt/agent/work/x", "123456789012"])
+@pytest.mark.parametrize(
+    "leak",
+    # A named id: test ids land in .test_durations and CI logs (#1718).
+    [pytest.param(_FAKE_KEY, id="aws-access-key"), "/opt/agent/work/x", "123456789012"],
+)
 def test_save_refuses_a_run_that_names_a_machine_or_an_account(tmp_path: Path, leak: str) -> None:
     src = _e2e_llm_output(tmp_path)
     (src / "deliverables" / "wordpress" / "synthesis" / "report.json").write_text(
@@ -452,7 +456,7 @@ def test_the_fixture_says_where_its_job_came_from() -> None:
     "leak",
     [
         "/opt/agent/work/x",
-        _FAKE_KEY,
+        pytest.param(_FAKE_KEY, id="aws-access-key"),
         "123456789012",
         "arn:aws:iam::x",
         "dba@customer-corp.com",
