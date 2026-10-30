@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Static-analysis configuration stays single and its suppressions stay explained (#1726).
+"""Static-analysis configuration stays single and its suppressions stay explained (#1726, #1727).
 
 - Bandit reads one config, ``[tool.bandit]`` in ``pyproject.toml``. A leftover
   ``.bandit`` file is read first by tools that prefer it, and its globs do not match
@@ -10,6 +10,8 @@
 - A ``nosemgrep`` comment names its rule id and gives a reason: after ``--``, in a
   trailing comment, in a ``nosec`` reason earlier on the line, or in a comment on the
   line above.
+- The private-scan test builds its fake API key at run time, so no scan of the working
+  tree or of a branch finds a credential-shaped literal there (#1727).
 """
 
 from __future__ import annotations
@@ -115,3 +117,11 @@ def test_every_nosemgrep_names_its_rule_and_gives_a_reason() -> None:
         for n in unexplained_nosemgrep(path.read_text(encoding="utf-8").splitlines())
     ]
     assert not bad, f"'nosemgrep' without a rule id and a reason: {bad}"
+
+
+@pytest.mark.passes_on_main
+def test_private_scan_fixture_keeps_its_fake_credential_split() -> None:
+    text = (REPO / "tests/unit/ci/test_private_scan.py").read_text(encoding="utf-8")
+    assert (
+        "abcd1234efgh5678" not in text
+    ), "build the fake key at run time, as the file's other fakes"
