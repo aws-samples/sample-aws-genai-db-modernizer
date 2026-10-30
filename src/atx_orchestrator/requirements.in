@@ -1,0 +1,36 @@
+# Direct dependencies of the AWS Transform image (the source of requirements.txt).
+#
+# Edit this list, then run `uv run python scripts/render_atx_requirements.py --write`.
+# requirements.txt pins every one of these and everything they pull in to the
+# versions in uv.lock, so the image installs what the tests ran against (#1725).
+# The lower bounds below are the floors the code needs; the lock decides the version.
+# The AWS Transform SDK packages are not here: see requirements-sdk.txt.
+
+# Project core dependencies (subset needed inside the container)
+# Full list lives in pyproject.toml — only runtime deps are listed here.
+# >=1.56: CacheConfig(tools_ttl=...) and the BedrockModel hooks RoleBedrockModel
+# overrides (src/shared/role_bedrock_model.py fails at import without them).
+# <2: those hooks are private. The import check catches a renamed hook, not a
+# kept one that stops being called, and CI tests only 1.56.0 (the lock file),
+# so a newer 1.x minor here is untested.
+strands-agents>=1.56.0,<2
+# LadybugDB — embedded graph DB backing the context-graph read-model that the
+# assessment-core and synthesis boundaries build + publish (graph_transport /
+# src.graph). Required in the agent image: without it, `from src.graph import
+# GraphStore` raises ModuleNotFoundError, build_and_publish_graph silently
+# no-ops, and no .lbug is ever produced. Pinned to match pyproject.toml.
+ladybug>=0.17.1
+pydantic>=2.12
+boto3>=1.34.0
+structlog>=23.2.0
+pyyaml>=6.0.1
+jinja2>=3.1.0
+# Executive report PDF (src/report/executive_report.py).
+reportlab>=4.2.0
+
+# Database connectors (needed by collector agent)
+mysql-connector-python>=9.1.0
+psycopg2-binary>=2.9.10
+
+# DocumentDB load test (optional — comment out if not needed)
+pymongo[aws]>=4.6.0

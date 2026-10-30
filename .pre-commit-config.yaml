@@ -299,6 +299,16 @@ repos:
         files: '(src/assessment/.*\.py|scripts/render_contract_schemas\.py|docs/contracts/schemas/.*\.json)'
         pass_filenames: false
 
+  # The AWS Transform image's pinned requirements are generated from uv.lock (#1725)
+  - repo: local
+    hooks:
+      - id: render-atx-requirements
+        name: AWS Transform image requirements are fresh
+        entry: uv run python scripts/render_atx_requirements.py --check
+        language: system
+        files: '(uv\.lock|src/atx_orchestrator/requirements.*\.(in|txt)|scripts/render_atx_requirements\.py)'
+        pass_filenames: false
+
   # Any change to a heuristic safety filter runs its benign-input corpus (#1161)
   - repo: local
     hooks:

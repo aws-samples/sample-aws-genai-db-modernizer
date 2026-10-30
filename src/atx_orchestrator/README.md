@@ -96,7 +96,9 @@ The current shape of this integration is recorded in `docs/architecture/decision
 | `src/report/engineering_report.py`, `executive_report.py` | Report renderers (engineering Markdown, executive report PDF) |
 | `runtime/store.py` | Transform storage subclasses (adds `write_text`) |
 | `src/report/assets/` | Executive report fonts |
-| `requirements.txt` | Container Python deps (SDK + project runtime deps) |
+| `requirements.in` | The image's direct dependencies (edit this one) |
+| `requirements.txt` | Generated from `requirements.in` and `uv.lock`: every dependency pinned to the locked version (`uv run python scripts/render_atx_requirements.py --write`; `ci/lint.sh` checks it is fresh) |
+| `requirements-sdk.txt` | AWS Transform SDK packages, exact pins by hand (not in `uv.lock`; their own transitive dependencies still resolve at build time) |
 
 ## Environment variables
 

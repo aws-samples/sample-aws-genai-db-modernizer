@@ -1,0 +1,12 @@
+# AWS Transform SDK packages, installed first by Dockerfile.atx (the botocore
+# models they ship must be registered before the other dependencies install).
+#
+# Exact pins, edited by hand: these packages are published for the image only,
+# so they are not in uv.lock and scripts/render_atx_requirements.py cannot pin
+# them from it. Their own transitive dependencies are resolved by pip at build
+# time, so the image's versions for those can still differ from uv.lock.
+# 1.0.0 or later avoids the v0.0.1 placeholder releases.
+agent-builder-sdk-aws-transform==1.1.0
+agent-builder-agentic-mcp-aws-transform==1.0.2
+agent-builder-types-aws-transform==1.1.0
+agent-builder-mcp-client-aws-transform==1.0.1

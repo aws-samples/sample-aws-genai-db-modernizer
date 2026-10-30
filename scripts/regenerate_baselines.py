@@ -199,6 +199,13 @@ BASELINES: tuple[Baseline, ...] = (
         lambda: _check_script_is_stale("render_contract_schemas.py"),
     ),
     Baseline(
+        "atx-requirements",
+        ("src/atx_orchestrator/requirements.txt",),
+        "uv run python scripts/render_atx_requirements.py --write",
+        lambda _reason: _python("scripts/render_atx_requirements.py", "--write"),
+        lambda: _check_script_is_stale("render_atx_requirements.py"),
+    ),
+    Baseline(
         "contract-schema-snapshot",
         ("tests/contract/schema_snapshot.json",),
         "uv run python scripts/contract_schema_snapshot.py --write",

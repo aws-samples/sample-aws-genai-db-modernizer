@@ -35,13 +35,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-# ── AWS Transform SDK ───────────────────────────────────────────────────────
-# Install SDK first so botocore models can be registered before other deps.
-RUN pip install --no-cache-dir \
-    "agent-builder-sdk-aws-transform>=1.0.0" \
-    "agent-builder-agentic-mcp-aws-transform>=1.0.0" \
-    "agent-builder-types-aws-transform>=1.0.0" \
-    "agent-builder-mcp-client-aws-transform>=1.0.0"
+# ── Dependencies ────────────────────────────────────────────────────────────
+# One resolve for the SDK pins (requirements-sdk.txt, not in uv.lock) and the
+# project pins (requirements.txt, generated from uv.lock by
+# scripts/render_atx_requirements.py), so pip sees any conflict between them.
+# pip check fails the build on one.
+COPY src/atx_orchestrator/requirements-sdk.txt src/atx_orchestrator/requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements-sdk.txt -r requirements.txt && \
+    pip check
 
 # Register botocore service models (REQUIRED — without this the agent fails at
 # startup with "Unknown service: 'transformagenticservice'")
@@ -59,10 +60,6 @@ RUN pip install --no-cache-dir awscli && \
     mkdir -p /opt/botocore-models && \
     cp -r /root/.aws/models/* /opt/botocore-models/ && \
     chmod -R a+r /opt/botocore-models
-
-# ── Project deps ────────────────────────────────────────────────────────────
-COPY src/atx_orchestrator/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
 
 # ── MCP server shim ─────────────────────────────────────────────────────────
 # AgentRuntimeServer looks for this exact binary path at startup. Needed by

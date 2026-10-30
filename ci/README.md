@@ -27,7 +27,9 @@ generated file gets it from its generator; the same check as the `license-header
 validator (`scripts/validate_skills.py`), the rule catalog's generated files
 (`scripts/render_catalog.py --check`), the `assess()` JSON Schemas
 (`scripts/render_contract_schemas.py --check`: `docs/contracts/schemas/` matches the public
-models, #1183) and the price table's age
+models, #1183), the AWS Transform image's pinned requirements
+(`scripts/render_atx_requirements.py --check`: `src/atx_orchestrator/requirements.txt` matches
+`uv.lock`, #1725) and the price table's age
 (`scripts/refresh_prices.py --check-age`: it warns, never fails, when
 `src/catalog/prices.toml` was retrieved more than 45 days ago; refresh it with
 `uv run python scripts/refresh_prices.py`, #1196). The `Refresh prices` workflow

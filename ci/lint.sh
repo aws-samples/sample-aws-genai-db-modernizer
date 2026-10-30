@@ -12,4 +12,5 @@ log "license headers"; uv run python scripts/license_headers.py --check
 log "commands"; uv run python scripts/validate_skills.py
 log "catalog"; uv run python scripts/render_catalog.py --check
 log "contract schemas"; uv run python scripts/render_contract_schemas.py --check
+log "image requirements"; uv run python scripts/render_atx_requirements.py --check
 log "prices"; uv run python scripts/refresh_prices.py --check-age
