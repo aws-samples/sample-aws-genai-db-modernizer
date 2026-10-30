@@ -169,6 +169,20 @@ test('#1076: a retired engine with no counted saving says why', () => {
   );
 });
 
+test('#1164: a retired engine reason is worded as the PDF words it: trimmed, one period, none when empty', () => {
+  const reasonOf = (reason) => {
+    render({
+      retiredEngines: [{ engine: 'opensearch', monthly_cost_usd: 5, moved_to: [], reason }],
+    });
+    return container.querySelector('[data-retired-engine="opensearch"]').textContent;
+  };
+  expect(reasonOf('x. ')).toMatch(/x\.$/);
+  expect(reasonOf('x. ')).not.toMatch(/x\. \.$/);
+  expect(reasonOf('x...')).toMatch(/[^.]x\.$/);
+  expect(reasonOf('  ')).not.toMatch(/\.$/);
+  expect(reasonOf('')).not.toMatch(/\.$/);
+});
+
 // #1146: the queries and the distinct query patterns they make, from the facts.
 test('the distinct query patterns line reads the facts it is given', () => {
   render({ queryPatterns: { queries: 1654, patterns: 1045 } });

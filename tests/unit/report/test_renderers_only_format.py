@@ -219,6 +219,9 @@ def _is_facts(node: ast.AST, facts_names: set[str]) -> bool:
         return node.id in facts_names
     if isinstance(node, ast.Call) and _call_name(node) == "dict" and node.args:
         return _is_facts(node.args[0], facts_names)
+    # ``(report.get("facts") or {})``: the judge's usual read (#1164).
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return _is_facts(node.values[0], facts_names)
     if _is_facts_block_read(node):
         return True
     return isinstance(node, ast.Call) and _call_name(node) in FACTS_READERS
@@ -590,6 +593,154 @@ def test_presentation_exemptions_carry_a_reason_and_are_pinned() -> None:
                 assert reason, f"{p.relative_to(REPO)}:{i}: '# facts: presentation' needs a reason"
                 found.add((str(p.relative_to(REPO)), reason))
     assert found == PINNED_EXEMPTIONS
+
+
+# #1164: the quality judge (``ci/llm/``) reads ``report.json`` to ground its rubric, and a
+# figure it recounts there can drift from the one the deliverables print (#1075: it counted
+# ``kept_in_sync`` itself). The same scan covers it, with two more owned names: the judge reads
+# ``migration_waves`` and ``query_groups`` straight off the report. What it still counts, by
+# file and expression, with the reason it may; each expression may occur once. A new entry is
+# reviewed, and an entry nothing matches any more fails ``test_the_judge_allowlist_is_current``.
+# Prefer reading the report's fact. Not traced, as everywhere in this scan: a list passed into a
+# helper (``_counted_risks(value)`` counts inside the helper), and a name the scan cannot tie to
+# an owned key.
+CI_LLM = REPO / "ci" / "llm"
+JUDGE_OWNED_KEYS = frozenset({"migration_waves", "query_groups"})
+_CLOSE_CALLS_FALLBACK = (
+    "fallback for a report written before facts.close_calls: the same count "
+    "close_call_facts makes, from query_traces.close_calls"
+)
+_WAVE_SYNC_FALLBACK = (
+    "per-wave tally of the kept_in_sync / shared_in_wave entries the report lists (facts.waves "
+    "or, for a report without facts, migration_waves[].table_owners split by the same rule as "
+    "wave_facts); the count the facts layer stores is read first (kept_in_sync_tables)"
+)
+_FACT_FALLBACK = (
+    "fallback for a report written before the fact existed: _fact_or reads the stored fact first"
+)
+JUDGE_RECOUNTS: dict[tuple[str, str], str] = {
+    ("ci/llm/judge.py", "sum(costs)"): (
+        "the judge's own model spend across its samples (a false match on the word cost), "
+        "not a report figure"
+    ),
+    **{
+        ("ci/llm/judge_facts.py", expr): _CLOSE_CALLS_FALLBACK
+        for expr in (
+            "sum((1 for c in raw if isinstance(c, dict) and c.get('settled_tie')))",
+            "slot['pair_query_count'] += 1",
+            "min(gaps)",
+            "max(gaps)",
+            "len(calls)",
+        )
+    },
+    **{
+        ("ci/llm/judge_facts.py", expr): _WAVE_SYNC_FALLBACK
+        for expr in (
+            "Counter((str(e.get('owner')) for e in kept))",
+            "len(kept)",
+            "len(shared)",
+        )
+    },
+    (
+        "ci/llm/judge_facts.py",
+        "Counter((str(t.get('engine') or 'unknown') for t in trade_offs if isinstance(t, dict)))",
+    ): "design trade-offs per engine for the risk-coverage checklist; the facts layer holds no such count",
+    ("ci/llm/judge_facts.py", "severity_counts[str(risk.get('severity'))] += 1"): (
+        "the digest's risks_by_severity counts the register as written (contentless entries "
+        "included), the ground truth the rubric checks the deliverables' counts against; "
+        "facts.open_risks_by_severity is the filtered figure"
+    ),
+    ("ci/llm/judge_facts.py", "len(engines)"): _FACT_FALLBACK + " (facts.engine_count)",
+    ("ci/llm/judge_facts.py", "len(waves)"): _FACT_FALLBACK + " (facts.migration_wave_count)",
+    ("ci/llm/judge_facts.py", "len(table_mappings)"): (
+        "tables_mapped counts the mapping rows the rubric lists, not the migrated-table figure"
+    ),
+    ("ci/llm/judge_facts.py", "sum(target_counts)"): (
+        "target_objects sums the per-engine target_tables of the designed engines for the rubric; "
+        "the deliverables print the per-engine figure (facts.engines[].target_objects), not a total"
+    ),
+    ("ci/llm/judge_facts.py", "len(query_groups)"): (
+        "query_groups counts the report's query_groups list as the Engineering Report heading "
+        "does; facts.query_group_counts counts the groups per owner engine, not this total"
+    ),
+    (
+        "ci/llm/judge_facts.py",
+        (
+            "sum((1 for g in query_groups if isinstance(g, dict) and "
+            "(not set(g.get('engines') or []).issubset(_RELATIONAL_ENGINES))))"
+        )[:100],
+    ): "the non-relational subset of the same list, the heading's N (see len(query_groups))",
+}
+
+
+def _judge_violations(root: Path = CI_LLM) -> list[tuple[str, str, str]]:
+    """``(file, expression, location)`` for every count the scan finds under ``root``."""
+    out = []
+    owned = OWNED_KEYS | JUDGE_OWNED_KEYS
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sys.modules[__name__], "OWNED_KEYS", owned)
+        for p in sorted(root.glob("*.py")):
+            rel = str(p.relative_to(REPO)) if p.is_relative_to(REPO) else p.name
+            for v in _violations(p):
+                where, expr = v.split(": ", 1)
+                out.append((rel, expr, where))
+    return out
+
+
+# These guard code main already satisfies (its counts are recorded in the allowlist).
+@pytest.mark.passes_on_main
+def test_the_judge_recounts_no_fact_outside_its_allowlist() -> None:
+    found = [
+        f"{loc}: {expr}"
+        for rel, expr, loc in _judge_violations()
+        if (rel, expr) not in JUDGE_RECOUNTS
+    ]
+    assert not found, (
+        "ci/llm/ recounts a figure report.json's facts carry (#1164, ADR-032); read the fact, "
+        "or add the count to JUDGE_RECOUNTS with its reason:\n" + "\n".join(found)
+    )
+
+
+@pytest.mark.passes_on_main
+def test_the_judge_allowlist_is_current() -> None:
+    """Every allowlisted count still exists, once, and says why; a stale entry or a second copy
+    of an allowlisted expression would hide a new one."""
+    found = [(rel, expr) for rel, expr, _ in _judge_violations()]
+    assert set(found) == set(JUDGE_RECOUNTS)
+    assert [k for k in set(found) if found.count(k) > 1] == []
+    assert all(len(reason.strip()) > 20 for reason in JUDGE_RECOUNTS.values())
+    assert {rel for rel, _ in found} >= {"ci/llm/judge_facts.py"}
+
+
+JUDGE_PROBE = (
+    "def digest(report):\n"
+    "    facts = (report.get('facts') or {})\n"
+    "    waves = facts.get('waves') or []\n"
+    "    kept = sum(len(w['kept_in_sync']) for w in waves)\n"
+    "    n_engines = len((report.get('facts') or {}).get('engines') or [])\n"
+    "    n_waves = len(report['migration_waves'])\n"
+    "    return kept, len(report['risks']), n_engines, n_waves\n"
+)
+
+
+@pytest.mark.passes_on_main
+def test_a_recount_in_the_judge_is_caught(tmp_path: Path) -> None:
+    """The kept_in_sync recount of #1075, the judge's ``(report.get("facts") or {})`` read of
+    ``facts.engines`` and the report's ``migration_waves``, through the ci/llm entry point."""
+    (tmp_path / "judge_probe.py").write_text(JUDGE_PROBE)
+    lines = {loc.rpartition(":")[2] for _, _, loc in _judge_violations(tmp_path)}
+    assert lines == {"4", "5", "6", "7"}
+
+
+@pytest.mark.passes_on_main
+def test_the_facts_block_is_recognised_through_an_or_default(tmp_path: Path) -> None:
+    probe = tmp_path / "p.py"
+    probe.write_text(
+        "def f(report):\n"
+        "    f1 = report.get('facts') or {}\n"
+        "    return len(f1.get('engines') or []), len((report.get('facts') or {})['waves'])\n"
+    )
+    assert len(_violations(probe)) == 2
 
 
 PROBE = """
