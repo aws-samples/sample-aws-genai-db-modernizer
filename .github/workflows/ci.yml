@@ -320,7 +320,7 @@ jobs:
             -f infrastructure/cloudformation/data-movement/examples/wordpress-postgresql.yaml \
             -f pipeline/iam-roles.yaml \
             --framework cloudformation --quiet --compact \
-            --skip-check CKV_AWS_46,CKV_AWS_111,CKV2_AWS_71
+            --skip-check CKV2_AWS_71
       - name: Checkov (Dockerfiles)
         run: |
           checkov -f src/atx_orchestrator/Dockerfile.atx \
