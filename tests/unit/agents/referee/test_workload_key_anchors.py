@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A key anchor is also the key of other access patterns on the table (#1061).
 
 The #728 key-column rule (``access_pattern.TableKeys.key_columns``) counts a primary

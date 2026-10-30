@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Display names for Aurora Optimization.category values, shown by the results
  * page's "Aurora Design" section (#587 round 3: the raw category code read

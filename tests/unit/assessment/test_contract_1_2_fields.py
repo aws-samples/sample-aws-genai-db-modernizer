@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The fields contract 1.2 adds to the ``assess()`` result (#1603), each checked against
 the artifact it is read from, never against a recount of its own:
 

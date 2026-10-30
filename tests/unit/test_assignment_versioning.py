@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Single assignment-version resolver + source provenance (ADR-028).
 
 Pins the one resolver that replaced the six ad-hoc ``max(vN)`` scans, and the

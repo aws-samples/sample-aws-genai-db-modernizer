@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The schema design trace is a versioned contract (ADR-008 Decision 1, #1258).
 
 ``schema-<engine>/[v<N>/]design_trace.json`` (and DynamoDB's per-group

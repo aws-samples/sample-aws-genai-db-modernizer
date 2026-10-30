@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Collected queries grouped into distinct query patterns (#1146).
 
 Two collected statements are one query pattern when they read or write the same rows

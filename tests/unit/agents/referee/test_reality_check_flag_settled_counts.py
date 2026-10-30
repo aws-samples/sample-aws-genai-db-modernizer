@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The settled workload a reality-check flag's tie-break reads (#746 item 2).
 
 ADR-031 Decision 12: the settled-workload snapshot is computed once, by the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Aurora draft maps the source data_type first (issue #274)."""
 
 from __future__ import annotations

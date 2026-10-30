@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``Assignment.moves`` is per-version (#616, maintainer decision 2026-10-14).
 
 Each assignment version holds only the Moves that produced it (design brief

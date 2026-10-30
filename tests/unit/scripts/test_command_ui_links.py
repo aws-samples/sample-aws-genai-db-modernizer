@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every local UI link a Claude Code command prints opens a real UI route (#439).
 
 `/assign` once pointed users at ``http://localhost:3000/assignments``, which no

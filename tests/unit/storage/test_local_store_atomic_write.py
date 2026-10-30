@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """LocalArtifactStore.write_json writes atomically (#517 round-1 review,
 I5): a status marker a job's own failure handler writes right as the
 process is dying must never leave a reader observing a half-written file.

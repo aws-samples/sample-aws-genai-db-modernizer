@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The model entry points an ``assess()`` run with ``deterministic=False`` reaches, and
 what tests put in their place (tests never call a model).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One high-ingest threshold for every engine's detector (#493).
 
 OpenSearch's ``os-07`` (high-ingest) and Aurora's ``aurora-anti-04``

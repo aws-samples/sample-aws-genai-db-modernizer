@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The regex query facts: the facade's fallback when sqlglot can't read a statement.
 
 These are the scans the collectors ran on raw query text before #796, moved

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality check records every engine change in the move ledger (#616, Track L PR2).
 
 Phase 1 settle and Phase 2 placement, the justification floors, the model

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A column's text type is read in the facts layer, in the source dialect (#1057).
 
 The substring-match scan penalty tells a word search from a substring scan by the type

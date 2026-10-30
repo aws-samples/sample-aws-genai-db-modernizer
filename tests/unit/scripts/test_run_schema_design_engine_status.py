@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``--status`` for a single-pass engine reports the last ``--finalize`` verdict (#332).
 
 Schema-design subagents reported their phases complete without writing

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reading a synthesis ranking: routed confidence and the main engine (#152)."""
 
 from __future__ import annotations

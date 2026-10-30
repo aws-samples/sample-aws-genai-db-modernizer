@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The --json runner output on stdout must be valid, parseable JSON only.
 
 Regression guard: the assignment agent prints '[assignment] ...' lines; those

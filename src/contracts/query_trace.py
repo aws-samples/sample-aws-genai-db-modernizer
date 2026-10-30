@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Query Decision Trace Contract (#339)
 
 Why a query ended on engine X and not Y, from the move ledger (#616): the

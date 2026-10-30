@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Check a commit message against this repo's house rules.
 
 Enforces the rules documented in CONTRIBUTING.md's Commit Message Format and

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each query is scored as written and after redesign (#1231, maintainer decision 2026-10-20).
 
 ADR-031 Decision 2 Amendment 13: routing scores a query's pattern dimension on the class

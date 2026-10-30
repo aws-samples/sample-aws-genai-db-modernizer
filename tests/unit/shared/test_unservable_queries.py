@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Queries on a fallback engine (#729).
 
 A query whose engine was decided by a fallback rule (``fallback.no_score``,

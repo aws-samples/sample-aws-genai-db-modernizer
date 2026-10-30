@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #957 (ADR-032): the results page's migration roadmap reads report.json's
 // waves (synthesis.migration_waves, which the /results API fills in for a
 // report written before the field existed) and each wave's figures from

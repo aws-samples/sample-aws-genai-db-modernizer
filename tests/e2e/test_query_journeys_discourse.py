@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#998: the query-journey pages stay within the graph engine's memory on discourse.
 
 The results page reads every journey page at once (page 1, then pages 2..N in

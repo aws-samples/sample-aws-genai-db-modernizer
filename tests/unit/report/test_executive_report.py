@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive report: a landscape briefing built from report.json's facts (#1020).
 
 Covers what does not need the pipeline: byte-identical renders, the page set and

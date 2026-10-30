@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The write-intent catalog loads strictly and is rendered into the rule-catalog page (#1362).
 
 ``src/catalog/write_intents/<id>.toml`` words each intent and every write-owning engine's

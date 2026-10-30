@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every engine the reality check removed is accounted for (#547, #987).
 
 The retired decision report listed them under "Engines not used". The

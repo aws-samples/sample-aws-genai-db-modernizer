@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cache overlay and generic routing fixes (#296).
 
 ElastiCache never owns a query. A hot, bounded read keeps its system-of-record

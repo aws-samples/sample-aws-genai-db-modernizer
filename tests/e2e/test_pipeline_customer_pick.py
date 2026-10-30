@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The pipeline finishes after a customer pick on every sample (#859).
 
 A customer edit at the assignment gate is a normal flow: the customer pins

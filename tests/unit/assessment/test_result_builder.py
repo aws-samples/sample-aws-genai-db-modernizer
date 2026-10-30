@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Edge cases of the result builder that the samples do not reach (#1182)."""
 
 from __future__ import annotations

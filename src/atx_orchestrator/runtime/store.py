@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Transform-side storage extensions.
 
 core-modernizer's ``ArtifactStore`` contract is used unchanged. The Transform

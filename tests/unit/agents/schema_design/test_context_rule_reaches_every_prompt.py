@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every model that designs or reviews a context group gets the context-table rule (#1243).
 
 A Bedrock smoke run on trailgear (PR #1385) showed why. Group 0 read ``Shipment`` as

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A design call's analysis input names only its own tables and queries (#162).
 
 ``filter_analysis_for_assignment`` narrows the engine's ``analysis.json`` to the tables and

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The DynamoDB designer is given each key-scoped write's key requirement (#1061).
 
 #1038 records, for a write that changes the rows one value of a key anchor addresses,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Table ids follow the collected database, never the run's name for it (#1572).
 
 A run is named by ``--db``, by the collection file name (``/modernize``) or by

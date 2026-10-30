@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The built help site (#325): home page, search, the sample report, and nav links.
 
 Run via `ci/e2e.sh`, which builds the site first (`mkdocs build --strict`, then

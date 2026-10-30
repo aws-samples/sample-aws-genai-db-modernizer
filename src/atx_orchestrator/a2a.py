@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A2A (agent-to-agent) wiring for the AWS Transform PoC.
 
 Provides ``invoke_and_wait`` — the discover-or-spawn, send, and poll primitive

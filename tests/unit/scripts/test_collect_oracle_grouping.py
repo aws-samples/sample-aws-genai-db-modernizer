@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``scripts/collect-oracle.sql`` emits one query row per statement shape (#412)."""
 
 from __future__ import annotations

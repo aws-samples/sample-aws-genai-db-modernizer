@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Render a Debezium connector stack for Amazon MSK Connect (#1414, ADR-033).
 
 Reads a connector input (the ``job_id``, ``wave``, ``source``, ``cdc`` and ``hub``

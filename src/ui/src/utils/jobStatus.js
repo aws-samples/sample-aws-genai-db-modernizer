@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // Maps a backend job/stage status string to a Cloudscape <StatusIndicator>
 // `type` and a translated label. The API returns upper-case job-level
 // statuses (RUNNING, SUCCEEDED, FAILED, CANCELLED, WAITING, PENDING,

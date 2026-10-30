@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for Redis analysis tools (src/tools/analysis/redis_analysis_tools.py).
 
 Verifies pattern detection and frequency_percent calculation (issue #453).

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard: every router module under src/api/routes is registered on the app.
 
 Catches the failure where a route module defines a `router` but was never

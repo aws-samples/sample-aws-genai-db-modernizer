@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A comment after a statement's closing ``;`` never changes how it parses (#1335).
 
 Every sample query is read twice, plain and with ``/*a='b'*/`` appended after its

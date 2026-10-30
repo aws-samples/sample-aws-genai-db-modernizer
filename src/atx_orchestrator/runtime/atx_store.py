@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # src/atx_orchestrator/runtime/atx_store.py
 """ATX-artifact-store-backed ArtifactStore (JSON-only).
 

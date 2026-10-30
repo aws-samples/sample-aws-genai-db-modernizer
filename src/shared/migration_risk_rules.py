@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The migration-risk rule table and the rules raised from report.json alone (#950, #1148).
 
 ``src.agents.referee.migration_risks`` raises the rules that read synthesis's

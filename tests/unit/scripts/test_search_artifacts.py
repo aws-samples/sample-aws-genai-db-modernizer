@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """scripts/search_artifacts.py: the allowlisted, repo-contained grep substitute (#275).
 
 Headless Claude Code sessions may have no Grep tool and CI denies Bash `grep`,

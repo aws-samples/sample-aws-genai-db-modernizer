@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/e2e-llm.sh checks the run's deliverables, not the help site (#353)."""
 
 from pathlib import Path

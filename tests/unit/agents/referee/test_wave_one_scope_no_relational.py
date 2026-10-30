@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Wave 1 when the customer's engine scope has no relational engine (#1369).
 
 A scope that leaves out every Aurora engine (or whose Aurora choice serves no query)

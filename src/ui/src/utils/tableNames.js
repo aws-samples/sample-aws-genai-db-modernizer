@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #1536: a statement that names no table (SET, SHOW, BEGIN/COMMIT, a procedure call)
 // is stored with the collector's placeholder `tables_accessed: ["unknown"]`. The stored
 // value stays as it is, so saved jobs still load; what a reader sees says the statement

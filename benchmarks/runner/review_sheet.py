@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Blind review sheets for a final-assignment answer key (#1074, step 2).
 
 A reviewer writes the key for a whole sample from one Markdown sheet per

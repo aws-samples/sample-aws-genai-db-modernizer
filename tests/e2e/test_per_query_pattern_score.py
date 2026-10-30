@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query access-pattern score on the bundled samples (#728, ADR-031 Decision 14 Amendment 5).
 
 - Every query of every sample gets exactly one access-pattern label.

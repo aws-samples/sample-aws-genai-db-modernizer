@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A designer's unsupported entry that names a waived gap does not move a query (#1650).
 
 On the saved Bedrock runs the wordpress comment ``COUNT`` (and a discourse visit count)

@@ -85,6 +85,7 @@ Pre-commit hooks run automatically on every commit to ensure code quality:
 - **Bandit** - security scanning
 - **markdownlint** - lint Markdown files
 - **Conventional Commits** - validate commit message format
+- **License headers** - every new source file carries the SPDX license header (see [Licensing](#licensing))
 - General checks: YAML/JSON syntax, large files, private keys, merge conflicts
 
 If hooks don't run after cloning, install manually:
@@ -469,6 +470,15 @@ If you discover a potential security issue in this project we ask that you notif
 See the [LICENSE](LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
 
 By contributing, you agree that your contributions will be licensed under the MIT-0 License.
+
+Every source file we wrote (`.py`, `.sh`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.sql`) starts with this two-line header, in the file's comment syntax, after any byte order mark, shebang line, Python encoding line or leading JS pragma docblock (`/** @jest-environment node */`, `@flow`, `@jsx`, which their tools read only at the very top) and before a JS `'use strict'` directive, with one blank line before the code:
+
+```text
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+```
+
+You don't have to type it: `uv run python scripts/license_headers.py --fix` adds it to every file without it, and running it again changes nothing. The `license-headers` pre-commit hook and `./ci/lint.sh` run `--check`, which lists the files that lack it and fails. Only `SPDX-License-Identifier: MIT-0` in the file's leading comment block counts: the text inside a docstring or string does not, and a file under another identifier fails the check. `contrib/` keeps its own provenance and is skipped (`[tool.license-headers]` in `pyproject.toml`), as are vendored code and build outputs. A generated source file gets the header from its generator (for example `scripts/render_catalog.py` for `engineCatalog.generated.js`), never from a hand edit.
 
 ---
 

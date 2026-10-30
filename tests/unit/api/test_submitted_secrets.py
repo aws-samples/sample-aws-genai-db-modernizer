@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-004 Decision 5: the Assessments API never stores or forwards a submitted secret (#723).
 
 Database credentials live in a secrets manager and the request names them by reference

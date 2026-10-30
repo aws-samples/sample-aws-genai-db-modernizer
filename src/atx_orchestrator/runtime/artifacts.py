@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Publish phase outputs to the AWS Transform Artifacts panel.
 
 The pipeline's system of record is S3, written through ``ArtifactStore``

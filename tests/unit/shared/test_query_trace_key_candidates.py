@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The decision trace carries the keys the redesign considered (#1361).
 
 ``build_query_trace`` takes a query's ``candidate_keys`` rows from the assignment's

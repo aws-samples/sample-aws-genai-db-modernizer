@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One place for which model each LLM call uses, and how to ask it (#624).
 
 Every model call in ``src/`` names a :class:`Role`, never a literal model ID.

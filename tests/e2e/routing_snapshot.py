@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-query routing snapshot harness (#497).
 
 This is not an identity gate: a routing refactor is expected to change which

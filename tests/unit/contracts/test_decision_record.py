@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The ``decisions/`` records are a versioned contract (ADR-008 Decision 1, #1257).
 
 ``decisions/assignment_review.json`` and ``decisions/assignment_approval.json`` are the

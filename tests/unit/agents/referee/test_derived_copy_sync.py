@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The stream sync of DynamoDB derived copies is listed and priced (#1527).
 
 #333 gave a source table one authoritative DynamoDB home and turned its other homes

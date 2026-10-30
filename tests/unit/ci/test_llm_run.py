@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for ci/llm/run.py's transcript checking and results merging.
 
 Most tests use the small synthetic stream-json fixtures in

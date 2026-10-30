@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A schema-design input saved before #293 still loads and drafts as it did.
 
 ``AgentIndex.index_type`` arrived with #293. An input written earlier has no such key on

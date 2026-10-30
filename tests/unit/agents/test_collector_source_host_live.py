@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Live and DDL collection fill ``metrics.source_host``'s host figures (#1224).
 
 No real database runs here: every database call is a mocked cursor (an SSM

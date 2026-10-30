@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Four more query-text detectors run in linear time and answer what their old regex did (#1009).
 
 Each was one regex whose lazy or greedy gap is retried from every occurrence of

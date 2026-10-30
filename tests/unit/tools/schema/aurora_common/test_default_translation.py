@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Column DEFAULT translation for the Aurora draft (#156, item 4).
 
 Source defaults are collector text. Only literals and a small per-target grammar

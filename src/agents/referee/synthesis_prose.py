@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model-written schema-design prose, cleaned before synthesis uses it (#1034).
 
 A schema design's ``trade_offs``, ``unsupported_patterns``, ``migration_notes``,

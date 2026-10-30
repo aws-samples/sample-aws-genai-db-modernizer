@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the collector digest normalization step (#556).
 
 Query text taken from the sample fixtures is inlined verbatim rather than

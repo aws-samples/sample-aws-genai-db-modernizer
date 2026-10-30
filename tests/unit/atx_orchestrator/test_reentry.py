@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Staleness-driven re-entry tools (ADR-029 Layer A): reopen + redispatch."""
 
 from __future__ import annotations

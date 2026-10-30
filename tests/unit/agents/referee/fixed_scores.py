@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Test helper: give a query a fixed score on an engine through the per-query scorer (#728).
 
 Since the access-pattern switch (ADR-031 Decision 14 Amendment 5) a classified query's

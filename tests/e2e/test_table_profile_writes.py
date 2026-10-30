@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1348: a table's profile counts the writes its write group counts, on every sample.
 
 ADR-031 Amendment 9: a table's writes are its targets, decided once, by

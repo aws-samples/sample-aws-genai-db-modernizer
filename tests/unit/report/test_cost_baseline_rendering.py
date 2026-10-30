@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PDF report and engineering report must show a known TCO baseline, and
 never a bare $0.00 / 0% (#380 review). An unknown baseline's current-cost and
 savings lines are left out (#949, the #1028 direction the results page already

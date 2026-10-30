@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary must agree with the deterministic wave order (#393).
 
 ``migration_waves`` is the one deterministic rule for the incremental roadmap's

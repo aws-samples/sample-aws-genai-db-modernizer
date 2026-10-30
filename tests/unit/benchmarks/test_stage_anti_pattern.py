@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The anti_pattern benchmark stage (#1084): a key's anti-pattern verdict against the pipeline's.
 
 Runs the real deterministic pipeline on the bundled wordpress sample (no model,

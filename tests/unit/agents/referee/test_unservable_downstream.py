@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every consumer of a query no engine in the customer's engine scope can serve (#1329).
 
 The customer gate refuses to edit one (a job's scope is fixed: a new assessment widens it)

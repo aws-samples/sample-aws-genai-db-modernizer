@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#787: a co-dependency group no engine can serve says so, and names the gates.
 
 When every analyzed engine is gated for at least one member of a co-dependency

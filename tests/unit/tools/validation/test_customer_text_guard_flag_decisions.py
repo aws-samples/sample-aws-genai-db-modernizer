@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The customer-text guard on ``reality-check/output.json``'s ``flag_decisions`` (#647).
 
 A real-model validation run produced a moved flag and the guard reported the

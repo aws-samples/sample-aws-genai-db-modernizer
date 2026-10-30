@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared helpers for the Claude Code hook scripts in this directory (#731).
 
 Stdlib only and no repo imports: hooks run on every tool call, under

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """build_risk_assessment must read whichever unsupported-pattern fields the
 engine's schema-design contract actually carries (#210).
 

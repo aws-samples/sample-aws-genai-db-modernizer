@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The initial-load-to-CDC handoff on fakes (#1427).
 
 No database, broker or AWS call is made. The source is an in-memory fake with a

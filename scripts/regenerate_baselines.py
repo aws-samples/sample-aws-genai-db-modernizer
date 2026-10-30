@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regenerate every generated baseline with one command, and say which is stale (#1163).
 
 The baselines are generated files that a rebase or a deliberate change leaves stale.

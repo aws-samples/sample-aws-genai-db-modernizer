@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 9 guard: Neptune and Keyspaces stay placeholders (#640).
 
 A placeholder engine is never a routing candidate and routing output is unchanged by its

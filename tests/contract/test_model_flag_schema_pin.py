@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The ModelFlag schema pin (#746).
 
 ``ModelFlag`` is what a model may say about a routing decision, in both LLM

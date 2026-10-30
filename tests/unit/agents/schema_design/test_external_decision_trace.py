@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """External (Claude Code) DocumentDB and OpenSearch designs carry their decision trace (#1068).
 
 The Bedrock path scoped the trace per call in #1066. The external path writes

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Which engines the source runs today, and the only savings a plan may claim (#949).
 
 A saving, or a "retired engine" line, may name only an engine the customer runs

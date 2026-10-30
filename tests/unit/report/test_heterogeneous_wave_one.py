@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1120: a heterogeneous source's wave 1 moves every source table, and says how far
 the plan has looked at that move.
 

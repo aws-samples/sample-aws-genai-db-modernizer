@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The DocumentDB decision trace is a versioned contract (ADR-008 Decision 1, #1188).
 
 ``analysis-documentdb/decision-trace.json`` was a plain dict: no ``contract_version``,

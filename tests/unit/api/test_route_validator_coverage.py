@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Structural guard: walks ``app.routes`` and asserts that every route
 whose path has a ``{job_id}`` segment depends on ``job_id_param``
 (directly or through a nested dependency such as ``get_graph_for_job``),

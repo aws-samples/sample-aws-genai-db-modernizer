@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary must agree with the effective table assignment (#205).
 
 (a) the synthesis LLM input carries the effective per-engine table list,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess(run_through="analysis")`` gives the same result in every process (#1259).
 
 The public contract promises that, with no model, the same collection, library version

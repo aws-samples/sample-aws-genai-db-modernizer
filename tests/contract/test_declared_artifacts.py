@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every JSON file a run writes is a contract or a declared internal file (#1192).
 
 ADR-008 Decision 1 (amendment of 2026-10-20): a JSON artifact under a job is one of

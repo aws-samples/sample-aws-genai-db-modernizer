@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression fixture for the #572/#587 real-model reviews.
 
 Round 2: a real-model run (schema design present, which the deterministic

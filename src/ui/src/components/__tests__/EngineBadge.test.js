@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1246: EngineBadge fills a Cloudscape Badge with the engine's catalog colour and names
  * the engine by its catalog display name. Cloudscape ships ESM this repo's Jest config

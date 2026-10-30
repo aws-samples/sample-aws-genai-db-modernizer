@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``scripts/release_notes.py``: the routing diff and changelog lines a release carries (#1184).
 
 The generator is tested on two small synthetic routing snapshots (the shape

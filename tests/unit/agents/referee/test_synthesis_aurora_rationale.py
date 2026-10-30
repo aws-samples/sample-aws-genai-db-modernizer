@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora's "Why" cell leads with the reason its queries stay relational, not with
 the routed workload signal (#393).
 

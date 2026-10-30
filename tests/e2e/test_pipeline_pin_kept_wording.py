@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The deliverables describe a consolidation the reality check kept partial (#861).
 
 A consolidation whose source engine stays in the reality check's own result

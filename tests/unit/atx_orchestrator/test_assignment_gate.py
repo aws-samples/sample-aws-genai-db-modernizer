@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ATX assignment-review gate (ADR-028 + HITL editable-table amendment).
 
 The gate is a hard interrupt: schema design must refuse until the customer has

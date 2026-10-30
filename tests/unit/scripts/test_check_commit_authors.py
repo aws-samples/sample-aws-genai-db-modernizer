@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for scripts/check_commit_authors.py (#1408).
 
 No test runs git or gh: ``check_range`` takes a ``run`` seam for ``git log`` and

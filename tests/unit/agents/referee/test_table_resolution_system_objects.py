@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``is_engine_system_object`` (#380 review): a database-engine-internal
 object (a system catalog schema, a stats-extension table/view) is never
 counted as part of "the whole database" wave 1 carries over -- but a real

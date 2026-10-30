@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1071: the assessment request carries ``engines_in_use`` to the collect step.
 
 The UI's offline form lets a user declare the other AWS databases the application runs

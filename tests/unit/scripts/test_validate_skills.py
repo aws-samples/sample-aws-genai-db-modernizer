@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """validate_skills checks every shipped command's script and prompt references."""
 
 from __future__ import annotations

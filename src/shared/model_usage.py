@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Token usage of every model call in a run, by phase and model id (#1494).
 
 Bedrock returns the usage of each call (input, output, cache read and cache write

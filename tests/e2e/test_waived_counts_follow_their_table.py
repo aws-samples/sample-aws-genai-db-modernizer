@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1151: a key-scoped COUNT on an engine only its waiver lets serve sits on its
 table's source of truth, in every assignment version the pipeline writes.
 

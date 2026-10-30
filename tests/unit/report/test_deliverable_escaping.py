@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Output-escaping tests for the customer-facing deliverables (threat model R3).
 
 R3 (``docs/security/atx-threat-model.md``): the Markdown deliverable interpolates customer- and LLM-derived strings — table and column names, raw SQL

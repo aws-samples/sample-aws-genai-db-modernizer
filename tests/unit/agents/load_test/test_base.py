@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Verify abstract base classes cannot be instantiated and define correct interface."""
 
 import pytest

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB schema design works per access pattern, not per statement (#1602).
 
 ``--split`` builds DynamoDB's design parts from query patterns (#1146): a part holds at

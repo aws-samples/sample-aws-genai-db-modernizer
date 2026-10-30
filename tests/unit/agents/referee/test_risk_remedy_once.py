@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1510: each risk's remedy and each wave gate are stated once, by their owner.
 
 The Risk register owns a risk's mitigation: a mitigation strategy names the risk by

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What only the retired decision report said now lives in the engineering report
 and, for the engine table, the executive report (#987, #1020).
 

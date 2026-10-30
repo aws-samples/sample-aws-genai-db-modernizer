@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the shared deterministic draft builder — Aurora MySQL (ADR-028).
 
 build_mysql_draft shares assembly with build_pg_draft so the script-first

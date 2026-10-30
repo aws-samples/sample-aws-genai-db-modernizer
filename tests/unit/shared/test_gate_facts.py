@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The approval-gate figures are computed once, in the facts layer (#1307, ADR-032)."""
 
 from __future__ import annotations

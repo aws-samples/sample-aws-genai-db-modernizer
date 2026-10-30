@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #519 / #526 round 1 review: the Dashboard's action-dropdown must never
  * offer "Cancel analysis" for a job that's already finished -- there is

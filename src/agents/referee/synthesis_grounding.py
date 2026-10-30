@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Ground synthesis output in the effective (post-reality-check) architecture.
 
 The reality check can eliminate an engine triage selected and fold its workload into

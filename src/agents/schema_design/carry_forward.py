@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Redesign only what a post-schema move changed (#1650, ADR-031 Amendment 18).
 
 A post-schema reroute writes assignment version N+1 from version N with a few

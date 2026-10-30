@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared helpers for the executive report PDF tests (#1020): its text, the table
 names it must never show, and where every run of text is drawn."""
 

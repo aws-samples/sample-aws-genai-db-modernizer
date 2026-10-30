@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#478: Aurora's queries live in ``query_groups`` like any other
 engine's (``build_query_groups``'s relational branch), while that engine's
 schema design has not run yet and so has no ``access_patterns`` of its own

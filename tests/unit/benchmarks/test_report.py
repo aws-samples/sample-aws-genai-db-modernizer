@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 from benchmarks.runner.models import Outcome, QueryVerdict, ScoreResult
 from benchmarks.runner.report import CaseRun, build_report
 

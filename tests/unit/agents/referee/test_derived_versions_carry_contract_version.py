@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every assignment version written from an earlier one carries today's
 ``contract_version`` (#972, ADR-008 Decision 1).
 

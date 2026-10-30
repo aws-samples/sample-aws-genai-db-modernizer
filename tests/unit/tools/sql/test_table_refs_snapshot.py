@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade's per-query table references match the committed snapshot (#557).
 
 A sqlglot bump or a facade change that alters any query's answer fails here;

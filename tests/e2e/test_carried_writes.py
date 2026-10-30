@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The 14 maintenance writes #1359 found carried onto DynamoDB, on the bundled samples (#1362).
 
 Their write groups keep them on DynamoDB (ADR-031 Decision 1 Amendment 9; the maintainer

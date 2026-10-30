@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Access-pattern facts from the sqlglot facade (#728).
 
 :func:`access_facts` reports, per SELECT (or UPDATE/DELETE) scope, the tables it

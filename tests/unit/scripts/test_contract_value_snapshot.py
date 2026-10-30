@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for ``scripts/contract_value_snapshot.py`` (#975): the bump
 rule for published enum, literal and id values, on synthetic snapshots."""
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Fail if pre-commit linter versions drift from the ones CI installs.
 
 Pre-commit pins each linter to a frozen git tag (`rev:` in

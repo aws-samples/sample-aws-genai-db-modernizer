@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The price table and the script that refreshes it from the AWS Price List (#1196).
 
 ``tests/fixtures/price_list/`` holds the us-east-1 offer files the committed table was

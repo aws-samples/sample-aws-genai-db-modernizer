@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Access-pattern counts as report facts (#792, ADR-032).
 
 The explorer's totals are deliverable facts: synthesis

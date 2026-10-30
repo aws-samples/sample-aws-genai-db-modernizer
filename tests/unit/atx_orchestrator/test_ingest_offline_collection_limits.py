@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``ingest_offline_collection`` enforces the table/query ingestion ceiling
 for contract-format input (#142).
 

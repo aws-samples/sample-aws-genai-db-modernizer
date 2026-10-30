@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A DynamoDB-alternative anti-pattern risk (aurora-anti-05 "no-relational-need",
 aurora-anti-06 "single-access-pattern-table") must not read as a flat
 contradiction of the routing when the SAME table also carries another

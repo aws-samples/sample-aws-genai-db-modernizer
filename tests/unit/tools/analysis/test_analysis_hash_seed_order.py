@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression tests: ElastiCache and OpenSearch analysis output must not depend
 on Python's per-process string hash seed (PYTHONHASHSEED) (issue #449).
 

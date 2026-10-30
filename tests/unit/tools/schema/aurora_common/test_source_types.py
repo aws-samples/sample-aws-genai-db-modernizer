@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Source data_type -> Aurora type for PostgreSQL and MySQL sources (issue #274)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1373: the query journey's "Workload Fit" is the assignment's `confidence` as
  * the API serves it, the query's score on the engine it is on. A query the

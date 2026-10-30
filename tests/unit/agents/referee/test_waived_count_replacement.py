@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1151: a key-scoped COUNT the waiver put on DynamoDB moves back when a later pass
 moves its table's writes off DynamoDB (ADR-031 Decision 2 Amendment 12).
 

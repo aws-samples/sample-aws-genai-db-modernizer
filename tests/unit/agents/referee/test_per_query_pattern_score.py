@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query access-pattern score is the routing path (ADR-031 Decision 14, Amendment 5, #728).
 
 A query's pattern dimension on an engine is its own access-pattern class's score there

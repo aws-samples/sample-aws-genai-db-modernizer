@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every writer of an assignment version refuses one outside the engine scope (#1327).
 
 ADR-031 Decision 2 Amendment 14: each writer runs ``engine_scope.check_in_scope``

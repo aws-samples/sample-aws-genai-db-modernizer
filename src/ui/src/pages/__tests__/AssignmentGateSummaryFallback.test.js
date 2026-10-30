@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #269: the Assignment review page's hero fallback notice renders exactly
  * when `summaryFallbackInfo(...)` reports `isFallback` -- never for a normal

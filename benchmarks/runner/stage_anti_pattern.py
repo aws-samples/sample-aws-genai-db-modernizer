@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Anti-pattern stage: score the pipeline's anti-pattern verdict against a key (#1084).
 
 A case names one catalog anti-pattern (``src/catalog/patterns/<id>.toml``) and a

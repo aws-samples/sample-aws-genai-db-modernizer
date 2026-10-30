@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #987: the results page's "Aurora Design" section names each optimization by
  * its readable category ("Read replica: Aurora cluster"), never the raw code

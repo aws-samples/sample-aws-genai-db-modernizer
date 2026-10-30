@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves: resolve them from the report and render the roadmap section."""
 
 from __future__ import annotations

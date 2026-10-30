@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """contrib/ is a quarantined snapshot (#1412): the product never imports it, and the tools skip it.
 
 contrib/cdc-elasticache-prototype/ is a third-party prototype kept for porting, not
@@ -260,6 +263,7 @@ def test_tool_configs_skip_contrib() -> None:
     assert "contrib/*" in tool["isort"]["extend_skip_glob"]
     assert any(re.search(p, f"{QUARANTINE}/x.py") for p in tool["mypy"]["exclude"])
     assert "contrib" in tool["bandit"]["exclude_dirs"]
+    assert "contrib/" in tool["license-headers"]["exclude"]
     assert "--ignore=contrib" in tool["pytest"]["ini_options"]["addopts"].split()
     assert "/contrib" in tool["hatch"]["build"]["targets"]["sdist"]["exclude"]
     assert tool["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src"]

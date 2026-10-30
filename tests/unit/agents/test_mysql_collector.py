@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for shared mysql_collector helper functions.
 
 These helpers (`_build_tables`, `_build_triggers`) are used by MySQL LIVE

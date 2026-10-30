@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis schema summaries read a null design field as no design (#757).
 
 ``dict.get(key, [])`` returns ``None`` when the key is present with a null value,

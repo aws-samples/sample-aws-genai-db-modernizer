@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Design texts as a risk's ``details`` list them (#950, #1410).
 
 Synthesis (``src.agents.referee.migration_risks``) writes each design trade-off's

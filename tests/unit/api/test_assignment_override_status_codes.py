@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PUT /assignments route must map every ``AssignmentOverrideError``
 subclass to HTTP 400, not just the ones caught by name (#548 round 2 review
 item 3). Before this, ``LosingAuroraEngineOverride`` (#381) fell through to

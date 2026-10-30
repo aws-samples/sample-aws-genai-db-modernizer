@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Flagged queries no kept engine can take (#888), for ``report.json``.
 
 Three kinds of unservable query never reach the move ledger, so the decision

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A long sentence two design trade-offs share is stated once (#1574).
 
 A scoped discourse run's DynamoDB design ran as 45 independent parts; two of them
@@ -10,6 +13,9 @@ it collects, so every deliverable reads the same deduplicated list.
 from __future__ import annotations
 
 import copy
+from typing import Any
+
+import pytest
 
 from src.shared.design_text import ALREADY_STATED, said_once_trade_offs
 
@@ -63,10 +69,11 @@ def test_a_legacy_trade_off_keeps_its_two_fields_equal() -> None:
     assert out[1]["description"] == "B." and out[1]["impact"] == "B."
 
 
+@pytest.mark.passes_on_main  # #1722 typed its dict only
 def test_a_stored_report_reads_the_same_list_and_its_risk_details_follow() -> None:
     from src.shared.design_text import design_prose_report
 
-    report = {
+    report: dict[str, Any] = {
         "trade_offs": [
             _t(f"A. {GSI}"),
             {"description": "Kept the cache.", "impact": "x", "engine": "reality-check"},

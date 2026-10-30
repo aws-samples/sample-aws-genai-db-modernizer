@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#766: an engine the capability gate excludes for a query is not a candidate
 for it (ADR-031 Decision 2 step 2), so it never joins an exact tie.
 

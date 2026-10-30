@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #822: the results page's query routing table lists every query of the
  * assessment (the query-journeys list), so a query's decision trace opens

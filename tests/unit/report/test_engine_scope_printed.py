@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The gate block, the final summary and ``index.md`` state the engine scope (#1574, item 4).
 
 A scoped job's deliverables named the scope, but the chat blocks ``/modernize`` quotes and

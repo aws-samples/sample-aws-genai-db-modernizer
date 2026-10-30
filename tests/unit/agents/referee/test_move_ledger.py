@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The move ledger (#616): one function records every first-assignment engine choice.
 
 ``move_ledger.apply`` records a Move and sets the engine; the resolver's

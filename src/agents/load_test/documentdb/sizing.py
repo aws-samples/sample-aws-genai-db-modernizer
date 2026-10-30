@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB cluster sizing for load tests.
 
 Implements the hybrid derived+mapped sizing strategy from ADR-022. The module

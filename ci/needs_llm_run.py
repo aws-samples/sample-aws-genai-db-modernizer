@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Decide which real-model runs a diff needs.
 
 Usage: ``ci/needs_llm_run.sh [BASE]`` (BASE defaults to origin/main), or

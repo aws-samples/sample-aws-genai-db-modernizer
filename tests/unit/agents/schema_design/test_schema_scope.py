@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema design scope validation (issue #203).
 
 A schema design may only reference the source tables and query IDs assigned

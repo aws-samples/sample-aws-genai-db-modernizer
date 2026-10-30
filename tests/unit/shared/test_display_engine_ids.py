@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Raw engine ids in model-written design prose read as engine names (#1574).
 
 A scoped run's DynamoDB designer wrote "Full-text matching stays on aurora_postgresql,
@@ -8,6 +11,8 @@ design prose seam, and the read-time step does the same for an older report.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -69,8 +74,9 @@ def test_the_design_prose_seam_names_the_engines() -> None:
     assert out["migration_notes"][0]["application_logic_required"] == SEEN[1][1]
 
 
+@pytest.mark.passes_on_main  # #1722 typed its dict only
 def test_an_older_report_reads_the_names_in_its_trade_offs_and_design_summaries() -> None:
-    report = {
+    report: dict[str, Any] = {
         "trade_offs": [
             {"description": "D.", "impact": SEEN[0][0], "engine": "dynamodb"},
             {"description": "Kept on aurora_postgresql.", "impact": "x", "engine": "reality-check"},

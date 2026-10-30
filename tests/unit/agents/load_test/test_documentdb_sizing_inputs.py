@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB sizing reads every input from where the collector writes it (#1540).
 
 The fixture is a real collector output: the trailgear sample collection run through

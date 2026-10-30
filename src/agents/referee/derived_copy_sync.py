@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The stream sync of DynamoDB derived copies, listed and priced (#1527, ADR-032).
 
 When the DynamoDB group merge cannot give a source table one home, it names an

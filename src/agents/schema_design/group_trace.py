@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Scope an analysis decision trace to the queries one design call designs (#1060).
 
 The analysis runs on the whole collection, so its decision trace covers every

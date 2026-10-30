@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``overall_risk_level`` is the highest severity among the open risks (#248).
 
 The old rule was a HIGH-count threshold: three HIGH risks for HIGH, one or two for

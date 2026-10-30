@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The collect phase's status line reports the table-reference parser (#553).
 
 The facade's regex fallbacks and the regex cross-check are counted on the one

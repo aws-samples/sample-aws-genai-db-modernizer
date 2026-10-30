@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Prompt-injection framing tests (issue #138 / threat model R1).
 
 Customer-supplied SQL and schema text (table/column names, raw ``query_text``)

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The app's real route table (src/AppRoutes.js) mounted in a MemoryRouter.
  * Pages are stubbed so the test exercises routing only: which page renders,

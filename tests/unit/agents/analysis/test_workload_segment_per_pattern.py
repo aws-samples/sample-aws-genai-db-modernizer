@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-017 Decision 5: a workload segment is all queries matching one catalog pattern (#703).
 
 One detected pattern is one segment. A segment is a catalog pattern (its id and type come from

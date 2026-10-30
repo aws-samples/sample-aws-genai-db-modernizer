@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#877: a co-dependency group no engine can serve keeps its group entry.
 
 A group that takes the Aurora fallback because no analyzed engine can serve

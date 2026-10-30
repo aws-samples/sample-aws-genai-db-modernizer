@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#367-3: ``engine_table_scope``'s table/engine membership must survive the
 same qualifier mismatch #116 fixed in schema design.
 

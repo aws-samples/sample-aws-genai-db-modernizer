@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A design group never cuts an access pattern that fits in one (#1146).
 
 The queries of one access pattern are designed together: they share the cluster of

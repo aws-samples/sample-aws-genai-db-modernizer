@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/test.sh's coverage tracer and the test-shard matrix (#1718)."""
 
 import os

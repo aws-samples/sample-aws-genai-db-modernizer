@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Contract test for the feasibility-review finding model (ADR-029 Layer C)."""
 
 from __future__ import annotations

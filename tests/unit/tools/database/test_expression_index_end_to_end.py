@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An expression index survives the whole way from a raw row to the draft (#295).
 
 The per-step tests in ``test_postgres_expression_indexes.py`` stop at

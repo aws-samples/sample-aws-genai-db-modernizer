@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An index column's key prefix length, as MySQL records it (#1623)."""
 
 from __future__ import annotations

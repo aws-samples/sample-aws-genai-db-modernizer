@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """build_docs_sample.py copies deliverables into the built help site (#364).
 
 By default it renders the recorded model run committed under

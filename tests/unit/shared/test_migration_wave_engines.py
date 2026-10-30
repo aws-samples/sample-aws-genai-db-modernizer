@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``cache_front_description`` is the one place every deliverable's
 cache-fronting sentence is built (review of #375): wave 2 fronts the
 retained relational engine, and once wave 3 moves those reads it fronts

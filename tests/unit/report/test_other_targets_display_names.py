@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PDF report names other targets by display name, even from a stored summary (#544).
 
 ``build_summary`` writes "Other targets evaluated: ..." with ``display_name``, but a

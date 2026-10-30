@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A leading-wildcard LIKE is an unindexed substring match (#493, option C).
 
 Maintainer decision (2026-10-16): penalise a literal leading-wildcard LIKE as a scan only

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model-facing steps read the collector output only through one choke point (#1180).
 
 ``read_collector_for_models`` removes the caller's query tags. Every module that

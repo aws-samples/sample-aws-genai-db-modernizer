@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The shape of a write's transaction, one engine-neutral fact (ADR-031 Decision 3, #493).
 
 DynamoDB supports ACID transactions: ``TransactWriteItems``/``TransactGetItems``

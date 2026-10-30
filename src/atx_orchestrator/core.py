@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared pipeline logic for the AWS Transform integration.
 
 This module holds the storage-agnostic functions that BOTH the orchestrator

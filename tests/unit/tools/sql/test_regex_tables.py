@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The regex extractor reads leading comments with the shared comment rule (#814).
 
 ``is_merge_statement`` used its own comment regex; it now uses

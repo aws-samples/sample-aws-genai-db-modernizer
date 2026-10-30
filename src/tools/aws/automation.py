@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """
 Automation machine provisioning — discovers RDS cluster metadata,
 provisions per-VPC automation machines, and manages SG ingress rules.

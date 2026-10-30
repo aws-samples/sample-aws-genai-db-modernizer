@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The external Reality Check request is compact, bounded and complete (#285).
 
 The request used to embed the full collector and analysis outputs: about 7.5 MB

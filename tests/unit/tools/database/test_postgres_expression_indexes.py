@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PostgreSQL expression-index keys survive collection (#295).
 
 ``pg_index.indkey`` holds 0 for an expression key, and 0 is never an

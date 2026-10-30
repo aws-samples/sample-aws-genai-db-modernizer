@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #723 (ADR-004 Decision 5): the Create Analysis page offers only secret
  * references (an AWS Secrets Manager ARN or name), tells the user to keep the

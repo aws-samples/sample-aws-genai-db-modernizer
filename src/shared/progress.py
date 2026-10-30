@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The pipeline phases' progress lines: printed for the command line, logged for a library call.
 
 The phases report their progress with :func:`say`, which takes ``print``'s arguments.

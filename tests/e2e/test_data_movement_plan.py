@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Data movement plans for the sample jobs (#1413).
 
 ``scripts/run_data_movement_plan.py`` runs on a copy of each finished job (wordpress,

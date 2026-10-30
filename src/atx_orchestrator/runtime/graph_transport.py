@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Publish and retrieve the LadybugDB ``.lbug`` graph across ATX phase processes.
 
 The graph is the per-query read-model (replacing the ~1,654 per-query journey

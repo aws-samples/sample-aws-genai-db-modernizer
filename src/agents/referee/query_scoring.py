@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The resolver's per-query, per-engine score (ADR-031 Decision 2 steps 2-5),
 shared so every caller that needs to know how well an engine fits one query
 uses the exact same arithmetic.

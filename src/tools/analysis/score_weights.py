@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The score-dimension weights an engine's analysis used for one table (#728).
 
 ``analysis.json`` records each table's four dimension scores and its confidence, but

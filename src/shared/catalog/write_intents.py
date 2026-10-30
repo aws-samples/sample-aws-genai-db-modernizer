@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The write-intent catalog (#1362): how each target engine serves what a set-based write is for.
 
 A write group moves as one unit (ADR-031 Decision 1 Amendment 9), so it can carry a member

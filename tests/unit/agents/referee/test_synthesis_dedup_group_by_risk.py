@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Dedup-only GROUP BY is not a blocking aggregation risk (#336).
 
 DynamoDB schema design's own ``unsupported_patterns`` sometimes flags a

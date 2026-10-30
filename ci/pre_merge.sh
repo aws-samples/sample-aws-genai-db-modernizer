@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Cheap pre-merge failsafe: run before pushing or asking for a merge.
 #
 #   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]

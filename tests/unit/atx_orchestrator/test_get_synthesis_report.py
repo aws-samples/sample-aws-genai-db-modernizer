@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """get_synthesis_report reads the VERSIONED synthesis artifact (ADR-029 Layer A).
 
 The synthesis writer produces synthesis/v{N}/report.json (keyed on the effective

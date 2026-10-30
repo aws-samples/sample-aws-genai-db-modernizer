@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A write counts against the tables it writes, never one it only reads (#1287).
 
 ADR-031 Amendment 9: a table's writes are its targets. ``build_table_profiles`` used to

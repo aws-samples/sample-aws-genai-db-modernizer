@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-004 Decision 5: IAM roles, no passwords in code, input or environment (#702).
 
 Database credentials live in Secrets Manager and are fetched through the IAM role; the

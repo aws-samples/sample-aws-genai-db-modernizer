@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each source table has one owning design group (#1243).
 
 The split used to give every chunk of a large cluster the whole cluster's

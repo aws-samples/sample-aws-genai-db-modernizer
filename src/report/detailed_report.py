@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The detailed engineering report: the full routing detail, for auditing a result (#1364).
 
 The engineering report tells the build team's story; this one is the record behind it,

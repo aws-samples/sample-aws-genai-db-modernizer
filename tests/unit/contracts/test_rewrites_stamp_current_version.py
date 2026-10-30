@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A writer that rewrites a contract file as a raw dict writes the current version (#1018).
 
 #971 makes a model loaded through ``load_contract`` write back the current

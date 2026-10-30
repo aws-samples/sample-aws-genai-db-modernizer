@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bulk-load statements name their real table and count as writes (#777).
 
 PostgreSQL's ``COPY t FROM STDIN`` and MySQL's ``LOAD DATA ... INTO TABLE t``

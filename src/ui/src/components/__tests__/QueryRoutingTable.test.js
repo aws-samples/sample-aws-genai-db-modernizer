@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #822: the results page's query routing table, the schema-design-free way
  * into a query's journey and its "Why this engine" decision trace. Cloudscape

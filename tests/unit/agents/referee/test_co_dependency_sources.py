@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What forms a unit that moves as one, as ADR-031 Decision 4 states it (#1270).
 
 Decision 4 once said statements in one transaction move together. The code never

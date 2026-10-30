@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Collection-upload gate: declare_plan_and_request_upload / finalize_collection_upload.
 
 The gate replaces upload discovery-by-listing. The upload HITL is raised

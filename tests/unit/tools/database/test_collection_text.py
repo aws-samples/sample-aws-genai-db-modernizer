@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for ``extract_json_object`` (#396).
 
 One tolerant reader for collection JSON, used by every call site that reads

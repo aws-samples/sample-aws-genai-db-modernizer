@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """SQL-fragment helpers for Aurora PostgreSQL column/constraint generation.
 
 Each helper returns a leading-space-prefixed fragment (or empty string) so the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the orchestrator publish wiring (Increment 2).
 
 ``_publish_synthesis_deliverables`` (in ``tools``) is tested with a fake store

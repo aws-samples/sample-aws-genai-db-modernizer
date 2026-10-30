@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query decision trace (#339): MOVED edges from the move ledger, the trace, the API.
 
 The fixture is the wordpress sample's own move ledger (deterministic pipeline,

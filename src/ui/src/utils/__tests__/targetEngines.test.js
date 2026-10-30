@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #724: the target databases a form offers come from the engine catalog's status, so a
  * placeholder engine (ADR-031 Decision 9) can never be ticked and a new active engine

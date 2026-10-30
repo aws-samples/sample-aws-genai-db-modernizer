@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-query routing decisions (#339): the appendix of the engineering report
 (the executive report has none, #1020).
 

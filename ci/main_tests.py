@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Which of a branch's new and changed tests pass on main's code (#1155).
 
 AGENTS.md's self-review item 1: every new test fails on main. ``ci/pre_merge.sh``

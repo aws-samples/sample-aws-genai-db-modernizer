@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The test session refuses every request to a real Bedrock endpoint (tests/conftest.py).
 
 AGENTS.md: tests never call a real model. The guard sits at botocore's endpoint, so a

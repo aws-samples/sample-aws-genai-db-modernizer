@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Durable job-status side effects for a script-driven local job (#517).
 
 Two gaps in ``LocalExecutionService._infer_status``

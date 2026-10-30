@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_schema_design.py --engine dynamodb --check-costs <draft>`` (issue #198).
 
 External-mode group subagents have no Strands ``compute_performances_and_costs``

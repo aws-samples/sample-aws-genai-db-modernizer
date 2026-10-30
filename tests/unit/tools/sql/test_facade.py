@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The sqlglot facade for table references (#557).
 
 The facade is the one place that calls sqlglot. These tests pin what it reports

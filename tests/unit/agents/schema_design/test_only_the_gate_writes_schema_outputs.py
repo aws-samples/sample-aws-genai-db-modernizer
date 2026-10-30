@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard test: only ``write_schema_output`` writes a ``schema_output.json`` (#1186).
 
 ``src/agents/schema_design/output_contract.py`` checks a design against its

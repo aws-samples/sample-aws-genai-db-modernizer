@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard rails for /modernize --auto: a headless run must never wait on a human.
 
 This is a tripwire, not a simulation of a real run — the real proof is an

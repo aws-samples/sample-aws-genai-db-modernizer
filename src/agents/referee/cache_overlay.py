@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cache overlay: ElastiCache fronts hot reads, it never owns a query (#296).
 
 ElastiCache is a cache layer, not a system of record. Every query is owned by the

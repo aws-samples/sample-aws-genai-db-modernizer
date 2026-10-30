@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one sentence that says the cache design covers fewer reads than the gate's candidates.
 
 #1252, ADR-032: its numbers are ``facts.cache_layer``'s (every deliverable calls this with the

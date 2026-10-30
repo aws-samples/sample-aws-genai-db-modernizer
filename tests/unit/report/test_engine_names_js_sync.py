@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The UI's engine display names must match ``ENGINE_DISPLAY_NAMES`` (#225).
 
 Both come from the engine catalog (``src/catalog/engines/*.toml``, #492): Python loads

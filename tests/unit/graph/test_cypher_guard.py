@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the read-only statement filter applied to caller-supplied Cypher."""
 
 from __future__ import annotations

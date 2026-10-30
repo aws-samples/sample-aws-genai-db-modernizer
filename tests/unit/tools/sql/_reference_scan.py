@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The scanner ``normalize._scan`` was before it read its spans from ``sql_spans`` (#1451).
 
 Kept as the reference the equivalence tests compare the new scan with; it is not used by

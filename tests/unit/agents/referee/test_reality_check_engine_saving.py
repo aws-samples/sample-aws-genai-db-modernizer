@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One saving figure per removed engine, from its analysed cost (#793).
 
 The reality check used to store ``ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY``

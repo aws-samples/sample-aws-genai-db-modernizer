@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for graph populators — validates nodes/edges created from artifacts."""
 
 from src.graph.populators import (

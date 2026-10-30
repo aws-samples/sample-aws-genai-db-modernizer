@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the shared store-IO fan-out helpers (src.storage.parallel).
 
 These pin the contract every per-artifact-IO call site relies on:

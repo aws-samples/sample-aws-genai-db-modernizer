@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Graph query routes — curated read views, raw Cypher execution and rebuild trigger.
 
 Handlers are plain ``def`` so FastAPI runs the synchronous graph calls in its

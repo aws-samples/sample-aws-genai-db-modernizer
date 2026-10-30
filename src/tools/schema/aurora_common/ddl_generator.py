@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Generate Aurora PostgreSQL and MySQL DDL from the normalized collector schema.
 
 Pure, deterministic, and LLM-free. Every column the type map cannot resolve

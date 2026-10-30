@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The triage insight figures of the job summary page, computed on the server (#1319, ADR-032).
 
 The page used to take ``signals.length`` and each signal's ``query_ids.length`` in the browser.

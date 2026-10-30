@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """MySQL ``#`` comments and PostgreSQL dollar-quoted strings are blanked, per dialect (#1101)."""
 
 from __future__ import annotations

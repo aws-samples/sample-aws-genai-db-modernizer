@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration risks raised from the facts synthesis already computes (#950).
 
 The anti-pattern risks in ``synthesis_report.build_risk_assessment`` ask one

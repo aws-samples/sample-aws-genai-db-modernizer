@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """scripts/_sandbox.py: argument containment for headless CI runs.
 
 Under MODERNIZER_CI_SANDBOX=1 (exported by ci/e2e-llm.sh) the allowlisted

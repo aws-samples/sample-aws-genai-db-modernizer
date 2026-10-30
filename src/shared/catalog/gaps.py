@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The relational-move gap rules (#471): what a source uses that the target Aurora lacks.
 
 One ``src/catalog/gaps/<rule_id>.toml`` per rule says, in one place, which source engines

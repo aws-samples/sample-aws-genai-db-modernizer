@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every analysis cost estimate prices from the one price table (#1196).
 
 Each estimate is checked twice: against the table's own figures (the stale constants it

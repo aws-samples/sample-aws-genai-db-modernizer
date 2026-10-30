@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // Random key generation matching the seeder's deterministic format.
 //
 // The seeder generates `primary_id` values like `doc-000001`, `doc-000002`, ...

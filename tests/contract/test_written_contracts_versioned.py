@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every model written to disk carries a ``contract_version`` (ADR-008 Decision 1, #972).
 
 ADR-008 Decision 1 says every contract an agent or script writes carries a

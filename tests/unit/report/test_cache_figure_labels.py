@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each cache figure says what it counts, and the change is stated once (#1252, ADR-032).
 
 On the WordPress sample the approval gate has 20 cache candidates (hot reads routing put under

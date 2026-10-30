@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The #952 rubric: seven criteria (cost folded into grounded, tone split into
 hedging, concision and contradictions), risks graded on completeness against
 the migration-risk facts, and a structured ``defects[]`` list. No model is

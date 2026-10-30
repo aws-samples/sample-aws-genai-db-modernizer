@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One tolerant reader for raw collection JSON (#396).
 
 Database clients wrap the JSON a collection script prints with extra text

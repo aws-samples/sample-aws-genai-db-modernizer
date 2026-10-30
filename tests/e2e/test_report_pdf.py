@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive report PDF on every sample (#1020): figures, no table names, no
 traceability, nothing clipped, determinism, fonts and branding.
 

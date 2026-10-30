@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing regression guard: the shape of the recommended modernization per sample.
 
 The modernizer should recommend incremental, wave-based modernization, not a full

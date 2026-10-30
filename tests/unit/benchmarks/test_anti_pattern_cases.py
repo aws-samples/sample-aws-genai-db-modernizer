@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Building the anti_pattern cases and their blind review sheets (#1084).
 
 The sheets must carry no answer: no engine, no score, no marker, column value or

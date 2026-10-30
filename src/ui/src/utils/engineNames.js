@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Display names for the engine keys the pipeline emits, used by the live
  * React results page (#225: badges used to show the raw engine key, e.g.

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable states the tables with no row count and the sizing assumption (#1636).
 
 A table the source has no row count for is sized at its collected size over its

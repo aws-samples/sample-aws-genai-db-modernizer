@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A read with no hit ratio of its own uses the collection's buffer-cache hit ratio (#1197).
 
 DocumentDB bills a read I/O only when the page misses its buffer cache

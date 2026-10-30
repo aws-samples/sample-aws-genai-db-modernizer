@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality Check request — the compact, bounded brief the consolidation reviewer reads.
 
 Both LLM paths review the same thing: for each consolidation, the queries it

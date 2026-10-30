@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Drop table rows a collection carries, and count them (#387).
 
 The assessment needs schema, query shapes and counters, never row data, so no

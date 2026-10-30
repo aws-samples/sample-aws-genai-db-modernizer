@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#992: a table has one writer; its reads stay per query (ADR-031 Amendment 9).
 
 Maintainer decision (2026-10-17): all of a table's write paths (INSERT, UPDATE,

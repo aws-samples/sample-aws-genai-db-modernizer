@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema Design agent handler — dispatches to target-specific schema design agents.
 
 Reads collector output and analysis output via ArtifactStore, writes them to local

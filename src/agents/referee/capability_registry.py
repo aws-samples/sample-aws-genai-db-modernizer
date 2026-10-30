@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Capability Registry — Engine capabilities and serviceability detection.
 
 Maps each engine's fundamental capabilities (what it CAN do at an

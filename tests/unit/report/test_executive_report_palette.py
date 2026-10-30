@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1246: the executive report draws each engine in the rule catalog's one colour
 (``colors.ui``), the colour every UI view uses, instead of a third palette of its own
 (Aurora pink, DynamoDB yellow, ElastiCache purple, from the retired ``colors.deck``).

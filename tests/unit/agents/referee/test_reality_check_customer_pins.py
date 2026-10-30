@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Phase 1 keeps an engine a customer pin holds (#860).
 
 The handler holds customer-pinned queries (``customer_override``) out of the

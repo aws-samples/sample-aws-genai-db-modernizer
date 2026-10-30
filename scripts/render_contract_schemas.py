@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Render the JSON Schemas of the public ``assess()`` request and result (#1183).
 
 The Pydantic models in ``src/assessment/models.py`` are the source. This script writes

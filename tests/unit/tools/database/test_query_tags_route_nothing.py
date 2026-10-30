@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Query tags change no routing (#1180).
 
 ``QueryPattern.query_tags`` is the caller's join key, never a routing input. Each

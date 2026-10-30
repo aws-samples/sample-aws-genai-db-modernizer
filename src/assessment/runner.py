@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run the pipeline's phases for one :class:`AssessmentRequest`.
 
 The phases are the core entry points every other path uses

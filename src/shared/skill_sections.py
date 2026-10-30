@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Read a shared prompt from ``src/skills/`` and split it into its sections (#628).
 
 Some decisions are made by a model in two modes: Claude Code reads a skill

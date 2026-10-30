@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one module that calls sqlglot: table references from SQL text (#557).
 
 Every caller asks this facade for a small, frozen fact model

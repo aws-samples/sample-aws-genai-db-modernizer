@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Compact stdout for a script whose progress output is large (issue #278).
 
 A headless Claude Code session keeps a Bash result inline only while it is

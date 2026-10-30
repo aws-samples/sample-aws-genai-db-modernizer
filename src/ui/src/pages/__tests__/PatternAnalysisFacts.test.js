@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1312: the pattern analysis page shows the engine overview figures the server
  * computed (the analysis `facts`) and computes none of them itself. The data below is

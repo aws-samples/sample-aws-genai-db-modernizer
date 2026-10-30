@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary is told the engine scope and the queries with no engine (#1574, item 5).
 
 The skill had no rule for a scoped job and its input carried neither the scope nor how

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Strict parsing of the SQL fragments a design delta may carry (issue #273).
 
 Delta content is LLM output produced from untrusted collector text (query

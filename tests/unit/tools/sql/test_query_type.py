@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One ``query_type`` rule, comment-aware and dialect-aware (#1178).
 
 A statement that opens with a comment (``-- endpoint: CartController.Add\\nSELECT``)

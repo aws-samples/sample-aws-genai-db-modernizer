@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``cache_safety_net_notes`` does not carry forward across assignment
 versions (#459 round 2 review).
 

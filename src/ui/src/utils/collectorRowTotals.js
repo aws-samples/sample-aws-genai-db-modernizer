@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #1636: a table's row count is a number, a real 0, or unknown (null): the source has no
 // count for it. The monitoring page's "Total rows" sums the known counts only and says
 // how many are unknown; with no known count at all the total is not known, never 0.

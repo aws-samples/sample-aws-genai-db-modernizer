@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Files written before #972 carry no ``contract_version`` and must still load.
 
 #972 gave every contract written to disk a ``contract_version``. A file one of

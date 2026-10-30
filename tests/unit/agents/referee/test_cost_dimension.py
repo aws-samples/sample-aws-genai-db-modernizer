@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 5: cost is one of four weighted score dimensions (#638).
 
 The decision states that a score has exactly four dimensions (pattern match,

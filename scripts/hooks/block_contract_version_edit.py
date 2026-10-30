@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Edit/Write): refuse hand edits of contract versions (#1408).
 
 A contract's ``contract_version`` default and its Version History entries are

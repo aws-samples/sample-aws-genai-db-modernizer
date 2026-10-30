@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every consumer handles a row count the source does not have explicitly (#1636).
 
 Before #1636 an unknown count reached every consumer as 0, so a table the source had

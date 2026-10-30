@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The post-schema routing: move what a schema design cannot serve, then redesign.
 
 One implementation for every path (#1492): the local pipeline

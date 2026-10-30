@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Curated graph query views: pure functions over a GraphStore.
 
 Each function runs a fixed Cypher traversal and returns a typed response model.

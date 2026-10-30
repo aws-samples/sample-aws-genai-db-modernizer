@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Local S3 artifacts service — the API's only artifact-read backend (hosted
 S3 artifacts service retired, #175)."""
 

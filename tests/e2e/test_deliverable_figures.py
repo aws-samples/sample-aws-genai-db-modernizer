@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable shows the same figures as report.json (#573).
 
 AGENTS.md "Deliverables agree": the engineering report and the executive report

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora decision trace contract, for PostgreSQL and MySQL
 (``analysis-aurora_postgresql/decision-trace.json``,
 ``analysis-aurora_mysql/decision-trace.json``).

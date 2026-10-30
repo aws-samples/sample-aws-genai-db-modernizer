@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#950: a risk's design texts (``Risk.details``) are listed in full in the
 engineering report, and the executive report states only their count, so no
 clipped quote ("…") ever reaches the PDF (the e2e-llm PDF check found one)."""

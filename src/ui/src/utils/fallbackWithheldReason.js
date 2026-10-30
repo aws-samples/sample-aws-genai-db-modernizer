@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Why the generated synthesis executive summary was withheld, in one clause
  * (#393, ported for #269; #536 added the risk-count reason).

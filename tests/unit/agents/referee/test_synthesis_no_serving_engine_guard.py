@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A query reality check moves onto an engine that cannot serve it must be
 reported honestly, without overstating or duplicating the gap (#335).
 

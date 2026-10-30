@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Raw collections seeded with known personal values in their literals (#1625).
 
 SQL Server, Oracle and Db2 keep the text of a real execution, so an application that

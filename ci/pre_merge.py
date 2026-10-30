@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Parsing and verdict logic behind ci/pre_merge.sh.
 
 The shell script runs git and the checks; the small decisions live here so

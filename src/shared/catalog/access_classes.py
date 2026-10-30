@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The access-pattern class table (ADR-031 Decision 14, Amendment 5, #728).
 
 ``src/catalog/access_classes.toml`` lists the eight classes a query can fall into

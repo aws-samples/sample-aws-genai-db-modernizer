@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Sources of truth and replicas, in every deliverable (#992, ADR-031 Amendment 9).
 
 ``facts.table_sources`` states, for each written table read on a replica, its

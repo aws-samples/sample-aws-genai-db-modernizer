@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Helpers: run a hook script the way Claude Code does (stdin JSON, `python -I`)."""
 
 from __future__ import annotations

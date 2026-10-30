@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Generate the synthetic SQL Server sample (``docs/examples/trailgear``, #618).
 
 The two other public samples (wordpress on MySQL, discourse on PostgreSQL) are

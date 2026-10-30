@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``scripts/usage_cost.py``: dollars from a run's model usage record (#1494)."""
 
 from __future__ import annotations

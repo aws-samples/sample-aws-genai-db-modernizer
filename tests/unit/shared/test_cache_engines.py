@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One cache-engine set and one hot-read floor for every consumer (#398).
 
 Based on the analysis in #430 by @proton0210. ``src/shared/cache_engines.py``

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1329: the approval gate and the job summary show the queries no engine in the
  * customer's engine scope can serve (the assignment's `unservable_queries`), so a

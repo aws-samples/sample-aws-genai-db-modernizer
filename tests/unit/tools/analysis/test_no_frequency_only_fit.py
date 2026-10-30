@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No fit pattern keys on call frequency alone (#920).
 
 A fit pattern says the engine serves an access pattern well. How often a query runs is

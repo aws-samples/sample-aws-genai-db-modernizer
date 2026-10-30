@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_synthesis.py``'s compact status line carries the cache overlay's
 safety-net notes (#424, #459): the chat/orchestrator reads only script
 stdout, never artifact contents (AGENTS.md's headless rules), so a cache

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """
 DynamoDB Schema Design Agent — uses SchemaDesignRunner for PE review loop.
 

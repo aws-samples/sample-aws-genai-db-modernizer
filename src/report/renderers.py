@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pure renderers for the synthesis deliverables (engineering report Markdown,
 provenance).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Stop hook that keeps a /modernize --auto run from ending with nothing running (#1574).
 
 Twice a scoped discourse run's orchestrator ended its turn after the last DynamoDB part
@@ -73,12 +76,12 @@ def _event(project: Path, records: list[dict] | None = None, **extra: object) ->
 
 def _blocked(res) -> bool:
     """Blocked by this hook: exit 2 with its own reason (a missing script also exits 2)."""
-    return res.blocked and res.stderr.startswith("Blocked: nothing is running")
+    return bool(res.blocked and res.stderr.startswith("Blocked: nothing is running"))
 
 
 def _allowed(res) -> bool:
     """Allowed by this hook: it ran and exited 0 (a missing script exits 2)."""
-    return res.code == 0
+    return bool(res.code == 0)
 
 
 def _env(project: Path) -> dict:

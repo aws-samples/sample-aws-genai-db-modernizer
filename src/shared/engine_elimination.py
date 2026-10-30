@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Single definition of "eliminated engine" (#235): no in-scope query remains on it, in one place.
 
 Before this module existed, three places decided independently whether an

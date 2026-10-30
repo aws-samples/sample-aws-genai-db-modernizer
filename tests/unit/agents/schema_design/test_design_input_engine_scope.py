@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A design request names no engine outside the customer's engine scope (#1574, item 2).
 
 The analysis carries catalog guidance that suggests other engines ("If it's a hot

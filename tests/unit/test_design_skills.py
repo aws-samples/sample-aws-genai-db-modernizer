@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tripwires for the schema-design skills (#625).
 
 The designer skills are the system prompts of unattended runs (headless

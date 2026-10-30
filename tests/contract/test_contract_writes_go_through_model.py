@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every write of a contract file goes through its model (ADR-008 Decision 2, #1018).
 
 A writer that reads a contract file as a dict, patches it and writes it back

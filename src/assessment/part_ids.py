@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The ``query_id`` of a statement part (:func:`src.assessment.cut_collection`, #1633).
 
 A part is a caller's rewrite of a statement that crosses a cut (or that the cut cannot

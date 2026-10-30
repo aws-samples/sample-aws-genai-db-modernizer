@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora PostgreSQL schema-design output contract.
 
 Relational target: table definitions with translated column types (carrying

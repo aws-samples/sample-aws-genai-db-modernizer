@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Start (or stop) the local API + UI servers for a `/modernize` run with the UI
 (the default `both` mode, or `--mode ui`).
 

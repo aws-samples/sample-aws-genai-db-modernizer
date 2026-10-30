@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Single source of truth for resolving assignment artifact versions (ADR-028).
 
 Assignment artifacts are written under ``<db>/<job>/assignment/v<N>/assignment.json``

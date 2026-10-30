@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``cut_collection`` (#1633, contract 1.3): cut an ``assess()`` result per service and
 assess each piece again, as a library caller does it.
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora schema-design delta contract (issue #273).
 
 An Aurora PostgreSQL / MySQL design is a 1:1 carry-over of the deterministic

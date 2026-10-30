@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 import pytest
 
 from src.tools.schema.aurora_common.source_family import classify_source_family, migration_strategy

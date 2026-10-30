@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB-specific load test components."""
 
 from src.agents.load_test.dynamodb.key_condition_parser import (

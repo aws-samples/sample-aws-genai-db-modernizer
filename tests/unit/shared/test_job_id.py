@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.shared.job_id: the job_id counterpart to validate_database_name
 (#420), added in #508. Mirrors tests/unit/shared/test_database_name.py."""
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every cost figure is the full-modernization estimate, with one caveat (#1474).
 
 The label and the caveat are two facts computed once in ``src/shared/report_facts.py``

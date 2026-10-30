@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engine overview figures of an analysis, computed once on the server (#1312, ADR-032).
 
 The pattern analysis page used to average the tables' fit scores, count patterns and sum the

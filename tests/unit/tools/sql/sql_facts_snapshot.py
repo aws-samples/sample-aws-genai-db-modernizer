@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-query regression snapshot of the sqlglot facade's query-shape facts (#796).
 
 For every query in the bundled samples (wordpress, discourse, trailgear) this

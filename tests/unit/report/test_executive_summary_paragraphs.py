@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable shows the same executive summary (#1403).
 
 A report whose facts carry ``executive_brief`` shows the deterministic summary worded

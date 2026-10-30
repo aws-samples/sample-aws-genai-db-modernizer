@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch k6 script generator for load testing.
 
 Generates k6 scripts that execute OpenSearch queries (search, aggregate,

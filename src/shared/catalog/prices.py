@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one dated price table every cost estimate reads (#1196).
 
 ``src/catalog/prices.toml`` holds us-east-1 on-demand list prices, written by

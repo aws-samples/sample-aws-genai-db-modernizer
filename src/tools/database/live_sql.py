@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Query-text facts for the live collectors, read through the SQL facade (#795).
 
 The offline parser reads every query's table references and its

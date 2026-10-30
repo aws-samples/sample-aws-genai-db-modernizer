@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1328: every deliverable states the customer's engine scope, from facts.engine_scope.
 
 The figure is computed once at synthesis (ADR-032); the engineering report and the

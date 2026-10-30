@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each engine's analysis cost estimator, by catalog engine id (#1195).
 
 The analysis agents call these on the whole collection, before routing. Synthesis calls

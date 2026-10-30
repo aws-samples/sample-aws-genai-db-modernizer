@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A timestamp column is identified by its collected data type, as a DBA would (#935).
 
 The maintainer decision on #935: a column is a timestamp when the schema says its

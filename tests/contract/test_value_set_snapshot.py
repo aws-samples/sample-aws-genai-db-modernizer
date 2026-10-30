@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Published value-set snapshot guard (#975, ADR-008 Decision 3).
 
 ``test_schema_snapshot.py`` guards field shapes. This guards the *values*

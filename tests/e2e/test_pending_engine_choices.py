@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pending engine choices per table, and ``--auto``'s "decide for me", end to end (#1003).
 
 On discourse (the sample with open ties), the deliverables present one choice

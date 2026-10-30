@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Executive Summary Response Contract
 
 The one shape a model's synthesis executive summary takes, in both LLM modes

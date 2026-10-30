@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #957, #1028: the results page opens with three deliverable buttons,
  * Executive Summary, Engineering Report and Assessment Detail, each the

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Column defaults in the Aurora draft: MySQL backslash escaping, translated and dropped defaults."""
 
 from __future__ import annotations

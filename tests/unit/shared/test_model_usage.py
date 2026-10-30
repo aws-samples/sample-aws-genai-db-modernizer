@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model token usage by phase and model id (#1494). No test calls a model: the Strands
 stream and the boto3 responses are fakes that carry a ``usage`` block."""
 

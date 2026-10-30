@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The post-schema router writes its versions through the move ledger (#616, #770).
 
 #489 Track L PR4: a reroute version (``source = post_schema_routing``) holds

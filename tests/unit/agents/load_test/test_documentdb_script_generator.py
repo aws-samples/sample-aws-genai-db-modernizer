@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DocumentDB script generator.
 
 Renders real Jinja2 templates (no mocking of templates) and verifies:

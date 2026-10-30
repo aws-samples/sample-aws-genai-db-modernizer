@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Database Modernizer - Development Environment Setup Script
 # This script sets up the complete development environment for new contributors
 

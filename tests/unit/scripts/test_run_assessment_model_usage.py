@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_assessment.py`` records the run's model usage the way ``assess()`` does (#1675).
 
 It also sends the structured-output re-ask lines to the run log (compact mode), and a

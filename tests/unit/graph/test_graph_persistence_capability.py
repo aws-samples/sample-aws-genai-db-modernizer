@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # tests/unit/graph/test_graph_persistence_capability.py
 """GraphPersistence must not touch a backend that does not support bytes (ATX)."""
 

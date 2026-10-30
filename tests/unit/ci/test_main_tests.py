@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/main_tests.py: which new and changed tests ci/pre_merge.sh runs on main's code (#1155)."""
 
 from __future__ import annotations

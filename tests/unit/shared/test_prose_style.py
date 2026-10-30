@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The plain-prose style list and its helpers (#1034)."""
 
 from __future__ import annotations

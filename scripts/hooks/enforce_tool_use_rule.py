@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Bash), headless runs only: enforce the tool-use rule at the call (#731).
 
 Every pipeline command and dispatch carries one tool-use sentence (see

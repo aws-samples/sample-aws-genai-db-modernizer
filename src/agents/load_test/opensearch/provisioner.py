@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """OpenSearch Service provisioner for load testing.
 
 Creates an OpenSearch domain with the instance type identified by the

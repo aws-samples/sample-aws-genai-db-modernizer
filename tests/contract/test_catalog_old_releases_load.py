@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The current catalog loader reads the catalog files every recorded release shipped (#1647).
 
 ``tests/contract/fixtures/catalog_releases/<tag>/`` holds a release's

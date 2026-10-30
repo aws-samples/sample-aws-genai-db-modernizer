@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The per-query, per-engine cost dimension (ADR-031 Decision 5, #494 slice 2).
 
 A classified query's cost dimension on an engine is its own estimated monthly cost

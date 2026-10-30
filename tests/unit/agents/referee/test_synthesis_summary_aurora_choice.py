@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#381 review: the resolver's heterogeneous Aurora engine choice must reach the
 executive summary, not only wave 1's rationale text (``build_summary``, using
 ``display_engine``/``display_source_database`` so the sentence names both

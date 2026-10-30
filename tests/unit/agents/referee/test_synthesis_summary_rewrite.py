@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One rewrite of a rejected executive summary (#214).
 
 When the post-checks reject the model's summary, the model gets it back once with

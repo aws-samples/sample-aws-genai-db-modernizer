@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The reality check's records are derived from the move ledger (#616).
 
 ``consolidations``, the sanity sweep's ``removed`` verdicts and the model flags'

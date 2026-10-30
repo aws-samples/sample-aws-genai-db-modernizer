@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bulk-load statements: the table they load and the fact that they write (#777).
 
 Two statements load rows from a file or the client stream straight into one

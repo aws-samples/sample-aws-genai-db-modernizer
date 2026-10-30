@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Property tests for literal redaction (#1625, ``src.tools.sql.redact``).
 
 Redaction is idempotent for every input: redacting redacted text changes nothing, so

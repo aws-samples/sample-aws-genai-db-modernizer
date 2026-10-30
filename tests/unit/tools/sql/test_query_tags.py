@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Leading comment tags of a query (#1180): reading, caps, sqlcommenter, isolation.
 
 ``src/tools/sql/query_tags.py`` reads the comments a statement opens with into

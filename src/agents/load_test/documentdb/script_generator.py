@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DocumentDB k6 script generator using per-operation Jinja templates.
 
 Mirrors :class:`DynamoDBScriptGenerator` structure but emits xk6-mongo-based

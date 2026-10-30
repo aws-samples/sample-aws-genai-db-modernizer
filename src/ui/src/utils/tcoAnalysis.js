@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * The current-cost baseline / savings figure as every deliverable shows it
  * (#334): `tco_analysis.current_monthly_cost` and `savings_percent` are

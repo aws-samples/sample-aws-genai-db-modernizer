@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model Flag Contract
 
 What a model may say about a routing decision (ADR-031 Decision 11, as amended

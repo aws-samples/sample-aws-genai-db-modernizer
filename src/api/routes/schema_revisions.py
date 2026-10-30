@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema revision loop API routes.
 
 Endpoints for retrieving schema versions, submitting revision requests,

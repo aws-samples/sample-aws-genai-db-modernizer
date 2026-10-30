@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Example budgets that follow the loaded Hypothesis profile (#956).
 
 tests/conftest.py loads the ``default`` profile (100 examples) unless

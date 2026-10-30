@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Final-assignment stage: run the deterministic pipeline through the reality check (#1074).
 
 The ``assignment`` stage scores the resolver's first pass from gold triage and

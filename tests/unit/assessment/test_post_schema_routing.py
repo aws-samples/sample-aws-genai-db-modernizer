@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess()`` runs the pipeline's post-schema routing after schema design (#1492).
 
 A statement a design reports unsupported moves, through the move ledger, to its best

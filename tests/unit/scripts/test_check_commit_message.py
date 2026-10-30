@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for scripts/check_commit_message.py.
 
 No test invokes a real git subprocess for the range mode -- ``check_range``

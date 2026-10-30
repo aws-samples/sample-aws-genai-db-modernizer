@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for numeric precision/scale on the collector column contract.
 
 Collectors shell out to database CLIs and parse the text output, so these two

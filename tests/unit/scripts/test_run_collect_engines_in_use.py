@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``--engines-in-use`` records the engines a source runs today in the collection (#963)."""
 
 from __future__ import annotations

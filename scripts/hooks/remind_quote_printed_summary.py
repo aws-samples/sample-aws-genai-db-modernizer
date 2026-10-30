@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PostToolUse hook (Bash): after ``print_summary.py --gate`` or ``--final``, remind the model to
 paste the block into its reply (#1605).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Assessment-core subagent for AWS Transform (one agent per image).
 
 Maps to AGENT_TYPE='assessment-core'. Runs the whole assessment front-half of

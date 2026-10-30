@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The approval-gate figures, computed once from the reality-check status data (#1307, ADR-032).
 
 The gate shows each engine's query count before and after the reality check and its share of

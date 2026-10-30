@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report's Risk register keeps CRITICAL and LOW intact (#270).
 
 #270 found the decision report's risk posture line folding CRITICAL into

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Mitigation strategies are derived from the risks actually present (#222).
 
 The decision report prints ``risk_assessment.mitigation_strategies`` and the executive

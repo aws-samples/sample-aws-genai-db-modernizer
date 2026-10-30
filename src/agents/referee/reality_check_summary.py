@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Keep the reality-check executive summary consistent with the final records (#236).
 
 The summary is written before the steps that can still change the outcome: the LLM

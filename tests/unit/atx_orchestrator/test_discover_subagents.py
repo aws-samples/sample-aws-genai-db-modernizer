@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for subagent discovery wiring.
 
 Note (Y-3): ``discover_subagents`` is INTENTIONALLY not in ``PIPELINE_TOOLS``.

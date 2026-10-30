@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Engine roles and waves from the REAL recommended_architecture (#281 follow-up).
 
 ``build_architecture_recommendation`` lists an engine with workload but no

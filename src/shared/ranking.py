@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reading a synthesis ``ranking`` the way the deliverables do (#152).
 
 A ranking entry carries two confidences:

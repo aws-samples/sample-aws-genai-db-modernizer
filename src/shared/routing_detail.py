@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Read a job's saved routing records for the detailed engineering report (#1364).
 
 The routing detail behind an assessment lives in the job's artifacts, next to its

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Dashboard routes — aggregate stats for the dashboard page."""
 
 from fastapi import APIRouter, HTTPException

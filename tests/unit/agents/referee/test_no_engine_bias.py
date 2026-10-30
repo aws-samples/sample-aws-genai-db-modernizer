@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guard test: an engine is never picked by name order, query count, set
 iteration order, or a literal-engine preference outside the shared ADR-031
 tie-break (#571).

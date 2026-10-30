@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Unit, contract, property and graph tests. No network, no credentials.
 #
 # --ignore=tests/e2e: the `test` CI job (and this script's own prerequisites,

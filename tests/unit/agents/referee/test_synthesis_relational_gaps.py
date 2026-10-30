@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis computes the relational move's gaps once, into the facts (#471, ADR-032)."""
 
 from __future__ import annotations

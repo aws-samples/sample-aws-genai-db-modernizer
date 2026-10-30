@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema-design arithmetic computed in code, not by the model (#626).
 
 Every expected value below is worked out by hand in the comment next to it, so

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The shared core of every analysis agent's ``decision-trace.json`` (#1187).
 
 Five of the six analysis engines (DynamoDB, DocumentDB, OpenSearch, Aurora

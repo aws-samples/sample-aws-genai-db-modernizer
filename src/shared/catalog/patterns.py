@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The pattern half of the rule catalog (ADR-031 Decision 8, #492).
 
 One ``src/catalog/patterns/<pattern_type>.toml`` per access-pattern type the code knows

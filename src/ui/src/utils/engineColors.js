@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * One colour per engine for every UI view, from the engine catalog (colors.ui in
  * src/catalog/engines, rendered into engineCatalog.generated.js by

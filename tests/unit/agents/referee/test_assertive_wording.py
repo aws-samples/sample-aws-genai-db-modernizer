@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Fixed wording in the deliverables is assertive and agrees with the plan (#951).
 
 The rubric judge, on a wordpress model run, cited fixed sentences that synthesis

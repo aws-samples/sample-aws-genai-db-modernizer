@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for runtime.artifacts.publish — the EXTERNAL-visibility upload path.
 
 Pins the artifact-visibility fix: CUSTOMER_OUTPUT deliverables are published with

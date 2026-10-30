@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Why the generated executive summary was withheld (#393 review, #536 added a reason).
 
 Four independent checks can reject it (``apply_synthesis_llm_output``:

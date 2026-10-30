@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The e2e suite's local UI server is reachable from this machine only (#1593)."""
 
 from __future__ import annotations

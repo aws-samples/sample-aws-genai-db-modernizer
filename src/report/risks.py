@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration risks as the deliverables show them: open, resolved and severity counts."""
 
 from __future__ import annotations

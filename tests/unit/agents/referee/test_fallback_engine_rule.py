@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#786: one fallback rule for a query no analyzed engine can serve.
 
 The first assignment's Aurora fallback (``AssignmentResolver``, Step 7) and the

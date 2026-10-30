@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reads of an entity with variable attributes, an engine-neutral fact (#920).
 
 A document model stores an entity whose attribute set varies (by type or category, or

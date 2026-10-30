@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Discover and load benchmark cases from a stage directory + manifest."""
 
 from __future__ import annotations

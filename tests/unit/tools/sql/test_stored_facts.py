@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The parsed query facts stored on each collected query pattern (#934).
 
 The collector parses every query once and stores the facade's two readings

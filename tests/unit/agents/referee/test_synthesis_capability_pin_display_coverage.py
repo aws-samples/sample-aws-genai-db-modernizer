@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every hard capability ``capability_registry`` can emit has a display string
 (#393 review): ``_CAPABILITY_PIN_DISPLAY`` had no entry for ``text_pattern_match`` or
 ``scan_engine``, so a query pinned to Aurora for either leaked the raw capability id

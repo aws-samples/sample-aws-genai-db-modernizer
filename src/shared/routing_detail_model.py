@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The shape of the detailed engineering report's routing detail (#1364).
 
 ``src.shared.report_facts.routing_detail_facts`` builds it from the job's saved routing

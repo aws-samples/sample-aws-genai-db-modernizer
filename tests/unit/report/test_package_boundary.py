@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src/report must not depend on the AWS Transform integration (it outlives it)."""
 
 from __future__ import annotations

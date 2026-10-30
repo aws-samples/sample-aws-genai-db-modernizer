@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A query's ``confidence`` is its score on the engine it ends on (#1373).
 
 The move ledger sets it with the engine: ``move_ledger.apply`` and

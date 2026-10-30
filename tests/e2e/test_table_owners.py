@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each mapped table's owner, the engines that also read it and its cache (#212).
 
 On the designed wordpress job (a schema design for every kept engine, no model), the

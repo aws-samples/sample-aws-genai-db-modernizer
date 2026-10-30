@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Concision checks on the engineering report (#1170).
 
 A rubric judge scored the engineering report's concision 2 of 5 because the

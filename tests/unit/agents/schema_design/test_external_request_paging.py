@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The single-pass external request is paged, never cut, whatever its size (#1103).
 
 DocumentDB, OpenSearch and ElastiCache have no grouped external path, so their

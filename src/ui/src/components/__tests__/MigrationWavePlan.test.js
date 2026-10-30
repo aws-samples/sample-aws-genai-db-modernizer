@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #957: the results page's migration roadmap. It shows report.json's waves (the
  * same ones the executive report and the engineering report show) with each

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_schema_design.py --status`` and ``--split`` group listing (issue #246).
 
 A headless ``/modernize`` run ended with no result: DynamoDB group subagents

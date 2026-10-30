@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing-quality gate: fail when a reviewed case's accuracy drops (#952).
 
 ``benchmarks/cases/<stage>/gate.json`` holds the floors::

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The one writer of an analysis agent's ``decision-trace.json`` (#973, #1187, #1190).
 
 Every analysis engine's trace is a contract registered for its path in

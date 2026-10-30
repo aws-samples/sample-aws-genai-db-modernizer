@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``load_synthesis_data`` loads the pre-Reality-Check assignment (#335).
 
 A risk check needs to tell "Reality Check moved this query to engine E" apart

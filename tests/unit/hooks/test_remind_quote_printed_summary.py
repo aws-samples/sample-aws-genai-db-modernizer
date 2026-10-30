@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PostToolUse reminder to paste print_summary.py's block into the reply (#1605)."""
 
 from __future__ import annotations

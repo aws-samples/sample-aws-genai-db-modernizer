@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No model input carries a query's tag fields (#1180).
 
 ``QueryPattern.query_tags`` is the caller's join key to its own code. A sample job

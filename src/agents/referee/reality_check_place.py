@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check Phase 2: place every query on its best settled engine (#502)."""
 
 from __future__ import annotations

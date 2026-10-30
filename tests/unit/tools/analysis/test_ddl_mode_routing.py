@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A DDL-only upload's routing is unchanged by #1636, while its row counts read as unknown.
 
 A DDL upload holds no row counts and no sizes. Before #1636 every table it described

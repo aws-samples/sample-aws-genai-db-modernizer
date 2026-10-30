@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Host-header allowlist for the local API.
 
 The local API listens on the loopback interface. A Host-header allowlist stops

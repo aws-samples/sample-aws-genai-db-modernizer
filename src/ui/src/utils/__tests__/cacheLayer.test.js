@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #296 cache overlay: ElastiCache is a cache layer, never an owner. These tests
  * cover the helpers that keep owner distributions/rankings from ever counting

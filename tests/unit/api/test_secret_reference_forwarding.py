@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-004 Decision 5: either secret reference form reaches live collection (#991).
 
 The Assessments API accepts the database credentials by reference only, as

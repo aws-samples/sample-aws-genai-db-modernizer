@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every internal reason code maps onto one public ``reason_code`` (#1182)."""
 
 from __future__ import annotations

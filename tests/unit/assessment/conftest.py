@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared inputs for the public ``assess()`` tests: the committed sample collections."""
 
 from __future__ import annotations

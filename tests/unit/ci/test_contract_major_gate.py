@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/contract_major_gate.py: an assess() contract MAJOR move needs a maintainer decision (#1648)."""
 
 from __future__ import annotations

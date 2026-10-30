@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The rule catalog (ADR-031 Decision 8): the engine files, plus the shared routing
 thresholds, hard gates and triage signals (``routing``, #921)."""
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report states each thing once (#1170).
 
 A rubric judge scored concision 2 of 5 on a wordpress model run (contract 1.39,

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Held queries in report.json and the facts (#1033).
 
 The post-schema router keeps a flagged query on its engine when a customer pin

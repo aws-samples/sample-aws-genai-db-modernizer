@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bounded thread-pool fan-out for independent per-item ArtifactStore IO.
 
 Under the ATX storage backend every ``read_json``/``write_json`` is a network

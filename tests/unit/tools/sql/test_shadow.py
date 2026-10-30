@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade-vs-regex cross-check (#557, #553).
 
 The sqlglot facade's answer drives ``tables_accessed`` (#553); the regex scan

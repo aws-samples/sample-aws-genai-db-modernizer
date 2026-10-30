@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis records, per consolidation, which queries it moved and which a
 later edit put back (#861), so the facts layer can tell an undone
 consolidation from one that still applies."""

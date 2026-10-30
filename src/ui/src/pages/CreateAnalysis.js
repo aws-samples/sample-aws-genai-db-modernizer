@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 //##-- React Events
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';

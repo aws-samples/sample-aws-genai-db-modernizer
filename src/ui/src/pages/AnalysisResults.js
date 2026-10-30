@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 //##-- React
 import { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';

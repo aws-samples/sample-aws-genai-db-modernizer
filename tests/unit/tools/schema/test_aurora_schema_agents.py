@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bedrock Aurora agents design a delta against the deterministic draft (issue #273).
 
 The designer is prompted with the compact design view (never the full draft)

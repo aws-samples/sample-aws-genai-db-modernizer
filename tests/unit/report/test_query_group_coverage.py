@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every in-scope query is in a query group, or the report says which are not (#226).
 
 ``facts.query_group_counts.ungrouped_queries`` counts, per owner engine, the in-scope

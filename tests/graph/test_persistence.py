@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for GraphPersistence — S3/local .lbug caching via the artifact store."""
 
 from pathlib import Path

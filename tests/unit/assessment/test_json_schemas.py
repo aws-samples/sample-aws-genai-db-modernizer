@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The checked-in JSON Schemas of the public ``assess()`` request and result (#1183).
 
 They are rendered from the Pydantic models, so a committed file must equal a fresh

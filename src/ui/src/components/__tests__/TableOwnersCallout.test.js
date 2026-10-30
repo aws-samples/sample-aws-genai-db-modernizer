@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #212: the results page's "Table owners" callout. It lists each mapped source
  * table from report.json's facts.table_owner_lines (the lines the engineering

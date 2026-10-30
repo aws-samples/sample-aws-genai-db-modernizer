@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """scripts/generate_sqlserver_sample.py (#618): the synthetic SQL Server sample.
 
 The committed ``docs/examples/trailgear/trailgear.zip`` must be exactly what

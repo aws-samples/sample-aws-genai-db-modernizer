@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Schema-design subagent for AWS Transform (modernizer-atx-v2).
 
 One agent (AGENT_TYPE='schema') designs the target schema for whichever engine

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The recorded PE flag (#740) through the headless path: review, reroute, redesign (#1059).
 
 The same recording ``tests/fixtures/pe_flag/wordpress_dynamodb_pe_review.json``

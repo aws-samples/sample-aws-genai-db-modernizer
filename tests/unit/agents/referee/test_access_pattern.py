@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-query access-pattern classes (ADR-031 Decision 14, Amendment 5, #728).
 
 Each query gets exactly one class from what it retrieves, read from the SQL

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Derive a database name from a collection file name (#1096).
 
 ``/modernize`` used to state this rule in prose and let the orchestrating model

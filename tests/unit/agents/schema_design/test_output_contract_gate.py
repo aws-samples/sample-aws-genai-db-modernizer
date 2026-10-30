@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No path writes a ``schema_output.json`` that fails its engine's contract (#1186).
 
 An external-mode e2e-llm run wrote a merged DynamoDB design whose table

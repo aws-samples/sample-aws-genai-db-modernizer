@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One check for placeholder values a broken renderer leaks into a deliverable.
 
 "undefined", "NaN", "null" or "None" count as a leak only when they stand as a whole

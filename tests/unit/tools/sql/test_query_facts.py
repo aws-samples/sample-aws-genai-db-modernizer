@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engine-neutral query facts (#491): one detector per fact, read by every gate.
 
 The capability gate (``capability_registry``) and the exclusion gate

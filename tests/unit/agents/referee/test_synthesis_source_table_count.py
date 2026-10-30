@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#530 review (round 2): ``SynthesisOutputContract.source_table_count`` gives
 ``src.report.architecture._n_tables_mapped`` a structured figure to read instead
 of parsing it back out of ``build_summary``'s "Analyzed N source tables ..."

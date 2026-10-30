@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The remaining writers of ``assigned_engine`` record Moves (#616, #489 Track L PR3).
 
 The cache owner normalisation (``cache_overlay.normalize_cache_owners``: the

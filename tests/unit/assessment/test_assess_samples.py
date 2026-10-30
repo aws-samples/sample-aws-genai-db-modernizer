@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``assess()`` on the committed samples, at both ``run_through`` values (#1182).
 
 The result is read from the internal contracts the run wrote, so each check compares

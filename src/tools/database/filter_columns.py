@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The columns a live collector reads from a WHERE clause, in linear time (#1009).
 
 The collectors for MySQL and PostgreSQL read ``filter_columns`` from the query

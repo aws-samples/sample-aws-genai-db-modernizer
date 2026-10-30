@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The ElastiCache decision trace is a versioned contract (ADR-008 Decision 1, #1191).
 
 ``analysis-elasticache/decision-trace.json`` was a plain dict built inline in the

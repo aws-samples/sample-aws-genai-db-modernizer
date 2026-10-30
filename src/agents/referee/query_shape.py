@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Query shape facts shared by every engine's detectors (ADR-031 Decision 8, #690).
 
 A detector here reports a fact about one query -- never a score, never an

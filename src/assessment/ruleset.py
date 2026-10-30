@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Which ruleset produced a result: ``ruleset_version`` and ``ruleset_hash``.
 
 A ruleset is not a configuration file: it is the rule catalog, the routing scorer and

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora with a real, #157-derived schema design (issue #429, defect 1).
 
 Earlier coverage (``test_synthesis_bedrock_context_aurora.py``,

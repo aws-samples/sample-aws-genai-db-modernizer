@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #730: the results page's close-call callout. It states each engine pair
  * from report.json's facts.close_calls (the same figures the decision and

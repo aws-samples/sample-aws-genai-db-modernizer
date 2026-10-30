@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Customer-facing label and definition for the routing fit score (#152, bug:
  * Deliverables present a fit score as a confidence percentage), imported by

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The Maintainer Decision gate workflow blocks merging a labelled PR (#388)."""
 
 from pathlib import Path

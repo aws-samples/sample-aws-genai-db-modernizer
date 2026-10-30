@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The regex table-reference extractor for offline collections.
 
 This is the scan ``offline_parser._transform_queries`` ran before #553, moved

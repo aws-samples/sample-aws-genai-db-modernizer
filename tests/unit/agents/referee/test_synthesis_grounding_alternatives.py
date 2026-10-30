@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """An eliminated engine listed as an alternative of a recommend cue is recommended (#253).
 
 The grounding rule looks for the nearest cue in the three words before an engine. In

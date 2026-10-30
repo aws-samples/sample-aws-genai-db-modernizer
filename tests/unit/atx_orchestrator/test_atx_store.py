@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # tests/unit/atx_orchestrator/test_atx_store.py
 """Tests for the ATX-artifact-store-backed ArtifactStore (JSON-only)."""
 

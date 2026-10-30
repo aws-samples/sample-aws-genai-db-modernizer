@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality-check external-mode marker contract (``reality-check/awaiting_llm.json``).
 
 In ``--llm-mode external`` the reality check writes a deterministic preview of its

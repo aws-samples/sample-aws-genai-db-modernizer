@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Test helper: a stand-in reality check's engine changes, recorded as Moves (#616).
 
 A test that hand-builds a reality-check result (or fakes ``run_reality_check``)

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #814: `sqlComments.js` is the JavaScript copy of `src/shared/sql_comments.py`'s
  * leading-comment scanner. Both run the same cases from

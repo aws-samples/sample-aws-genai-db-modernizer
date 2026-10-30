@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Binary read/write for the artifact store abstraction."""
 
 from src.storage.local_store import LocalArtifactStore

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #548 round 2 review item 3: a failed override PUT must show the API's real,
  * customer-facing reason (`response.detail`) -- not just "HTTP 400: Bad

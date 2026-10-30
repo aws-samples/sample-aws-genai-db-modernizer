@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Aurora MySQL indexes on TEXT and BLOB columns carry a key prefix (#1623).
 
 MySQL rejects ``CREATE INDEX ix ON posts (body)`` on a TEXT column (error 1170).

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #482: the Job summary page kept its own engine colour tables instead of reading
  * the shared palette, and its seven-engine hex table was missing two of the nine

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/replay.py: keeping a passing real-model run and replaying it (#1409)."""
 
 from __future__ import annotations

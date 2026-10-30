@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Fail a pull request that moves the ``assess()`` contract MAJOR without approval (#1648).
 
 The released-contract guard (``tests/contract/test_assess_released_contract.py``) lets

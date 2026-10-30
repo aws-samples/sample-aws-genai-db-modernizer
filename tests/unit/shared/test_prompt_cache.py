@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Bedrock prompt caching on the schema-design path (#626).
 
 Schema design is the only role with ``prompt_cache``: every designer and PE

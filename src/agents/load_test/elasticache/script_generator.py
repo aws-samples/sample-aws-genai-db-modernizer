@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ElastiCache (Valkey/Redis) k6 script generator for load testing.
 
 Generates k6/xk6-redis scripts that execute Redis commands matching

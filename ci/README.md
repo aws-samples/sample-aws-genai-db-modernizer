@@ -20,7 +20,10 @@ step has one implementation.
 
 ## `lint.sh`
 
-Lint and type-check: ruff, black, isort, mypy, and the Claude Code command
+Lint and type-check: ruff, black, isort, mypy, the license headers
+(`scripts/license_headers.py --check`: every source file starts with the two-line
+SPDX header, #1722; `--fix` adds it, the quarantined third-party snapshot is skipped and a
+generated file gets it from its generator; the same check as the `license-headers` pre-commit hook), and the Claude Code command
 validator (`scripts/validate_skills.py`), the rule catalog's generated files
 (`scripts/render_catalog.py --check`), the `assess()` JSON Schemas
 (`scripts/render_contract_schemas.py --check`: `docs/contracts/schemas/` matches the public

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Render the customer deliverables for a completed local job.
 
 Writes the job's latest synthesis version into the customer folder
@@ -94,7 +97,6 @@ def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None
 
     try:
         from src.report.deliverables import render_deliverables
-
         from src.report.facts import report_facts
 
         rendered = render_deliverables(store, job_id, db, report_key, assignment_version=version)

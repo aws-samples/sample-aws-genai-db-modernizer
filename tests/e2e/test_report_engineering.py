@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engineering report: its sections, figures, wording and branding (#987).
 
 The engineering report is the supporting deliverable next to the executive report and

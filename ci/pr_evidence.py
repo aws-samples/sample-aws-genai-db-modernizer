@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The PR Evidence section: write it from the head commit, check it in CI (#1153).
 
 Review kept finding PR bodies whose ``needs_llm_run`` verdict was wrong or whose

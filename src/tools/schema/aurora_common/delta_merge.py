@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Merge a model-written delta into the deterministic Aurora draft (issue #273).
 
 The model never transcribes the draft. It writes an ``AuroraDesignDeltaContract``

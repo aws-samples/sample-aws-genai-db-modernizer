@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A runnable tour of the modernizer used as a Python library, through ``assess()``.
 
 Run it from the repository root (after ``uv sync``):

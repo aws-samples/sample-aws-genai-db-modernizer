@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each contract model's ``extra`` setting is a recorded choice (ADR-008 Decision 5, #976).
 
 ADR-008's forward compatibility (a newer file read by older code) relies on

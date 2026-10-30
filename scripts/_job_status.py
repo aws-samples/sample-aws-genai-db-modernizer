@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """CLI glue for ``scripts/run_*.py`` around the shared job-status primitives
 in ``src.shared.job_status`` (#517).
 

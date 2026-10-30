@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One rule sizes every penalty in the pattern catalog (ADR-031 Decision 8, #920).
 
 Before #920 every DocumentDB anti-pattern, and DynamoDB's full-scan anti-patterns, cost

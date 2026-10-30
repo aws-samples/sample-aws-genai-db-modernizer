@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-engine text-search class scores (catalog PR C, #920; review item 8).
 
 The text-search class used to rate every query by the strongest text pattern an engine

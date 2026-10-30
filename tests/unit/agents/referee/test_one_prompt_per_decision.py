@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#628: each model decision reads one prompt source in both LLM modes.
 
 The consolidation review (``/reality-check`` in Claude Code, the consolidation

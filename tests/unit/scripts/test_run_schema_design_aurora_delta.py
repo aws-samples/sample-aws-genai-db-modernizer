@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """External-mode Aurora design: compact request, delta response, deterministic merge (#273).
 
 ``run_external`` writes a compact design view instead of the collector output

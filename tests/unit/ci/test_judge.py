@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ci/llm/judge.py grades a job's rendered deliverables through the same
 `claude -p ... --output-format json` CLI invocation the headless run uses.
 

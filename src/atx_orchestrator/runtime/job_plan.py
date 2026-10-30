@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Job plan API wrappers for AWS Transform WebApp progress reporting.
 
 Thin boto3 wrappers around the ``transformagenticservice`` client's

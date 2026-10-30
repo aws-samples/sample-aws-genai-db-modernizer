@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Per-query routing snapshot harness (see ``tests/e2e/routing_snapshot.py``).
 
 Not an identity gate: a routing refactor is expected to move some queries.

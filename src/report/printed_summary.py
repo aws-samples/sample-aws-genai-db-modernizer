@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The text /modernize quotes at the approval gate and at completion (#1307, ADR-032).
 
 Both blocks are printed by ``scripts/print_summary.py``; the command quotes them verbatim

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """How much the reported judge score moves on unchanged content, single
 sample against the median of three (#952).
 

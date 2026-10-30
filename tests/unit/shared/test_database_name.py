@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.shared.database_name: the one database_name validator every entry
 point that builds an artifact path shares (#420). #418 added it only on the
 AWS Transform path (src/atx_orchestrator/subagents/base.py); this is now the

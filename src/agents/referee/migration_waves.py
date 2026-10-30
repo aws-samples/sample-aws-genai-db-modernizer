@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Migration waves (#225, reordered relational-first by #321): the incremental
 roadmap, written once by synthesis.
 

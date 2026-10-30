@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No collected literal value reaches any file a run writes (#1625).
 
 A SQL Server, an Oracle and a Db2 collection seeded with personal values in their

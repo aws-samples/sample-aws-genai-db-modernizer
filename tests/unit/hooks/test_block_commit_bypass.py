@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Hook 1: git commit --no-verify / -n / SKIP= / core.hooksPath."""
 
 from __future__ import annotations

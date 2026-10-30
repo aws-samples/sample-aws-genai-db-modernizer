@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The customer-text guard on ``Assignment.moves``, the move ledger (#616).
 
 The e2e wording guard reported the raw engine ids in every Move's runner-up,

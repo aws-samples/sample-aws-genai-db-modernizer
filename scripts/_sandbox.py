@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Argument containment for the scripts a headless CI `/modernize` run may call.
 
 `ci/e2e-llm.sh` runs `claude -p` with `.claude/settings.ci.json`, whose Bash

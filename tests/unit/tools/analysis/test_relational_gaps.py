@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Version and feature gaps for the relational move (#471): every rule, both ways.
 
 Each catalog rule has a positive case below (a collection fragment that must raise it)

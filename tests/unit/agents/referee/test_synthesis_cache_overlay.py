@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cache overlay downstream of the assignment (#296).
 
 The cache layer owns no query, so it is never an owner share of the workload: its

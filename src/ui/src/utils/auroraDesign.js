@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Aurora design section (#478): before #157, the Results page, the HTML
  * export and the engineering report all showed

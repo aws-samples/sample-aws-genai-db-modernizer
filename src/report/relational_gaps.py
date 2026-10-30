@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A cross-engine wave 1's note and relational gap list (#1120, #471).
 
 The facts layer states, for wave 1 of a heterogeneous source, that the wave is not yet

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Neutralise references to ``WITH``-defined CTE names before table extraction.
 
 A CTE name is a query-local result set, not a source table, so the regex table

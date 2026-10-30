@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The deliverables state the tables the source has no row count for (#1636).
 
 Before #1636 a table with no statistics reached every figure as an empty one: 265 of

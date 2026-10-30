@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Payload parity: the same model answer reaches the same result in both LLM modes (#628).
 
 Maintainer decision (2026-10-14): headless (Claude Code) and Bedrock runs must

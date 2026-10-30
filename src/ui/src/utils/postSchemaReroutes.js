@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #629: rows the post-schema router moved after the customer approved the
  * assignment. The assignment gate marks them, distinct from a reality-check

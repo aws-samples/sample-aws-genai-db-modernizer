@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """start_local_ui orchestrates the local API + UI servers for `/modernize --mode ui|both`.
 
 Everything here is stubbed -- no real `uvicorn`, `npm`, or `serve` process is

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No test passes because a repo path is missing (#1238).
 
 Every CI environment runs the same tree (maintainer decision, 2026-10-20). A test

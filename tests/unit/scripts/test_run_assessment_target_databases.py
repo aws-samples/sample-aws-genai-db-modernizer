@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1328: ``run_assessment.py --target-databases`` is the CLI's engine scope.
 
 A refused value stops the run before anything is written, with the setting's own

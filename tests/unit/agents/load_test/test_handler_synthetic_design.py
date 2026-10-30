@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run the load-test handler against a committed synthetic DynamoDB design.
 
 The design (docs/examples/wordpress/load-test-results/schema-dynamodb/v2) is a

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Storage abstraction layer for artifact read/write operations.
 
 Provides a storage-agnostic interface backed by S3 (cloud) or filesystem (local).

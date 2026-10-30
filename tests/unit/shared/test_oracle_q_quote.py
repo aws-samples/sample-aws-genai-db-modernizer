@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Oracle's alternative quoting, ``q'[...]'``, in the one span grammar (#1451).
 
 The string runs from ``q'<delimiter>`` to the closing delimiter and a quote (``[ ( { <``

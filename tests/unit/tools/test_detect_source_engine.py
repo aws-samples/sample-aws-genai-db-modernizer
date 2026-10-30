@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Offline collections declare their engine via ``metadata.engine`` (#381) when the
 collector script sets it (SQL Server), falling back to the version string (every
 other collector script) when it does not.

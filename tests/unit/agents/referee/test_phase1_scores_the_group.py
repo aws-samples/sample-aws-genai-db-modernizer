@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#894: the reality check's Phase 1 scores a co-dependency group as a group.
 
 Phase 1 decides whether an engine earns its place from the scores of the

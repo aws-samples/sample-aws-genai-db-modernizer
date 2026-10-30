@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_through="schema_design"`` and ``"synthesis"`` (#1387).
 
 Both phases need a model, so ``deterministic=True`` is refused with them. Tests never

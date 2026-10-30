@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every analysis engine's decision trace is a contract (ADR-008 Decision 1, #1187, #1190).
 
 Only the DynamoDB trace was a versioned contract; the other engines' traces were

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cross-deliverable risk-count consistency (issue #201), and the fixed source
 of those risks (issue #210).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Session fixtures: one deterministic pipeline run per sample input."""
 
 from __future__ import annotations

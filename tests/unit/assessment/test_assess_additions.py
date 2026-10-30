@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The stable additions to the ``assess()`` result before contract 1.0 ships (#1390).
 
 ``summary.source_engine``, ``assignment_version``, ``engines[]``, ``consolidations[]``

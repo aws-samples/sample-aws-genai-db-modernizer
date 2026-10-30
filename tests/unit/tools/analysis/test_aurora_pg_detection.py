@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for Aurora PostgreSQL regex-based feature detection.
 
 Tests cover false-positive prevention and false-negative fixes compared to the

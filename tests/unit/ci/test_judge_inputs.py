@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """What the rubric judge is shown (ci/llm/judge.py + ci/llm/judge_facts.py):
 the structured facts block, full deliverable text, the overall prompt
 ceiling with per-section truncation markers, and the size record in

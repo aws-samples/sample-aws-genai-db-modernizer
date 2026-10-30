@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary's three parts and their checks (#1403).
 
 The deterministic summary words ``facts`` as recommendation, risk and decision; the

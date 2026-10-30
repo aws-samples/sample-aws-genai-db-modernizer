@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Cache overlay: customer pins, legacy cache owners, persisted safety net,
 invalidation context and the OpenSearch absorber rule (#296 review).
 """

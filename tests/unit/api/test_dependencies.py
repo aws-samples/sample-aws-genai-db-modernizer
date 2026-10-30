@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.api.dependencies: the FastAPI dependencies that validate a
 database_name, job_id, or filename query/path parameter outside a request
 body model (#505, #508). Exercised directly (not through TestClient) so

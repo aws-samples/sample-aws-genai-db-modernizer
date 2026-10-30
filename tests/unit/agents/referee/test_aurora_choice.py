@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the #381 heterogeneous Aurora engine choice.
 
 A source with no Aurora dialect of its own (SQL Server, Oracle, DB2) has both

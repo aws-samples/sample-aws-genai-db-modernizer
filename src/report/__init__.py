@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer deliverables rendered from a synthesis report.
 
 Pure functions of artifacts already on an ``ArtifactStore``: no LLM calls, no

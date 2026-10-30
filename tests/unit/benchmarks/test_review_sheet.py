@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Blind answer-key review sheets (#1074, step 2).
 
 The sheet must never show the engine the pipeline picked or a score, so a key

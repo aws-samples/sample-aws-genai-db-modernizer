@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1246 / #1088: no page or component keeps an engine palette of its own. Engine badges
  * go through EngineBadge (the catalog colour) and engine colours through engineHex, so

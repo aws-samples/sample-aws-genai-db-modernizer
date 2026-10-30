@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The public result's ``summary.tables`` say what the deliverables say (#1182).
 
 ``assess()`` stops before synthesis, so it builds each table's owner line from the

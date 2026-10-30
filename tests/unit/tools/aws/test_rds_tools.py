@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-004 Decisions 1, 3 and 4: the RDS tools (#702).
 
 Granular tools (one data source each, so the agent collects only what it needs), graceful

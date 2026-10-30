@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The fields contract 1.2 added to the public ``assess()`` result (#1603), as a library
 caller reads them in contract 1.3 (the only version this release supports).
 

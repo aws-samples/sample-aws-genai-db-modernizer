@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The results page's download panel: list and download a job's deliverables (#957).
 
 ``GET /api/v1/assessments/{job_id}/deliverables`` lists the files of the job's

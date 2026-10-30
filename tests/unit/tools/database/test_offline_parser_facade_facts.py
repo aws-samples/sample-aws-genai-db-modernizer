@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The offline parser's query-shape facts come from the sqlglot facade (#796).
 
 ``has_joins``, ``join_count``, ``has_aggregations`` and ``has_subqueries`` used

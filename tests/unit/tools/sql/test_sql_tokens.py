@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade's dialect-aware tokens (#471): what the relational-move gap check reads."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Finalize and ``--merge`` reject out-of-scope schema designs (issue #203).
 
 A design that references a source table or query ID the effective assignment

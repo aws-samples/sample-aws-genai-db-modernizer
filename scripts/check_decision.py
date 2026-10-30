@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Poll for a human-in-the-loop decision artifact.
 
 Exits 0 and prints JSON content if the decision file exists.

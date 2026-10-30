@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 // #615 (ADR-032): the one reader of report.json's `facts` block on the UI side.
 // Synthesis computes every customer-facing figure once
 // (src/shared/report_facts.py); the UI only formats it. The /results API fills

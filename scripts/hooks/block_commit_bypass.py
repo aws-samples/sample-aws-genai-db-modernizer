@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Bash): refuse a ``git commit`` that skips the commit hooks (#731).
 
 Blocks, in any simple command of the line:

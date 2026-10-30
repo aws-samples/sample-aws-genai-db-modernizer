@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Engine display names are the one shared, AWS-branded source of truth (#221).
 
 The interactive HTML report's engine label table and its hand-kept JS mirror (both

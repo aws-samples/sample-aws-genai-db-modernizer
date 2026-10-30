@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The live collectors never read table rows (#387).
 
 Before #387 every live collector ran ``SELECT * ... LIMIT 10`` per table by default

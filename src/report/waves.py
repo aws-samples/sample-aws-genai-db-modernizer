@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Resolve a report's migration waves (#225), with the legacy fallback for a
 report synthesized before ``migration_waves`` existed."""
 

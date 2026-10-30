@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """ADR-031 Decision 2 step 1: every modelled engine is a candidate (#726).
 
 Triage detects workload signals, but a signal is evidence, never a gate on which

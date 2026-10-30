@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #992: the results page's "Sources of truth and replicas" callout. It lists
  * each written table read on a replica from report.json's facts.table_sources

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The scheduled price refresh opens one reviewed pull request, with no credentials (#1196)."""
 
 import re

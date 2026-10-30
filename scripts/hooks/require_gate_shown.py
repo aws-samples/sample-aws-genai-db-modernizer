@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Bash, Agent): no schema design before the approval gate is in the chat (#1401, #1626).
 
 After reality check, ``/modernize`` runs ``scripts/print_summary.py --gate --mode <mode>`` and

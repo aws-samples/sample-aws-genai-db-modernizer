@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Deterministic key reconciliation for DynamoDB group drafts (issue #772).
 
 DynamoDB schema design always runs in groups of about 20 queries, designed in

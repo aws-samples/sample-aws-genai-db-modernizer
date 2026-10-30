@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Frame untrusted customer content in LLM prompts as data, never instructions.
 
 Threat model finding R1 (`docs/security/atx-threat-model.md`): the assessment

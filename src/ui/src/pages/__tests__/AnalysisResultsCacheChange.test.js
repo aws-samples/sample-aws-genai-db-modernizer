@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1252: the Results page (AnalysisResults.js) renders the one cache change sentence,
  * `cacheChangeSentence(cacheLayerFactsOf(synthesis))`, as a plain JSX text child, the same pattern

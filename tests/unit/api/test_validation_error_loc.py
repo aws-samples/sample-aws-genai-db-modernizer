@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1303: each mode check of AssessmentRequest names the field to fix in its 422 `loc`.
 
 A model_validator's ValueError has an empty field path, so FastAPI reported ``["body"]`` and a

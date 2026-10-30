@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for the ATX .lbug publish + STATE-pointer discovery round-trip.
 
 graph_transport bridges the gap that a binary .lbug cannot go through the

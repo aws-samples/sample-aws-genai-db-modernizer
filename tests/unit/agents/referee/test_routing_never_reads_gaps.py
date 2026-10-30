@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Routing never reads the relational gap check (#471, ADR-031, #1330).
 
 Gaps are read at synthesis only: the gap detector (``src.tools.analysis.relational_gaps``)

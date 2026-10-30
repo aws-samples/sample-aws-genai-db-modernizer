@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model flags re-route by score (#647, #667): synthetic flags, their destinations.
 
 A flag says "these queries cannot be served on this engine". The shared scorer

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis drops consolidation-eliminated engines (ADR-029 Layer E).
 
 An engine triage selected but that ends up with no in-scope query in the

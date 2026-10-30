@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A negated engine mention is not a claim about that engine (#1417).
 
 ``recommends_engine`` and ``check_summary_grounding`` share one definition of

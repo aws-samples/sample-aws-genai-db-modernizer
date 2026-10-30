@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1373 (maintainer decision on #1381, 2026-10-22): the Assignment review page shows
  * "pinned (utility)" for a query the first assignment pinned as a utility or DDL

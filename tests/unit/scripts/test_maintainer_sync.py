@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The maintainer sync must compare file contents, not size and mtime (#344).
 
 Also covers #448: before copying files, the script must fetch the target

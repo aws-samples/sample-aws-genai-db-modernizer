@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Customer assignment-review document: render, parse, and diff (ADR-028).
 
 The review is a free-form markdown document the customer reads and hand-edits.

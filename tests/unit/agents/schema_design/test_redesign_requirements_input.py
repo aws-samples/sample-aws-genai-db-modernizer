@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The designer of the engine serving a query routed on a redesign is given it (#1231).
 
 ADR-031 Decision 2 Amendment 13: routing scores a query after redesign, so the plan holds

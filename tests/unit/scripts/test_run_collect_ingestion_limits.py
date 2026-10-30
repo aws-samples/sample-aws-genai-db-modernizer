@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_collect.py`` enforces upload size/row caps before ingestion (#142).
 
 Mirrors ``test_run_assessment_ingestion_limits.py`` for the standalone

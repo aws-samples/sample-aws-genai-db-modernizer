@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #729: the results page's callout for queries on a fallback engine. It
  * lists each query from report.json's facts.unservable (the same list the

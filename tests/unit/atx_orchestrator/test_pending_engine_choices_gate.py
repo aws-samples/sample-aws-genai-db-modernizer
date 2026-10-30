@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The ATX review gate presents pending engine choices per table and applies a
 pick per table, or "decide for me" when the customer asks (#1003)."""
 

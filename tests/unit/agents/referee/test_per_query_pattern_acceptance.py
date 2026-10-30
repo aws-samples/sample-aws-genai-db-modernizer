@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Acceptance tests of the per-query access-pattern switch (#728, ADR-031 Decision 14 Amendment 5).
 
 They read only the routing path every production caller uses

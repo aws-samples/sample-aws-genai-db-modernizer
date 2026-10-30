@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """One source-engine detector for every ingest path (#1177, #381).
 
 ``offline_parser.detect_source_engine`` reads an offline collection's source engine

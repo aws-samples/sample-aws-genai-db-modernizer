@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * Client-side copy of the API's database-name rule (#510). The server
  * (src/shared/database_name.py, #420) accepts 1 to 128 ASCII letters, digits,

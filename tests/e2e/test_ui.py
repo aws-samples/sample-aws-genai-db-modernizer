@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The local UI lists the jobs and renders their results against the local API.
 
 Route selection: the live app only ever links to these pages for a completed job

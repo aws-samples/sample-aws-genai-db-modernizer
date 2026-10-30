@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DocumentDB provisioner.
 
 Mocks boto3 (docdb, secretsmanager, sts) and pymongo to verify:

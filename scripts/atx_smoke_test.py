@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # ruff: noqa: E402, F401 — imports placed after setup; availability-check imports are intentional
 """Smoke test — verifies the ATX orchestrator wires up correctly.
 

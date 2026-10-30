@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """src.api.routes.agent_interaction's agent path parameter had no shape of
 its own: database_name and job_id are both validated against a character
 class (#420/#505/#508), but "agent" wasn't, so "agent=.." resolved

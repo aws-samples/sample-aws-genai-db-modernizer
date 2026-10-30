@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The engine half of the rule catalog (ADR-031 Decision 8, #492).
 
 One ``src/catalog/engines/<id>.toml`` per engine carries the engine-wide facts every

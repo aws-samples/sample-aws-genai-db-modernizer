@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 import { displayTables } from './tableNames';
 // #822: the rows of the results page's query routing table, one per query of
 // the assessment (GET /assessments/{job_id}/query-journeys), so every query's

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Guards for the sub-rules of ADR-031 Decision 7 (#648).
 
 Decision 7 says more than "one scoring path": a mandatory-engine candidate wins

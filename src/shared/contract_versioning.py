@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Read-side contract version check (ADR-008 Decision 4, #971).
 
 Every stored contract carries a ``contract_version`` in MAJOR.MINOR form

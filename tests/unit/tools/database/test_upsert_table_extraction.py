@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Regression tests for upsert clauses misread as table references.
 
 Issue: the UPDATE keyword in ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE

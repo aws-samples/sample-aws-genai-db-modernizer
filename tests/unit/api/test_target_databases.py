@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#1328: the Assessments API's ``target_databases`` is the job's engine scope.
 
 It is validated against the engine catalog (active engines only, a 422 naming the

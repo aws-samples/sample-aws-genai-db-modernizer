@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """POST /{job_id}/resume refuses a cancelled job (#383, #518 round 1).
 
 Cancelling a job blocks any further API-driven phase: the API only ever runs

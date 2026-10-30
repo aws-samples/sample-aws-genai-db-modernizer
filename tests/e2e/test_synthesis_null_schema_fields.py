@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Synthesis survives a schema design whose list fields are explicit nulls (#757, #1094).
 
 Synthesis reads ``schema_output.json`` as a raw dict (``synthesis_data._read_artifact``),

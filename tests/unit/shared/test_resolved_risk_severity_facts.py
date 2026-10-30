@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The risks the assignment resolved, by severity, as a report fact (#1020, ADR-032).
 
 "Low risk, and the assignment already resolved 2 high and 4 medium risks" is the

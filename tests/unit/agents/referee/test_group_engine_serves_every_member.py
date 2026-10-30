@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#727: a co-dependency group goes to the best engine that can serve every member.
 
 ADR-031 Decision 4, Amendment 4 (maintainer decision, 2026-10-14): only an

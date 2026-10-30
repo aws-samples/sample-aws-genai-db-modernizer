@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """DynamoDB on-demand request units follow item size and read kind (#1476, #1000).
 
 DynamoDB bills a read 0.5 / 1 / 2 read request units per 4 KB (eventually consistent /

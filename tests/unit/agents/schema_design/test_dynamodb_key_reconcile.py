@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Shared tables that parallel groups gave different keys (issue #772).
 
 DynamoDB schema design always runs in groups. When two groups design the same

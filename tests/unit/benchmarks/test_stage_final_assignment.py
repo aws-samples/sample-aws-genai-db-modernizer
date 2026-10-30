@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The final-assignment benchmark stage (#1074): a sample through the reality check.
 
 Runs the real deterministic pipeline on the bundled wordpress sample (no

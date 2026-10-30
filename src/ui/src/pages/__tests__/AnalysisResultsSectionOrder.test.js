@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #1028: the results page shows the headline first and the detail on demand.
  * Section order, from the top: the three deliverable buttons, the executive

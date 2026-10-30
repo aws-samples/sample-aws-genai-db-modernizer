@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A saved job from an older release still loads through today's read paths (#1159).
 
 ``tests/fixtures/old_jobs/<tag>/`` holds the artifacts of a real job that release ``<tag>``

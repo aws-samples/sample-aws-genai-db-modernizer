@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Resolve the installed package version, with a safe fallback (#391).
 
 The version is derived from the git release tag by ``hatch-vcs``

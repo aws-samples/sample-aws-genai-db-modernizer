@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary leads with the recommendation, the risk and the decision (#1403).
 
 Synthesis computes the facts before the summary, so the deterministic summary, the model's

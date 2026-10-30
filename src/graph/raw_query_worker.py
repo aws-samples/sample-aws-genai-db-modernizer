@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run one caller-supplied read query in a separate, resource-capped process.
 
 Some statements build large values before the engine's query timeout or

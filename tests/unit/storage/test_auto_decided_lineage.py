@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A decide-for-me version edits the lineage it was applied to (#1003): Reality
 Check does not run again for it, and it is never taken for a customer approval."""
 

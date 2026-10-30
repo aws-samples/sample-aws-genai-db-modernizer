@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The saved graph's path never leaves the artifact root (#842, CodeQL py/path-injection).
 
 ``GraphStoreCache.local_path`` builds ``{base}/{db}/{job}/graph/context.lbug``

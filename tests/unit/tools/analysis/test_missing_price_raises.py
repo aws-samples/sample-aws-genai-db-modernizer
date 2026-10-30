@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A price missing from the price table raises, naming the engine and the price (#1395).
 
 An estimate never prices a gap at $0: a hole in ``src/catalog/prices.toml`` is found by a

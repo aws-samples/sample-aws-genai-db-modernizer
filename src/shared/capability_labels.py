@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Display strings for the hard capabilities ``capability_registry`` can require.
 
 Shared between ``src.agents.referee.assignment_resolver`` (the "lacks required

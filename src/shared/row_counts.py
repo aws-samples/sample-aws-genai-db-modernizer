@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A table's row count and size: a number, a real zero, or unknown (#1636).
 
 The collection scripts read every count from the source's own catalogue and statistics

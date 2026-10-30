@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tripwires for the external-mode Aurora design commands (issue #273).
 
 A headless run on a large schema failed because the command asked the model to

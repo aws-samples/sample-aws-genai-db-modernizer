@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The executive summary leads with the recommendation, the risk and the decision (#1403).
 
 On every deterministic sample (``--llm-mode none``) the summary is the facts' three parts:

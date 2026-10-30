@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The renderers' own fixed wording is concise and agrees with the plan (#951).
 
 The rubric judge, on a wordpress model run, cited: 64-character query hashes in

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for engine exclusion rules and assignment integration."""
 
 from src.agents.referee.engine_exclusions import (

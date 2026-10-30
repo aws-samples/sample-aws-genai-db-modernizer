@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """``run_schema_design.py --finalize --engine dynamodb`` (issue #197).
 
 DynamoDB designs through split -> per-group drafts -> ``--merge``; ``--merge``

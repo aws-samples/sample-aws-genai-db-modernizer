@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Run every step that talks to a model on a sample job and record what it hands over.
 
 Shared by the model-boundary marker tests (``test_query_tags_reach_no_model.py``,

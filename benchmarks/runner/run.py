@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Benchmark CLI: discover cases, run a stage, score, report.
 
 Stages: assignment, final_assignment (#1074), anti_pattern (#1084).

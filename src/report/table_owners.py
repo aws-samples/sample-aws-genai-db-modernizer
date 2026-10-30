@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Each mapped table's owner, the engines that also read it and its cache (#212).
 
 ADR-031 Amendment 9: a table has one writer, and that engine owns it. Every other

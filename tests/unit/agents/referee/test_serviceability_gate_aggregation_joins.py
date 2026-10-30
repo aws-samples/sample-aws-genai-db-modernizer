@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The serviceability gate never consolidates onto an engine that can't run
 an aggregation or a multi-table join (#338).
 

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facade's readings of one query, stored on its collected query pattern (#934).
 
 A collector parses every query once (:func:`src.tools.sql.facade.read_sql`). Every

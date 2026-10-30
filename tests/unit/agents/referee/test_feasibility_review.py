@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Post-gate feasibility reviewer (ADR-029 Layer C)."""
 
 from __future__ import annotations

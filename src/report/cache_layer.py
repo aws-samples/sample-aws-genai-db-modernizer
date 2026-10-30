@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The cache layer section: which queries a cache fronts, and in which wave."""
 
 from __future__ import annotations

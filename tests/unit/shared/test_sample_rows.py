@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """No customer row data is kept: sample rows are dropped and counted (#387).
 
 The collectors no longer read table rows. A collection or collector output written

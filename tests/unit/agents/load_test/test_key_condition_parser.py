@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DynamoDB key_condition string parser."""
 
 from src.agents.load_test.dynamodb.key_condition_parser import parse_key_condition

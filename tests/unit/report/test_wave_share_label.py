@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A wave's query share names what it counts (#1453).
 
 The share is queries over queries ("of queries"); the distinct query patterns

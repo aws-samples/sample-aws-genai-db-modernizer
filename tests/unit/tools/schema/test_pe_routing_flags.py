@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PE reviewers flag queries; they never name a target engine (#629).
 
 The DynamoDB, DocumentDB and OpenSearch PE reviewers report a query their engine

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every deliverable states the read I/O basis DocumentDB's cost rests on (#1197, ADR-032).
 
 DocumentDB's estimate bills a read only on a buffer-cache miss, using the source's hit

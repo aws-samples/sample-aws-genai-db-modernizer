@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """#950: synthesis raises the migration risks before the summary counts them.
 
 End to end through ``run_synthesis_deterministic`` and the report writer: the

@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #519: the Dashboard's old "Delete" action only ever called
  * `DELETE /assessments/{job_id}`, which cancels a job -- it never removed

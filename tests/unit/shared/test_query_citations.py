@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Model prose cites a query by its report label, never by a bare id (#1321).
 
 A DynamoDB designer wrote "The per-post comment count (query 8c66eaee) runs as a

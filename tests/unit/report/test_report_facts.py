@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The facts layer (#615, ADR-032) and the figure bugs it fixes.
 
 Each deliverable reads one shared fact from ``report.json``'s ``facts``

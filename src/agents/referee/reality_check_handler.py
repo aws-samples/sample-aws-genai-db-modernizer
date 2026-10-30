@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Referee-Reality-Check agent handler — CTO-level engine consolidation.
 
 Reads assignment, triage, analysis, and collector artifacts, runs the reality

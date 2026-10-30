@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DynamoDB-specific load test models."""
 
 from src.agents.load_test.dynamodb.models import DynamoDBTableSeedInfo

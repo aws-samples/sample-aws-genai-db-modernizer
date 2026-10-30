@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality Check Model Response Contract
 
 The one shape a model's answer to the reality check's consolidation review

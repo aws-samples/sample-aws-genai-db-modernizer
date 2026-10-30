@@ -1,3 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
 /**
  * #478: Cloudscape's CodeEditor renders a hidden ARIA status
  * description built from i18nStrings.errorsTab/warningsTab/cursorPosition.

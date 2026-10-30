@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The source's buffer-cache hit ratio a read is estimated with (#1197).
 
 An engine that bills a read only on a buffer-cache miss (DocumentDB's storage I/O) is

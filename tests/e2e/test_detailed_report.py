@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """The detailed engineering report on the bundled samples (#1364).
 
 Every run writes ``engineering-report-detailed.md`` into its deliverables folder, listed

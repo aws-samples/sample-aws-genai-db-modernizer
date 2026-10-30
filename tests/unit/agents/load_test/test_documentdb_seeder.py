@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Tests for DocumentDB seeder.
 
 Mocks pymongo MongoClient + collection insert_many to verify:

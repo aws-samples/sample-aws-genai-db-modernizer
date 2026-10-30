@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """scripts._job_status.run_main: the shared catch-all every scripts/run_*.py
 entry point's ``if __name__ == "__main__":`` guard uses (#517).
 

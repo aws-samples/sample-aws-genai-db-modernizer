@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Pluralisation helper (issue #206).
 
 The executive summary deck printed "1 session store queries": every count+noun

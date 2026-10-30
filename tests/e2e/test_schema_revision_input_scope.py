@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A schema revision's designer inputs stay inside its engine's assignment (#1524).
 
 ``_dispatch_llm_redesign`` hands the designer the collector and analysis files of the

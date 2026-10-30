@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Consumer contract tests on the public ``assess()`` result (#1184).
 
 A library caller (AWS Transform is the first) builds on the result's documented fields

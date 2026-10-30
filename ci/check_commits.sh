@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 # Lint every commit message added on top of main (#570), the CI counterpart
 # of the local `check-commit-message` pre-commit hook (commit-msg stage only
 # runs locally; CI never sees it, so this script catches a `--no-verify`

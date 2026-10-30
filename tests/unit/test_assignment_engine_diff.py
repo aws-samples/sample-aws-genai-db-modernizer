@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """assignment_engine_diff classifies a new assignment's engines (ADR-029 A)."""
 
 from __future__ import annotations

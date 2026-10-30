@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Retry/throttle resilience for the shared schema designer loop.
 
 Under a small shared Bedrock quota the group workers get throttled; a throttle

@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Unit tests for the consolidated assessment-core runner (ADR-025, ADR-026).
 
 ``run_assessment_core`` runs the whole assessment front-half in one process:

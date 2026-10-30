@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Consolidation Validator — LLM-based validation of deterministic consolidation decisions.
 
 After the deterministic reality check decides to consolidate queries from one engine

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """PreToolUse hook (Edit/Write): refuse hand edits of generated baselines (#731).
 
 The routing snapshot, the routing baseline, the contract schema and value-set

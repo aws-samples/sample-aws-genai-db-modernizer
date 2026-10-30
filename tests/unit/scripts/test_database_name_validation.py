@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Every local entry point that takes a database name must reject a
 malformed or path-traversing one before writing any artifact, not only
 under MODERNIZER_CI_SANDBOX=1 (#420). scripts/_sandbox.py already covers the

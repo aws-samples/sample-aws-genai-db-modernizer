@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Declarative deploy/update/destroy harness for the AWS Transform ATX agent fleet.
 
 One container image (Dockerfile.atx), N AgentCore runtimes that differ only by

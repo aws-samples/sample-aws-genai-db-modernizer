@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Queries that cannot be served as designed: the ones on a fallback engine
 (#729), where each landed, why, and how to redesign and re-run it, and the
 flagged queries no kept engine can take (#888): a review flagged them and they

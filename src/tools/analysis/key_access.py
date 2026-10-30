@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """How a query reaches its rows by key, an engine-neutral fact (#920, catalog PR B).
 
 Key-value and wide-column engines serve a read only through a key: a ``GetItem`` on

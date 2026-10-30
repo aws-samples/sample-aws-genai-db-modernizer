@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """A comment between two statements never changes how they parse (#1340).
 
 #1338 trimmed comments after the last ``;``; this covers the ones between statements:

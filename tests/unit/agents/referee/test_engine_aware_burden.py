@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Reality check Phase 1's extra-engine burden is engine-aware (#494 slice 2).
 
 Before, an engine's burden was its standing cost plus the flat extra-engine burden,

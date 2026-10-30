@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 """Superseded pull request CI runs are cancelled; queue and main runs are not (#1174)."""
 
 from pathlib import Path
