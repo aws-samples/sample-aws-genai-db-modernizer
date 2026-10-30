@@ -428,15 +428,25 @@ def _names_pattern(names: Iterable[str]) -> re.Pattern[str]:
     return re.compile("|".join(parts), re.IGNORECASE)
 
 
+# Enough of a sentence's end for both end checks (each match is a few characters), so a
+# long statement with many "?" placeholders is read in linear time (#1420). Exact only on
+# folded whitespace: ``_PLACEHOLDER_END``'s ``\s*`` is one space at most there, and
+# ``without_table_names``, the one caller, folds the text before it splits it.
+_END_CONTEXT = 40
+
+
 def _sentences(s: str) -> list[str]:
-    out: list[str] = []
+    out: list[list[str]] = []
+    tail = ""  # the end of the sentence being built
     for piece in _SENTENCE_END.split(s):
         # Not a sentence end: an abbreviation's full stop, a "?" placeholder in SQL.
-        if out and (_ABBREVIATION.search(out[-1]) or _PLACEHOLDER_END.search(out[-1])):
-            out[-1] += " " + piece
+        if out and (_ABBREVIATION.search(tail) or _PLACEHOLDER_END.search(tail)):
+            out[-1].append(piece)
+            tail = (tail + " " + piece)[-_END_CONTEXT:]
         else:
-            out.append(piece)
-    return out
+            out.append([piece])
+            tail = piece[-_END_CONTEXT:]
+    return [" ".join(parts) for parts in out]
 
 
 def without_table_names(text: Any, names: Iterable[str] | re.Pattern[str] | None) -> str:

@@ -12,6 +12,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -420,17 +421,20 @@ def _estimate_rows_p95(avg_rows: float, avg_ms: float, p95_ms: float) -> float |
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
+    sql = code_text(sql, "mysql")  # comments and literals are not SQL (#1420)
     cols = where_columns(sql, "`") + _AND_COL_RE.findall(sql)
     return list(dict.fromkeys(cols)) or None
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
+    sql = code_text(sql, "mysql")  # comments and literals are not SQL (#1420)
     m = _ORDER_COL_RE.search(sql)
     if not m:
         return None
     raw = m.group(1)
     cols = [c.strip().strip("`").split()[0] for c in raw.split(",")]
-    return [c for c in cols if c and not c.upper().startswith(("ASC", "DESC"))] or None
+    # A literal (a placeholder once blanked) sorts by a constant: it names no column.
+    return [c for c in cols if c and c != "?" and not c.upper().startswith(("ASC", "DESC"))] or None
 
 
 def _hash(text: str) -> str:
@@ -438,6 +442,7 @@ def _hash(text: str) -> str:
 
 
 def _has_time_range_filter(query_text: str) -> bool:
+    query_text = live_sql.time_range_text(query_text, "mysql")  # (#1420)
     if re.search(
         r"\b(NOW\s*\(\s*\)|CURRENT_TIMESTAMP|CURRENT_DATE|CURDATE\s*\(\s*\))\s*[-+]\s*INTERVAL\b",
         query_text,

@@ -14,6 +14,8 @@ them, in each dialect an entry applies to:
 - a wrong answer not fixed yet is an ``xfail(strict=True)`` naming its issue;
 - every public function of the declared fact and prose modules is registered or
   listed as not a detector, so a new detector declares its expectations;
+- every other module with a SQL heuristic (``OTHER_SQL_MODULES``) has its heuristics
+  registered, each in the dialects it reads, or is excluded with why (#1420);
 - each detector's cost on a very long input grows linearly, measured against the
   same detector on a shorter input in this process (#1230).
 
@@ -23,12 +25,15 @@ what each detector answers today, and its known wrong answers are the strict xfa
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
+from pathlib import Path
 
 import pytest
 
 from tests.corpus.adversarial_inputs import (
+    ALL_DIALECTS,
     LONG_PROSE_UNIT,
     LONG_SQL_UNIT,
     PROSE_ENTRIES,
@@ -36,15 +41,25 @@ from tests.corpus.adversarial_inputs import (
     long_text,
 )
 from tests.corpus.detectors import (
+    NOT_CORPUS_MODULES,
+    NOT_OTHER_SQL_HEURISTICS,
     NOT_PROSE_DETECTORS,
     NOT_SQL_DETECTORS,
+    OTHER_SQL_DETECTORS,
     PROSE_DETECTORS,
     PROSE_MODULES,
     SQL_DETECTORS,
     entry_keys,
 )
 from tests.unit.tools.sql._timing import assert_linear
-from tests.unit.tools.sql.test_one_definition_per_fact import FACT_MODULES, _public_facts
+from tests.unit.tools.sql.test_one_definition_per_fact import (
+    FACT_MODULES,
+    OTHER_SQL_MODULES,
+    _public_facts,
+)
+
+# Every SQL detector the corpus runs: the fact modules' and the other SQL modules'.
+ALL_SQL_DETECTORS = (*SQL_DETECTORS, *OTHER_SQL_DETECTORS)
 
 
 def _marks(bugs: dict, *keys: str) -> list:
@@ -69,9 +84,11 @@ def _not_linear(issue: int | None) -> list:
 
 def _sql_cases() -> list:
     cases = []
-    for detector in SQL_DETECTORS:
+    for detector in ALL_SQL_DETECTORS:
         for entry in SQL_ENTRIES:
             for dialect in entry.dialects:
+                if dialect not in detector.dialects:
+                    continue
                 key = f"{entry.id}@{dialect}"
                 cases.append(
                     pytest.param(
@@ -156,6 +173,101 @@ def test_every_sql_detector_in_the_fact_modules_is_registered():
     assert not declared - found, f"Registered but gone: {sorted(declared - found)}"
 
 
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def _uses_re(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "re"
+        for n in ast.walk(node)
+    )
+
+
+def _regex_functions(path: str) -> set[str]:
+    """``<path>:<name>`` of each function in ``path`` that runs a regex, and
+    ``<path>:<Class>.<method>`` of each such method: it calls ``re``, or reads a
+    module-level pattern. A pattern is any module-level name, annotated or not, whose
+    value reaches ``re`` (``re.compile``, a tuple or dict of them) or calls a module
+    function that does (a pattern factory, as in ``redact._token``)."""
+    tree = ast.parse((_REPO / path).read_text(encoding="utf-8"))
+    factories = {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef) and _uses_re(node)
+    }
+    patterns: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        calls_factory = any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in factories
+            for n in ast.walk(value)
+        )
+        if _uses_re(value) or calls_factory:
+            patterns |= {t.id for t in targets if isinstance(t, ast.Name)}
+
+    def runs_regex(fn: ast.AST) -> bool:
+        return _uses_re(fn) or any(
+            isinstance(n, ast.Name) and n.id in patterns for n in ast.walk(fn)
+        )
+
+    found = {
+        f"{path}:{node.name}"
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and runs_regex(node)
+    }
+    for cls in (node for node in tree.body if isinstance(node, ast.ClassDef)):
+        found |= {
+            f"{path}:{cls.name}.{fn.name}"
+            for fn in cls.body
+            if isinstance(fn, ast.FunctionDef) and runs_regex(fn)
+        }
+    return found
+
+
+@pytest.mark.passes_on_main
+def test_every_other_sql_module_is_in_the_corpus_or_excluded():
+    """Each module of OTHER_SQL_MODULES has a registered heuristic or a reason it has
+    none (#1420), and each registered one is a function of such a module."""
+    modules = {d.name.split(":")[0] for d in OTHER_SQL_DETECTORS}
+    assert not modules - set(OTHER_SQL_MODULES), sorted(modules - set(OTHER_SQL_MODULES))
+    assert not modules & set(NOT_CORPUS_MODULES), sorted(modules & set(NOT_CORPUS_MODULES))
+    missing = set(OTHER_SQL_MODULES) - modules - set(NOT_CORPUS_MODULES)
+    assert not missing, (
+        "A module with a SQL heuristic is not in the adversarial corpus: register its "
+        "heuristics in OTHER_SQL_DETECTORS (tests/corpus/detectors.py), or list it in "
+        f"NOT_CORPUS_MODULES with why. {sorted(missing)}"
+    )
+    assert not set(NOT_CORPUS_MODULES) - set(OTHER_SQL_MODULES), "excluded but gone"
+    for detector in OTHER_SQL_DETECTORS:
+        path, function = detector.name.split(":")
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+        module = importlib.import_module(path.removesuffix(".py").replace("/", "."))
+        assert inspect.isfunction(getattr(module, function, None)), detector.name
+        assert detector.dialects and set(detector.dialects) <= set(ALL_DIALECTS)
+
+
+@pytest.mark.passes_on_main
+def test_every_regex_function_of_a_registered_module_is_registered_or_excluded():
+    """Per function, not only per module: a new regex heuristic in a collector, the CTE
+    reading, redaction or the report filter declares its corpus answers (#1420)."""
+    registered = {d.name for d in OTHER_SQL_DETECTORS}
+    found: set[str] = set()
+    for path in {name.split(":")[0] for name in registered}:
+        found |= _regex_functions(path)
+    assert not registered & set(NOT_OTHER_SQL_HEURISTICS)
+    missing = found - registered - set(NOT_OTHER_SQL_HEURISTICS)
+    assert not missing, (
+        "A function that runs a regex in a module of the corpus is not registered: add it "
+        "to OTHER_SQL_DETECTORS with its expectations, or to NOT_OTHER_SQL_HEURISTICS with "
+        f"why. {sorted(missing)}"
+    )
+    stale = set(NOT_OTHER_SQL_HEURISTICS) - found
+    assert not stale, f"Excluded but runs no regex (or gone): {sorted(stale)}"
+
+
 @pytest.mark.passes_on_main
 def test_every_prose_rewriter_and_guard_is_registered():
     found: set[str] = set()
@@ -176,9 +288,12 @@ def test_every_prose_rewriter_and_guard_is_registered():
 def test_every_declared_answer_and_bug_names_a_corpus_entry():
     sql_keys, prose_ids = entry_keys()
     sql_ids = {key.split("@")[0] for key in sql_keys}
-    for detector in SQL_DETECTORS:
+    for detector in ALL_SQL_DETECTORS:
         for key in (*detector.expect, *detector.bugs):
             assert key in sql_keys or key in sql_ids, (detector.name, key)
+            # A declared answer or a bug in a dialect the detector does not read is dead.
+            dialect = key.partition("@")[2]
+            assert not dialect or dialect in detector.dialects, (detector.name, key)
         assert all(issue > 0 for issue in detector.bugs.values()), detector.name
     for detector in PROSE_DETECTORS:
         for key in (*detector.expect, *detector.bugs):
@@ -208,12 +323,13 @@ _PROSE_SIZES = (20_000, 160_000)
 
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize(
-    "detector", SQL_DETECTORS, ids=[d.name.rsplit("/", 1)[-1] for d in SQL_DETECTORS]
+    "detector", ALL_SQL_DETECTORS, ids=[d.name.rsplit("/", 1)[-1] for d in ALL_SQL_DETECTORS]
 )
 def test_sql_detector_is_linear_on_a_very_long_statement(detector):
+    dialect = "postgresql" if "postgresql" in detector.dialects else detector.dialects[0]
     assert_linear(
         lambda n: long_text(LONG_SQL_UNIT, n),
-        lambda text: detector.read(text, "postgresql"),
+        lambda text: detector.read(text, dialect),
         sizes=_SQL_SIZES,
     )
 

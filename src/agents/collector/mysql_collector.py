@@ -1079,7 +1079,14 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         query_tags_dropped=d.get("query_tags_dropped") or 0,
         has_text_search=d.get("has_text_search"),
         text_search_type=d.get("text_search_type"),
-        has_time_range_filter=d.get("has_time_range_filter") or _detect_time_range(query_text),
+        # A collector that read the flag keeps its answer, False included: the live
+        # collectors read it with comments and literals blanked (#1420). Only a pattern
+        # with no flag falls back to the text.
+        has_time_range_filter=(
+            d["has_time_range_filter"]
+            if d.get("has_time_range_filter") is not None
+            else _detect_time_range(query_text)
+        ),
         # Timestamps + counters
         first_seen=_normalize_datetime_str(d.get("first_seen")),
         last_seen=_normalize_datetime_str(d.get("last_seen")),
