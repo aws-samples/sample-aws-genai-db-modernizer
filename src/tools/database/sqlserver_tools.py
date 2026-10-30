@@ -17,6 +17,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
@@ -583,6 +584,7 @@ def _extract_tables(sql: str) -> list[str]:
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
     """Best-effort extraction of column names appearing in WHERE clauses."""
+    sql = code_text(sql, "sqlserver")  # comments and literals are not SQL (#1420)
     where_match = re.search(
         r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b|$)",
         sql,
@@ -596,6 +598,7 @@ def _extract_filter_columns(sql: str) -> list[str] | None:
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
+    sql = code_text(sql, "sqlserver")  # comments and literals are not SQL (#1420)
     order_match = re.search(
         r"\bORDER\s+BY\b(.*?)(?:\bLIMIT\b|\bOFFSET\b|$)", sql, re.IGNORECASE | re.DOTALL
     )
@@ -674,11 +677,15 @@ def _estimate_rows_p95(avg_rows: float, avg_ms: float, p95_ms: float) -> float |
 
 
 def _has_time_range_filter(query_text: str) -> bool:
+    query_text = live_sql.time_range_text(query_text, "sqlserver")  # (#1420)
     lower = query_text.lower()
     if re.search(r"\b(getdate|sysdatetime|current_timestamp)\b", lower):
         return True
     if re.search(r"\bbetween\b.*\b(date|datetime|datetime2|date_)", lower):
         return True
     if re.search(r"(date|datetime|datetime2|created|updated|_at|_date)\s*[<>]=?", lower):
+        return True
+    # A date or timestamp literal after BETWEEN or a comparison (#1420).
+    if re.search(r"(?:\bbetween\s+|[<>]=?\s*)n?'\d{4}-\d{2}-\d{2}", lower):
         return True
     return False

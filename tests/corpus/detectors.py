@@ -10,6 +10,15 @@ and what it should answer on the corpus, or listed as not a detector, with why.
 ``test_adversarial_corpus.py`` fails on a function that is neither, so a new
 detector has to declare its expectations before it lands.
 
+The other modules that read SQL with a heuristic (``OTHER_SQL_MODULES``: the live
+collectors' filter, sort and time-range parsing, the CTE-name reading, the
+``query_type`` rule, literal redaction, the foreign-syntax check of a cut, the
+executive report's quoted-SQL filter) register their heuristics here too (#1420),
+each in the dialects it reads. Every function of such a module that runs a regex is
+registered or in ``NOT_OTHER_SQL_HEURISTICS`` with why. A module whose heuristics read
+no collected workload SQL (DDL, Cypher, generated DDL, a model-written access
+pattern) is in ``NOT_CORPUS_MODULES`` with what it reads.
+
 A registered detector's answer on a corpus entry is compared with:
 
 - ``expect[<entry id>@<dialect>]`` or ``expect[<entry id>]`` when it has one (a
@@ -25,9 +34,12 @@ day the fix lands and the mark has to go.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from unittest.mock import patch
 
+from src.agents.collector import mysql_collector
 from src.agents.referee import (
     query_shape,
     synthesis_grounding,
@@ -35,8 +47,13 @@ from src.agents.referee import (
     utility_statements,
 )
 from src.agents.referee.table_resolution import SourceScope
+from src.assessment import cut
+from src.report import executive_report
 from src.shared import prose_style, unsupported_pattern
-from src.tools.sql import facade, regex_facts
+from src.shared.sql_spans import code_text, replace_strings_and_comments
+from src.tools.database import mysql_tools, oracle_tools, postgres_tools, sql_cte, sqlserver_tools
+from src.tools.database.filter_columns import where_columns
+from src.tools.sql import facade, redact, regex_facts
 from src.tools.sql.query_facts import QueryFacts
 from src.tools.sql.query_type import statement_query_type
 from src.tools.validation import customer_text_guard
@@ -71,6 +88,8 @@ class SqlDetector:
     read: Callable[[str, str], object]  # (text, dialect) -> a comparable answer
     expect: Mapping[str, object] = field(default_factory=dict)
     bugs: Mapping[str, int] = field(default_factory=dict)
+    # The dialects it reads: a live collector reads only its own engine's text.
+    dialects: tuple[str, ...] = ALL_DIALECTS
 
 
 @dataclass(frozen=True)
@@ -288,6 +307,243 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
     ),
 )
 
+# ---------------------------------------------------------------------------
+# The other SQL modules (#1420): heuristics outside the declared fact modules
+# ---------------------------------------------------------------------------
+
+_COLLECTORS = {
+    "mysql": ("src/tools/database/mysql_tools.py", mysql_tools),
+    "postgresql": ("src/tools/database/postgres_tools.py", postgres_tools),
+    "sqlserver": ("src/tools/database/sqlserver_tools.py", sqlserver_tools),
+    "oracle": ("src/tools/database/oracle_tools.py", oracle_tools),
+}
+# The identifier quote each collector passes to where_columns.
+_WHERE_QUOTE = {"mysql": "`", "postgresql": '"'}
+
+# A keyword as a quoted name: the name is the column the WHERE filters on (the twin
+# names another column).
+_FILTERS_ON_LIMIT: dict[str, object] = {
+    "backtick_identifiers@mysql": ["limit"],
+    "bracket_identifiers@sqlserver": ["limit"],
+    "double_quoted_identifiers@postgresql": ["limit"],
+    "double_quoted_identifiers@oracle": ["limit"],
+}
+
+
+# A quoted name read as SQL (#1737): words inside it read as a filter, and Oracle reads no
+# column from a double-quoted name (``"join"`` reads ``jo``).
+_QUOTED_NAME_BUGS = {
+    "mysql": _bug(1737, "where_as_backtick_identifier"),
+    "postgresql": _bug(1737, "where_as_double_quoted_identifier", dialects=("postgresql",)),
+    "sqlserver": _bug(1737, "where_as_bracket_identifier"),
+    "oracle": _bug(
+        1737,
+        "double_quoted_identifiers",
+        "where_as_double_quoted_identifier",
+        "bare_name_clauses_double_quoted",
+        dialects=("oracle",),
+    ),
+}
+
+# DDL and maintenance statements the quoted-SQL filter does not know (#1738): cut only when
+# a comment after one holds SELECT-like words, so the twin prints.
+_UNCUT_STATEMENTS = _bug(
+    1738,
+    "alter_index_on_with_comment",
+    "update_statistics_with_comment",
+    "drop_index_on_with_comment",
+    "truncate_with_comment",
+    "alter_table_with_comment",
+    "comment_on_table_string",
+    "optimize_table_with_line_comment",
+    "lock_tables_with_comment",
+    "vacuum_with_line_comment",
+    "describe_with_comment",
+)
+
+
+# Each of these is a time range in the engines' forms (#1420): a date, time or timestamp
+# literal after a comparison or BETWEEN, NOW() less an interval, one in a DO block's body.
+_TIME_RANGE_ENTRIES = (
+    "iso_t_timestamp",
+    "utc_timestamp",
+    "offset_timestamp",
+    "zone_name_timestamp",
+    "offset_and_zone_timestamp",
+    "go_default_timestamp",
+    "between_iso_timestamps",
+    "between_dates",
+    "now_minus_interval",
+    "do_block_time_range",
+)
+_IS_TIME_RANGE: dict[str, object] = dict.fromkeys(_TIME_RANGE_ENTRIES, True)
+
+
+def _leaked_words(redactor: Callable[[str, str], str]) -> Callable[[str, str], object]:
+    """The corpus's hostile keywords left outside literals and comments once the text is
+    redacted by ``redactor``: a literal read to the wrong end leaks its words into code,
+    or a value."""
+
+    def read(text: str, dialect: str) -> object:
+        # Uncached: a cached short text would make the linear-cost check compare a
+        # lookup with a redaction.
+        with patch.object(redact, "_CACHE", redact._SizeBoundCache(max_chars=0)):
+            redacted = redactor(text, dialect)
+        return _words(
+            replace_strings_and_comments(redacted, dialect, string=str, comment=lambda _s: " ")
+        )
+
+    return read
+
+
+# A quoted name keeps its words, and with no setting collected a string ends where either
+# reading of standard_conforming_strings ends it: the span either reading hides is redacted
+# whole (privacy first), so 'C:\' AND c IS NULL ... is one value.
+_REDACTION_EXPECT: dict[str, object] = {
+    **_KEEPS_IDENTIFIER_NAMES,
+    "backslash_ends_no_string@postgresql": (),
+}
+
+
+def _cte_drops(text: str, dialect: str) -> tuple[str, ...]:
+    """The words ``drop_cte_references`` blanked: each ``FROM``/``JOIN`` of a CTE name."""
+    kept = Counter(sql_cte.drop_cte_references(text, dialect).split())
+    return tuple(sorted((Counter(text.split()) - kept).elements()))
+
+
+# The executive report's quoted-SQL filter (#1020) cuts a sentence that lists statements
+# back to the clause before its colon: a statement there, hostile or not, never prints.
+_GAP_CLAUSE = "Schema design gap: these four queries have no access pattern"
+
+
+def _report_line(text: str, dialect: str) -> str:
+    return executive_report.without_table_names(f"{_GAP_CLAUSE}: {text}", None)
+
+
+def _text_only(read: Callable[[str], object]) -> Callable[[str, str], object]:
+    """A collector's parser takes the text alone: it reads its own engine's dialect."""
+    return lambda text, _dialect: read(text)
+
+
+def _collector_detectors() -> tuple[SqlDetector, ...]:
+    """Each live collector's filter, sort and time-range parsing, in its own dialect."""
+    detectors: list[SqlDetector] = []
+    for dialect, (path, module) in _COLLECTORS.items():
+        own = (dialect,)
+        detectors += [
+            SqlDetector(
+                f"{path}:_extract_filter_columns",
+                _text_only(module._extract_filter_columns),
+                expect={k: v for k, v in _FILTERS_ON_LIMIT.items() if k.endswith(f"@{dialect}")},
+                bugs=_QUOTED_NAME_BUGS[dialect],
+                dialects=own,
+            ),
+            SqlDetector(
+                f"{path}:_extract_sort_columns",
+                _text_only(module._extract_sort_columns),
+                dialects=own,
+            ),
+            SqlDetector(
+                f"{path}:_has_time_range_filter",
+                _text_only(module._has_time_range_filter),
+                expect=_IS_TIME_RANGE,
+                dialects=own,
+            ),
+        ]
+    return tuple(detectors)
+
+
+OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
+    *_collector_detectors(),
+    SqlDetector(
+        "src/agents/collector/mysql_collector.py:_detect_time_range",
+        lambda text, dialect: mysql_collector._detect_time_range(text),
+        expect=_IS_TIME_RANGE,
+        # Every collector builds its patterns with it, with no engine: it runs in every
+        # dialect. A time range in a comment or a string sets the collected flag (#1743).
+        bugs=_bug(1743, "time_range_in_comment", "time_range_in_string"),
+    ),
+    SqlDetector(
+        "src/tools/database/filter_columns.py:where_columns",
+        # Its callers pass code text: comments blanked, each literal a placeholder.
+        lambda text, dialect: where_columns(code_text(text, dialect), _WHERE_QUOTE[dialect]),
+        expect={k: v for k, v in _FILTERS_ON_LIMIT.items() if k.endswith(("mysql", "postgresql"))},
+        dialects=tuple(_WHERE_QUOTE),
+    ),
+    SqlDetector("src/tools/database/sql_cte.py:drop_cte_references", _cte_drops),
+    SqlDetector("src/tools/sql/query_type.py:statement_query_type", statement_query_type),
+    SqlDetector(
+        "src/tools/sql/redact.py:redact_literals",
+        _leaked_words(redact.redact_literals),
+        expect=_REDACTION_EXPECT,
+    ),
+    SqlDetector(
+        # Collected view, procedure and trigger bodies, through the same span reading.
+        "src/tools/sql/redact.py:redact_definition",
+        _leaked_words(redact.redact_definition),
+        expect=_REDACTION_EXPECT,
+    ),
+    SqlDetector("src/assessment/cut.py:foreign_syntax", cut.foreign_syntax),
+    SqlDetector(
+        "src/report/executive_report.py:without_table_names", _report_line, bugs=_UNCUT_STATEMENTS
+    ),
+)
+
+# The OTHER_SQL_MODULES with no detector in the corpus: what their heuristics read, none of
+# it a collected workload query.
+NOT_CORPUS_MODULES: dict[str, str] = {
+    "src/tools/database/ddl_parser.py": "reads DDL, not a workload query",
+    "src/tools/schema/aurora_common/sql_safety.py": "checks generated DDL, not a workload query",
+    "src/agents/schema_design/dynamodb_key_reconcile.py": (
+        "its conditional-write check reads a model-written access pattern's key condition "
+        "and description, not SQL"
+    ),
+    "src/graph/cypher_guard.py": "reads Cypher, not SQL",
+    "src/graph/schema.py": "the graph store's own DDL, not a workload query",
+    "src/tools/schema/aurora_common/delta_merge.py": "reads the generated Aurora DDL",
+}
+
+# The functions of a registered OTHER_SQL_MODULES module that run a regex but are not a
+# heuristic of their own, with why.
+NOT_OTHER_SQL_HEURISTICS: dict[str, str] = {
+    "src/tools/database/mysql_tools.py:_version_gte": "compares version strings",
+    "src/tools/database/filter_columns.py:_read_word": "a helper of where_columns, registered",
+    "src/tools/database/sql_cte.py:_blank": "blanks a span drop_cte_references masked",
+    "src/tools/database/sql_cte.py:_visible_ctes": "a helper of drop_cte_references, registered",
+    "src/report/executive_report.py:printable": "maps glyphs the PDF font lacks",
+    "src/report/executive_report.py:_md_markup": "renders Markdown emphasis as PDF markup",
+    "src/report/executive_report.py:_names_pattern": (
+        "builds without_table_names' identifier pattern, registered"
+    ),
+    "src/report/executive_report.py:_sentences": "a helper of without_table_names, registered",
+    "src/report/executive_report.py:_date": "reads the report's date",
+    "src/assessment/cut.py:_view_tables": "reads a collected view definition's tables",
+    "src/assessment/cut.py:_bracket_name": "a helper of foreign_syntax, registered",
+}
+_REDACT = "src/tools/sql/redact.py"
+for _fn in (
+    "_token",
+    "_number_patterns",
+    "_long_digit_runs",
+    "_quoted_runs_redacted",
+    "_unterminated",
+    "_prefix_start",
+    "_shape",
+    "_track_parens",
+    "_positions",
+    "_number_edits",
+):
+    NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = "a step of redact_literals, registered"
+for _fn in ("_Redactor.redact", "_Redactor._redact", "_Redactor._string"):
+    NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = (
+        "a step of redact_literals and redact_definition, registered"
+    )
+for _fn in ("scrub_comment", "redact_comment"):
+    NOT_OTHER_SQL_HEURISTICS[f"{_REDACT}:{_fn}"] = (
+        "redacts a comment's text (quoted runs, e-mail addresses, long digit runs): a "
+        "comment is prose to it, with no SQL span to read"
+    )
+
 # Public functions of the fact modules that are not a detector of their own, with why.
 NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_FACADE}:sqlglot_dialect": "maps an engine name to a dialect; reads no SQL",
@@ -364,11 +620,13 @@ PROSE_MODULES: dict[str, str] = {
     "src/tools/validation/customer_text_guard.py": "the internal-wording guard",
     "src/agents/referee/synthesis_grounding.py": "the summary and risk checks",
     "src/agents/referee/synthesis_prose.py": "the schema-design prose seam",
+    "src/report/executive_report.py": "the quoted-SQL and identifier filter on printed prose (#1020)",
 }
 
 _PROSE = "src/shared/prose_style.py"
 _GUARD = "src/tools/validation/customer_text_guard.py"
 _GROUNDING = "src/agents/referee/synthesis_grounding.py"
+_EXEC = "src/report/executive_report.py"
 
 # The target the summary checks compare a summary with: Aurora PostgreSQL first,
 # OpenSearch second, one high risk, ElastiCache serving no table.
@@ -571,6 +829,28 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "negated_attribution": False,
         },
     ),
+    ProseDetector(
+        f"{_EXEC}:without_table_names",
+        lambda text: executive_report.without_table_names(text, None),
+        expect={
+            # Plain prose prints as written (its whitespace folded).
+            **{
+                entry.id: " ".join(entry.text.split())
+                for entry in PROSE_ENTRIES
+                if entry.id
+                in ("negation", "numeric_ranges", "negated_attribution", "risk_and_wave_claims")
+            },
+            # A tilde fence holds no SQL and no identifier: nothing to cut.
+            "tilde_fenced_code_block": (
+                "The plan keeps reads local. ~~~ leverage — robust -- seamless ~~~"
+            ),
+            # A backtick quotes SQL, and a snake_case word is an identifier: the
+            # sentence goes.
+            "code_span": "",
+            "identifier_colon": "",
+            "quoted_engine_id": "",
+        },
+    ),
 )
 
 NOT_PROSE_DETECTORS: dict[str, str] = {
@@ -591,6 +871,15 @@ NOT_PROSE_DETECTORS: dict[str, str] = {
     f"{_GROUNDING}:engine_table_scope": "reads the assignment, not prose",
     f"{_GROUNDING}:build_effective_architecture": "reads the assignment, not prose",
     f"{_GROUNDING}:build_fallback_summary": "writes deterministic text from the assignment",
+    f"{_EXEC}:register_fonts": "registers the PDF fonts",
+    f"{_EXEC}:font_for": "names a registered font",
+    f"{_EXEC}:printable": "maps glyphs the font lacks; cuts nothing",
+    f"{_EXEC}:table_names": "reads a report's table names, not prose",
+    f"{_EXEC}:collected_identifiers": "reads a collection's identifiers, not prose",
+    f"{_EXEC}:contrast_ratio": "compares two colours",
+    f"{_EXEC}:card_mitigation": "without_table_names over a risk's mitigation, registered",
+    f"{_EXEC}:build_story": "lays out the PDF from a report",
+    f"{_EXEC}:render_executive_report_pdf": "writes the PDF",
     "src/agents/referee/synthesis_prose.py:clean_schema_design_prose": (
         "clean_model_prose over each model-written field of a schema design, registered"
     ),

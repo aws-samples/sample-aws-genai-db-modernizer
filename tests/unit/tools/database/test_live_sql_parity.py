@@ -514,6 +514,36 @@ def test_a_performance_insights_pattern_keeps_the_collected_text_search():
     assert (pattern.has_text_search, pattern.text_search_type) == (True, "fulltext")
 
 
+@pytest.mark.parametrize(
+    "live",
+    [_live_mysql, _live_mariadb, _live_postgres, _live_sqlserver, _live_oracle],
+    ids=["mysql", "mariadb", "postgresql", "sqlserver", "oracle"],
+)
+def test_a_live_time_range_flag_reaches_the_built_pattern(live):
+    """The pattern keeps the live collector's time-range answer, False included (#1420):
+    a time range only in a comment is none, and the text check does not override it."""
+    from src.agents.collector.mysql_collector import _dict_to_query_pattern
+
+    in_comment = live("SELECT id FROM t WHERE id = 1 -- created_at > NOW() - INTERVAL 1 DAY")
+    assert in_comment["has_time_range_filter"] is False
+    assert _dict_to_query_pattern(in_comment).has_time_range_filter is False
+    real = live("SELECT id FROM t WHERE created_at > '2026-01-01T10:00:00Z'")
+    assert _dict_to_query_pattern(real).has_time_range_filter is True
+
+
+@pytest.mark.passes_on_main
+def test_a_pattern_with_no_time_range_flag_reads_its_text():
+    """An offline pattern that carries no flag (or None) falls back to the text check."""
+    from src.agents.collector.mysql_collector import _dict_to_query_pattern
+
+    text = "SELECT id FROM t WHERE created_at > NOW() - INTERVAL 1 DAY"
+    for row in ({}, {"has_time_range_filter": None}):
+        pattern = _dict_to_query_pattern({"query_id": "q", "query_text": text, **row})
+        assert pattern.has_time_range_filter is True
+    pattern = _dict_to_query_pattern({"query_id": "q", "query_text": "SELECT id FROM t"})
+    assert pattern.has_time_range_filter is False
+
+
 def test_the_collectors_hold_no_text_search_detector():
     from src.agents.collector import mysql_collector
     from src.tools.database import mysql_tools, oracle_tools, postgres_tools, sqlserver_tools

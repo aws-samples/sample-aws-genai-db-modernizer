@@ -31,14 +31,21 @@ before), so its downstream consumers see no format change:
 Resolving a name to a collection table id (``<database>.<table>``) stays with
 the pipeline (``TableNameResolver``); a live collector reads its queries
 before it has a table list to resolve against.
+
+A collector's own filter, sort and time-range parsing reads the text the engine
+runs (#1420): :func:`src.shared.sql_spans.code_text` for the columns, :func:`time_range_text` for the
+time range, so a keyword or a column name inside a comment or a string literal
+(a query tag, a note) is never read as SQL.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from typing import Any
 
+from src.shared.sql_spans import literals_and_comments_for, opens_routine_body, spans
 from src.tools.sql import facade
 from src.tools.sql.facade import SqlReading, TableRef, TableReferences
 from src.tools.sql.query_facts import query_facts, remember_stored_facts
@@ -46,6 +53,19 @@ from src.tools.sql.query_tags import QueryTags
 from src.tools.sql.stored_facts import stored_reading
 
 logger = logging.getLogger(__name__)
+
+# A literal that reads as a date, a time, a timestamp or an interval's amount, in the forms
+# MySQL, PostgreSQL, SQL Server and Oracle accept (with a string prefix such as N or E):
+# digits and separators ('2026-01-01 10:00:00+02', '7'), or an ISO date with an optional
+# T or space time, fraction, a Z or an offset, and a zone name ('2026-01-01T10:00:00Z',
+# '2026-01-01 10:00:00 UTC', '2026-01-01 10:00:00 -0800 PST', Go's
+# '2026-01-01 10:00:00.000000 +0000 UTC').
+_TIME_LITERAL_RE = re.compile(
+    r"[A-Za-z]{0,2}'(?:[\d\s:.+\-/]*"
+    r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?)?"
+    r"\s*(?:Z|[+-]\d{2}(?::?\d{2})?)?\s*(?:[A-Za-z][\w/+\-]*)?)'",
+    re.IGNORECASE,
+)
 
 _SYSTEM_CATALOGS = frozenset({"sys", "information_schema"})
 _POSTGRES_ENGINES = frozenset({"postgresql", "postgres"})
@@ -155,3 +175,39 @@ class LiveQueryReader:
             self._read,
             ", ".join(f"{reason}={n}" for reason, n in sorted(self._fallbacks.items())),
         )
+
+
+def time_range_text(sql: str, source_engine: str) -> str:
+    """``sql`` for a collector's time-range check (#1420), read in ``source_engine``'s
+    forms: each comment a space, each date, time or number literal as written
+    (:data:`_TIME_LITERAL_RE`) and every other literal empty (``''``). A date literal
+    after ``BETWEEN`` or a comparison is the signal the check reads; a word inside any
+    other literal is text, never a function or a column.
+
+    A PostgreSQL ``DO`` block or ``AS $$ ... $$`` routine body is SQL the engine runs, so
+    it is read the same way, as :func:`src.shared.sql_spans.code_text` reads it (#1416):
+    ``now() - interval '30 days'`` in it is a time range.
+    """
+    text = sql or ""
+    grammar = literals_and_comments_for(source_engine)
+    out: list[str] = []
+    last = 0
+    for start, end, opener in spans(text, grammar):
+        out.append(text[last:start])
+        last = end
+        span = text[start:end]
+        if opener in ("--", "/*", "#"):
+            out.append(" ")
+        elif opener in grammar.identifiers:
+            out.append(span)
+        elif (
+            opener[0] == "$"
+            and end - start >= 2 * len(opener)
+            and opens_routine_body("".join(out[-4:]))
+        ):
+            body = text[start + len(opener) : end - len(opener)]
+            out.append(" " + time_range_text(body, source_engine) + " ")
+        else:
+            out.append(span if _TIME_LITERAL_RE.fullmatch(span) else "''")
+    out.append(text[last:])
+    return "".join(out)

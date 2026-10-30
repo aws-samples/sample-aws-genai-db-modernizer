@@ -16,6 +16,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.index_keys import add_index_key
@@ -607,6 +608,7 @@ def _extract_tables(sql: str) -> list[str]:
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
+    sql = code_text(sql, "oracle")  # comments and literals are not SQL (#1420)
     # Match columns in comparisons (col = val, col > val, col != val, etc.)
     matches = re.findall(r"\b(\w+)\s*(?:[=<>!]+|(?:NOT\s+)?IN|(?:NOT\s+)?LIKE|IS)", sql, re.I)
     # Filter out SQL keywords that regex might capture
@@ -616,17 +618,22 @@ def _extract_filter_columns(sql: str) -> list[str] | None:
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
+    sql = code_text(sql, "oracle")  # comments and literals are not SQL (#1420)
     m = re.search(r"order\s+by\s+(.+?)(?:;|\)|$)", sql, re.I)
     if not m:
         return None
     cols = [c.strip().split()[0].lower() for c in m.group(1).split(",")]
-    return [c for c in cols if c and c not in ("asc", "desc")] or None
+    # A literal (a placeholder once blanked) sorts by a constant: it names no column.
+    return [c for c in cols if c and c != "?" and c not in ("asc", "desc")] or None
 
 
 def _has_time_range_filter(query_text: str) -> bool:
+    query_text = live_sql.time_range_text(query_text, "oracle")  # (#1420)
     lower = query_text.lower()
     return bool(
         re.search(r"(sysdate|systimestamp|current_date|current_timestamp)", lower)
         or re.search(r"between\s+.*?(date|timestamp|to_date)", lower)
         or re.search(r"interval\s+'", lower)
+        # A date or timestamp literal after BETWEEN or a comparison (#1420).
+        or re.search(r"(?:\bbetween\s+|[<>]=?\s*)'\d{4}-\d{2}-\d{2}", lower)
     )

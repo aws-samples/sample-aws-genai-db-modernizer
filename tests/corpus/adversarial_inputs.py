@@ -61,6 +61,11 @@ _HOSTILE_WORDS = (
     "SQL_CALC_FOUND_ROWS created_at session_id token NEXTVAL information_schema"
 )
 _IN_COMMENT = _HOSTILE_WORDS.replace("''", "'")
+# A time-range predicate in each engine's form (#1420).
+_TIME_RANGES = (
+    "created_at > NOW() - INTERVAL 1 DAY OR d > SYSDATE OR d > GETDATE() "
+    "OR d BETWEEN '2026-01-01' AND '2026-02-01' OR updated_at >= ?"
+)
 # Words the base statements share (SELECT id FROM t WHERE ...): not hostile.
 _BASE_WORDS = frozenset({"SELECT", "FROM", "WHERE", "AND", "AS", "ID", "NOTE"})
 
@@ -282,6 +287,91 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         "WITH w AS (SELECT 'x' AS s FROM t) SELECT s FROM w",
         ALL_DIALECTS,
         "an INSERT inside a string in a CTE: the statement appends nothing (#1459)",
+    ),
+    SqlEntry(
+        "cte_and_parenthesis_in_string",
+        "WITH w AS (SELECT id FROM t WHERE (id IN (1, 2) AND note = ') FROM w ORDER BY z (')) "
+        "SELECT id FROM w ORDER BY id",
+        "WITH w AS (SELECT id FROM t WHERE (id IN (1, 2) AND note = 'x')) "
+        "SELECT id FROM w ORDER BY id",
+        ALL_DIALECTS,
+        "an unbalanced parenthesis, a CTE reference and a sort inside a string in nested "
+        "parentheses of a CTE body (#1420)",
+    ),
+    SqlEntry(
+        "cte_in_comment",
+        "WITH w AS (SELECT id FROM t WHERE ((id = 1))) SELECT id FROM w "
+        "/* WITH v AS (SELECT 1) SELECT x FROM v JOIN w ON 1=1 WHERE c = 1 ORDER BY z */",
+        "WITH w AS (SELECT id FROM t WHERE ((id = 1))) SELECT id FROM w",
+        ALL_DIALECTS,
+        "another CTE list, a join on the CTE, a filter and a sort inside a block comment (#1420)",
+    ),
+    # Time ranges (#1420): one in a comment or a string is none, and each date, time or
+    # timestamp literal form the engines accept is one (each time-range check declares it).
+    SqlEntry(
+        "time_range_in_comment",
+        f"SELECT id FROM t WHERE id = 1 -- {_TIME_RANGES}",
+        "SELECT id FROM t WHERE id = 1",
+        ALL_DIALECTS,
+        "a time-range predicate in each engine's form inside a line comment",
+    ),
+    SqlEntry(
+        "time_range_in_string",
+        "SELECT id FROM t WHERE note = '" + _TIME_RANGES.replace("'", "''") + "'",
+        "SELECT id FROM t WHERE note = 'x'",
+        ALL_DIALECTS,
+        "a time-range predicate in each engine's form inside a string literal",
+    ),
+    *(
+        SqlEntry(
+            entry_id,
+            f"SELECT id FROM t WHERE {predicate} /* note */",
+            f"SELECT id FROM t WHERE {predicate}",
+            ALL_DIALECTS,
+            f"{why}, with a comment after it",
+        )
+        for entry_id, predicate, why in (
+            ("iso_t_timestamp", "created_at > '2026-01-01T10:00:00'", "an ISO timestamp with T"),
+            ("utc_timestamp", "created_at > '2026-01-01T10:00:00Z'", "an ISO timestamp in UTC"),
+            (
+                "offset_timestamp",
+                "created_at > '2026-01-01T10:00:00+02:00'",
+                "an ISO timestamp with an offset",
+            ),
+            (
+                "zone_name_timestamp",
+                "created_at > '2026-01-01 10:00:00 UTC'",
+                "a timestamp with a zone name",
+            ),
+            (
+                "offset_and_zone_timestamp",
+                "created_at > '2026-01-01 10:00:00 -0800 PST'",
+                "a timestamp with an offset and a zone name",
+            ),
+            (
+                "go_default_timestamp",
+                "created_at > '2026-01-01 10:00:00.000000 +0000 UTC'",
+                "Go's default time format: fraction, offset and zone name",
+            ),
+            (
+                "between_iso_timestamps",
+                "created_at BETWEEN '2026-01-01T00:00:00' AND '2026-02-01T00:00:00'",
+                "BETWEEN two ISO timestamps",
+            ),
+            ("between_dates", "created_at BETWEEN '2026-01-01' AND '2026-02-01'", "BETWEEN dates"),
+            (
+                "now_minus_interval",
+                "created_at > NOW() - INTERVAL '1 day'",
+                "NOW() less an interval",
+            ),
+        )
+    ),
+    SqlEntry(
+        "do_block_time_range",
+        "DO $$ BEGIN DELETE FROM t WHERE created_at < now() - interval '30 days'; END $$",
+        "DO $body$ BEGIN DELETE FROM t WHERE created_at < now() - interval '30 days'; END $body$",
+        ("postgresql",),
+        "a time range inside a DO block's body, which is code the engine runs (#1416)",
     ),
     SqlEntry(
         "do_update_in_comment_after_do_nothing",
