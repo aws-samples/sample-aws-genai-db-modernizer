@@ -250,6 +250,11 @@ Resources:
 
   AutomationInstance:
     Type: AWS::EC2::Instance
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_46
+            comment: "False positive: the user data is a fixed bootstrap script that only installs database clients; it holds no credential (the instance reads them from Secrets Manager at run time)"
     DependsOn:
       - SSMEndpoint
       - SSMMessagesEndpoint

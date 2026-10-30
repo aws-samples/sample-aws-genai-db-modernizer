@@ -249,6 +249,9 @@ repos:
         args: [
           '--directory', 'infrastructure/cloudformation',
           '--skip-path', 'infrastructure/cloudformation/parameters',
+          # The hook's own entry adds `-d .`, so without this it also scans the
+          # quarantined contrib/ snapshot, which keeps its own findings.
+          '--skip-path', '(^|/)contrib/',
           '--framework', 'cloudformation',
           '--quiet',
           '--compact'
@@ -263,6 +266,7 @@ repos:
         name: Dockerfile security scanning with Checkov
         args: [
           '--directory', 'infrastructure/docker',
+          '--skip-path', '(^|/)contrib/',
           '--framework', 'dockerfile',
           '--quiet',
           '--compact'
