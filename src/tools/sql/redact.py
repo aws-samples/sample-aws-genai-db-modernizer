@@ -91,6 +91,7 @@ is right for grouping variants and wrong for a text the parser reads again.
 from __future__ import annotations
 
 import re
+import string
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -127,14 +128,79 @@ __all__ = [
 # Anything that could be a literal or a comment: text with none comes back as it is.
 _MAYBE_LITERAL_RE = re.compile(r"['\"\d$#]|--|/\*")
 
-_NUMBER_RE = re.compile(
-    r"(?<![\w$#:.@])(?:\d+(?:\.\d+)*\.?|\.\d+(?:\.\d+)*)(?:[eE][+-]?\d+)?[fFdD]?(?![\w$#])",
-    re.UNICODE,
-)
-_HEX_RE = re.compile(r"(?<![\w$#:.@])0[xX][0-9A-Fa-f]+(?![\w$#])")
+# What can follow a number token: ``.digits`` fragments, each with its own exponent.
+# The token takes all of them, so no digit of a literal survives beside a placeholder
+# (``0x1F.1``, ``1.5e3.2``); a placeholder never starts a second number (#1715).
+_NUMBER_TAIL = r"(?:\.\d+(?:[eE][+-]?\d+)?[fFdD]?)*"
+_START = r"(?<![\w$#:.@])"
 
-# SQL Server's money literal (``$1984.37``): the ``$`` is part of the value.
-_MONEY_RE = re.compile(r"(?<![\w$#:.@])\$\s?[+-]?(?:\d+\.?\d*|\.\d+)(?![\w$#])")
+
+def _digits(digit: str, *, separators: bool) -> str:
+    return rf"{digit}+(?:_{digit}+)*" if separators else rf"{digit}+"
+
+
+def _token(body: str, *, strict: bool) -> re.Pattern[str]:
+    """``body`` as a token. Strict (MySQL): it ends at a non-word. Otherwise the whole
+    token is taken first, and a glued word is left to the text after it; where a ``$`` or
+    ``#`` follows, the shorter strict reading main always had applies (the number before
+    the ``.``), so no digit that was redacted before is kept."""
+    if strict:
+        return re.compile(_START + body + r"(?![\w$#])", re.UNICODE)
+    return re.compile(_START + "(?:(?>" + body + r")(?![$#])|" + body + r"(?![\w$#]))", re.UNICODE)
+
+
+def _number_patterns(dialect: str) -> tuple[re.Pattern[str], ...]:
+    """The number, hex, binary and octal token patterns of one dialect.
+
+    MySQL keeps the strict reading: a number glued to a word (``1_000``, ``4abc``) is a
+    name there, since an identifier may start with digits, and ``0o17`` is no literal.
+
+    Every other engine reads a number glued to a word as a number plus an alias
+    (SQL Server, Db2, Oracle and PostgreSQL 14 and earlier), so the numeric prefix is
+    the literal and the digits of the alias after it would leak: the token ends where
+    the number does (``4111111111111111abc`` is a placeholder and ``abc``) and takes ``_`` digit groups
+    (``4111_1111_1111_1111``). PostgreSQL 16 reads those groups, ``0o17``, ``0b101`` and
+    ``0xFFFF_FFFF`` as one literal. Redacting them on every PostgreSQL version, and on
+    the engines with no such literal, only drops an alias, so it is safe (#1715).
+    """
+    strict = dialect == "mysql"
+    sep = not strict
+    dec = _digits(r"\d", separators=sep)
+    num = (
+        rf"(?:{dec}(?:\.{dec})*\.?|\.{dec}(?:\.{dec})*)(?:[eE][+-]?{dec})?" r"(?:[fFdD](?!\w))?"
+        if sep
+        else r"(?:\d+(?:\.\d+)*\.?|\.\d+(?:\.\d+)*)(?:[eE][+-]?\d+)?[fFdD]?"
+    )
+    tail = rf"(?:\.{dec}(?:[eE][+-]?{dec})?(?:[fFdD](?!\w))?)*" if sep else _NUMBER_TAIL
+
+    def token(body: str) -> re.Pattern[str]:
+        return _token(body, strict=strict)
+
+    hexa = rf"0[xX]{_digits('[0-9A-Fa-f]', separators=sep)}{tail}"
+    # Any digit, not only the valid ones: ``0b102`` reads as ``0 AS b102`` on the engines
+    # that glue, and a digit left behind next to the placeholder would be redacted by a
+    # second pass.
+    # (MySQL's ``0b`` is lower case only: ``0B101`` is a name there.)
+    binary = rf"0[bB]{_digits(r'\d', separators=True)}{tail}" if sep else rf"0b[01]+{tail}"
+    octal = rf"0[oO]{_digits(r'\d', separators=sep)}{tail}"
+    patterns = [token(num + tail), token(hexa), token(binary)]
+    if not strict:
+        patterns.append(token(octal))
+    return tuple(patterns)
+
+
+_NUMBER_PATTERNS = {
+    dialect: _number_patterns(dialect)
+    for dialect in ("mysql", "postgresql", "sqlserver", "oracle", "db2")
+}
+
+# SQL Server's money literal (``$1984.37``): the ``$`` is part of the value. It ends like a
+# number token (``$1.5x`` is ``?`` and a word; ``$4111_1111`` takes its groups).
+_MONEY_RE = _token(
+    r"\$\s?[+-]?(?:\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\.\d+(?:_\d+)*)(?:[eE][+-]?\d+(?:_\d+)*)?"
+    + r"(?:\.\d+(?:_\d+)*(?:[eE][+-]?\d+(?:_\d+)*)?(?:[fFdD](?!\w))?)*",
+    strict=False,
+)
 # A kept number is a size, never a value: at most this many digits (a card, account
 # or phone number is longer), a type size at most five, ``SELECT n`` and ``COUNT(n)``
 # only 0 or 1.
@@ -601,6 +667,11 @@ class _Redactor:
                 mark = " " + mark
             if e < len(text) and (text[e].isalnum() or text[e] in "_$'\""):
                 mark = mark + " "
+                if text[e].isalnum() or text[e] == "_":
+                    # A number glued to a word: the word is a word of its own now, which
+                    # a keyword rule can read differently (``1ORDER BY``), so the redacted
+                    # text is confirmed with another pass (``_redacted``).
+                    self.disagreed = True
             out.append(mark)
             pos = e
             at += 1
@@ -865,9 +936,46 @@ def _track_parens(masked: str, start: int, end: int, stack: list[str]) -> None:
             j = masked.find(")", j + 1, end)
 
 
+def _positions(
+    masked: str,
+    lists: list[tuple[int, int]],
+    fixed: list[tuple[int, int]],
+    numbers: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """The part of each ``ORDER BY``/``GROUP BY`` list in which a number is a position.
+
+    A list is read as positions only up to its first item that is replaced: a hex, binary
+    or money literal, or a number that is not a plain integer position (a longer one, a
+    decimal, one glued to a word). After it the numbers are redacted. The redacted text
+    has a placeholder there, which ends the list for the next pass, so both passes agree
+    (``ORDER BY 0x1F, 2`` is ``ORDER BY ?, ?`` at once)."""
+    out: list[tuple[int, int]] = []
+    for start, end in lists:
+        cut = end
+        for a, _b in fixed:
+            if start <= a < cut:
+                cut = a
+        for a, b in numbers:
+            if start <= a < cut:
+                number = masked[a:b]
+                position = _SMALL_INTEGER_RE.fullmatch(number) and len(number) <= _MAX_KEPT_DIGITS
+                if not position or masked[b : b + 1] in _POSITION_STOP:
+                    cut = a
+        out.append((start, cut))
+    return out
+
+
+_POSITION_STOP = frozenset("._$#") | frozenset(string.ascii_letters + string.digits)
+
+
 def _number_edits(masked: str, dialect: str) -> list[tuple[int, int]]:
     """The numbers (and binary and money literals) of the code to replace, in order."""
-    keep: list[tuple[int, int]] = [m.span() for m in _ORDERING_RE.finditer(masked)]
+    number_re, *literal_res = _NUMBER_PATTERNS.get(dialect, _NUMBER_PATTERNS["db2"])
+    fixed = [m.span() for pattern in literal_res for m in pattern.finditer(masked)]
+    if dialect == "sqlserver":
+        fixed += [m.span() for m in _MONEY_RE.finditer(masked)]
+    numbers = [m.span() for m in number_re.finditer(masked)]
+    keep = _positions(masked, [m.span() for m in _ORDERING_RE.finditer(masked)], fixed, numbers)
 
     def kept(start: int, end: int) -> bool:
         number = masked[start:end]
@@ -887,10 +995,7 @@ def _number_edits(masked: str, dialect: str) -> list[tuple[int, int]]:
             return True
         return bool(_KEEP_AFTER_RE.match(after) or _KEEP_BEFORE_RE.search(before))
 
-    edits = [m.span() for m in _HEX_RE.finditer(masked)]
-    if dialect == "sqlserver":
-        edits += [m.span() for m in _MONEY_RE.finditer(masked)]
-    edits += [m.span() for m in _NUMBER_RE.finditer(masked) if not kept(*m.span())]
+    edits = fixed + [span for span in numbers if not kept(*span)]
     edits.sort()
     # A money literal holds a number (``$ 1984.37``): one value, one placeholder.
     merged: list[tuple[int, int]] = []
