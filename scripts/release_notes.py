@@ -414,7 +414,7 @@ def _version(tag: str) -> Version | None:
 
 def _git(repo: Path, *args: str) -> str:
     # Fixed git subcommands; refs and paths are passed as separate arguments.
-    done = subprocess.run(  # nosec B603 B607
+    done = subprocess.run(  # nosec B603 B607 -- fixed argv, git resolved from PATH
         ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
     )
     return done.stdout

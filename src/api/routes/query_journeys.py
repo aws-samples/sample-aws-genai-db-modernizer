@@ -166,7 +166,9 @@ def get_query_journey(query_id: str, job_id: str = Depends(job_id_param)):
         mapped = graph_route.graph_error_to_http(exc)
         if mapped is not None:
             raise mapped from exc
-    except Exception:  # noqa: BLE001 - graph not wired/available -> artifact fallback  # nosec B110
+    except (
+        Exception
+    ):  # noqa: BLE001  # nosec B110 -- graph not wired or unavailable: fall back to the artifact
         pass  # intentional: any graph failure means "try the artifact path"
 
     if not artifact_store:

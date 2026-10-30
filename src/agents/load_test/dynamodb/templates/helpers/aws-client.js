@@ -42,7 +42,7 @@ export function dynamoRequest(action, payload) {
   const signingKey = getSignatureKey(__ENV.AWS_SECRET_ACCESS_KEY, dateStamp, region, service);
   const signature = crypto.hmac('sha256', signingKey, stringToSign, 'hex');
 
-  headers['Authorization'] = `AWS4-HMAC-SHA256 Credential=${__ENV.AWS_ACCESS_KEY_ID}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`; // nosemgrep: no-stringify-keys
+  headers['Authorization'] = `AWS4-HMAC-SHA256 Credential=${__ENV.AWS_ACCESS_KEY_ID}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`; // nosemgrep: no-stringify-keys -- SigV4 Authorization header string, not a serialised key
 
   return http.post(endpoint, body, { headers });
 }

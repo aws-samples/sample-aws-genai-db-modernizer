@@ -186,7 +186,7 @@ class ElastiCacheProvisioner(BaseProvisioner):
                     f"Replication group {replication_group_id} entered status: {status}"
                 )
 
-            time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep
+            time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep -- intentional polling interval
 
         raise TimeoutError(
             f"Replication group {replication_group_id} not available after {timeout_minutes} minutes"

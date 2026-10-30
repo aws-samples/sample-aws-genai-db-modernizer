@@ -640,7 +640,7 @@ def project_schema_design_input(
                         numeric_scale=c.numeric_scale,
                         nullable=c.nullable,
                         default_value=c.default_value,
-                        is_auto_increment=c.is_auto_increment,  # nosemgrep: is-function-without-parentheses
+                        is_auto_increment=c.is_auto_increment,  # nosemgrep: is-function-without-parentheses -- field, not a method
                         cardinality=c.cardinality,
                     )
                     for c in t.columns
@@ -649,8 +649,8 @@ def project_schema_design_input(
                     AgentIndex(
                         index_name=idx.index_name,
                         columns=idx.columns,
-                        is_unique=idx.is_unique,  # nosemgrep: is-function-without-parentheses
-                        is_primary=idx.is_primary,  # nosemgrep: is-function-without-parentheses
+                        is_unique=idx.is_unique,  # nosemgrep: is-function-without-parentheses -- field, not a method
+                        is_primary=idx.is_primary,  # nosemgrep: is-function-without-parentheses -- field, not a method
                         index_type=idx.index_type,
                         predicate=idx.predicate,
                         has_expressions=idx.has_expressions,

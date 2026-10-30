@@ -556,7 +556,7 @@ class SchemaDesignRunner:
                 if regular_failures >= regular_max or throttle_failures >= throttle_max:
                     break
                 say(f"{prefix} Retry after {backoff:.1f}s")
-                time.sleep(backoff)  # nosemgrep: arbitrary-sleep
+                time.sleep(backoff)  # nosemgrep: arbitrary-sleep -- intentional polling interval
 
         # --- Graceful fallback ---
         if previous_output is not None:
@@ -564,7 +564,7 @@ class SchemaDesignRunner:
             self._append_trade_offs(
                 previous_output,
                 [
-                    (  # nosemgrep: string-concat-in-list
+                    (  # nosemgrep: string-concat-in-list -- intentional multi-line string
                         f"[WARNING] Revision failed after {attempt} attempts ({last_error}). "
                         f"Returning last valid design."
                     )

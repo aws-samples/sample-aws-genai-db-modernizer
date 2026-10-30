@@ -245,9 +245,9 @@ class GraphStore:
         with self._connection() as conn:
             return cast("list[list[Any]]", self._execute_single(conn, cypher).get_all())
 
-    def _exec_schema_cypher(self, cypher: str) -> list[list[Any]]:  # nosec B608  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query  # fmt: skip
+    def _exec_schema_cypher(self, cypher: str) -> list[list[Any]]:  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- Cypher text from internal catalog names; values are bound parameters  # fmt: skip
         """Execute Cypher built from internal schema catalog names (not user input)."""
-        return self._get_all(cypher)  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query  # fmt: skip
+        return self._get_all(cypher)  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- Cypher text from internal catalog names; values are bound parameters  # fmt: skip
 
     def _list_tables(self) -> list[list[Any]]:
         """Return show_tables() rows as positional lists: [id, name, type, ...]."""
@@ -296,7 +296,7 @@ class GraphStore:
                 table_name = table[1]
                 table_type = table[2]
                 if table_type == "NODE":
-                    cypher = f"MATCH (n:{table_name}) RETURN COUNT(n) AS c"  # nosec B608
+                    cypher = f"MATCH (n:{table_name}) RETURN COUNT(n) AS c"
                     rows = self._exec_schema_cypher(cypher)
                     if rows and rows[0][0] > 0:
                         return True
@@ -312,11 +312,11 @@ class GraphStore:
             # table names come from show_tables() — internal schema catalog, not user input.
             for table in tables:
                 if table[2] == "REL":
-                    self._exec_schema_cypher(f"DROP TABLE {table[1]}")  # nosec B608
+                    self._exec_schema_cypher(f"DROP TABLE {table[1]}")
             for table in tables:
                 if table[2] == "NODE":
-                    self._exec_schema_cypher(f"DROP TABLE {table[1]}")  # nosec B608
-        except Exception as exc:  # nosec B110  # noqa: BLE001
+                    self._exec_schema_cypher(f"DROP TABLE {table[1]}")
+        except Exception as exc:  # noqa: BLE001
             logger.warning("clear() failed: %s", exc)
 
     def close(self) -> None:

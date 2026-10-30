@@ -40,12 +40,11 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
 
     def __init__(self, region: str = "us-east-1"):
         self.region = region
-        self.env = (
-            SandboxedEnvironment(  # nosemgrep: python.lang.security.audit.autoescape-disabled
-                loader=FileSystemLoader(str(TEMPLATES_DIR)),
-                keep_trailing_newline=True,
-                autoescape=False,  # Generating JS code, not HTML — autoescaping would break output
-            )
+        # nosemgrep: python.lang.security.audit.autoescape-disabled -- sandboxed environment renders k6 JavaScript, not HTML
+        self.env = SandboxedEnvironment(
+            loader=FileSystemLoader(str(TEMPLATES_DIR)),
+            keep_trailing_newline=True,
+            autoescape=False,  # Generating JS code, not HTML — autoescaping would break output
         )
 
     def generate_scenario(self, access_pattern: dict, table_def: dict, seed_info: dict) -> str:
@@ -78,7 +77,8 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
             "gsi_name": access_pattern.get("gsi_name"),
         }
 
-        return str(template.render(**context))  # nosemgrep: direct-use-of-jinja2
+        # nosemgrep: direct-use-of-jinja2 -- renders our own k6 template in a sandboxed environment
+        return str(template.render(**context))
 
     def generate_main(self, scenarios: list, duration_minutes: int, warmup_seconds: int) -> str:
         """Generate the k6 main.js entry point."""
@@ -112,7 +112,7 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
             )
 
         return str(
-            template.render(  # nosemgrep: direct-use-of-jinja2
+            template.render(  # nosemgrep: direct-use-of-jinja2 -- renders our own k6 template in a sandboxed environment
                 scenarios=enriched,
                 duration=f"{duration_minutes}m",
                 warmup_seconds=warmup_seconds,

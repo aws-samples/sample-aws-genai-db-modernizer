@@ -87,7 +87,7 @@ const TableComponent = memo(({columnsTable,visibleContent, dataset, title, descr
 
     return (
                 <Table
-                      {...collectionProps} // nosemgrep: react-props-spreading
+                      {...collectionProps} // nosemgrep: react-props-spreading -- props come from the Cloudscape collection hook
                       selectionType="single"
                       header={
                         <Header
@@ -102,17 +102,17 @@ const TableComponent = memo(({columnsTable,visibleContent, dataset, title, descr
                       columnDefinitions={columnsTable}
                       visibleColumns={preferences.visibleContent}
                       items={items}
-                      pagination={<Pagination {...paginationProps} ariaLabels={paginationLabels} />} // nosemgrep: react-props-spreading
+                      pagination={<Pagination {...paginationProps} ariaLabels={paginationLabels} />} // nosemgrep: react-props-spreading -- props come from the Cloudscape collection hook
                       filter={
                         <TextFilter
-                          {...filterProps} // nosemgrep: react-props-spreading
+                          {...filterProps} // nosemgrep: react-props-spreading -- props come from the Cloudscape collection hook
                           countText={getMatchesCountText(filteredItemsCount)}
                           filteringAriaLabel="Filter records"
                         />
                       }
                       preferences={
                         <CollectionPreferences
-                          {...collectionPreferencesProps} // nosemgrep: react-props-spreading
+                          {...collectionPreferencesProps} // nosemgrep: react-props-spreading -- props come from the Cloudscape collection hook
                           preferences={preferences}
                           onConfirm={({ detail }) => {
                             setPreferences(detail);
@@ -129,7 +129,7 @@ const TableComponent = memo(({columnsTable,visibleContent, dataset, title, descr
                       resizableColumns
                       stickyHeader
                       loadingText="Loading records"
-                      {...extendedTableProperties} // nosemgrep: react-props-spreading
+                      {...extendedTableProperties} // nosemgrep: react-props-spreading -- props come from the Cloudscape collection hook
                     />
 
            );

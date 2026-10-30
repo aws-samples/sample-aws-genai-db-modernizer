@@ -54,7 +54,7 @@ class ValkeyRunner(BaseRunner):
         merged_env.update(env_vars)
 
         logger.info("k6_run_start", duration_minutes=duration_minutes)
-        result = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603 -- fixed k6 argv, script paths under our own scripts_dir, no shell # nosemgrep: dangerous-subprocess-use-audit
             cmd, capture_output=True, text=True, timeout=timeout_seconds, env=merged_env
         )
 

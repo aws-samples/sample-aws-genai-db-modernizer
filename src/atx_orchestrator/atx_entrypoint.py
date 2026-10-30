@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 # has no compile-time guard, so re-check it whenever a row is added.
 _AGENTS: dict[str, str] = {
     # ATX-only: the chat-facing orchestrator. No core-modernizer counterpart.
-    "orchestrator": "/tmp/orchestrator_agent",  # nosec B108
+    "orchestrator": "/tmp/orchestrator_agent",  # nosec B108 -- container-local dir created and chowned in Dockerfile.atx, one agent per container
     # Pipeline phases. Names match the artifact key prefix in S3, not
     # core-modernizer's AGENT_TYPE values — see the module docstring for the two
     # mapping differences.
@@ -88,14 +88,14 @@ _AGENTS: dict[str, str] = {
     # separate runtimes (collector, referee-triage, analysis, assignment-resolver)
     # and now also runs Reality Check. Reality Check makes one Bedrock call, so the
     # agent is no longer purely deterministic (hence "assessment-core").
-    "assessment-core": "/tmp/assessment_core_agent",  # nosec B108
-    "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108
+    "assessment-core": "/tmp/assessment_core_agent",  # nosec B108 -- container-local dir created and chowned in Dockerfile.atx, one agent per container
+    "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108 -- container-local dir created and chowned in Dockerfile.atx, one agent per container
     # Schema design (ADR-027): one agent for every target engine. Upstream
     # exposes a single run_schema_design parameterised by target_type, so one
     # runtime takes target_type from the invocation payload instead of six
     # runtimes each baking it into AGENT_TYPE. The orchestrator still invokes it
     # once per engine, concurrently.
-    "schema": "/tmp/schema_agent",  # nosec B108
+    "schema": "/tmp/schema_agent",  # nosec B108 -- container-local dir created and chowned in Dockerfile.atx, one agent per container
     # Reality Check is now folded into assessment-core (ADR-026), not a separate
     # runtime. Still not implemented as ATX subagents: schema-split, schema-merge.
     # Adding one means a row here, a branch in _resolve_factory, a subagent module

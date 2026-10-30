@@ -15,7 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { FALLBACK_REASONS } from '../fallbackWithheldReason';
 
-// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path built from the repo's own tree, not input
 const REPORT_DIR = path.resolve(__dirname, '../../../../../src/report');
 const TABLE_RE = /_FALLBACK_REASONS: tuple\[tuple\[str, str\], \.\.\.\] = \(([\s\S]*?)\n\)\n/;
 
@@ -28,7 +28,7 @@ function parsePythonFallbackReasons() {
   const matches = fs
     .readdirSync(REPORT_DIR)
     .filter((name) => name.endsWith('.py'))
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path built from the repo's own tree, not input
     .map((name) => [name, fs.readFileSync(path.join(REPORT_DIR, name), 'utf8').match(TABLE_RE)])
     .filter(([, match]) => match);
   if (matches.length !== 1) {

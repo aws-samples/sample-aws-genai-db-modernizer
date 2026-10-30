@@ -47,7 +47,7 @@ class OpenSearchRunner(BaseRunner):
         merged_env.update(env_vars)
 
         try:
-            result = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit
+            result = subprocess.run(  # nosec B603 -- fixed k6 argv, script paths under our own scripts_dir, no shell # nosemgrep: dangerous-subprocess-use-audit
                 cmd, capture_output=True, text=True, timeout=30, env=merged_env
             )
             if result.returncode != 0:
@@ -152,7 +152,7 @@ class OpenSearchRunner(BaseRunner):
             url, data=body.encode(), headers=headers, method="POST"
         )
         try:
-            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- https-only URL built from our own domain
             with urllib.request.urlopen(
                 req, timeout=15
             ) as resp:  # nosec B310  # nosemgrep: dynamic-urllib-use-detected -- URL built from trusted internal config, not user input
@@ -202,7 +202,7 @@ class OpenSearchRunner(BaseRunner):
         merged_env.update(env_vars)
 
         logger.info("k6_run_start", duration_minutes=duration_minutes)
-        result = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603 -- fixed k6 argv, script paths under our own scripts_dir, no shell # nosemgrep: dangerous-subprocess-use-audit
             cmd, capture_output=True, text=True, timeout=timeout_seconds, env=merged_env
         )
 

@@ -54,7 +54,7 @@ const ProgressState = ({ stepsList, stepCurrent, humanStages, title, jobId, jobI
 
   return (
     <div>
-      {/* nosemgrep: missing-template-string-indicator */}
+      {/* nosemgrep: missing-template-string-indicator -- template literal is intentional */}
       <style>{`
         @keyframes dotPulse {
           0%, 100% { box-shadow: 0 0 6px rgba(9, 114, 211, 0.4); }

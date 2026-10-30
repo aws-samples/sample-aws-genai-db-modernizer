@@ -13,6 +13,7 @@ import logging
 import time
 
 import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,23 @@ def add_ingress_rule(
             raise
 
 
+# Credential and permission errors never clear by waiting; everything else (for
+# example InvalidInstanceId before the instance registers) is retried.
+_FATAL_SSM_CODES = frozenset(
+    {
+        "AccessDenied",
+        "AccessDeniedException",
+        "UnauthorizedOperation",
+        "ExpiredToken",
+        "ExpiredTokenException",
+        "InvalidClientTokenId",
+        "UnrecognizedClientException",
+        "AuthFailure",
+        "SignatureDoesNotMatch",
+    }
+)
+
+
 def _wait_for_ssm(instance_id: str, region: str, timeout: int = 180) -> None:
     """Wait for SSM agent to report Online."""
     ssm = boto3.client("ssm", region_name=region)
@@ -238,7 +256,10 @@ def _wait_for_ssm(instance_id: str, region: str, timeout: int = 180) -> None:
             if instances and instances[0].get("PingStatus") == "Online":
                 logger.info("SSM agent online: %s", instance_id)
                 return
-        except Exception:  # nosec B110
-            pass
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in _FATAL_SSM_CODES or code.endswith("AccessDenied"):
+                raise
+            logger.debug("SSM not ready for %s yet: %s", instance_id, code)
         time.sleep(10)  # nosemgrep: arbitrary-sleep  # waiting for SSM agent to come online
     logger.warning("SSM agent not online after %ds: %s", timeout, instance_id)

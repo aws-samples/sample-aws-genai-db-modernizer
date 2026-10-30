@@ -466,7 +466,7 @@ const PatternAnalysisPage = memo(() => {
     if (antiPatterns.length > 0) {
       tabs.push({
         id: 'anti-patterns',
-        // nosemgrep: missing-template-string-indicator
+        // nosemgrep: missing-template-string-indicator -- template literal is intentional
         label: `⚠️ ${t('pattern-analysis.anti-patterns.tab-label', { count: analysisData?.facts?.anti_patterns_detected ?? 0 })}`,
         content: (
           <SpaceBetween size="l">

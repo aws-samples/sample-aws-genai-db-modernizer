@@ -29,7 +29,7 @@ class K6Runner(BaseRunner):
         merged_env.update(env_vars)
 
         logger.info("k6_dry_run", cmd=cmd)
-        result = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        result = subprocess.run(  # nosec B603 -- fixed k6 argv, script paths under our own scripts_dir, no shell # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             cmd, capture_output=True, text=True, timeout=120, env=merged_env
         )
 
@@ -61,7 +61,7 @@ class K6Runner(BaseRunner):
         merged_env.update(env_vars)
 
         logger.info("k6_run_start", duration_minutes=duration_minutes)
-        result = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+        result = subprocess.run(  # nosec B603 -- fixed k6 argv, script paths under our own scripts_dir, no shell # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
             cmd, capture_output=True, text=True, timeout=timeout_seconds, env=merged_env
         )
 

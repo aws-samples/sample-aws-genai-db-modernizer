@@ -49,7 +49,7 @@ function uiSourceFiles(dir) {
   for (const name of fs.readdirSync(dir)) {
     if (name === '__tests__' || name === 'node_modules') continue;
     // `dir` and `name` come from walking the repo's own src/ui/src tree.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path built from the repo's own tree, not input
     const full = path.join(dir, name);
     if (fs.statSync(full).isDirectory()) out.push(...uiSourceFiles(full));
     else if (full.endsWith('.js')) out.push(full);
