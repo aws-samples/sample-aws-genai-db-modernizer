@@ -459,6 +459,7 @@ def test_the_scan_maps_wrapper_and_client_calls():
     assert not {"CreateWorklog", "RetrieveFromKnowledgeBase", "PutMigrationPlan"} & calls
 
 
+@pytest.mark.passes_on_main  # checks the installed server against this file's list, not src/
 def test_every_agentic_mcp_tool_has_a_decision():
     installed = set(_mcp_tool_operations())
     assert sorted(installed - _REVIEWED_MCP_TOOLS) == [], "new tool: expose or exclude it"

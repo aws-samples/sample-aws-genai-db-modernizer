@@ -80,7 +80,7 @@ phase deterministically, whatever `--llm-mode` says.
 ./scripts/setup_dev.sh                       # uv sync --extra dev + pre-commit hooks
 uv sync --extra dev --extra e2e              # add the e2e extra (Playwright, pypdf)
 uv sync --extra docs                         # add the docs extra (mkdocs, mkdocs-material) to build the help site
-uv pip install -r src/atx_orchestrator/requirements-sdk.txt   # needed by the atx_orchestrator tests (CI runs them in the full suite)
+uv pip install "agent-builder-sdk-aws-transform>=1.0.0"   # needed by the atx_orchestrator tests (CI runs them in the full suite)
 ```
 
 The UI needs Node 22 (`npm ci`, then `npm run build`, in `src/ui/`); `ci/e2e.sh`
