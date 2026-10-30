@@ -7,7 +7,7 @@
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
 # lint, the zero-token replay of the saved real-model run, tests (skipped by
-# --quick) and the needs_llm_run verdict. Exits non-zero on a refused author, a
+# --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, or (with
 # --strict-main-tests) a new or changed test that passes on main.
@@ -130,7 +130,6 @@ if adr_out="$(PR_BODY_FILE="$pr_body_file" helper adr "$base")"; then
 else
   fail "adr: ${adr_out#error: }"
 fi
-rm -f "$pr_body_file"
 
 # e. Generated files that differ from main must still match their generator.
 check_generated() {  # check_generated NAME "path|path" command...
@@ -158,7 +157,7 @@ check_generated "assess() JSON Schemas" "docs/contracts/schemas/assess_request.v
 tmp="$(mktemp)"
 main_wt=""
 cleanup() {
-  rm -f "$tmp"
+  rm -f "$tmp" "$pr_body_file"
   if [ -n "$main_wt" ]; then
     git worktree remove --force "$main_wt" >/dev/null 2>&1 || true
     rm -rf "$(dirname "$main_wt")"
@@ -284,6 +283,18 @@ if verdict="$(./ci/needs_llm_run.sh "$base" 2>&1)"; then
 else
   note "warn llm: needs_llm_run could not decide ($verdict)"
 fi
+
+# j2. The PR body's Evidence marker against that verdict (#1153), on the body fetched in d2;
+# skipped without one.
+if [ ! -s "$pr_body_file" ]; then
+  note "skip pr-evidence: no pull request body (gh missing, or no PR for this branch yet)"
+elif ev_out="$(python3 ci/pr_evidence.py check --body-file "$pr_body_file" --base "$base" 2>&1)"; then
+  note "ok   pr-evidence: the PR body's needs_llm_run verdict matches"
+else
+  fail "pr-evidence: the PR body's Evidence section disagrees with the diff"
+  printf '%s\n' "$ev_out" | sed 's/^/       /'
+fi
+rm -f "$pr_body_file"
 
 log "pre_merge summary"
 for line in "${summary[@]}"; do echo "$line"; done
