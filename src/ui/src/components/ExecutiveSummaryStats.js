@@ -42,6 +42,13 @@ import { displayEngine } from '../utils/engineNames';
  * for a report written before it.
  */
 // The price date(s) as the facts layer stated them; it only formats (ADR-032).
+// A retired engine's reason as the PDF and the engineering report word it (src/report/formatting.py
+// _retired_in_use_lines): trimmed, one closing period, nothing when it is empty (#1127).
+function retiredReason(row) {
+  const reason = String(row.reason ?? '').trim().replace(/\.+$/, '');
+  return reason ? `${reason}.` : '';
+}
+
 function priceListLine(t, priceList) {
   if (!priceList) return null;
   const dates = Object.entries(priceList.engine_dates || {});
@@ -180,8 +187,8 @@ const ExecutiveSummaryStats = memo(({
                     reason: row.no_saving_reason,
                   })}
               </Box>
-              {row.reason && (
-                <Box fontSize="body-s" color="text-body-secondary">{`${String(row.reason).replace(/\.+$/, '')}.`}</Box>
+              {retiredReason(row) && (
+                <Box fontSize="body-s" color="text-body-secondary">{retiredReason(row)}</Box>
               )}
             </div>
           ))}

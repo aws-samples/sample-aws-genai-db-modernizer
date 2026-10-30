@@ -541,6 +541,154 @@ function guardedSources() {
   return GUARDED_UI_FILES.map(f => [`src/ui/src/${f}`, `${UI_SRC}/${f}`]);
 }
 
+// ---------------------------------------------------------------------------
+// Strings Python already words (#1164, ADR-032)
+// ---------------------------------------------------------------------------
+// The same customer-facing string built in two places drifts: the UI added a "." to
+// a retired engine's reason without stripping a trailing one while Python stripped it
+// (#1127). Fields below carry text that synthesis (or an agent) already wrote, so UI code
+// shows them as they are. A mechanical scan, not a proof: it flags a read of one of these
+// fields (or a name bound to one, or a destructured key) that is trimmed, sliced or
+// replaced, or followed by more text (`reason + '.'`, `${reason}.`): the shape of #1127.
+// A prefix label (`': ' + reason`), case changes, `.includes` (search) and a whole-value
+// fallback (`row.reason || ''`) are not flagged.
+const TEXT_FIELDS = new Set([
+  'reason', 'no_saving_reason', 'description', 'description_now', 'mitigation', 'rationale',
+  'explanation', 'redesign_hint', 'executive_summary', 'detail',
+]);
+const TRIMMING_CALLS = new Set([
+  'replace', 'replaceAll', 'trim', 'trimEnd', 'trimStart', 'slice', 'substring', 'substr',
+  'concat', 'padEnd', 'padStart', 'charAt',
+]);
+
+// The places the scan lets a UI file reshape a field Python words, by `file|code`, each with
+// the reason. A new one is reviewed: prefer a fact written by synthesis (src/shared/report_facts.py).
+const TEXT_ALLOWLIST = new Map([
+  ['src/ui/src/components/ExecutiveSummaryStats.js|`${reason}.`',
+    'a retired engine\'s reason, worded as src/report/formatting.py _retired_in_use_lines words it (trimmed, one closing period, nothing when empty); the UI does it in retiredReason() because report.json stores the reality check\'s sentence as written, and storing the closing form is a facts-layer change'],
+  ['src/ui/src/components/ExecutiveSummaryStats.js|String(row.reason ?? \'\').trim().replace(/\\.+$/, \'\')',
+    'the same retiredReason() helper: trims and strips closing periods the way the Python rows do (strip, then rstrip(".")), so the two agree on "x. " and on a blank reason'],
+  ['src/ui/src/pages/AnalysisResults.js|tradeOff.description.replace(/^\\[PE note\\]\\s*/, \'\')',
+    'drops the "[PE note]" tag the schema agents prepend to a note\'s description (src/tools/schema/base_schema_agent.py); the tab already splits notes from decisions on that tag. Python\'s counterpart (design_text_item, src/shared/design_text.py) strips any [tag] or "PE note:" marker and the trailing period, so the UI and the engineering report still differ on those forms; a stored kind would need a contract change, out of scope for #1164'],
+]);
+
+// Reads that are not report text: an event's or caught error's own `reason` / `detail`
+// (a promise rejection, an API error message), whatever they are named in the handler.
+const NOT_REPORT_RECEIVERS = new Set(['e', 'ev', 'evt', 'event', 'err', 'error', 'rejection']);
+const ERROR_CONSTRUCTORS = new Set(['Error', 'TypeError', 'RangeError']);
+
+// Hits of the text-field scan in one source (#1164). Names are tracked per function: a name
+// bound to a text field taints that function and the ones inside it, not the rest of the file.
+function textFieldHits(code) {
+  const ast = parseSource(code);
+  const isText = n => isMember(n) && TEXT_FIELDS.has(propName(n))
+    && !(t.isIdentifier(n.object) && NOT_REPORT_RECEIVERS.has(n.object.name));
+  // The value of n is (a form of) a text field: the read itself, a name bound to one, either side
+  // of a fallback or branch, or String(...) / a string method called on one. A list, a count or
+  // a value passed to another call is not.
+  const holdsText = (n, tainted) => {
+    if (!n) return false;
+    if (isText(n)) return true;
+    if (t.isIdentifier(n)) return tainted.has(n.name);
+    if (t.isLogicalExpression(n)) return holdsText(n.left, tainted) || holdsText(n.right, tainted);
+    if (t.isConditionalExpression(n)) {
+      return holdsText(n.consequent, tainted) || holdsText(n.alternate, tainted);
+    }
+    if (t.isParenthesizedExpression(n)) return holdsText(n.expression, tainted);
+    if (isCall(n)) {
+      if (t.isIdentifier(n.callee, { name: 'String' })) return holdsText(n.arguments[0], tainted);
+      return isMember(n.callee) && TRIMMING_CALLS.has(propName(n.callee))
+        && holdsText(n.callee.object, tainted);
+    }
+    return false;
+  };
+  // Source ranges the scan leaves alone: React keys and the message of an Error.
+  const skipped = [];
+  for (const n of walk(ast.program)) {
+    if (t.isJSXAttribute(n) && t.isJSXIdentifier(n.name, { name: 'key' })) skipped.push(n);
+    if ((t.isNewExpression(n) || t.isCallExpression(n)) && t.isIdentifier(n.callee)
+      && ERROR_CONSTRUCTORS.has(n.callee.name)) skipped.push(n);
+  }
+  const hits = [];
+  const visitScope = (fn, inherited) => {
+    const own = [...walkOwn(fn)];
+    // A parameter or destructured name shadows an inherited one.
+    const tainted = new Set(inherited);
+    if (isFn(fn)) {
+      fn.params.forEach(p => [...walk(p)].filter(x => t.isIdentifier(x)).forEach(x => tainted.delete(x.name)));
+    }
+    own.filter(n => t.isVariableDeclarator(n) && t.isIdentifier(n.id)).forEach(n => tainted.delete(n.id.name));
+    let size = -1;
+    while (size !== tainted.size) {
+      size = tainted.size;
+      for (const n of own) {
+        if (t.isVariableDeclarator(n) && t.isIdentifier(n.id) && holdsText(n.init, tainted)) {
+          tainted.add(n.id.name);
+        }
+        if (t.isObjectPattern(n)) {
+          n.properties.filter(p => t.isObjectProperty(p) && t.isIdentifier(p.key) && TEXT_FIELDS.has(p.key.name))
+            .forEach(p => {
+              const v = t.isAssignmentPattern(p.value) ? p.value.left : p.value;
+              if (t.isIdentifier(v)) tainted.add(v.name);
+            });
+        }
+      }
+    }
+    const text = n => holdsText(n, tainted);
+    for (const n of own) {
+      if (isCall(n) && isMember(n.callee) && TRIMMING_CALLS.has(propName(n.callee)) && text(n.callee.object)) {
+        hits.push(n);
+      } else if (isCall(n) && isMember(n.callee) && propName(n.callee) === 'join'
+        && t.isArrayExpression(n.callee.object)
+        && n.callee.object.elements.slice(0, -1).some(text)) {
+        hits.push(n);
+      } else if (t.isBinaryExpression(n) && n.operator === '+' && text(n.left)) {
+        hits.push(n);
+      } else if (t.isTemplateLiteral(n)
+        && n.expressions.some((e, i) => text(e) && n.quasis[i + 1].value.cooked !== '')) {
+        hits.push(n);
+      } else if (t.isJSXElement(n) || t.isJSXFragment(n)) {
+        // `{row.reason}.` : more text right after the field in JSX.
+        n.children.forEach((c, i) => {
+          const next = n.children[i + 1];
+          if (t.isJSXExpressionContainer(c) && text(c.expression)
+            && next && ((t.isJSXText(next) && next.value.trim() !== '')
+              || (t.isJSXExpressionContainer(next) && t.isStringLiteral(next.expression)
+                && next.expression.value.trim() !== ''))) hits.push(c);
+        });
+      }
+    }
+    own.flatMap(n => children(n)).filter(isFn).forEach(child => visitScope(child, tainted));
+  };
+  visitScope(ast.program, new Set());
+  const inside = (h, o) => o !== h && o.start <= h.start && h.end <= o.end;
+  return hits
+    .filter(h => !skipped.some(o => inside(h, o) || (o.start === h.start && o.end === h.end)))
+    // Keep the outermost hit: a call inside a template is reported once.
+    .filter(h => !hits.some(o => inside(h, o)))
+    .map(h => ({ line: h.loc.start.line, code: code.slice(h.start, h.end).replace(/\s+/g, ' ') }));
+}
+
+function nonTestUiFiles() {
+  const out = [];
+  const visit = dir => fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) {
+      if (!['__tests__', 'locales', 'node_modules'].includes(e.name)) visit(p);
+    } else if (/\.jsx?$/.test(e.name)) {
+      out.push([`src/ui/src/${path.relative(UI_SRC, p)}`, p]);
+    }
+  });
+  visit(UI_SRC);
+  return out;
+}
+
+function textViolations(files) {
+  return files.flatMap(([label, file]) => textFieldHits(fs.readFileSync(file, 'utf8'))
+    .filter(h => !TEXT_ALLOWLIST.has(`${label}|${h.code}`))
+    .map(h => `${label}:${h.line}: ${h.code.slice(0, 100)}`));
+}
+
 describe('renderers only format (#748, ADR-032)', () => {
   test('no UI code does arithmetic on a figure the facts layer owns', () => {
     const found = guardedSources().flatMap(([label, file]) => violationsIn(fs.readFileSync(file, 'utf8'), label));
@@ -598,6 +746,117 @@ describe('renderers only format (#748, ADR-032)', () => {
     // read nowhere on the UI side now.
     const withRule = guardedSources().filter(([, file]) => /table_owners|owned_counts_by_engine/.test(fs.readFileSync(file, 'utf8')));
     expect(withRule.map(([label]) => label)).toEqual([]);
+  });
+
+  describe('UI code does not build or trim a string Python already words (#1164)', () => {
+    test('no UI file reshapes a customer-facing text field outside the allowlist', () => {
+      expect(textViolations(nonTestUiFiles())).toEqual([]);
+    });
+
+    test('every allowlisted reshaping carries a reason, still exists, and occurs once', () => {
+      const keys = nonTestUiFiles().flatMap(([label, file]) => textFieldHits(fs.readFileSync(file, 'utf8'))
+        .map(h => `${label}|${h.code}`));
+      TEXT_ALLOWLIST.forEach((reason, key) => {
+        expect([key, reason.trim().length > 20]).toEqual([key, true]);
+        expect([key, keys.filter(k => k === key).length]).toEqual([key, 1]);
+      });
+    });
+
+    test('flags trimming, concatenating and wrapping a text field, nothing else', () => {
+      const code = `
+function render(row, tradeOff, t) {
+  const { reason: why, mitigation } = row;
+  const a = row.reason.replace(/\\.$/, '') + '.';
+  const b = \`\${row.description}.\`;
+  const c = row.no_saving_reason + ' (see below)';
+  const d = why.trim();
+  const e = mitigation.slice(0, 80);
+  const text = row.rationale || '';
+  const f = text + '!';
+  const ok1 = row.reason;
+  const ok2 = row.reason || '';
+  const ok3 = row.description?.toLowerCase().includes('x');
+  const ok4 = \`\${row.reason}\`;
+  const ok5 = t('key', { reason: row.reason });
+  const ok6 = row.engine + '.';
+  const ok7 = row.title.trim();
+  const ok8 = \`: \${row.reason}\`;
+  const ok9 = 'Why: ' + row.reason;
+  return [a, b, c, d, e, f, ok1, ok2, ok3, ok4, ok5, ok6, ok7, ok8, ok9];
+}`;
+      const lines = code.split('\n');
+      const flagged = new Set(textFieldHits(code).map(h => h.line));
+      const lineOf = text => lines.findIndex(l => l.includes(text)) + 1;
+      ['const a =', 'const b =', 'const c =', 'const d =', 'const e =', 'const f =']
+        .forEach(text => expect([text, flagged.has(lineOf(text))]).toEqual([text, true]));
+      ['const ok1', 'const ok2', 'const ok3', 'const ok4', 'const ok5', 'const ok6', 'const ok7', 'const ok8', 'const ok9', 'const text =']
+        .forEach(text => expect([text, flagged.has(lineOf(text))]).toEqual([text, false]));
+    });
+
+    test('flags JSX text after the field, a variable suffix and a join', () => {
+      const code = [
+        'function render(row, dot) {',
+        '  const a = row.reason + dot;',
+        "  const b = [row.reason, '.'].join('');",
+        "  return (<div><Box>{row.reason}.</Box><Box>{row.description} (see below)</Box><Box>{row.mitigation}{'.'}</Box></div>);",
+        '}',
+      ].join('\n');
+      expect(textFieldHits(code).map(h => h.line).sort()).toEqual([2, 3, 4, 4, 4]);
+      const ok = [
+        'function render(row) {',
+        "  const a = ['Why', row.reason].join(': ');",
+        '  return (<div><Box>{row.reason}</Box><Box>Why: {row.reason}</Box></div>);',
+        '}',
+      ].join('\n');
+      expect(textFieldHits(ok)).toEqual([]);
+    });
+
+    test('leaves React keys, Error messages and an event\'s own reason alone', () => {
+      const code = [
+        'function render(rows, data, res) {',
+        "  window.addEventListener('unhandledrejection', (event) => {",
+        "    log(String(event.reason) + ' (unhandled)');",
+        '  });',
+        '  const fail = () => { throw new Error(`${data.detail} (HTTP ${res.status})`); };',
+        '  return rows.map((r, i) => <li key={`${r.reason}-${i}`}>{r.title}</li>);',
+        '}',
+      ].join('\n');
+      expect(textFieldHits(code)).toEqual([]);
+      // the same shape on a report row is still caught
+      expect(textFieldHits('function f(row) { return row.reason + "."; }').length).toBe(1);
+    });
+
+    test('names are tracked per function, not per file', () => {
+      const code = [
+        'function a(row) {',
+        '  const reason = row.reason;',
+        '  return reason.trim();',
+        '}',
+        'function b(items, reason) {',
+        "  const label = reason + '-x';",
+        '  return [items, label];',
+        '}',
+        'function c(row) {',
+        '  const reason = row.reason;',
+        "  return () => { const reason = 3; return reason + '-y'; };",
+        '}',
+      ].join('\n');
+      expect(textFieldHits(code).map(h => h.line)).toEqual([3]);
+    });
+
+    test('the retired-engine reason is caught when it is not allowlisted (#1127)', () => {
+      const file = 'components/ExecutiveSummaryStats.js';
+      const real = fs.readFileSync(`${UI_SRC}/${file}`, 'utf8');
+      const keys = textFieldHits(real).map(h => `src/ui/src/${file}|${h.code}`);
+      expect(keys.length).toBeGreaterThan(0);
+      keys.forEach(k => expect(TEXT_ALLOWLIST.has(k)).toBe(true));
+      // Reshaping the text differently is a hit nothing allowlists.
+      const from = "String(row.reason ?? '').trim()";
+      expect(real).toContain(from);
+      const mutated = textFieldHits(real.replace(from, `${from}.slice(0, 80)`))
+        .map(h => `src/ui/src/${file}|${h.code}`);
+      expect(mutated.some(k => !TEXT_ALLOWLIST.has(k))).toBe(true);
+    });
   });
 
   describe('the guard itself', () => {

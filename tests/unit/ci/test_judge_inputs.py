@@ -794,6 +794,26 @@ def test_risk_counts_skip_contentless_entries_like_the_deliverables() -> None:
     assert judge_facts.build_facts(report)["totals"]["open_risks"] == 0
 
 
+def test_totals_read_the_facts_counts_instead_of_recounting_them() -> None:
+    """#1164: the engine, risk and wave counts are the report's facts, not the judge's own
+    count of the lists; a report without the facts keeps counting them."""
+    report = _report()
+    report["risk_assessment"]["risks"] = [{"risk_id": "R-1", "description": "[dynamodb] A risk."}]
+    report["migration_waves"] = [{"wave": 1}]
+    before = judge_facts.build_facts(report)["totals"]
+    report["facts"] = {
+        **(report.get("facts") or {}),
+        "engine_count": 9,
+        "open_risk_count": 7,
+        "resolved_risk_count": 5,
+        "migration_wave_count": 4,
+    }
+    totals = judge_facts.build_facts(report)["totals"]
+    assert (totals["engines_selected"], totals["open_risks"]) == (9, 7)
+    assert (totals["resolved_risks"], totals["migration_wave_count"]) == (5, 4)
+    assert before["engines_selected"] != 9 and before["migration_wave_count"] == 1
+
+
 def test_totals_match_the_figure_the_deterministic_summary_prints() -> None:
     """Checked against the printed "Schema design produced N target objects: ...; M
     in-scope access patterns" sentence of the real summary builder, with query groups

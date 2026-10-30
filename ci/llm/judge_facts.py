@@ -277,6 +277,13 @@ def _fact_count(report: dict[str, Any], block: str, key: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _fact_or(report: dict[str, Any], key: str, fallback: int | None) -> int | None:
+    """``report.facts[key]`` (a top-level count the deliverables print), else ``fallback``
+    for a report written before the fact existed (ADR-032: read it, do not recount it)."""
+    value = (report.get("facts") or {}).get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+
 def _count(value: Any) -> int | None:
     return len(value) if isinstance(value, list) else None
 
@@ -717,7 +724,7 @@ def build_facts(
             "database": db,
             "architecture_type": rec_arch.get("architecture_type"),
             "architecture_rationale": _cap(rec_arch.get("rationale")),
-            "engines_selected": len(engines),
+            "engines_selected": _fact_or(report, "engine_count", len(engines)),
             "tables_analyzed": tables_analyzed,
             "tables_mapped": len(table_mappings),
             "queries": summary.get("query_count"),
@@ -749,9 +756,18 @@ def build_facts(
                 report, "table_owner_lines", "also_read_table_count"
             ),
             "count_labels": COUNT_LABELS,
-            "open_risks": _counted_risks(risk_assessment.get("risks")),
-            "resolved_risks": _counted_risks(risk_assessment.get("resolved_risks")),
-            "migration_wave_count": len(waves) if isinstance(waves, list) and waves else None,
+            "open_risks": _fact_or(
+                report, "open_risk_count", _counted_risks(risk_assessment.get("risks"))
+            ),
+            "resolved_risks": _fact_or(
+                report, "resolved_risk_count", _counted_risks(risk_assessment.get("resolved_risks"))
+            ),
+            "migration_wave_count": _fact_or(
+                report,
+                "migration_wave_count",
+                len(waves) if isinstance(waves, list) and waves else None,
+            )
+            or None,
             "overall_risk": risk_assessment.get("overall_risk_level"),
             "risks_by_severity": dict(severity_counts),
             "projected_monthly_cost_usd": tco.get("projected_monthly_cost"),
