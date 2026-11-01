@@ -31,8 +31,10 @@ value to the TCO and to ``facts.derived_copy_sync``. A row sized to no query (no
 scope for the engine) is left as it is. Routing never reads it: its cost dimension is its own per-query model.
 
 Prices are the price table's (``src/catalog/prices.toml``); a missing one raises
-(``catalog.required_price``, #1460). The consumer's own compute, the free tier and the
-copies' storage and GSIs are not priced.
+(``catalog.required_price``, #1460). The consumer's own compute, the free tier, the
+copies' table storage and the writes the replayed items cause on the copies' GSIs are not
+priced here. The storage of every GSI, the copies' included, is the design's GSI cost
+(``gsi_cost``, #805), stated in its own line.
 """
 
 from __future__ import annotations
@@ -224,8 +226,8 @@ def derived_copy_sync_facts(
             "request unit each) over the bytes replayed, as full batches: a lower bound.",
             f"Each copy applies a replayed item as a standard write, rounded up to {write_kb} KB "
             "write request units per item, at the on-demand write price.",
-            "The consumer's compute, the free tier and the copies' storage and indexes are "
-            "not included.",
+            "The consumer's compute, the free tier, the copies' table storage and the writes "
+            "the replayed items cause on the copies' indexes are not included.",
         ],
     }
 
@@ -256,6 +258,6 @@ def tco_assumptions(engine: str, sync: Mapping[str, Any]) -> list[str]:
         f"for the stream sync of {n} derived {_plural(n, 'copy', 'copies')} ({risks}) at "
         f"on-demand prices, with Streams reads billed as full {batch_mb} MB batches (a lower "
         "bound) and each copy's replayed writes",
-        "The sync figure leaves out the consumer's compute, the free tier, and the copies' "
-        "storage and indexes",
+        "The sync figure leaves out the consumer's compute, the free tier, the copies' table "
+        "storage and the writes the replayed items cause on the copies' indexes",
     ]

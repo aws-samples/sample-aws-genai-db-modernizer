@@ -158,6 +158,9 @@ def test_the_tco_states_what_the_sync_figure_rests_on() -> None:
     assert "lower bound" in line
     [left_out] = [a for a in synced["tco_analysis"]["assumptions"] if "leaves out" in a]
     assert "compute" in left_out and "free tier" in left_out
+    # #805: the copies' index storage is the GSI line's scope, not left out here.
+    assert "storage and indexes" not in left_out
+    assert "copies' table storage" in left_out
     for a in (line, left_out):
         assert ";" not in a  # the reports join assumptions with "; "
         assert a in synced["facts"]["cost_assumptions"]

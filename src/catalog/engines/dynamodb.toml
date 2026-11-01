@@ -27,6 +27,11 @@ write_unit_bytes = 1024
 # A Streams read request unit is one GetRecords call, which returns up to 1 MB (#1527,
 # aws.amazon.com/dynamodb/pricing/on-demand/).
 streams_read_unit_bytes = 1048576
+# Each global secondary index item is stored with 100 bytes of overhead on top of the
+# base table's key, the index key and the projected attributes (#805, DynamoDB Developer
+# Guide, "Storage considerations for Global Secondary Indexes":
+# docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html#GSI.StorageConsiderations).
+index_item_overhead_bytes = 100
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
 # (#1002); the first profile is the engine's default.

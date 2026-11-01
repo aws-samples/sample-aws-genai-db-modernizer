@@ -1642,6 +1642,9 @@ class AccessFacts:
     # The columns an UPDATE's SET assigns (lower-case names, #1231): a redesign never
     # keys a column its own write rewrites.
     assigned_columns: tuple[str, ...] = ()
+    # False when some SET target is not a plain column (a PostgreSQL ``(a, b) = (...)``
+    # tuple), so ``assigned_columns`` names only part of what the update writes (#805).
+    assigned_columns_complete: bool = True
 
 
 def query_readings(sql: str, source_engine: str) -> tuple[SqlFacts, AccessFacts]:
@@ -1737,6 +1740,12 @@ def _access_facts(statements: list[exp.Expr]) -> AccessFacts:
                 for assignment in statement.expressions
                 if (column := _set_column(assignment)) is not None
             )
+        ),
+        assigned_columns_complete=all(
+            _set_column(assignment) is not None
+            for statement in statements
+            if isinstance(statement, exp.Update)
+            for assignment in statement.expressions
         ),
     )
 

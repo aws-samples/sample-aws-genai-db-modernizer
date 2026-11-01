@@ -43,6 +43,7 @@ from src.agents.referee.cache_overlay import (
 )
 from src.agents.referee.derived_copy_sync import tco_assumptions
 from src.agents.referee.engine_scope import SCOPE_BASIS
+from src.agents.referee.gsi_cost import tco_assumption as gsi_tco_assumption
 from src.agents.referee.routed_confidence import RoutedFit, routed_fits
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.substring_match import substring_match_risks
@@ -1035,8 +1036,14 @@ def build_tco_analysis(
     wave_one_engine: str | None = None,
     retired_bases: dict[str, dict] | None = None,
     derived_copy_syncs: Mapping[str, Mapping[str, Any]] | None = None,
+    gsi_costs: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict:
     """Aggregate cost estimates from all analysis outputs.
+
+    ``gsi_costs`` (#805) is the storage and write cost of each DynamoDB design's GSIs
+    (``gsi_cost.gsi_costs_by_engine``), which the analysis estimate does not model: its
+    monthly total joins that engine's row, as the derived-copy sync does, and the TCO
+    states the share in one assumption line.
 
     ``derived_copy_syncs`` (#1566) is each engine's stream sync of its derived copies
     (``derived_copy_sync.syncs_by_engine``): its monthly total joins that engine's row,
@@ -1072,6 +1079,7 @@ def build_tco_analysis(
     # DynamoDB read-consistency footnote), each once, in engine order.
     footnotes: list[str] = []
     sync_lines: list[str] = []
+    gsi_lines: list[str] = []
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -1104,6 +1112,12 @@ def build_tco_analysis(
         if sync and components and (sizing is None or sizing["sized_query_count"] > 0):
             monthly = round(monthly + sync["total_monthly_cost_usd"], 2)
             sync_lines += tco_assumptions(engine, sync)
+        # #805: the design's GSIs (storage and the writes they add), priced once from the
+        # design; the same rule as the sync: a row sized to no query keeps its figure.
+        gsi = (gsi_costs or {}).get(engine)
+        if gsi and components and (sizing is None or sizing["sized_query_count"] > 0):
+            monthly = round(monthly + gsi["total_monthly_cost_usd"], 2)
+            gsi_lines.append(gsi_tco_assumption(gsi))
         target_costs.append(
             {
                 "database": engine,
@@ -1183,6 +1197,7 @@ def build_tco_analysis(
                 else []
             ),
             *sync_lines,
+            *gsi_lines,
             *footnotes,
         ],
     }

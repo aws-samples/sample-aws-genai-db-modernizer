@@ -49,7 +49,9 @@ Fields:
   units) and, for DynamoDB, ``streams_read_unit_price_per_million`` (a Streams read
   request unit, #1527). ``read_unit_bytes`` / ``write_unit_bytes`` /
   ``streams_read_unit_bytes`` (the bytes one unit reads or writes) stay in the engine
-  file; an engine billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
+  file; an engine billed by capacity has none. ``index_item_overhead_bytes`` (#805): the
+  storage overhead the engine adds to each secondary index item; an engine whose design
+  has priced indexes (DynamoDB's GSIs) sets it, and only those designs are priced. ``reads_billed_on_cache_miss_only``: a read served from
   the engine's buffer cache is not billed. ``estimate_instance_class`` /
   ``estimate_instance_memory_gb`` (a property): the instance an engine's cost estimate
   prices and its memory, read from the price table's ``instance_memory_gib`` for that
@@ -187,6 +189,7 @@ class EnginePricing(BaseModel):
     write_unit_bytes: int | None = Field(default=None, gt=0)
     streams_read_unit_price_per_million: float | None = Field(default=None, ge=0)
     streams_read_unit_bytes: int | None = Field(default=None, gt=0)
+    index_item_overhead_bytes: int | None = Field(default=None, ge=0)
     reads_billed_on_cache_miss_only: bool = False
     estimate_instance_class: str | None = Field(default=None, min_length=1)
 

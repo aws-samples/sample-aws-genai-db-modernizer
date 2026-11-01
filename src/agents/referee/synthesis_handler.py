@@ -21,11 +21,13 @@ LLM seam functions (for Skill Sync / external LLM integration):
 from datetime import UTC, datetime
 
 from src.agents.prompt_framing import with_untrusted_notice
+from src.agents.referee.assigned_cost import engine_queries
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
 from src.agents.referee.derived_copy_sync import syncs_by_engine
 from src.agents.referee.engine_scope import scope_of, scope_unservable_rows
 from src.agents.referee.flagged_unservable import flagged_unservable_records
+from src.agents.referee.gsi_cost import gsi_costs_by_engine
 from src.agents.referee.migration_risks import (
     add_migration_risks,
     build_migration_risks,
@@ -386,6 +388,16 @@ def run_synthesis_deterministic(
         wave_one_engine=wave_retained_engine(migration_waves),
         retired_bases=retired_bases,
         derived_copy_syncs=derived_copy_syncs,
+        # #805: the DynamoDB design's GSIs, priced once from the design (no design, no cost).
+        gsi_costs=gsi_costs_by_engine(
+            {e: a.schema_design for e, a in data.engines.items()},
+            data.collector,
+            (
+                {e: engine_queries(data.assignment, e)[1] for e in data.engines}
+                if (data.assignment or {}).get("query_assignments")
+                else None
+            ),
+        ),
     )
     # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
     # queries), never the whole-collection analysis estimate, so every cost agrees.
