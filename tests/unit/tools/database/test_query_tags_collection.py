@@ -157,6 +157,7 @@ def test_the_pattern_carries_the_tags_and_a_pi_merge_keeps_both() -> None:
                 "query_tags_dropped": 1,
             }
         ],
+        source_engine="mysql",
     )
     [m] = merged.query_patterns
     assert (m.query_tags, m.query_tags_dropped) == (["a", "b"], 1)

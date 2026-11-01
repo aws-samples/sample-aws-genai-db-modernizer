@@ -66,7 +66,12 @@ from src.shared.row_counts import (
     read_size_mb,
 )
 from src.shared.source_cache import percent_or_none
-from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
+from src.shared.sql_spans import (
+    span_dialect,
+    span_settings,
+    use_span_settings,
+    with_span_settings,
+)
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.aws.rds_tools import (
     get_cloudwatch_metrics,
@@ -78,6 +83,7 @@ from src.tools.aws.rds_tools import (
 )
 from src.tools.aws.s3_storage import init_storage, load_json, save_json
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database import live_sql
 from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 from src.tools.sql.query_tags import QueryTags
@@ -420,7 +426,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     )
     live_queries = _build_queries(queries_raw)
     aws_queries = aws_raw.get("query_patterns", [])
-    queries = _merge_into_queries(live_queries, aws_queries)
+    queries = _merge_into_queries(live_queries, aws_queries, source_engine="mysql")
     # Prefer DB-direct global_stats over PI counters (LIVE mode has DB access)
     global_stats = schema_raw.get("global_stats", {}) if isinstance(schema_raw, dict) else {}
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
@@ -471,7 +477,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
     aws_queries = aws_raw.get("query_patterns", [])
-    queries = _build_queries_from_aws(aws_queries)
+    queries = _build_queries_from_aws(aws_queries, source_engine=_engine_name(inp))
     pi_counters = aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")
@@ -988,10 +994,10 @@ def _build_queries(
     )
 
 
-def _build_queries_from_aws(aws_patterns: list[dict]) -> Queries:
+def _build_queries_from_aws(aws_patterns: list[dict], *, source_engine: str | None) -> Queries:
     if not aws_patterns:
         return Queries(query_patterns=[])
-    patterns = [_dict_to_query_pattern(p) for p in aws_patterns]
+    patterns = [_dict_to_query_pattern(p, source_engine=source_engine) for p in aws_patterns]
     return Queries(
         query_patterns=patterns,
         total_queries_analyzed=len(patterns),
@@ -999,7 +1005,9 @@ def _build_queries_from_aws(aws_patterns: list[dict]) -> Queries:
     )
 
 
-def _merge_into_queries(live_queries: Queries, aws_patterns: list[dict]) -> Queries:
+def _merge_into_queries(
+    live_queries: Queries, aws_patterns: list[dict], *, source_engine: str | None
+) -> Queries:
     if not aws_patterns:
         return live_queries
     existing = {p.query_id: p for p in live_queries.query_patterns}
@@ -1024,7 +1032,7 @@ def _merge_into_queries(live_queries: Queries, aws_patterns: list[dict]) -> Quer
             if p.db_load_contribution_percent is None and aq.get("db_load_contribution_percent"):
                 p.db_load_contribution_percent = aq["db_load_contribution_percent"]
         else:
-            existing[qid] = _dict_to_query_pattern(aq)
+            existing[qid] = _dict_to_query_pattern(aq, source_engine=source_engine)
     return Queries(
         query_patterns=list(existing.values()),
         total_queries_analyzed=len(existing),
@@ -1032,7 +1040,7 @@ def _merge_into_queries(live_queries: Queries, aws_patterns: list[dict]) -> Quer
     )
 
 
-def _dict_to_query_pattern(d: dict) -> QueryPattern:
+def _dict_to_query_pattern(d: dict, *, source_engine: str | None) -> QueryPattern:
     """Convert a raw query-stats dict (DMV/V$/PI/etc.) into a QueryPattern.
 
     Pass-through is generous: any field present in ``d`` flows into the
@@ -1081,11 +1089,11 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         text_search_type=d.get("text_search_type"),
         # A collector that read the flag keeps its answer, False included: the live
         # collectors read it with comments and literals blanked (#1420). Only a pattern
-        # with no flag falls back to the text.
+        # with no flag falls back to the text, read in the source dialect (#1743).
         has_time_range_filter=(
             d["has_time_range_filter"]
             if d.get("has_time_range_filter") is not None
-            else _detect_time_range(query_text)
+            else _detect_time_range(query_text, source_engine)
         ),
         # Timestamps + counters
         first_seen=_normalize_datetime_str(d.get("first_seen")),
@@ -1098,9 +1106,19 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
     )
 
 
-def _detect_time_range(sql: str) -> bool:
+def _detect_time_range(sql: str, source_engine: str | None) -> bool:
+    """Whether ``sql`` filters on a time range, for a pattern that carries no flag.
+
+    The text is read as ``source_engine`` runs it (#1743, :func:`live_sql.time_range_text`):
+    comments blanked, every date, time or number literal kept and every other literal
+    emptied, so a time-range predicate inside a comment or a string is none. With no
+    dialect known (no engine, or one the span grammar does not read) the whole text is
+    read, as before.
+    """
     import re
 
+    if span_dialect(source_engine):
+        sql = live_sql.time_range_text(sql, source_engine or "")
     if re.search(
         r"\b(NOW\s*\(\s*\)|CURRENT_TIMESTAMP|CURRENT_DATE|CURDATE\s*\(\s*\)|now\s*\(\s*\))\s*[-+]\s*(INTERVAL|[\?\$])",
         sql,

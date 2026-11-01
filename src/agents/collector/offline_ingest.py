@@ -143,7 +143,9 @@ def build_offline_contract(
         metrics = _build_metrics(queries, None, source_host=_build_source_host(parsed))
         rds_meta = None
     else:
-        queries = _merge_into_queries(queries, aws_raw.get("query_patterns", []))
+        queries = _merge_into_queries(
+            queries, aws_raw.get("query_patterns", []), source_engine=inp.engine.value
+        )
         cw_raw = aws_raw.get("cloudwatch", {})
         pi_counters = parsed.get("global_stats", {}) or aws_raw.get("pi_counters", {})
         _enrich_patterns_from_pi_and_cw(

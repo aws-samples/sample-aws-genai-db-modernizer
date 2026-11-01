@@ -507,41 +507,137 @@ def test_a_performance_insights_pattern_keeps_the_collected_text_search():
     from src.agents.collector.mysql_collector import _dict_to_query_pattern
 
     row = _live_rds_pi("mysql")("SELECT * FROM a WHERE b = ? -- LIKE '%x'")
-    pattern = _dict_to_query_pattern(row)
+    pattern = _dict_to_query_pattern(row, source_engine="mysql")
     assert (pattern.has_text_search, pattern.text_search_type) == (False, None)
     row = _live_rds_pi("mysql")("SELECT * FROM a WHERE MATCH (b) AGAINST (?)")
-    pattern = _dict_to_query_pattern(row)
+    pattern = _dict_to_query_pattern(row, source_engine="mysql")
     assert (pattern.has_text_search, pattern.text_search_type) == (True, "fulltext")
 
 
 @pytest.mark.parametrize(
-    "live",
-    [_live_mysql, _live_mariadb, _live_postgres, _live_sqlserver, _live_oracle],
+    "live, engine",
+    [
+        (_live_mysql, "mysql"),
+        (_live_mariadb, "mariadb"),
+        (_live_postgres, "postgresql"),
+        (_live_sqlserver, "sqlserver"),
+        (_live_oracle, "oracle"),
+    ],
     ids=["mysql", "mariadb", "postgresql", "sqlserver", "oracle"],
 )
-def test_a_live_time_range_flag_reaches_the_built_pattern(live):
+def test_a_live_time_range_flag_reaches_the_built_pattern(live, engine):
     """The pattern keeps the live collector's time-range answer, False included (#1420):
     a time range only in a comment is none, and the text check does not override it."""
     from src.agents.collector.mysql_collector import _dict_to_query_pattern
 
     in_comment = live("SELECT id FROM t WHERE id = 1 -- created_at > NOW() - INTERVAL 1 DAY")
     assert in_comment["has_time_range_filter"] is False
-    assert _dict_to_query_pattern(in_comment).has_time_range_filter is False
+    assert _dict_to_query_pattern(in_comment, source_engine=engine).has_time_range_filter is False
     real = live("SELECT id FROM t WHERE created_at > '2026-01-01T10:00:00Z'")
-    assert _dict_to_query_pattern(real).has_time_range_filter is True
+    assert _dict_to_query_pattern(real, source_engine=engine).has_time_range_filter is True
 
 
-@pytest.mark.passes_on_main
-def test_a_pattern_with_no_time_range_flag_reads_its_text():
-    """An offline pattern that carries no flag (or None) falls back to the text check."""
+@pytest.mark.parametrize("engine", ["mysql", "mariadb", "postgresql", "sqlserver", "oracle"])
+def test_a_pattern_with_no_time_range_flag_reads_its_text(engine):
+    """A pattern that carries no flag (or None) falls back to the text check."""
     from src.agents.collector.mysql_collector import _dict_to_query_pattern
 
     text = "SELECT id FROM t WHERE created_at > NOW() - INTERVAL 1 DAY"
     for row in ({}, {"has_time_range_filter": None}):
-        pattern = _dict_to_query_pattern({"query_id": "q", "query_text": text, **row})
+        pattern = _dict_to_query_pattern(
+            {"query_id": "q", "query_text": text, **row}, source_engine=engine
+        )
         assert pattern.has_time_range_filter is True
-    pattern = _dict_to_query_pattern({"query_id": "q", "query_text": "SELECT id FROM t"})
+    pattern = _dict_to_query_pattern(
+        {"query_id": "q", "query_text": "SELECT id FROM t"}, source_engine=engine
+    )
     assert pattern.has_time_range_filter is False
+
+
+_IN_COMMENT = "SELECT id FROM t WHERE id = 1 -- created_at > NOW() - INTERVAL 1 DAY"
+_IN_STRING = "SELECT id FROM t WHERE note = 'created_at > NOW() - INTERVAL 1 DAY'"
+_IN_BLOCK = "SELECT id FROM t WHERE id = 1 /* AND d BETWEEN '2026-01-01' AND '2026-02-01' */"
+
+
+@pytest.mark.parametrize("engine", ["mysql", "mariadb", "postgresql", "sqlserver", "oracle"])
+@pytest.mark.parametrize(
+    "sql, expected",
+    [
+        (_IN_COMMENT, False),
+        (_IN_STRING, False),
+        (_IN_BLOCK, False),
+        ("SELECT id FROM t WHERE created_at > NOW() - INTERVAL 1 DAY -- note", True),
+        ("SELECT id FROM t WHERE d BETWEEN '2026-01-01' AND '2026-02-01' /* x */", True),
+        ("SELECT id FROM t WHERE d >= '2026-01-01T10:00:00Z' AND note = 'x'", True),
+        ("SELECT id FROM t WHERE created_at >= ? AND note = 'y'", True),
+    ],
+)
+def test_the_text_time_range_reads_code_only_in_the_source_dialect(engine, sql, expected):
+    """``_detect_time_range`` reads the text the engine runs (#1743): comments blanked and
+    every non-date literal emptied, in the source dialect; a date literal still counts."""
+    from src.agents.collector.mysql_collector import _detect_time_range
+
+    assert _detect_time_range(sql, engine) is expected
+
+
+def test_the_text_time_range_reads_each_dialects_own_comments():
+    """A ``#`` starts a comment in MySQL and MariaDB only: elsewhere it is an operator,
+    and the predicate after it is code."""
+    from src.agents.collector.mysql_collector import _detect_time_range
+
+    sql = "SELECT id FROM t WHERE id = 1 # created_at > NOW() - INTERVAL 1 DAY"
+    assert _detect_time_range(sql, "mysql") is False
+    assert _detect_time_range(sql, "mariadb") is False
+    assert _detect_time_range(sql, "postgresql") is True
+
+
+@pytest.mark.parametrize("engine", [None, "", "db2"])
+def test_the_text_time_range_reads_the_whole_text_with_no_known_dialect(engine):
+    """With no dialect known the text is read as before: no dialect's comments or
+    strings can be told apart."""
+    from src.agents.collector.mysql_collector import _detect_time_range
+
+    assert _detect_time_range(_IN_COMMENT, engine) is True
+    assert _detect_time_range("SELECT id FROM t", engine) is False
+
+
+def _pi_row(sql: str) -> dict:
+    """A Performance Insights pattern: it carries no time-range flag."""
+    return {"query_id": "pi", "query_text": sql, "tables_accessed": ["t"]}
+
+
+@pytest.mark.parametrize("engine", ["mysql", "mariadb", "postgresql", "sqlserver", "oracle"])
+def test_every_pattern_builder_reads_the_text_time_range_in_its_dialect(engine):
+    """Each collector's pattern builder passes its source engine (#1743): a Performance
+    Insights pattern whose time range is only in a comment or a string has none."""
+    from src.agents.collector import (
+        mysql_collector,
+        oracle_collector,
+        postgres_collector,
+        sqlserver_collector,
+    )
+    from src.contracts.collector_output import Queries
+
+    built: list[Queries] = []
+    if engine in ("mysql", "mariadb"):
+        built.append(
+            mysql_collector._build_queries_from_aws([_pi_row(_IN_COMMENT)], source_engine=engine)
+        )
+        built.append(
+            mysql_collector._merge_into_queries(
+                Queries(query_patterns=[]), [_pi_row(_IN_STRING)], source_engine=engine
+            )
+        )
+    else:
+        module = {
+            "postgresql": postgres_collector,
+            "sqlserver": sqlserver_collector,
+            "oracle": oracle_collector,
+        }[engine]
+        built.append(module._build_queries_from_aws([_pi_row(_IN_COMMENT)]))
+        built.append(module._merge_queries(Queries(query_patterns=[]), [_pi_row(_IN_STRING)]))
+    for queries in built:
+        assert [p.has_time_range_filter for p in queries.query_patterns] == [False]
 
 
 def test_the_collectors_hold_no_text_search_detector():

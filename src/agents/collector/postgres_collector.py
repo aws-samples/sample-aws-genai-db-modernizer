@@ -290,7 +290,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 def _build_queries_from_aws(aws_patterns: list[dict]) -> Queries:
     if not aws_patterns:
         return Queries(query_patterns=[])
-    patterns = [_dict_to_query_pattern(p) for p in aws_patterns]
+    patterns = [_dict_to_query_pattern(p, source_engine="postgresql") for p in aws_patterns]
     return Queries(
         query_patterns=patterns,
         total_queries_analyzed=len(patterns),
@@ -550,7 +550,7 @@ def _merge_queries(live: Queries, aws_patterns: list[dict]) -> Queries:
             if p.db_load_contribution_percent is None and aq.get("db_load_contribution_percent"):
                 p.db_load_contribution_percent = aq["db_load_contribution_percent"]
         else:
-            existing[qid] = _dict_to_query_pattern(aq)
+            existing[qid] = _dict_to_query_pattern(aq, source_engine="postgresql")
     return Queries(
         query_patterns=list(existing.values()),
         total_queries_analyzed=len(existing),
