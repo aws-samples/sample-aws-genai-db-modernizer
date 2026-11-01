@@ -30,9 +30,9 @@ def all_offers() -> dict[str, rp.OfferFile]:
 
 @pytest.fixture(scope="module")
 def offers(all_offers) -> dict[str, rp.OfferFile]:
-    """The offers the committed table was read from: the data movement files (#1567) hold
-    the next refresh's sections and are not in the table yet."""
-    return {s: o for s, o in all_offers.items() if s not in rp.OPTIONAL_SERVICES}
+    """The offers the committed table was read from: since the first online refresh
+    (#1567) that includes the data movement files."""
+    return all_offers
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +114,6 @@ class TestTheCommittedTable:
         committed = load_price_table()
         assert rp.render_table(offers, committed.retrieved_on) == PRICES_FILE.read_text()
 
-    @pytest.mark.passes_on_main
     def test_states_each_offer_files_publication_date(self, offers) -> None:
         table = load_price_table()
         assert set(table.published) == set(offers)
@@ -265,10 +264,15 @@ class TestDataMovementPrices:
         assert {"dms.replication", "msk.provisioned", "msk_connect.workers"} <= set(rp.SPECS)
         assert {"AWSDatabaseMigrationSvc", "AmazonMSK"} <= set(rp.services())
 
-    @pytest.mark.passes_on_main
     def test_a_refresh_without_the_offer_files_leaves_the_sections_out(self, offers) -> None:
-        assert "dms.replication" not in rp.extract_prices(offers)
-        assert "[dms." not in PRICES_FILE.read_text()
+        without = {s: o for s, o in offers.items() if s not in rp.OPTIONAL_SERVICES}
+        assert "dms.replication" not in rp.extract_prices(without)
+        assert "[dms." not in rp.render_table(without, load_price_table().retrieved_on)
+
+    def test_the_committed_table_carries_the_sections_the_plan_reads(self) -> None:
+        table = load_price_table()
+        for section in ("dms.replication", "msk.provisioned", "msk_connect.workers"):
+            assert table.section(section), section
 
     def test_the_selectors_match_the_real_offer_files(self, all_offers) -> None:
         prices = rp.extract_prices(all_offers)
