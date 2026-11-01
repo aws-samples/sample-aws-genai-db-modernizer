@@ -319,3 +319,32 @@ class TestDataMovementPrices:
         path.write_text(path.read_text().replace("Kafka.Storage.GP2", "Kafka.Storage.X"))
         with pytest.raises(ValueError, match="msk.provisioned.storage_price_per_gb_month"):
             rp.extract_prices(rp.load_offers(tmp_path))
+
+
+class TestTheTrimmedFixtures:
+    """``--update-fixtures`` keeps the test copies in step with a refresh (#1196)."""
+
+    def test_trimming_the_committed_fixtures_changes_nothing(self, tmp_path: Path) -> None:
+        for path in FIXTURES.glob("*.csv"):
+            (tmp_path / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        lines = rp.fetch_lines(FIXTURES)
+        assert rp.update_fixtures(lines, tmp_path) == []
+        for path in FIXTURES.glob("*.csv"):
+            assert (tmp_path / path.name).read_text(encoding="utf-8") == path.read_text(
+                encoding="utf-8"
+            )
+
+    def test_a_newer_file_replaces_its_rows_and_keeps_the_lookalikes(self, tmp_path: Path) -> None:
+        lines = rp.fetch_lines(FIXTURES)
+        es = lines["AmazonES"]
+        newer = [ln.replace("2026-10-26T17:31:53Z", "2030-01-01T00:00:00Z") for ln in es]
+        (tmp_path / "AmazonES.csv").write_text("\n".join(es) + "\n", encoding="utf-8")
+        assert rp.update_fixtures({"AmazonES": newer}, tmp_path) == []
+        out = (tmp_path / "AmazonES.csv").read_text(encoding="utf-8")
+        assert "2030-01-01" in out and out.count("\n") == len(es)
+
+    def test_a_rate_the_price_list_dropped_is_reported(self, tmp_path: Path) -> None:
+        es = rp.fetch_lines(FIXTURES)["AmazonES"]
+        (tmp_path / "AmazonES.csv").write_text("\n".join(es) + "\n", encoding="utf-8")
+        notes = rp.update_fixtures({"AmazonES": es[:-1]}, tmp_path)
+        assert len(notes) == 1 and "no longer in the price list" in notes[0]

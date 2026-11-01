@@ -20,6 +20,8 @@ Usage:
     uv run python scripts/refresh_prices.py                       # download and write
     uv run python scripts/refresh_prices.py --source-dir DIR      # read DIR/<ServiceCode>.csv
                                                                   # (DMS and MSK files optional)
+    uv run python scripts/refresh_prices.py --update-fixtures tests/fixtures/price_list
+                                                                  # also rewrite the trimmed test copies
     uv run python scripts/refresh_prices.py --check-age           # warn when the table is old
 
 ``--check-age`` runs in lint. It only warns (exit 0): a price list ages slowly, and a
@@ -436,18 +438,66 @@ def _download(service: str) -> list[str]:
         conn.close()
 
 
-def load_offers(source_dir: Path | None) -> dict[str, OfferFile]:
-    offers = {}
+def fetch_lines(source_dir: Path | None) -> dict[str, list[str]]:
+    """Every offer file's lines, downloaded or read from ``source_dir``."""
+    lines = {}
     for service in services():
         if source_dir is None:
-            lines = _download(service)
+            lines[service] = _download(service)
         else:
             path = source_dir / f"{service}.csv"
             if service in OPTIONAL_SERVICES and not path.exists():
                 continue
-            lines = path.read_text(encoding="utf-8").splitlines()
-        offers[service] = read_offer(service, lines)
-    return offers
+            lines[service] = path.read_text(encoding="utf-8").splitlines()
+    return lines
+
+
+def load_offers(source_dir: Path | None) -> dict[str, OfferFile]:
+    return {s: read_offer(s, lines) for s, lines in fetch_lines(source_dir).items()}
+
+
+def _selectors(spec: object) -> list[Selector]:
+    if isinstance(spec, Selector):
+        return [spec]
+    if isinstance(spec, dict):
+        return [s for v in spec.values() for s in _selectors(v)]
+    return []
+
+
+def trim_offer(service: str, lines: list[str], kept_rates: set[str]) -> list[str]:
+    """The trimmed copy of one offer file the tests read (tests/fixtures/price_list/):
+    the metadata and header lines, then each row a selector matches plus each row whose
+    rate code ``kept_rates`` (the committed copy's) names. The committed copy's extra rows are
+    the look-alikes (the other storage configuration, Redis OSS next to Valkey, the free
+    tier) that keep a selector from growing ambiguous unnoticed."""
+    selectors = [s for spec in SPECS.values() for s in _selectors(spec) if s.service == service]
+    header = next(csv.reader([lines[5]]))
+    out = lines[:6]
+    for line in lines[6:]:
+        row = dict(zip(header, next(csv.reader([line])), strict=False))
+        if row.get("RateCode") in kept_rates or any(sel.matches(row) for sel in selectors):
+            out.append(line)
+    return out
+
+
+def update_fixtures(lines: Mapping[str, list[str]], fixtures: Path) -> list[str]:
+    """Rewrite each trimmed fixture from the offer files read for a refresh. Returns a
+    note for each rate the committed copy kept that the price list no longer has."""
+    notes = []
+    for service, offer_lines in lines.items():
+        path = fixtures / f"{service}.csv"
+        kept: set[str] = set()
+        if path.exists():
+            text = path.read_text(encoding="utf-8").splitlines()
+            kept = {r["RateCode"] for r in csv.DictReader(text[5:])}
+        trimmed = trim_offer(service, offer_lines, kept)
+        present = {r["RateCode"] for r in csv.DictReader(trimmed[5:])}
+        notes += [
+            f"{service}: rate {rate} is no longer in the price list"
+            for rate in sorted(kept - present)
+        ]
+        path.write_text("\n".join(trimmed) + "\n", encoding="utf-8")
+    return notes
 
 
 def age_warning(
@@ -468,6 +518,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source-dir", type=Path, help="read <ServiceCode>.csv from here")
     parser.add_argument("--output", type=Path, default=PRICES_FILE)
+    parser.add_argument(
+        "--update-fixtures",
+        type=Path,
+        metavar="DIR",
+        help="also rewrite the trimmed offer files the tests read, in DIR "
+        "(tests/fixtures/price_list), from the files this refresh read",
+    )
     parser.add_argument("--check-age", action="store_true", help="warn when the table is old")
     parser.add_argument("--max-age-days", type=int, default=MAX_AGE_DAYS)
     args = parser.parse_args(argv)
@@ -480,7 +537,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     try:
-        offers = load_offers(args.source_dir)
+        lines = fetch_lines(args.source_dir)
+        offers = {s: read_offer(s, text) for s, text in lines.items()}
     except (OSError, http.client.HTTPException, RuntimeError, ValueError) as exc:
         # A failed download or an unreadable file: one line, and the table is untouched.
         print(f"refresh_prices: {exc}", file=sys.stderr)
@@ -488,6 +546,10 @@ def main(argv: list[str] | None = None) -> int:
     args.output.write_text(render_table(offers, dt.date.today()), encoding="utf-8")
     load_price_table(args.output)  # the file it wrote must load
     print(f"wrote {args.output}")
+    if args.update_fixtures:
+        for note in update_fixtures(lines, args.update_fixtures):
+            print(f"refresh_prices: {note}", file=sys.stderr)
+        print(f"wrote the trimmed offer files in {args.update_fixtures}")
     return 0
 
 
