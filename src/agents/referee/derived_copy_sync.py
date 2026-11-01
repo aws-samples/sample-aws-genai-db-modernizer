@@ -11,9 +11,13 @@ something to build and to pay for, so synthesis computes it once into
 
 One entry per overlap (``dynamodb_merge.merge_overlaps``) that has an open risk:
 
-- ``replayed_writes_per_second``: the design's write access patterns on any home of the
-  overlap's source rows (``design_rps``). A write on a copy is pointed at the home, so
-  every one of them lands on the home's stream and is replayed to every copy.
+- ``replayed_writes_per_second``: the items the design's write access patterns on any
+  home of the overlap's source rows change a second, on average load (#1753,
+  ``design_write_load``: each pattern's collected queries, in scope for the engine, at
+  ``calls_per_second`` times the rows each call changes as collected, each query once; never
+  ``design_rps``, which carries the design's peak and growth factors). The GSI cost reads
+  the same rate. A write on a copy is pointed at the home, so every one of them lands on
+  the home's stream and is replayed to every copy.
 - **Stream reads**: the home's stream is read once, however many copies there are. A
   Streams read request unit is one GetRecords call, which returns up to 1 MB
   (``streams_read_unit_bytes`` of the engine file); the replayed bytes a month
@@ -43,6 +47,11 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from src.agents.referee.design_write_load import (
+    collected_queries,
+    items_per_second,
+    pattern_queries,
+)
 from src.agents.schema_design.dynamodb_merge import (
     WRITE_OPERATIONS,
     merge_overlaps,
@@ -125,12 +134,18 @@ def _linked_risk(overlap: Mapping, risks: Iterable[Mapping]) -> str | None:
 
 
 def derived_copy_sync_facts(
-    schema: Mapping[str, Any] | None, risks: Iterable[Mapping[str, Any]]
+    schema: Mapping[str, Any] | None,
+    risks: Iterable[Mapping[str, Any]],
+    collector: Mapping[str, Any] | None = None,
+    query_ids: Iterable[str] | None = None,
 ) -> dict[str, Any] | None:
     """``facts.derived_copy_sync`` for the DynamoDB design ``schema``; None with no sync.
 
     ``risks`` is the report's open risks: only an overlap that has its risk is listed,
-    so every entry has the place the deliverables print it (``risk_id``).
+    so every entry has the place the deliverables print it (``risk_id``). The replayed
+    rate is the collection's average load (``collector``), for ``query_ids`` only when
+    given (the in-scope queries the TCO sizes the engine for); with no collection
+    nothing is replayed.
     """
     if not isinstance(schema, Mapping):
         return None
@@ -156,6 +171,7 @@ def derived_copy_sync_facts(
         catalog.required_price(engine, "streams_read_unit_bytes", prices.streams_read_unit_bytes)
     )
 
+    queries = collected_queries(collector, query_ids)
     syncs: list[dict[str, Any]] = []
     for overlap in overlaps:
         risk_id = _linked_risk(overlap, risks)
@@ -168,19 +184,25 @@ def derived_copy_sync_facts(
             continue
         home, _ = chosen
 
-        writes = 0.0  # replayed writes a second
+        writes = 0.0  # replayed writes (items) a second
         write_units = 0.0  # write request units a second one copy bills
         stream_bytes = 0.0  # bytes a second the home's stream carries
+        seen: set[str] = set()  # each query's writes replay once
         for ap in patterns:
             if ap.get("operation") not in WRITE_OPERATIONS or ap.get("table_name") not in homes:
                 continue
             named = {normalize_table_name(s) for s in ap.get("source_tables") or [] if s}
             if named and not named & sources:
                 continue
-            rps, size = _number(ap.get("design_rps")), _number(ap.get("item_size_bytes"))
-            writes += rps
-            stream_bytes += rps * size
-            write_units += rps * write_request_units(size, STANDARD, write_bytes)
+            size = _number(ap.get("item_size_bytes"))
+            for qid in pattern_queries(ap, queries):
+                if qid in seen:
+                    continue
+                seen.add(qid)
+                rate = items_per_second(queries[qid])
+                writes += rate
+                stream_bytes += rate * size
+                write_units += rate * write_request_units(size, STANDARD, write_bytes)
 
         stream_units = math.ceil(stream_bytes * SECONDS_PER_MONTH / streams_bytes - 1e-9)
         stream_cost = round(stream_units / 1_000_000 * streams_price, 2)
@@ -221,7 +243,8 @@ def derived_copy_sync_facts(
         },
         "assumptions": [
             "Every write to the source rows is replayed from the authoritative home's "
-            "DynamoDB stream to each derived copy, at the design's write rate.",
+            "DynamoDB stream to each derived copy, at the collected average write rate "
+            "(calls per second times the rows each call changes, as collected).",
             f"Stream reads are billed as {stream_mb} MB GetRecords calls (one Streams read "
             "request unit each) over the bytes replayed, as full batches: a lower bound.",
             f"Each copy applies a replayed item as a standard write, rounded up to {write_kb} KB "
@@ -233,11 +256,25 @@ def derived_copy_sync_facts(
 
 
 def syncs_by_engine(
-    designs: Mapping[str, Mapping[str, Any] | None], risks: Iterable[Mapping[str, Any]]
+    designs: Mapping[str, Mapping[str, Any] | None],
+    risks: Iterable[Mapping[str, Any]],
+    collector: Mapping[str, Any] | None = None,
+    query_ids: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """``facts.derived_copy_sync`` of each engine's design that has a sync, by engine id."""
+    """``facts.derived_copy_sync`` of each engine's design that has a sync, by engine id.
+
+    ``query_ids`` is, by engine, the in-scope queries the TCO sizes it for (None: no
+    assignment, every collected query)."""
     risks = list(risks)
-    found = {engine: derived_copy_sync_facts(schema, risks) for engine, schema in designs.items()}
+    found = {
+        engine: derived_copy_sync_facts(
+            schema,
+            risks,
+            collector,
+            None if query_ids is None else list(query_ids.get(engine) or []),
+        )
+        for engine, schema in designs.items()
+    }
     return {engine: fact for engine, fact in found.items() if fact}
 
 
@@ -256,8 +293,8 @@ def tco_assumptions(engine: str, sync: Mapping[str, Any]) -> list[str]:
     return [
         f"The {display_engine(engine)} figure includes {_usd(sync['total_monthly_cost_usd'])}/mo "
         f"for the stream sync of {n} derived {_plural(n, 'copy', 'copies')} ({risks}) at "
-        f"on-demand prices, with Streams reads billed as full {batch_mb} MB batches (a lower "
-        "bound) and each copy's replayed writes",
+        f"on-demand prices on average load, with Streams reads billed as full {batch_mb} MB "
+        "batches (a lower bound) and each copy's replayed writes",
         "The sync figure leaves out the consumer's compute, the free tier, the copies' table "
         "storage and the writes the replayed items cause on the copies' indexes",
     ]

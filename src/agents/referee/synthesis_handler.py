@@ -378,9 +378,14 @@ def run_synthesis_deterministic(
     # in-scope query reads (wave 1 moves the whole source database).
     # #1566: the derived copies' stream sync, computed once from the risks it sits under
     # (built above): the DynamoDB cost counts it and facts.derived_copy_sync lists it.
+    # #805, #1753: both design-time costs read the in-scope queries the TCO sizes each
+    # engine for, on the collection's average load.
+    sized_query_ids = _sized_query_ids(data)
     derived_copy_syncs = syncs_by_engine(
         {e: a.schema_design for e, a in data.engines.items()},
         risk_assessment.get("risks") or [],
+        data.collector,
+        sized_query_ids,
     )
     tco = build_tco_analysis(
         data,
@@ -392,11 +397,7 @@ def run_synthesis_deterministic(
         gsi_costs=gsi_costs_by_engine(
             {e: a.schema_design for e, a in data.engines.items()},
             data.collector,
-            (
-                {e: engine_queries(data.assignment, e)[1] for e in data.engines}
-                if (data.assignment or {}).get("query_assignments")
-                else None
-            ),
+            sized_query_ids,
         ),
     )
     # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
@@ -1465,6 +1466,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         else syncs_by_engine(
             {e: a.schema_design for e, a in data.engines.items()},
             (result.get("risk_assessment") or {}).get("risks") or [],
+            data.collector,
+            _sized_query_ids(data),
         )
     )
     output_data["facts"] = compute_report_facts(
@@ -1492,6 +1495,13 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     )
 
     return output_data
+
+
+def _sized_query_ids(data: SynthesisData) -> dict[str, list[str]] | None:
+    """By engine, the in-scope queries the TCO sizes it for; None with no assignment."""
+    if not (data.assignment or {}).get("query_assignments"):
+        return None
+    return {e: engine_queries(data.assignment, e)[1] for e in data.engines}
 
 
 def _write_synthesis_report(
