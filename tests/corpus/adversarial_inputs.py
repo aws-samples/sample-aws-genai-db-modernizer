@@ -734,7 +734,12 @@ PROSE_ENTRIES: tuple[ProseEntry, ...] = (
 
 # Very long input (#1230): built at two sizes so a test can bound the growth of a
 # detector's cost, relative to a same-process reference, never in seconds.
-LONG_SQL_UNIT = "SELECT a FROM t WHERE note = 'it''s GROUP BY x' /* JOIN */ AND b = ? -- c\n"
+LONG_SQL_UNIT = (
+    "SELECT a FROM t WHERE note = 'it''s GROUP BY x' /* JOIN */ AND b = ? -- c\n"
+    # DDL openers and modifiers, for the report's statement filter (#1738).
+    "CREATE OR REPLACE UNIQUE TEMP GLOBAL TEMPORARY DROP TEMP; EXEC EXECUTE CALL; "
+    "truncate vacuum analyze lock check table if not exists concurrently\n"
+)
 LONG_PROSE_UNIT = "The reads stay local. `code_span` -- 2-4 weeks.\n"
 
 

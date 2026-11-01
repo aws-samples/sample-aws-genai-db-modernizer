@@ -354,23 +354,6 @@ _FILTERS_ON_LIMIT: dict[str, object] = {
 }
 
 
-# DDL and maintenance statements the quoted-SQL filter does not know (#1738): cut only when
-# a comment after one holds SELECT-like words, so the twin prints.
-_UNCUT_STATEMENTS = _bug(
-    1738,
-    "alter_index_on_with_comment",
-    "update_statistics_with_comment",
-    "drop_index_on_with_comment",
-    "truncate_with_comment",
-    "alter_table_with_comment",
-    "comment_on_table_string",
-    "optimize_table_with_line_comment",
-    "lock_tables_with_comment",
-    "vacuum_with_line_comment",
-    "describe_with_comment",
-)
-
-
 # Each of these is a time range in the engines' forms (#1420): a date, time or timestamp
 # literal after a comparison or BETWEEN, NOW() less an interval, one in a DO block's body.
 _TIME_RANGE_ENTRIES = (
@@ -498,7 +481,14 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
     ),
     SqlDetector("src/assessment/cut.py:foreign_syntax", cut.foreign_syntax),
     SqlDetector(
-        "src/report/executive_report.py:without_table_names", _report_line, bugs=_UNCUT_STATEMENTS
+        "src/report/executive_report.py:without_table_names",
+        _report_line,
+        expect={
+            # An English-word verb with a bare one-letter name reads as prose (#1738), so
+            # the twin prints; the entry is cut only because its comment holds SQL.
+            "optimize_table_with_line_comment": _GAP_CLAUSE + ".",
+            "describe_with_comment": _GAP_CLAUSE + ".",
+        },
     ),
 )
 

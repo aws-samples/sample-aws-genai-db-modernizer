@@ -345,6 +345,68 @@ _SQL_SHAPE = re.compile(
 _SQL_QUOTED = re.compile(
     r"`|\[\w[^\]]*\]|\"[\w.$]+\"|\b(?:SELECT|FROM|WHERE|JOIN|HAVING|LIMIT|OFFSET|DISTINCT|VALUES)\b"
 )
+# DDL and maintenance statements (#1738), in any case, as collector text quotes them
+# ("truncate table users"). Ordinary words are not cut: a statement is (a) a verb, an
+# object keyword and a name ("alter table orders"), or (b) a bare verb ("truncate",
+# "vacuum", "call") only where it opens a list item (after ": ", "; " or "e.g. "),
+# then a name. A name is never an article ("alter the table", "Next step: create a
+# view", "Risk: analyze the read path"). For the verbs no English sentence is without
+# (truncate, vacuum, reindex, create, alter, drop, ...) a name may also be a plain word
+# at the end of the text or before a SQL word. For the verbs that are ordinary English
+# (check, repair, analyze, optimize, lock, rename, cluster, call, grant, describe) it
+# must be quoted, schema-qualified, contain "_", or be followed by "(" or ";" or by a
+# few SQL words only ("Before Wave 2, check table sizes."). Every part is a fixed word
+# sequence or a bounded lookahead, so the match is linear.
+_DDL_NOT_ARTICLE = r"(?!(?:the|a|an|this|that|these|those|its|their|our)\b)"
+_DDL_QUALIFIED = r"[`\"\[][\w.$]+[`\"\]]|[\w$]+\.[\w$.]+"
+_DDL_NAME = (
+    _DDL_NOT_ARTICLE + r"(?:" + _DDL_QUALIFIED + r"|[\w$]+(?=\s*[(;]|\s*\.?\s*$"
+    r"|\s+(?:add|on|to|set|in|using|is|as|rebuild|read|write|with|from|for|values|select)\b))"
+)
+_DDL_STRICT_A = (
+    _DDL_NOT_ARTICLE + r"(?:" + _DDL_QUALIFIED + r"|[\w$]*_[\w$]*"
+    r"|[\w$]+(?=\s*[(;]|\s+(?:add|rebuild|using|read|write)\b))"
+)
+_DDL_STRICT_B = (
+    _DDL_NOT_ARTICLE + r"(?:" + _DDL_QUALIFIED + r"|[\w$]*_[\w$]*"
+    r"|[\w$]+(?=\s*[(;]|\s+(?:on|using|set|add|read|write|values|select"
+    r"|in\s+(?:share|exclusive|access|row))\b))"
+)
+_DDL_OBJECT = (
+    r"(?:table|index|view|sequence|trigger|procedure|function|schema|database|type|extension)s?\b"
+)
+_DDL_MODIFIER = (
+    r"(?:or|replace|unique|materialized|temp|temporary|global|local|unlogged|external"
+    r"|fulltext|spatial|clustered|nonclustered)\s+"
+)
+_DDL_OBJECT_TAIL = r"\s+(?:if\s+(?:not\s+)?exists\s+)?(?:concurrently\s+)?"
+_DDL_LIST_ITEM = r"(?:(?<=: )|(?<=; )|(?<=e\.g\. ))"
+_DDL_BARE_MODIFIER = r"(?:(?:analy[sz]e|full|verbose|freeze)\s+)*"
+_SQL_DDL = re.compile(
+    r"\b(?:create|alter|drop|truncate|reindex|checksum|comment\s+on)\s+(?:"
+    + _DDL_MODIFIER
+    + r")*"
+    + _DDL_OBJECT
+    + _DDL_OBJECT_TAIL
+    + _DDL_NAME
+    + r"|\b(?:check|repair|analy[sz]e|optimize|lock|rename)\s+(?:"
+    + _DDL_MODIFIER
+    + r")*"
+    + _DDL_OBJECT
+    + _DDL_OBJECT_TAIL
+    + _DDL_STRICT_A
+    + r"|"
+    + _DDL_LIST_ITEM
+    + r"(?:truncate|vacuum|exec|revoke|merge\s+into|update\s+statistics)\s+"
+    + _DDL_BARE_MODIFIER
+    + _DDL_NAME
+    + r"|"
+    + _DDL_LIST_ITEM
+    + r"(?:analy[sz]e|cluster|grant|call|execute|describe|lock)\s+"
+    + _DDL_BARE_MODIFIER
+    + _DDL_STRICT_B,
+    re.IGNORECASE,
+)
 # An identifier whatever list it is on: a word with an inner underscore (snake_case),
 # as a schema, table, view, routine or column name is written ("revoked_at").
 _SNAKE = r"[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*[A-Za-z0-9]"
@@ -467,7 +529,12 @@ def without_table_names(text: Any, names: Iterable[str] | re.Pattern[str] | None
     pattern = names if isinstance(names, re.Pattern) else _names_pattern(names or [])
 
     def first_hit(piece: str) -> int | None:
-        found = (_SQL_SHAPE.search(piece), _SQL_QUOTED.search(piece), pattern.search(piece))
+        found = (
+            _SQL_SHAPE.search(piece),
+            _SQL_QUOTED.search(piece),
+            _SQL_DDL.search(piece),
+            pattern.search(piece),
+        )
         hits = [m.start() for m in found if m]
         return min(hits) if hits else None
 
