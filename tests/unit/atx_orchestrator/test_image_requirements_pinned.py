@@ -74,6 +74,28 @@ def test_pins_equal_the_locked_versions() -> None:
         assert locked[name] == version, f"{name}: image pins {version}, uv.lock has {locked[name]}"
 
 
+def test_strands_floor_is_shared_by_project_and_image() -> None:
+    """pyproject.toml and requirements.in must agree on the strands-agents range (#1747).
+
+    RoleBedrockModel overrides private BedrockModel hooks that first exist in
+    1.56.0; a lower floor in one file lets a resolver pick a version the other
+    file would reject, so the two specifiers must stay identical.
+    """
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    project_range = next(
+        req.specifier
+        for req in (Requirement(dep) for dep in pyproject["project"]["dependencies"])
+        if canonicalize_name(req.name) == "strands-agents"
+    )
+    image_range = next(
+        req.specifier
+        for req in rar.direct_requirements((IMAGE / "requirements.in").read_text(encoding="utf-8"))
+        if canonicalize_name(req.name) == "strands-agents"
+    )
+    assert project_range == image_range
+    assert ">=1.56.0" in str(project_range), "the shared floor must stay >=1.56.0"
+
+
 def test_every_direct_dependency_is_pinned_within_its_bounds() -> None:
     pins = _pins(IMAGE / "requirements.txt")
     direct = rar.direct_requirements((IMAGE / "requirements.in").read_text(encoding="utf-8"))

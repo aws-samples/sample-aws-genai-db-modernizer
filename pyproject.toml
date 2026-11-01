@@ -11,7 +11,7 @@ license = {text = "MIT-0"}
 
 dependencies = [
     # Strands Agent Framework
-    "strands-agents>=1.0.0",
+    "strands-agents>=1.56.0,<2",
 
     # Web Framework & API
     "fastapi>=0.104.1",
