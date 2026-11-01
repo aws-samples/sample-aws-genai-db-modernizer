@@ -1,0 +1,94 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+# The docs-impact map (#1162): changed source paths (globs) -> the pages to review.
+#
+# ci/pre_merge.sh reads it. When a branch changes a mapped path but none of that entry's
+# pages, it warns and lists the pages; it fails unless the PR body (or a commit message)
+# has a "Docs: <reason>" line saying why they need no change. Keep the map small and
+# honest: add an entry where a page has drifted from the code before, not for every module.
+#
+# * paths: globs against repo-relative paths; "*" stays inside one folder, "**" crosses folders.
+# * docs: the doc pages, help-site pages and command files that describe those paths.
+# * why: what drifted, or what the pages say about the paths.
+#
+# tests/unit/docs/test_docs_impact_map.py checks that every page exists and every path matches
+# a tracked file. Rationale and the rule: ci/README.md and CONTRIBUTING.md.
+
+[[entry]]
+name = "report-and-deliverables"
+paths = ["src/report/**", "scripts/run_report.py"]
+docs = [
+  "docs/understand-the-results.md",
+  "docs/sample.md",
+  "docs/other-ways-to-run-it.md",
+  "README.md",
+  ".claude/commands/synthesize.md",
+]
+why = "The pages describe the deliverables and what each report section shows; the deliverables list drifted once (tests/unit/docs/test_deliverables_lists.py now pins the file names, not the prose)."
+
+[[entry]]
+name = "results-page"
+paths = ["src/ui/src/pages/AnalysisResults.js", "src/ui/src/pages/AssignmentGate.js"]
+docs = ["docs/understand-the-results.md", "docs/use-claude-code.md"]
+why = "The help site describes the results page order and the approval gate; no test ties the prose to the page's section order."
+
+[[entry]]
+name = "local-ui-launcher"
+paths = ["scripts/start_local_ui.py"]
+docs = [
+  "docs/other-ways-to-run-it.md",
+  "docs/use-claude-code.md",
+  ".claude/commands/modernize.md",
+]
+why = "The pages and the /modernize command describe how the UI starts, its ports and the job-page links."
+
+[[entry]]
+name = "triage"
+paths = ["src/agents/referee/triage.py", "scripts/run_triage.py"]
+docs = [
+  "docs/understand-the-results.md",
+  "docs/guides/referee-agent-guide.md",
+  ".claude/commands/triage.md",
+]
+why = "Triage wording on the help site and in the referee guide drifted from what triage does."
+
+[[entry]]
+name = "engine-catalog"
+paths = ["src/catalog/engines/*.toml", "src/shared/engine_names.py"]
+docs = [
+  "docs/architecture/high-level-design.md",
+  "docs/guides/new-analysis-agent-guide.md",
+  "docs/use-claude-code.md",
+  "README.md",
+]
+why = "Pages list the engines by name and id; tests/unit/docs/test_doc_enum_claims.py checks the explicit lists, the prose needs a read."
+
+[[entry]]
+name = "llm-modes"
+paths = [
+  "scripts/run_assessment.py",
+  "scripts/run_analysis.py",
+  "scripts/run_reality_check.py",
+  "scripts/run_schema_design.py",
+  "scripts/run_synthesis.py",
+]
+docs = ["AGENTS.md", "docs/other-ways-to-run-it.md", "docs/use-claude-code.md"]
+why = "The modes (--llm-mode) and what each skips are described in prose on several pages; the mode lists are checked, the behaviour is not."
+
+[[entry]]
+name = "assess-library-contract"
+paths = [
+  "src/assessment/models.py",
+  "src/assessment/runner.py",
+  "src/assessment/cut.py",
+  "src/assessment/loading.py",
+]
+docs = ["docs/contracts/assess.md", "docs/examples/library/README.md"]
+why = "The assess() request and result are documented field by field."
+
+[[entry]]
+name = "bedrock-guardrail"
+paths = ["infrastructure/cloudformation/bedrock-guardrail.yaml"]
+docs = ["docs/other-ways-to-run-it.md", "docs/use-claude-code.md"]
+why = "Both pages describe the guardrail the template creates and how to attach it."

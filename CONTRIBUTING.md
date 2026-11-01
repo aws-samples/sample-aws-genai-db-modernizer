@@ -365,7 +365,7 @@ src/
 ├── skills/          # Markdown prompts for LLM behavior
 ├── storage/         # Artifact storage abstraction
 ├── tools/           # Deterministic tools
-│   ├── analysis/    #   Workload analysis (DynamoDB, DocumentDB, Redis, OpenSearch)
+│   ├── analysis/    #   Workload analysis (DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL)
 │   ├── aws/         #   AWS service integrations (RDS, S3, SSM)
 │   └── database/    #   Database-specific tooling (MySQL, PostgreSQL)
 └── ui/              # React frontend
@@ -456,6 +456,7 @@ All contributions should include appropriate documentation:
 1. **Docstrings** - All public functions must have docstrings
 2. **README updates** - Update relevant README files for new features
 3. **Guide updates** - Update implementation guides in `docs/guides/` if behavior changes
+4. **Docs-impact map** - A change to a path in `ci/docs_impact_map.toml` needs an edit to one of its pages, or a `Docs: <reason>` line in the PR body; see [ci/README.md](ci/README.md).
 
 ---
 
@@ -637,7 +638,7 @@ A review, a PR description or a code comment often lists a follow-up or a known 
 
 Many pull requests land on `main` every day, so a branch that was green yesterday can conflict or break today.
 
-- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version problems (a hand-written version that collides with main's, a contract change with no bump or pending bump), runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
+- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version problems (a hand-written version that collides with main's, a contract change with no bump or pending bump), checks the docs-impact map (above), runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
 - Rebase onto the latest main and re-test right before merging, not only when you opened the PR.
 - Do not take a contract version number yourself: declare the bump kind with `uv run python scripts/bump_contract.py` and run `uv run python scripts/resolve_contract_versions.py` after your last rebase (see Contract Changes, ADR-008 Decision 8).
 - Never hand-merge a generated snapshot (the routing snapshot, `tests/contract/schema_snapshot.json`, `tests/contract/value_set_snapshot.json`, rendered catalog docs). Take main's copy and regenerate it on top of it.

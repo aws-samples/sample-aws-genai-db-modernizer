@@ -25,6 +25,10 @@ Closes #
 
 <!-- A change to behaviour under src/agents/referee/ or src/shared/ edits the ADR it touches. Write "ADR-0xx edited" (name the ADR), or "No ADR change: <reason>". ci/pre_merge.sh fails without one of them. -->
 
+## Docs
+
+<!-- A change to a path in ci/docs_impact_map.toml edits one of its pages (the doc pages, help-site pages and command files that describe it), or says why none needs a change on a line of its own, outside this comment: "Docs: <reason>" (a "- " bullet is fine; a line in a code block or comment does not count). A `Docs:` commit trailer works too. ci/pre_merge.sh warns and lists the pages, and fails without a page edit or this line. -->
+
 ## Evidence
 
 <!-- For each behavior claim above, paste the command and its output (trimmed) or a rendered excerpt. Do not assert behavior in prose. -->

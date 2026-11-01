@@ -12,7 +12,8 @@
 # lint, the zero-token replay of the saved real-model run, tests (skipped by
 # --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
-# under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, or (with
+# under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
+# ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
 # --strict-main-tests) a new or changed test that passes on main.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -132,6 +133,18 @@ if adr_out="$(PR_BODY_FILE="$pr_body_file" helper adr "$base")"; then
   note "ok   adr: ${adr_out#ok: }"
 else
   fail "adr: ${adr_out#error: }"
+fi
+
+# d3. Docs-impact map (#1162): a mapped path changed without any of its pages warns and lists
+# them; it fails with no "Docs: <reason>" line in the PR body or a commit message. Cheap, so it
+# runs with --quick too.
+docs_out="$(PR_BODY_FILE="$pr_body_file" helper docs-impact "$base")" && docs_rc=0 || docs_rc=$?
+if [ "$docs_rc" -ne 0 ]; then
+  fail "docs-impact: ${docs_out#error: }"
+elif [ "${docs_out%%:*}" = warn ]; then
+  note "warn docs-impact: ${docs_out#warn: }"
+else
+  note "ok   docs-impact: ${docs_out#ok: }"
 fi
 
 # e. Generated files that differ from main must still match their generator.
