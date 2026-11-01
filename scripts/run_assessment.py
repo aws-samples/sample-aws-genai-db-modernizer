@@ -61,13 +61,15 @@ from src.shared.bedrock_guardrail import (  # noqa: E402
     describe_active_guardrail,
     exit_on_invalid_guardrail_config,
 )
-from src.shared.collection_database_name import (  # noqa: E402
-    resolve_database_name,
-)
+from src.shared.collection_database_name import resolve_database_name  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.gate_facts import cache_candidate_reads  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
-from src.tools.database.collection_text import extract_json_object  # noqa: E402
+from src.tools.database.offline_collection_check import (  # noqa: E402
+    OfflineCollectionError,
+    read_collection_text,
+    validate_offline_collection,
+)
 from src.tools.validation.ingestion_limits import (  # noqa: E402
     IngestionLimitError,
     check_collection_counts,
@@ -368,8 +370,11 @@ def phase_collect(
     except UnicodeDecodeError:
         _error("collect", f"{collector_file} is not a UTF-8 JSON collection.")
 
-    content = extract_json_object(raw_text, source=collector_file)
-    input_data = json.loads(content)
+    # Not JSON, or no collection object: named, with its line (#131).
+    try:
+        input_data = read_collection_text(raw_text, source=collector_file)
+    except OfflineCollectionError as exc:
+        _error("collect", str(exc))
 
     from src.contracts.collector_output import CollectorOutputContract
     from src.shared.contract_versioning import (
@@ -384,7 +389,6 @@ def phase_collect(
         is_contract = carries_contract(input_data, CollectorOutputContract, artifact=collector_file)
     except ContractVersionError as exc:
         _error("collect", str(exc))
-    is_raw = "collection_version" in input_data or isinstance(input_data.get("queries"), list)
 
     if is_contract:
         try:
@@ -407,6 +411,7 @@ def phase_collect(
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
+    absent_sections: list[str] = []  # #131: common sections a raw collection lacks
 
     if is_contract:
         from src.shared.sample_rows import collector_output_without_sample_rows
@@ -424,7 +429,13 @@ def phase_collect(
                 collector_data, CollectorOutputContract, artifact=f"{db_name}/{job_id} upload"
             )
         )
-    elif is_raw:
+    else:
+        # Anything else is a raw collection if the input check says so, the same check
+        # run_collect.py runs, before anything is transformed or written (#131).
+        try:
+            validate_offline_collection(input_data, source=collector_file)
+        except OfflineCollectionError as exc:
+            _error("collect", str(exc))
         # Keep a copy of the raw file, less any table rows (#387)
         from src.shared.sample_rows import raw_collection_without_sample_rows
 
@@ -448,8 +459,10 @@ def phase_collect(
             # its fallback (#553); the regex also runs as a cross-check, and
             # both counts go on the collect status line (``table_refs``).
             sql_shadow = TableShadow()
-            parsed = parse_offline_collection(input_data, shadow=sql_shadow, database_name=db_name)
-        except (IngestionLimitError, DatabaseNameMismatchError) as exc:
+            parsed = parse_offline_collection(
+                input_data, shadow=sql_shadow, database_name=db_name, source=collector_file
+            )
+        except (IngestionLimitError, DatabaseNameMismatchError, OfflineCollectionError) as exc:
             _error("collect", str(exc))
         write_shadow_artifact(store, db_name, job_id, sql_shadow)
         table_refs = sql_shadow.status_summary()
@@ -464,9 +477,8 @@ def phase_collect(
         collected_name = parsed.get("collected_database_name")
         if collected_name and collected_name != db_name:
             other_name = {"collected_database_name": collected_name}
-    else:
-        _error("collect", "Unrecognized file format.")
-        return "", ""  # unreachable
+        # #131: the common sections the file lacks, read as empty.
+        absent_sections = parsed.get("absent_sections") or []
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
@@ -495,6 +507,7 @@ def phase_collect(
             **other_name,
             **({"table_refs": table_refs} if table_refs is not None else {}),
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
+            **({"absent_sections": absent_sections} if absent_sections else {}),
         },
     )
     return job_id, db_name

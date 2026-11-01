@@ -37,7 +37,10 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.shared.workload_fit_labels import query_fit_text  # noqa: E402
-from src.tools.database.collection_text import extract_json_object  # noqa: E402
+from src.tools.database.offline_collection_check import (  # noqa: E402
+    OfflineCollectionError,
+    read_collection_text,
+)
 
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -84,8 +87,12 @@ def main():
         sys.exit(1)
 
     with open(collector_file, encoding="utf-8") as f:
-        content = extract_json_object(f.read(), source=collector_file)
-        input_data = json.loads(content)
+        text = f.read()
+    try:
+        input_data = read_collection_text(text, source=collector_file)
+    except OfflineCollectionError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
 
     # Detect format
     from src.contracts.collector_output import CollectorOutputContract
@@ -170,8 +177,10 @@ def main():
         )
 
         try:
-            parsed = parse_offline_collection(input_data, database_name=db_name)
-        except DatabaseNameMismatchError as exc:
+            parsed = parse_offline_collection(
+                input_data, database_name=db_name, source=collector_file
+            )
+        except (DatabaseNameMismatchError, OfflineCollectionError) as exc:
             print(f"ERROR: {exc}")
             sys.exit(1)
 

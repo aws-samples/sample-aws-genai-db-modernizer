@@ -163,7 +163,8 @@ def _run_dispatched(env: dict, offline_metadata: dict | None = None):
         patch("src.agents.collector.handler._dispatch_collect") as dispatch,
         patch(
             "src.tools.database.offline_parser.fetch_offline_json",
-            return_value={"metadata": offline_metadata or {}},
+            # The smallest offline collection the input check accepts (#131).
+            return_value={"metadata": offline_metadata or {}, "tables": [], "queries": []},
         ) as fetch,
     ):
         dispatch.return_value.model_dump_json.return_value = "{}"
@@ -171,6 +172,35 @@ def _run_dispatched(env: dict, offline_metadata: dict | None = None):
 
         run_collector("job-1", "trailgear", MagicMock(spec=ArtifactStore))
     return dispatch.call_args[0][0], dispatch.call_args[0][1], fetch
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"metadata": {"engine": "mysql"}}, {"name": "shop", "rows": []}],
+    ids=["metadata-only", "another-document"],
+)
+def test_a_file_that_is_not_an_offline_collection_raises_naming_it(document):
+    """#131: refused before the engine is read or anything is built, never collected
+    as an empty database. It raises, so the caller's failure path records it."""
+    from src.tools.database.offline_collection_check import OfflineCollectionError
+
+    with (
+        patch.dict("os.environ", _OFFLINE_ENV, clear=True),
+        patch("src.agents.collector.handler._dispatch_collect") as dispatch,
+        patch("src.tools.database.offline_parser.fetch_offline_json", return_value=document),
+    ):
+        from src.agents.collector.handler import run_collector
+
+        store = MagicMock(spec=ArtifactStore)
+        with pytest.raises(OfflineCollectionError) as exc:
+            run_collector("job-1", "shop", store)
+
+    assert str(exc.value).startswith(
+        "The offline collection s3://test-bucket/uploads/collection.json"
+    )
+    assert "'tables'" in str(exc.value)
+    dispatch.assert_not_called()
+    store.write_json.assert_not_called()
 
 
 @pytest.mark.parametrize(

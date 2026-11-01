@@ -28,6 +28,25 @@ What each collection script emits. The scripts (`scripts/collect-*.sql`) are the
 | `global_stats` | yes | yes | yes | yes |
 | `io_stats`, `wait_events`, `os_stats` | no | no | yes | yes |
 
+### Input check
+
+Before the parser transforms anything, every ingest path reads and checks the file (#131, `src/tools/database/offline_collection_check.py`). The check refuses only what the parser cannot read, so every file that loaded before still loads. It refuses with one error that names the file, never a value from it:
+
+- text that is not valid JSON, with the line and column in the file;
+- a document with neither `tables` nor `queries`;
+- a section the parser cannot read: a non-empty `tables`, `columns`, `indexes`, `foreign_keys`, `primary_keys`, `views`, `procedures`, `triggers` or `queries` that is not a list, a non-empty `global_stats` or `os_stats` that is not an object, or a `metadata` string that does not hold JSON;
+- entries that are not objects, or lack a key the parser reads. The error lists every such entry with its section and position.
+
+| Section | Required keys |
+|---|---|
+| `tables` | `table_name` |
+| `columns` | `table_name`; `column_name` for a column of a table in `tables` |
+| `indexes` | `table_name`, `index_name`; `non_unique` on each index's first row |
+| `foreign_keys` | `table_name`, `constraint_name`, `column_name`, `referenced_column_name`; `referenced_table_name` on each constraint's first row |
+| `primary_keys` | `table_name`, `column_name` |
+
+Every other field is optional, and extra fields and sections are kept. `io_stats` and `wait_events` are passed on as given. A section that is missing, `null`, or empty in another type (`{}` for a list, `""`), and a `metadata` that is not an object, reads as empty, as before. The run's log and the collect status line (`absent_sections`) name it. `tables` or `queries` is reported the same way when the other is there. `io_stats`, `wait_events` and `os_stats` are never reported, since only SQL Server and Oracle write them. A collection with empty `tables` and `queries` lists is valid. The trailing `{"_sentinel": true}` the Oracle script ends each list with is dropped, and its unescaped control characters are read as spaces, on every path.
+
 `metadata.settings` holds the source settings that change how SQL text is read (#1482): MySQL's and MariaDB's `@@GLOBAL.sql_mode` and PostgreSQL's `standard_conforming_strings`. With `NO_BACKSLASH_ESCAPES` a backslash has no meaning in a MySQL string, with `ANSI_QUOTES` (or `ANSI`) a `"..."` is a name rather than a string, and with `standard_conforming_strings = off` a backslash is an escape in a plain PostgreSQL `'...'` string. MySQL's `procedures` and `triggers` rows also carry their own `sql_mode` (`information_schema` `SQL_MODE`), which the server parses each body under. The collector keeps them on `metadata.source_database.settings` and on each routine and trigger, and the facts read each text with them. SQL Server and Oracle report none, and a collection without them is read with each engine's defaults.
 
 Redaction never relies on these settings to mask less: a statement may have run under another value (a framework that sets its own session `sql_mode`, a role-level `ALTER ROLE ... SET standard_conforming_strings`), so every character that either reading puts inside a string or a comment is masked, and a MySQL `"..."` is always redacted as a string. So `ANSI_QUOTES` helps the facts only for text read before redaction: every stored query text and definition is already redacted, and a quoted name such as `"created_at"` is stored as `"?"`, so a fact read later from the stored text (a retention delete's `"created_at" < now()`) does not see the column. The facts are only as good as the setting read: `@@GLOBAL.sql_mode` is the default sessions start with, not a session's own; `current_setting('standard_conforming_strings')` is the collecting session's value, which includes a database-level override and the collecting role's, but not another role's (`pg_db_role_setting`). For an application whose sessions run another value, the facts of a statement with a backslash in a string can be read the other way; redaction is unaffected.

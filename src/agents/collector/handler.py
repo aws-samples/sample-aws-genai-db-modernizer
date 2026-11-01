@@ -32,6 +32,9 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
         print("ERROR: CLUSTER_ENDPOINT and SECRET_ARN are required for live mode", file=sys.stderr)
         sys.exit(1)
 
+    # A file that is not an offline collection raises OfflineCollectionError (#131), so
+    # the caller's failure path records it: entrypoint.py's collector/error.json, the
+    # LocalOrchestrator's failed phase with the message as its cause.
     raw = _offline_collection(bucket, region) if mode == "offline" else None
     engine, port = _engine_and_port(mode, raw)
 
@@ -128,15 +131,22 @@ def _requested_engines_in_use(store: ArtifactStore, database_name: str, job_id: 
 
 def _offline_collection(bucket: str, region: str) -> dict:
     """The offline collection file, downloaded once: its metadata names the source
-    engine, and the collector builds the output from the same copy (#1177)."""
+    engine, and the collector builds the output from the same copy (#1177).
+
+    It passes the input check first (#131): a file that is not an offline collection
+    is refused here, never read as an empty one.
+
+    Raises:
+        OfflineCollectionError: the file is not JSON or not an offline collection.
+    """
+    from src.tools.database.offline_collection_check import validate_offline_collection
     from src.tools.database.offline_parser import fetch_offline_json
 
-    raw = fetch_offline_json(
-        bucket=os.environ.get("OFFLINE_S3_BUCKET", bucket),
-        key=os.environ.get("OFFLINE_S3_KEY", ""),
-        region=region,
-    )
-    return raw if isinstance(raw, dict) else {}
+    bucket = os.environ.get("OFFLINE_S3_BUCKET", bucket)
+    key = os.environ.get("OFFLINE_S3_KEY", "")
+    raw = fetch_offline_json(bucket=bucket, key=key, region=region)
+    validate_offline_collection(raw, source=f"s3://{bucket}/{key}")
+    return raw
 
 
 def _engine_and_port(mode: str, raw: dict | None) -> tuple[str, int]:

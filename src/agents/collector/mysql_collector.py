@@ -537,6 +537,7 @@ def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> Coll
     from src.tools.database.offline_parser import fetch_offline_json, parse_offline_collection
 
     # Stage 1: parse offline JSON
+    source = f"s3://{inp.offline_config.s3_bucket}/{inp.offline_config.s3_key}"
     parsed = ckpt.load_or_run(
         "offline_schema",
         lambda: parse_offline_collection(
@@ -550,6 +551,7 @@ def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> Coll
                 )
             ),
             database_name=inp.database_name,
+            source=source,
         ),
     )
 

@@ -192,6 +192,13 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
-    except Exception:
-        traceback.print_exc()
+    except Exception as exc:
+        from src.tools.database.offline_collection_check import OfflineCollectionError
+
+        if isinstance(exc, OfflineCollectionError):
+            # The file is at fault, not the code (#131): its message, no traceback. The
+            # error artifact is already written.
+            print(f"ERROR: {exc}", file=sys.stderr)
+        else:
+            traceback.print_exc()
         sys.exit(1)
