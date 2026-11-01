@@ -273,7 +273,7 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
    The full unit, contract and property suites (`make test`, or
    `./ci/test.sh`) run on CI only; they are slow on a laptop, so run targeted
    tests locally with at most 4 workers. `make test` also runs the
-   `atx_orchestrator` tests, which need the AWS Transform SDK (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`;
+   `atx_orchestrator` tests, which need the AWS Transform SDK (`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`;
    see `tests/unit/atx_orchestrator/conftest.py`).
 
 3. **Verify linters pass** (pre-commit runs these automatically on commit, but you can run manually):
@@ -399,7 +399,7 @@ uv run pytest tests/contract/ -v
 ```
 
 `make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
-(`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`; see
+(`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`; see
 `tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
 extra (`uv sync --extra e2e`), the `docs` extra (`uv sync --extra docs`,
 needed to build the help site this suite also checks), Node 22, and
