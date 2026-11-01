@@ -20,12 +20,14 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.shared.collection_database_name import (  # noqa: E402
-    resolve_database_name,
-)
+from src.shared.collection_database_name import resolve_database_name  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
-from src.tools.database.collection_text import extract_json_object  # noqa: E402
+from src.tools.database.offline_collection_check import (  # noqa: E402
+    OfflineCollectionError,
+    read_collection_text,
+    validate_offline_collection,
+)
 from src.tools.validation.ingestion_limits import (  # noqa: E402
     IngestionLimitError,
     check_collection_counts,
@@ -164,8 +166,11 @@ def main() -> None:
     except UnicodeDecodeError:
         _error(f"{args.file} is not a UTF-8 JSON collection.")
 
-    content = extract_json_object(raw_text, source=args.file)
-    input_data = json.loads(content)
+    # Not JSON, or no collection object: named, with its line (#131).
+    try:
+        input_data = read_collection_text(raw_text, source=args.file)
+    except OfflineCollectionError as exc:
+        _error(str(exc))
 
     # Detect format: contract (processed) vs raw (collection script output)
     from src.contracts.collector_output import CollectorOutputContract
@@ -198,6 +203,7 @@ def main() -> None:
     job_id = args.job_id or str(uuid.uuid4())[:8]
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    absent_sections: list[str] = []  # #131: common sections a raw collection lacks
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
 
     # No --db: the file's own valid metadata name, else one derived from its file
@@ -228,7 +234,12 @@ def main() -> None:
             )
         )
     else:
-        # Raw collection script output — parse with offline parser
+        # Raw collection script output — parse with offline parser, once it passes
+        # the input check, before anything is transformed or written (#131).
+        try:
+            validate_offline_collection(input_data, source=args.file)
+        except OfflineCollectionError as exc:
+            _error(str(exc))
         # Keep a copy of the raw file, less any table rows (#387)
         from src.shared.sample_rows import raw_collection_without_sample_rows
 
@@ -252,8 +263,10 @@ def main() -> None:
             # its fallback (#553); the regex also runs as a cross-check, and
             # both counts go on the collect status line (``table_refs``).
             sql_shadow = TableShadow()
-            parsed = parse_offline_collection(input_data, shadow=sql_shadow, database_name=db_name)
-        except (IngestionLimitError, DatabaseNameMismatchError) as exc:
+            parsed = parse_offline_collection(
+                input_data, shadow=sql_shadow, database_name=db_name, source=args.file
+            )
+        except (IngestionLimitError, DatabaseNameMismatchError, OfflineCollectionError) as exc:
             _error(str(exc))
         write_shadow_artifact(store, db_name, job_id, sql_shadow)
         table_refs = sql_shadow.status_summary()
@@ -268,6 +281,8 @@ def main() -> None:
         collected_name = parsed.get("collected_database_name")
         if collected_name and collected_name != db_name:
             other_name = {"collected_database_name": collected_name}
+        # #131: the common sections the file lacks, read as empty.
+        absent_sections = parsed.get("absent_sections") or []
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
@@ -292,6 +307,7 @@ def main() -> None:
             **other_name,
             **({"table_refs": table_refs} if table_refs is not None else {}),
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
+            **({"absent_sections": absent_sections} if absent_sections else {}),
         }
     )
 

@@ -369,7 +369,9 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
             )
     else:
         # The run's name never keys the tables: the collection's own name does (#1572).
-        parsed = parse_offline_collection(raw_input, database_name=database_name)
+        parsed = parse_offline_collection(
+            raw_input, database_name=database_name, source=f"{database_name}/{job_id} upload"
+        )
         # The one source-engine detector (#1177): this path used to guess on its own
         # ("postgres" in the version string, else MySQL).
         collector_data = build_offline_collector_output(

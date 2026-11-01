@@ -23,8 +23,13 @@ import boto3
 
 from src.shared.sample_rows import without_sample_rows
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
-from src.tools.database.collection_text import extract_json_object
 from src.tools.database.index_keys import add_index_key, expression_key_fields
+from src.tools.database.offline_collection_check import (
+    read_collection_text,
+    validate_offline_collection,
+    warn_absent_sections,
+    without_sentinels,
+)
 from src.tools.sql.query_type import statement_query_type
 from src.tools.sql.redact import (
     raw_collection_settings,
@@ -117,42 +122,51 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     head = s3.head_object(Bucket=bucket, Key=key)
     check_file_size(head["ContentLength"], source=f"s3://{bucket}/{key}")
     resp = s3.get_object(Bucket=bucket, Key=key)
-    content = extract_json_object(
-        resp["Body"].read().decode("utf-8"), source=f"s3://{bucket}/{key}"
-    )
-
-    # Oracle 19c JSON_OBJECT doesn't escape control chars in string values.
-    # Strip them (except newlines which are line separators in the JSON).
-    content = "".join(c if ord(c) >= 32 or c == "\n" else " " for c in content)
-
-    # Remove sentinel objects used for trailing-comma handling in PL/SQL scripts.
-    # The regex handles three real-world cases produced by DBMS_OUTPUT.PUT_LINE:
-    #   [item, item, {"_sentinel":true}]               inline emission
-    #   [\nitem,\n{"_sentinel": true}\n]               multi-line emission
-    #   [\n{"_sentinel": true}\n]                      empty-array case (no comma)
-    # A lookahead `(?=\s*\])` restricts matches to sentinels that immediately
-    # precede an array-close bracket, so a nested object with a legitimate
-    # `_sentinel:true` field elsewhere in the JSON is preserved.
-    # Previous two literal `.replace()` calls handled only the first case,
-    # which caused parse failures on real Oracle customer data.
-    content = re.sub(
-        r'(?:,\s*)?\{\s*"_sentinel"\s*:\s*true\s*\}(?=\s*\])',
-        "",
-        content,
-    )
-
-    result: dict = json.loads(content)
-    return result
+    # One reader for every path (#131): the object found in the text, Oracle 19c's
+    # unescaped control characters made spaces (newlines kept), the trailing
+    # ``{"_sentinel": true}`` the PL/SQL script ends each list with dropped, and a
+    # decode error placed at its line and column of the file.
+    return read_collection_text(resp["Body"].read().decode("utf-8"), source=f"s3://{bucket}/{key}")
 
 
 def parse_offline_collection(
-    data: dict, shadow: TableShadow | None = None, *, database_name: str | None = None
+    data: dict,
+    shadow: TableShadow | None = None,
+    *,
+    database_name: str | None = None,
+    source: str = "passed in",
 ) -> dict:
     """:func:`_parse_offline_collection`, with every statement and definition read with
     the source settings the collection reports (``metadata.settings``: MySQL's
     ``sql_mode``, PostgreSQL's ``standard_conforming_strings``, #1482): a string is read,
     redacted and grouped the way the source reads it. A collection that reports none
-    is read with each engine's defaults."""
+    is read with each engine's defaults.
+
+    A trailing Oracle ``{"_sentinel": true}`` entry is dropped from each list, then
+    ``data`` passes the input check
+    (:func:`~src.tools.database.offline_collection_check.validate_offline_collection`,
+    #131), before anything is transformed; ``source`` names the file in its messages.
+    The common sections the collection lacks read as empty and are listed in the
+    result's ``absent_sections``.
+
+    Raises:
+        OfflineCollectionError: ``data`` is not an offline collection, or has
+            sections or entries the parser cannot read (every one listed).
+    """
+    # The Oracle script's end-of-list sentinels never count as entries (#131): dropped
+    # here too for a collection given in memory (AWS Transform ingest, ``assess()``).
+    data = without_sentinels(data)
+    absent = validate_offline_collection(data, source=source)
+    warn_absent_sections(data, absent, source=source)
+    parsed = _parse_with_source_settings(data, shadow, database_name=database_name)
+    if absent:
+        parsed["absent_sections"] = list(absent)
+    return parsed
+
+
+def _parse_with_source_settings(
+    data: dict, shadow: TableShadow | None, *, database_name: str | None
+) -> dict:
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
     if isinstance(metadata, str):
         try:
@@ -203,16 +217,16 @@ def _parse_offline_collection(
 
     metadata = data.get("metadata", {})
     if isinstance(metadata, str):
-        metadata = json.loads(metadata)
+        metadata = json.loads(metadata)  # an object: the input check read it (#131)
 
     # Group columns, indexes, FKs, PKs by table_name
     columns_by_table: dict[str, list] = {}
-    for c in data.get("columns", []):
+    for c in data.get("columns") or []:
         columns_by_table.setdefault(c["table_name"], []).append(c)
 
     source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     indexes_by_table: dict[str, dict[str, dict]] = {}
-    for i in data.get("indexes", []):
+    for i in data.get("indexes") or []:
         tbl = i["table_name"]
         idx_name = i["index_name"]
         if tbl not in indexes_by_table:
@@ -237,7 +251,7 @@ def _parse_offline_collection(
                 index["prefix_lengths"] = None
 
     fks_by_table: dict[str, dict[str, dict]] = {}
-    for fk in data.get("foreign_keys", []):
+    for fk in data.get("foreign_keys") or []:
         tbl = fk["table_name"]
         name = fk["constraint_name"]
         if tbl not in fks_by_table:
@@ -255,7 +269,7 @@ def _parse_offline_collection(
         fks_by_table[tbl][name]["referenced_columns"].append(fk["referenced_column_name"])
 
     pks_by_table: dict[str, list[str]] = {}
-    for pk in data.get("primary_keys", []):
+    for pk in data.get("primary_keys") or []:
         pks_by_table.setdefault(pk["table_name"], []).append(pk["column_name"])
 
     # Assemble tables with nested children. The one qualifier of every table id,
@@ -286,7 +300,7 @@ def _parse_offline_collection(
         )
 
     # Parse global stats into the format collect_global_stats() returns
-    raw_stats = data.get("global_stats", {})
+    raw_stats = data.get("global_stats") or {}
     read_req = int(raw_stats.get("innodb_buffer_pool_read_requests", 0))
     reads = int(raw_stats.get("innodb_buffer_pool_reads", 0))
     global_stats = {
