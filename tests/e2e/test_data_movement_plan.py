@@ -24,8 +24,10 @@ from pathlib import Path
 import pytest
 
 from src.contracts.data_movement_plan import DataMovementPlan
+from src.shared.catalog.prices import HOURS_PER_MONTH, price_table
 from src.shared.contract_versioning import load_contract
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES
+from src.tools.data_movement.plan import DMS_INSTANCE_CLASS, DMS_STORAGE_GB
 from tests.e2e.pipeline import REPO, PipelineResult, _env, unzip_sample
 
 SCRIPT = "scripts/run_data_movement_plan.py"
@@ -127,9 +129,24 @@ def _check_plans(plans: list[DataMovementPlan], report: dict, assignment: dict) 
                 # A replica fed by a non-relational owner has no feed from the hub yet.
                 if target.source_of_truth not in RELATIONAL_ENGINES | {plan.source.engine}:
                     assert (table, target.engine) in reverse, (plan.wave, table, target.engine)
+    # The committed price table carries the DMS, MSK and MSK Connect sections (#1424), so a
+    # plan states its cost from them, or names the one thing it could not price: a hub
+    # table the collector did not measure.
+    table = price_table()
+    dms = table.section("dms.replication")
+    dms_month = round(
+        dms["instance_hourly"][DMS_INSTANCE_CLASS] * HOURS_PER_MONTH
+        + dms["storage_price_per_gb_month"] * DMS_STORAGE_GB,
+        2,
+    )
     for plan in plans:
-        assert plan.monthly_cost_usd is None
-        assert any(u.kind == "cost" for u in plan.unsupported)
+        gaps = [u for u in plan.unsupported if u.kind == "cost"]
+        if plan.cdc.tool == "dms":
+            assert plan.monthly_cost_usd == dms_month, plan.wave
+            assert not gaps, plan.wave
+        else:
+            assert (plan.monthly_cost_usd is not None) != bool(gaps), plan.wave
+            assert all(u.item == "hub_storage" for u in gaps), plan.wave
 
 
 def test_each_sample_job_gets_one_valid_plan_per_wave(run: PipelineResult, tmp_path: Path) -> None:

@@ -24,10 +24,16 @@ from typing import Any
 import pytest
 
 from src.contracts.data_movement_plan import DataMovementPlan
-from src.shared.catalog.prices import PriceTable
+from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable, price_table
 from src.shared.contract_versioning import contract_for_artifact, current_version, load_contract
 from src.storage.local_store import LocalArtifactStore
-from src.tools.data_movement.plan import JobInputs, build_plans, write_plans
+from src.tools.data_movement.plan import (
+    DMS_INSTANCE_CLASS,
+    DMS_STORAGE_GB,
+    JobInputs,
+    build_plans,
+    write_plans,
+)
 
 
 def _col(name: str, nullable: bool = False) -> dict[str, Any]:
@@ -752,10 +758,23 @@ def test_a_job_with_no_assignment_is_refused(tmp_path: Path) -> None:
         write_plans(store, "shop", "job-1")
 
 
-@pytest.mark.passes_on_main
-def test_the_committed_price_table_has_no_data_movement_prices_until_a_refresh_adds_them() -> None:
-    # #1424: the sections come with the first online run of scripts/refresh_prices.py, so
-    # no plan states a cost from the committed table and each says which price is missing.
+def test_the_committed_price_table_prices_the_dms_wave_from_its_entries() -> None:
+    # #1424: the committed table carries the DMS, MSK and MSK Connect sections, so a plan
+    # states its cost from them; the figure is recomputed here from the table's entries.
+    table = price_table()
+    dms = table.section("dms.replication")
+    expected = round(
+        dms["instance_hourly"][DMS_INSTANCE_CLASS] * HOURS_PER_MONTH
+        + dms["storage_price_per_gb_month"] * DMS_STORAGE_GB,
+        2,
+    )
     plans = build_plans(_job())
-    assert all(p.monthly_cost_usd is None for p in plans)
-    assert all(any(u.kind == "cost" for u in p.unsupported) for p in plans)
+    assert expected > 0
+    assert plans[0].monthly_cost_usd == expected
+    assert not [u for u in plans[0].unsupported if u.kind == "cost"]
+    assert f"retrieved on {table.retrieved_on.isoformat()}" in " ".join(plans[0].cost_assumptions)
+    # A later wave is either priced from the table or names what it could not price.
+    for plan in plans[1:]:
+        gaps = [u for u in plan.unsupported if u.kind == "cost"]
+        assert (plan.monthly_cost_usd is not None) != bool(gaps), plan.wave
+        assert all(u.item == "hub_storage" for u in gaps), plan.wave
