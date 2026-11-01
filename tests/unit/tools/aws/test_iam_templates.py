@@ -413,6 +413,11 @@ def test_the_execution_role_grants_only_the_transform_agents_calls_the_code_make
     assert sorted(needed - granted) == [], "called but not granted"
 
 
+def test_closing_a_superseded_hitl_task_is_a_direct_call():
+    # runtime/hitl.py closes the routing tables the review gate supersedes (#1742).
+    assert "CloseHitlTask" in _code_calls()
+
+
 @pytest.mark.passes_on_main  # main already grants every direct call
 def test_every_direct_call_is_granted():
     granted = _transform_agents_actions("AgentCoreExecutionRole")

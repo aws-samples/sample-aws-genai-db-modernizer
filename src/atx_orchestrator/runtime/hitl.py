@@ -17,7 +17,8 @@ cells inline in the WebApp and submits; the submission comes back as a structure
 the DB-Assessment agent use, over the same ``get_agentic_api_client()`` seam
 :mod:`artifacts` already uploads through.
 
-Two functions, mirroring the two halves of the gate:
+Two functions, mirroring the two halves of the gate, plus
+:func:`close_hitl_task`, which closes a task the gate no longer waits on (#1742):
 
 * :func:`raise_assignment_table` — upload the table as a ``HITL_FROM_AGENT`` JSON
   artifact, create a **BLOCKING** ``TableComponent`` HITL task, and start it.
@@ -49,9 +50,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# HITL task statuses that mean the customer is done with the task (submitted, or
-# the task was closed after a submission). Anything else means still waiting.
-_TERMINAL_STATUSES = frozenset({"SUBMITTED", "COMPLETED", "CLOSED", "CLOSED_PENDING_NEXT_TASK"})
+# The pinned SDK's ``HitlTaskStatus`` values, in three groups. A test reads the
+# enum from the SDK's service model and fails when a value is in no group, so a
+# new SDK status cannot drift past these silently.
+# Still waiting on the customer: the only statuses a superseded task is closed in.
+_OPEN_STATUSES = frozenset({"CREATED", "AWAITING_HUMAN_INPUT", "IN_PROGRESS"})
+# The customer has submitted (DELIVERED: the submission reached the agent; the
+# approval states follow a submission). Never closed: the submission is the answer.
+_SUBMITTED_STATUSES = frozenset({"SUBMITTED", "DELIVERED", "WAITING_APPROVAL", "AWAITING_APPROVAL"})
+# Closed one way or another.
+_CLOSED_STATUSES = frozenset({"CLOSED", "CANCELLED", "CLOSED_PENDING_NEXT_TASK"})
 
 
 def _resolve_client_and_context() -> tuple[Any, dict[str, Any]]:
@@ -355,6 +363,8 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
       valid "keep the routing as-is" action; ``edited_items`` is ``[]``. The
       caller treats it as approve-as-is, NOT as an error.
     * ``"awaiting_submission"`` — the task exists but has no human response yet.
+    * ``"closed"`` — the task was closed without a submission (for example the
+      gate closed it as superseded, #1742); nothing will arrive, so do not wait.
     * ``"unreadable"`` — the customer submitted (humanArtifact present) and the
       payload has content, but the rows could not be parsed out of it. The caller
       MUST NOT treat this as "no changes"; the edits are there but we failed to
@@ -387,6 +397,10 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
     # keeps its humanArtifact, so terminal status alone is not "just submitted";
     # the caller's .meta COMPLETED flag guards against re-applying a processed one.
     if not human:
+        if status in _CLOSED_STATUSES:
+            # Closed without a submission (superseded, #1742): nothing will
+            # arrive, so the caller must not wait on it.
+            return "closed", None
         return "awaiting_submission", None
 
     inline = human.get("content")
@@ -428,6 +442,103 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
         _raw_snippet(downloaded),
     )
     return "unreadable", None
+
+
+# A fixed namespace for the close call's idempotency token, so a retried close of
+# the same task sends the same token.
+_CLOSE_TOKEN_NAMESPACE = uuid.UUID("5b0e6f8a-4c1d-4b7e-9a63-1742c105ed00")
+
+# Close errors that mean the task is no longer open: it was closed or submitted
+# meanwhile. The status is read again to tell which.
+_NOT_OPEN_ERROR_CODES = frozenset({"ConflictException", "TerminalResourceException"})
+
+
+def _error_code(exc: Exception) -> str:
+    """The service error code of a client exception (botocore shape), or its class name."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = (response.get("Error") or {}).get("Code")
+        if code:
+            return str(code)
+    return type(exc).__name__
+
+
+def _task_status(client: Any, request_context: dict[str, Any], hitl_task_id: str) -> str:
+    """The task's upper-cased status; raises what ``get_hitl_task`` raises."""
+    resp: Any = client.get_hitl_task(hitlTaskId=hitl_task_id, requestContext=request_context)
+    task = resp.get("hitlTask") or resp
+    return str(task.get("hitlTaskStatus") or task.get("status") or "").upper()
+
+
+def _not_open_outcome(status: str) -> str:
+    """The outcome for a task found not open: ``"submitted"`` or ``"already_closed"``."""
+    return "submitted" if status in _SUBMITTED_STATUSES else "already_closed"
+
+
+def close_hitl_task(hitl_task_id: str, closure_type: str = "CANCELLED") -> str:
+    """Close a superseded HITL task so it leaves the job's Tasks tab; never raises.
+
+    The review gate calls this when a task it raised is superseded: the customer
+    approved in chat instead, the review is reopened, or a new routing table is
+    raised (ADR-028 Decision E). It closes the task only while it is open
+    (``CREATED``, ``AWAITING_HUMAN_INPUT``, ``IN_PROGRESS``), and sends an
+    idempotency token derived from the task id, so calling it again is harmless.
+    Returns an outcome the caller acts on:
+
+    * ``"closed"`` — the close call succeeded.
+    * ``"already_closed"`` — the task was already closed.
+    * ``"submitted"`` — the customer submitted the task (before the call, or
+      between the status read and the close). It is not closed; the caller tells
+      the agent the submission was not applied.
+    * ``"missing"`` — no task id, or the service has no such task.
+    * ``"unavailable"`` — outside the ATX runtime (no client).
+    * ``"error"`` — any other client failure, logged as a warning.
+    """
+    if not hitl_task_id:
+        return "missing"
+    try:
+        client, request_context = _resolve_client_and_context()
+    except Exception as exc:  # noqa: BLE001 - expected outside the ATX runtime
+        logger.warning("HITL close unavailable (no runtime client): %s", exc)
+        return "unavailable"
+
+    try:
+        status = _task_status(client, request_context, hitl_task_id)
+        if status and status not in _OPEN_STATUSES:
+            logger.info("HITL task %s is %s; not closing it", hitl_task_id, status)
+            return _not_open_outcome(status)
+    except Exception as exc:  # noqa: BLE001 - a failed read must not stop the close
+        if _error_code(exc) == "ResourceNotFoundException":
+            logger.info("HITL task %s no longer exists; nothing to close", hitl_task_id)
+            return "missing"
+        logger.info("get_hitl_task failed for %s (%s); closing anyway", hitl_task_id, exc)
+
+    try:
+        client.close_hitl_task(
+            hitlTaskId=hitl_task_id,
+            closureType=closure_type,
+            idempotencyToken=str(
+                uuid.uuid5(_CLOSE_TOKEN_NAMESPACE, f"{hitl_task_id}:{closure_type}")
+            ),
+            requestContext=request_context,
+        )
+    except Exception as exc:  # noqa: BLE001 - closing is best-effort, never fails the job
+        code = _error_code(exc)
+        if code == "ResourceNotFoundException":
+            logger.info("HITL task %s no longer exists; nothing to close", hitl_task_id)
+            return "missing"
+        if code in _NOT_OPEN_ERROR_CODES:
+            # Closed or submitted since the status read: read it again to tell which.
+            try:
+                status = _task_status(client, request_context, hitl_task_id)
+            except Exception:  # noqa: BLE001
+                status = ""
+            logger.info("HITL task %s is no longer open (%s, %s)", hitl_task_id, code, status)
+            return _not_open_outcome(status)
+        logger.warning("Could not close superseded HITL task %s: %s", hitl_task_id, exc)
+        return "error"
+    logger.info("Closed superseded HITL task %s as %s", hitl_task_id, closure_type)
+    return "closed"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

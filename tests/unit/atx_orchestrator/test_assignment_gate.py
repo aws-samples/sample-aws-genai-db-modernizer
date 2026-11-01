@@ -537,4 +537,4 @@ class TestPendingHitlOnAtxStore:
         # Must not raise on the JSON-only store, and must be readable back.
         tools._record_pending_hitl(store, DB, JOB, "hitl-123", 2)
         pending = tools._read_pending_hitl(store, DB, JOB)
-        assert pending == {"hitl_task_id": "hitl-123", "assignment_version": 2}
+        assert pending == {"hitl_task_id": "hitl-123", "assignment_version": 2, "lifecycle": 1}

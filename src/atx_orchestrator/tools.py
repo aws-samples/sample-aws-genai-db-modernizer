@@ -771,6 +771,30 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
         step_id = get_step_id("assignment_review")
 
     column_definitions, items = build_review_table(assignment)
+    # A table raised earlier (an earlier round, before a reopen, or an earlier
+    # "review in detail") is superseded by this one: close it first, so the Tasks
+    # tab shows only the table the customer still has to act on (#1742).
+    retried = _retry_failed_closes(store, database_name, job_id)
+    ignored_task = _retire_pending_hitl(store, database_name, job_id, "reraise")
+    # A table whose close failed stays open: the new pointer carries it, so a later
+    # step retries the close and reports a submission it receives meanwhile.
+    retired = _read_pending_hitl(store, database_name, job_id) or {}
+    unclosed = [str(t) for t in retired.get("unclosed_tasks") or []]
+    if (
+        retired.get("lifecycle")
+        and retired.get("close_outcome") in _FAILED_CLOSE
+        and retired.get("hitl_task_id")
+        and str(retired["hitl_task_id"]) not in unclosed
+    ):
+        unclosed.append(str(retired["hitl_task_id"]))
+    ignored_note: dict = (
+        {
+            "superseded_submission_ignored": ignored_task,
+            "message": _ignored_submission_message(ignored_task, "reraise"),
+        }
+        if ignored_task
+        else {}
+    )
     hitl_task_id = _hitl.raise_assignment_table(
         column_definitions=column_definitions,
         items=items,
@@ -785,19 +809,23 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     )
 
     if hitl_task_id:
-        _record_pending_hitl(store, database_name, job_id, hitl_task_id, version)
+        _record_pending_hitl(store, database_name, job_id, hitl_task_id, version, unclosed)
         mark_step_pending_human_input(
             "assignment_review", "Awaiting the customer's edited routing table."
         )
         _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
-        return json.dumps(
-            {
-                "status": "awaiting_review",
-                "transport": "hitl",
-                "job_id": job_id,
-                "assignment_version": version,
-                "hitl_task_id": hitl_task_id,
-            }
+        return _with_ignored_reports(
+            json.dumps(
+                {
+                    "status": "awaiting_review",
+                    "transport": "hitl",
+                    "job_id": job_id,
+                    "assignment_version": version,
+                    "hitl_task_id": hitl_task_id,
+                    **ignored_note,
+                }
+            ),
+            retried,
         )
 
     # Fallback: HITL unavailable. Publish the full editable markdown table to the
@@ -834,15 +862,19 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
         "assignment_review", "Awaiting the customer's edited routing table (chat)."
     )
     _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
-    return json.dumps(
-        {
-            "status": "awaiting_review",
-            "transport": "chat",
-            "job_id": job_id,
-            "assignment_version": version,
-            "review_artifact": review_key,
-            "review_markdown": review_md,
-        }
+    return _with_ignored_reports(
+        json.dumps(
+            {
+                "status": "awaiting_review",
+                "transport": "chat",
+                "job_id": job_id,
+                "assignment_version": version,
+                "review_artifact": review_key,
+                "review_markdown": review_md,
+                **ignored_note,
+            }
+        ),
+        retried,
     )
 
 
@@ -894,6 +926,29 @@ def finalize_assignment_review(
     edit), ``validation_warnings``, and ``feasibility_findings``.
     """
     job_id = _platform_job_id(job_id)
+    # Retry closes that failed earlier first (#1742): a table submitted after its
+    # close failed is reported in this result instead of being dropped silently.
+    retried = _retry_failed_closes(_make_store(), database_name, job_id)
+    out = _finalize_assignment_review_core(
+        job_id,
+        database_name,
+        edited_markdown,
+        accept_feasibility_risks,
+        table_choices,
+        decide_for_me,
+    )
+    return _with_ignored_reports(out, retried)
+
+
+def _finalize_assignment_review_core(
+    job_id: str,
+    database_name: str,
+    edited_markdown: str,
+    accept_feasibility_risks: bool,
+    table_choices: str,
+    decide_for_me: bool,
+) -> str:
+    """The body of :func:`finalize_assignment_review` (``job_id`` already resolved)."""
     from src.agents.referee.assignment_overrides import (
         AssignmentOverrideError,
         AssignmentValidationFailed,
@@ -927,12 +982,33 @@ def finalize_assignment_review(
     # table they saw, not a version written since, so an unchanged submission never
     # becomes an override back onto what they were shown.
     stripped = (edited_markdown or "").strip()
-    pending = _read_pending_hitl(store, database_name, job_id)
+    pending = _awaited_pending_hitl(store, database_name, job_id)
+    # The customer submitted a routing table after approving in chat, and the gate
+    # closed it as superseded (#1742): when the platform re-invokes the agent for
+    # that submission, report that its edits were not applied rather than silently
+    # approving as-is again.
+    if not stripped and not (table_choices or "").strip() and not decide_for_me:
+        late = _late_ignored_submission(store, database_name, job_id)
+        if late and _assignment_review_approved(job_id):
+            return json.dumps(
+                {
+                    "status": "approved",
+                    "job_id": job_id,
+                    "changed": False,
+                    "applied_overrides": 0,
+                    "assignment_version": version,
+                    "superseded_submission_ignored": late,
+                    "message": _ignored_submission_message(late, "chat"),
+                }
+            )
     shown_version = version
     if stripped and REVIEW_BEGIN_MARKER in stripped:
         shown_version = review_version(stripped) or version
     elif pending and pending.get("hitl_task_id") and pending.get("assignment_version"):
-        shown_version = int(pending["assignment_version"])
+        # A submission already applied (an infeasible edit, re-read for
+        # accept_feasibility_risks) is diffed against the version it produced, so
+        # its edits are never applied twice (#1742).
+        shown_version = int(pending.get("applied_version") or pending["assignment_version"])
     # A saved assignment that split a table's writes is re-routed to one source of
     # truth, as a new version (#992, ADR-031 Amendment 9). The review tools do this
     # before they show the routing; here it only catches a version the customer was
@@ -982,6 +1058,9 @@ def finalize_assignment_review(
     #   3. nothing -> approve as-is (customer continued with the recommendation)
     overrides: list = []
     no_changes_submission = False
+    # True when the approval comes from the open table's own submission; that task
+    # is the answer, not superseded, so it is not closed below.
+    from_hitl_submission = False
 
     try:
         if stripped and REVIEW_BEGIN_MARKER in stripped:
@@ -990,6 +1069,26 @@ def finalize_assignment_review(
             from src.atx_orchestrator.runtime import hitl as _hitl
 
             status, edited_items = _hitl.read_assignment_submission(pending["hitl_task_id"])
+            if status in ("submitted", "submitted_empty"):
+                # This task's submission is the customer's answer: it is never
+                # closed as superseded (#1742).
+                from_hitl_submission = True
+                if pending.get("answered") != _ANSWERED_CONSUMED:
+                    pending = {**pending, "answered": _ANSWERED_CONSUMED}
+                    _update_pending_hitl(store, database_name, job_id, pending)
+            if status == "closed":
+                # Closed without a submission (superseded, and the pointer write
+                # was lost): nothing will arrive, so do not wait on it. The
+                # customer continues with the routing as it is.
+                _update_pending_hitl(
+                    store,
+                    database_name,
+                    job_id,
+                    pending,
+                    superseded=True,
+                    close_outcome="already_closed",
+                )
+                pending = None
             if status == "awaiting_submission":
                 return json.dumps(
                     {
@@ -1010,6 +1109,8 @@ def finalize_assignment_review(
                 # notes that no changes were detected so a lost edit is noticeable.
                 overrides = []
                 no_changes_submission = True
+            elif status == "closed":
+                overrides = []
             else:
                 # status in ("unreadable", "unavailable"): the customer submitted
                 # content we could not read, or the task could not be fetched. Do
@@ -1107,6 +1208,11 @@ def finalize_assignment_review(
         # tell the customer the group moved together.
         propagated = result.propagated_query_ids
         replaced_counts = result.replaced_count_query_ids
+        if from_hitl_submission and pending:
+            # Record the version this submission produced: a re-read diffs
+            # against it, so the same edits are never applied again (#1742).
+            pending = {**pending, "applied_version": effective_version}
+            _update_pending_hitl(store, database_name, job_id, pending)
     # Approve-as-is (no edits) is stamped CUSTOMER_APPROVED on the artifact only
     # after the feasibility gate below passes, so a routing the reviewer blocks is
     # never recorded as approved.
@@ -1178,6 +1284,27 @@ def finalize_assignment_review(
                 exc_info=True,
             )
 
+    # The customer approved in chat while a routing table was still open: that
+    # BLOCKING task is superseded, so close it rather than leave it in the Tasks
+    # tab (#1742). Best-effort; it never blocks the approval.
+    # Every approval retires the round's pointer (#1742): a later round never
+    # reads, waits on or closes it.
+    ignored_task: str | None = None
+    if pending and not from_hitl_submission:
+        ignored_task = _retire_pending_hitl(store, database_name, job_id, "chat")
+    elif pending and from_hitl_submission:
+        # Its own submission approved the routing: retired, never closed.
+        _update_pending_hitl(
+            store,
+            database_name,
+            job_id,
+            pending,
+            answered=_ANSWERED_APPROVED,
+            superseded=True,
+            superseded_by="approval",
+            close_outcome="answered",
+        )
+
     # Record approval — this opens the schema-design gate. Same .meta phase signal
     # the web path checks, so no new approval artifact is introduced (ADR-028).
     _mark_assignment_review(job_id, PhaseStatus.COMPLETED)
@@ -1226,6 +1353,10 @@ def finalize_assignment_review(
             "routing, re-open the table and edit the 'new engine' / 'in scope' cells before "
             "submitting."
         )
+    if ignored_task:
+        approved["superseded_submission_ignored"] = ignored_task
+        note = _ignored_submission_message(ignored_task, "chat")
+        approved["message"] = f"{approved['message']} {note}" if "message" in approved else note
     return json.dumps(approved)
 
 
@@ -1813,7 +1944,12 @@ def _pending_hitl_key(database_name: str, job_id: str) -> str:
 
 
 def _record_pending_hitl(
-    store: object, database_name: str, job_id: str, hitl_task_id: str, version: int
+    store: object,
+    database_name: str,
+    job_id: str,
+    hitl_task_id: str,
+    version: int,
+    unclosed: list[str] | None = None,
 ) -> None:
     """Persist the HITL task the review gate is blocked on (best-effort).
 
@@ -1822,7 +1958,16 @@ def _record_pending_hitl(
     submits and the platform re-invokes the orchestrator) read the submission
     back. This is transport state, not an approval signal — approval remains the
     ``.meta`` ASSIGNMENT_REVIEW phase (ADR-028), so no approval artifact is added.
+    ``unclosed`` carries earlier tables whose close failed, so a later step
+    retries the close (#1742).
     """
+    pointer: dict = {
+        "hitl_task_id": hitl_task_id,
+        "assignment_version": version,
+        "lifecycle": _POINTER_LIFECYCLE,
+    }
+    if unclosed:
+        pointer["unclosed_tasks"] = list(unclosed)
     try:
         # write_json (not write_text): the ATX artifact store is JSON-only and
         # raises on write_text, which would silently drop this pointer and break
@@ -1830,7 +1975,7 @@ def _record_pending_hitl(
         # read the customer's submission back). Read side uses read_json.
         store.write_json(  # type: ignore[attr-defined]
             _pending_hitl_key(database_name, job_id),
-            {"hitl_task_id": hitl_task_id, "assignment_version": version},
+            pointer,
         )
     except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
         logger.warning(
@@ -1851,6 +1996,262 @@ def _read_pending_hitl(store: object, database_name: str, job_id: str) -> dict |
     except Exception:  # noqa: BLE001 - absence is normal (chat fallback / approve-as-is)
         logger.debug("ATX: no pending HITL pointer for job_id=%s", job_id, exc_info=True)
     return None
+
+
+def _update_pending_hitl(
+    store: object, database_name: str, job_id: str, pending: dict, **fields: object
+) -> None:
+    """Rewrite the pending HITL pointer with ``fields`` added (best-effort, logged)."""
+    try:
+        store.write_json(  # type: ignore[attr-defined]
+            _pending_hitl_key(database_name, job_id), {**pending, **fields}
+        )
+    except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
+        logger.warning(
+            "ATX: could not update the pending HITL pointer for task %s with %s (job_id=%s); "
+            "a later finalize re-reads the task's status instead",
+            pending.get("hitl_task_id"),
+            sorted(fields),
+            job_id,
+            exc_info=True,
+        )
+
+
+# The pending pointer's lifecycle (#1742, ADR-028 Decision E). Every pointer
+# belongs to one round of the review, the round that raised its table:
+#
+# * open: written when a table is raised (``lifecycle`` marks a pointer written
+#   with this lifecycle; one without it comes from a job saved before, whose
+#   answered state was never recorded).
+# * ``answered: consumed``: finalize read the task's submission, which did not
+#   approve the routing yet (infeasible or invalid), so finalize reads it again.
+# * ``superseded``: retired, never read, waited on or closed again. Every
+#   approval retires the pointer (``answered: approved`` when the task's own
+#   submission approved), a reopen retires it, and a new table replaces it. An
+#   open task is closed when it is retired (``close_outcome``); a submission it
+#   held that was never read is recorded as ``submission_ignored`` and reported.
+_POINTER_LIFECYCLE = 1
+_ANSWERED_CONSUMED = "consumed"
+_ANSWERED_APPROVED = "approved"
+
+
+def _open_pending_hitl(store: object, database_name: str, job_id: str) -> dict | None:
+    """The pointer to a task that is neither answered nor superseded, or None.
+
+    Only such a task is ever closed: a task whose submission finalize read is the
+    customer's answer, and a superseded one was already handled.
+    """
+    pending = _read_pending_hitl(store, database_name, job_id)
+    if (
+        not pending
+        or not pending.get("hitl_task_id")
+        or pending.get("superseded")
+        or pending.get("answered")
+    ):
+        return None
+    return pending
+
+
+def _awaited_pending_hitl(store: object, database_name: str, job_id: str) -> dict | None:
+    """The pointer finalize reads a submission from, or None.
+
+    An open pointer, or one whose submission was read but did not approve the
+    routing yet (an infeasible or invalid edit, which finalize reads again). A
+    retired (superseded) pointer, which includes every pointer of an earlier
+    round, is never waited on or read again.
+    """
+    pending = _read_pending_hitl(store, database_name, job_id)
+    if (
+        not pending
+        or not pending.get("hitl_task_id")
+        or pending.get("superseded")
+        or pending.get("answered") == _ANSWERED_APPROVED
+    ):
+        return None
+    return pending
+
+
+def _ignored_submission_message(task_id: str, when: str) -> str:
+    """What the agent tells the customer about a table submission the gate dropped."""
+    if when == "chat":
+        return (
+            f"A routing table submission (task {task_id}) arrived for a review that was "
+            "already decided in chat, so its edits were not applied. The chat decision stands. "
+            "To apply table edits, reopen the review with reopen_assignment_review and open a "
+            "new table."
+        )
+    if when == "late":
+        return (
+            f"An earlier routing table (task {task_id}) was submitted after it was replaced "
+            "(its close had failed), so its edits were not applied. Tell the customer, and ask "
+            "them to make their edits again in the current review."
+        )
+    if when == "reopen":
+        return (
+            f"The open routing table (task {task_id}) had been submitted but not finalized when "
+            "the review was reopened, so its edits were not applied. Tell the customer, and ask "
+            "them to make their edits again in this round."
+        )
+    return (
+        f"The previous routing table (task {task_id}) had a submission that was not read "
+        "before the table was replaced, so its edits were not applied. Tell the customer, and "
+        "ask them to make their edits again in the new table."
+    )
+
+
+def _retire_pending_hitl(
+    store: object, database_name: str, job_id: str, retired_by: str
+) -> str | None:
+    """Retire the gate's current pointer, closing its task while it is open.
+
+    ``retired_by`` is ``"chat"`` (an approval not made by the task's own
+    submission), ``"reopen"`` or ``"reraise"``. An answered pointer is only marked
+    superseded: its submission was read, so its task is not closed and nothing is
+    reported. An open pointer's task is closed through
+    :func:`hitl.close_hitl_task`, best-effort (#1742, ADR-028 Decision E): that
+    never raises, closes the task only while it is open, and a pointer write
+    failure is only logged, so this never fails the job. The pointer is marked
+    superseded whatever the close outcome, because the gate has stopped waiting.
+
+    Returns the task id when the customer had submitted it (before the call, or
+    between the status read and the close) and that submission was never read:
+    it is not applied, and the caller says so in its result. A pointer without
+    ``lifecycle`` comes from a job saved before answered states were recorded, so
+    whether its submission was read is unknown; it is closed and never reported.
+    Otherwise ``None``.
+    """
+    pending = _read_pending_hitl(store, database_name, job_id)
+    if not pending or not pending.get("hitl_task_id") or pending.get("superseded"):
+        return None
+    task_id = str(pending["hitl_task_id"])
+    if pending.get("answered"):
+        _update_pending_hitl(
+            store,
+            database_name,
+            job_id,
+            pending,
+            superseded=True,
+            superseded_by=retired_by,
+            close_outcome="answered",
+        )
+        return None
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    outcome = _hitl.close_hitl_task(task_id)
+    logger.info(
+        "ATX: superseded HITL task %s (%s): %s (job_id=%s)", task_id, retired_by, outcome, job_id
+    )
+    ignored = outcome == "submitted" and bool(pending.get("lifecycle"))
+    fields: dict[str, object] = {
+        "superseded": True,
+        "superseded_by": retired_by,
+        "close_outcome": outcome,
+    }
+    if ignored:
+        fields["submission_ignored"] = True
+        logger.warning(
+            "ATX: HITL task %s was submitted but is superseded (%s); its edits are not applied "
+            "(job_id=%s)",
+            task_id,
+            retired_by,
+            job_id,
+        )
+    _update_pending_hitl(store, database_name, job_id, pending, **fields)
+    return task_id if ignored else None
+
+
+def _late_ignored_submission(store: object, database_name: str, job_id: str) -> str | None:
+    """The task a chat decision in this round superseded whose submission was dropped.
+
+    ``submission_ignored`` is set when the close found the task submitted, or a
+    retried close did (:func:`_retry_failed_closes`). ``stale`` marks a pointer
+    from an earlier round, which is never reported again.
+    """
+    pending = _read_pending_hitl(store, database_name, job_id)
+    if (
+        not pending
+        or not pending.get("superseded")
+        or pending.get("superseded_by") != "chat"
+        or pending.get("stale")
+        or not pending.get("lifecycle")
+        or not pending.get("submission_ignored")
+        or not pending.get("hitl_task_id")
+    ):
+        return None
+    return str(pending["hitl_task_id"])
+
+
+_FAILED_CLOSE = ("error", "unavailable")
+
+
+def _retry_failed_closes(store: object, database_name: str, job_id: str) -> list[tuple[str, str]]:
+    """Retry every close that failed earlier; return the dropped submissions found.
+
+    Two kinds of task can still be open after a failed close: the retired task
+    the pointer names, and earlier tables a new table replaced
+    (``unclosed_tasks``). Each is closed again through
+    :func:`hitl.close_hitl_task` (best-effort, never raises). One that turns out
+    submitted had its submission dropped: it is recorded and returned as
+    ``(task id, kind)``, ``kind`` being ``"chat"`` for a table a chat decision
+    superseded and ``"late"`` otherwise, so the calling step's result reports it.
+    Only pointers with ``lifecycle`` are retried and reported.
+    """
+    pending = _read_pending_hitl(store, database_name, job_id)
+    if not pending or not pending.get("lifecycle"):
+        return []
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    found: list[tuple[str, str]] = []
+    fields: dict[str, object] = {}
+    task_id = str(pending.get("hitl_task_id") or "")
+    if task_id and pending.get("superseded") and pending.get("close_outcome") in _FAILED_CLOSE:
+        outcome = _hitl.close_hitl_task(task_id)
+        fields["close_outcome"] = outcome
+        if outcome == "submitted":
+            kind = "chat" if pending.get("superseded_by") == "chat" else "late"
+            fields["submission_ignored"] = True
+            fields["reported"] = True
+            found.append((task_id, kind))
+    if pending.get("unclosed_tasks"):
+        still: list[str] = []
+        for unclosed in pending["unclosed_tasks"]:
+            outcome = _hitl.close_hitl_task(str(unclosed))
+            if outcome in _FAILED_CLOSE:
+                still.append(str(unclosed))
+            elif outcome == "submitted":
+                found.append((str(unclosed), "late"))
+        fields["unclosed_tasks"] = still
+    if fields:
+        _update_pending_hitl(store, database_name, job_id, pending, **fields)
+    for dropped, _kind in found:
+        logger.warning(
+            "ATX: superseded HITL task %s was submitted after its close failed; its edits are "
+            "not applied (job_id=%s)",
+            dropped,
+            job_id,
+        )
+    return found
+
+
+def _with_ignored_reports(out: str, found: list[tuple[str, str]]) -> str:
+    """Add each dropped submission in ``found`` to a tool's JSON result, once."""
+    if not found:
+        return out
+    try:
+        result = json.loads(out)
+    except ValueError:
+        return out
+    for task_id, kind in found:
+        reported = result.get("superseded_submission_ignored")
+        if reported == task_id or task_id in (result.get("superseded_submissions_ignored") or []):
+            continue
+        if reported is None:
+            result["superseded_submission_ignored"] = task_id
+        else:
+            result.setdefault("superseded_submissions_ignored", [reported]).append(task_id)
+        note = _ignored_submission_message(task_id, kind)
+        result["message"] = f"{result['message']} {note}" if result.get("message") else note
+    return json.dumps(result)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2380,17 +2781,38 @@ def reopen_assignment_review(job_id: str, database_name: str) -> str:
     # icons that read as errors (ADR-029). redispatch_after_reroute re-marks each
     # engine accurately once the customer applies their edit.
     _reset_schema_view_for_reentry(job_id, database_name)
-    return json.dumps(
-        {
-            "status": "reopened",
-            "job_id": job_id,
-            "assignment_version": version,
-            "message": (
-                "Gate reopened. Present the routing, apply the customer's edit with "
-                "finalize_assignment_review, then call redispatch_after_reroute."
-            ),
-        }
+    # A new round starts: retire the previous round's pointer, closing its table
+    # if it is still open, so this round never reads, waits on or closes it
+    # (#1742). A submission that table held and nobody finalized (a reopen while
+    # the review was still waiting) is reported, not applied: applying it here
+    # would approve edits as part of a reopen.
+    # First retry a close that failed earlier: a table submitted since is
+    # reported in this result, before its pointer is marked stale below.
+    retried = _retry_failed_closes(store, database_name, job_id)
+    previous = _read_pending_hitl(store, database_name, job_id)
+    if previous and previous.get("superseded") and not previous.get("stale"):
+        # Retired in an earlier round: nothing about it is reported in this one.
+        _update_pending_hitl(store, database_name, job_id, previous, stale=True)
+    ignored_task = _retire_pending_hitl(store, database_name, job_id, "reopen")
+    if ignored_task:
+        # Reported now, in the reopen's result.
+        retired = _read_pending_hitl(store, database_name, job_id)
+        if retired:
+            _update_pending_hitl(store, database_name, job_id, retired, reported=True)
+    message = (
+        "Gate reopened. Present the routing, apply the customer's edit with "
+        "finalize_assignment_review, then call redispatch_after_reroute."
     )
+    reopened: dict = {
+        "status": "reopened",
+        "job_id": job_id,
+        "assignment_version": version,
+        "message": message,
+    }
+    if ignored_task:
+        reopened["superseded_submission_ignored"] = ignored_task
+        reopened["message"] = f"{message} {_ignored_submission_message(ignored_task, 'reopen')}"
+    return _with_ignored_reports(json.dumps(reopened), retried)
 
 
 @tool
