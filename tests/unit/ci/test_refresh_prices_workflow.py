@@ -89,7 +89,7 @@ def test_one_fixed_branch_and_an_existing_pull_request_is_updated() -> None:
 
 def test_an_unchanged_table_proposes_nothing() -> None:
     script = _script()
-    unchanged = script.index('if git diff --quiet -- "$table"; then')
+    unchanged = script.index('if git diff --quiet -- "$table" "$fixtures"; then')
     assert script.index("exit 0", unchanged) < script.index("git commit")
 
 
