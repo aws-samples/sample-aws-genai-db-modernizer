@@ -491,7 +491,7 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
 def _build_queries(raw: list[dict]) -> Queries:
     if not raw:
         return Queries(query_patterns=[])
-    patterns = [_dict_to_query_pattern(p) for p in raw]
+    patterns = [_dict_to_query_pattern(p, source_engine="oracle") for p in raw]
     return Queries(
         query_patterns=patterns,
         total_queries_analyzed=len(patterns),
@@ -502,7 +502,7 @@ def _build_queries(raw: list[dict]) -> Queries:
 def _build_queries_from_aws(aws_patterns: list[dict]) -> Queries:
     if not aws_patterns:
         return Queries(query_patterns=[])
-    patterns = [_dict_to_query_pattern(p) for p in aws_patterns]
+    patterns = [_dict_to_query_pattern(p, source_engine="oracle") for p in aws_patterns]
     return Queries(
         query_patterns=patterns,
         total_queries_analyzed=len(patterns),
@@ -526,7 +526,7 @@ def _merge_queries(live: Queries, aws_patterns: list[dict]) -> Queries:
             if aws.get("wait_events"):
                 existing.wait_events = aws["wait_events"]
         else:
-            by_id[qid] = _dict_to_query_pattern(aws)
+            by_id[qid] = _dict_to_query_pattern(aws, source_engine="oracle")
     return Queries(
         query_patterns=list(by_id.values()),
         total_queries_analyzed=len(by_id),

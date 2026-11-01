@@ -471,11 +471,9 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
     *_collector_detectors(),
     SqlDetector(
         "src/agents/collector/mysql_collector.py:_detect_time_range",
-        lambda text, dialect: mysql_collector._detect_time_range(text),
+        # Every collector builds its patterns with it, in its own engine's dialect (#1743).
+        mysql_collector._detect_time_range,
         expect=_IS_TIME_RANGE,
-        # Every collector builds its patterns with it, with no engine: it runs in every
-        # dialect. A time range in a comment or a string sets the collected flag (#1743).
-        bugs=_bug(1743, "time_range_in_comment", "time_range_in_string"),
     ),
     SqlDetector(
         "src/tools/database/filter_columns.py:where_columns",

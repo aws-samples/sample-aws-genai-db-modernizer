@@ -130,7 +130,7 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
     )
     live_queries = _build_queries(queries_raw)
     aws_queries = aws_raw.get("query_patterns", [])
-    queries = _merge_into_queries(live_queries, aws_queries)
+    queries = _merge_into_queries(live_queries, aws_queries, source_engine="mariadb")
     global_stats = schema_raw.get("global_stats", {}) if isinstance(schema_raw, dict) else {}
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})
