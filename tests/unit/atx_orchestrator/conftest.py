@@ -14,5 +14,5 @@ The SDK is now installed in CI (see ``.github/workflows/ci.yml``) so these tests
 RUN. If the SDK is missing they must fail loudly, not vanish: a hidden test is a
 hidden failure. To run them locally, install the SDK:
 
-    uv pip install "agent-builder-sdk-aws-transform>=1.0.0"
+    uv pip install -r src/atx_orchestrator/requirements-sdk.txt
 """

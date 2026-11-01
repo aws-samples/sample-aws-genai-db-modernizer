@@ -6,7 +6,7 @@
 #   - Python 3.12+ and uv (for local development)
 #   - For "make test" to pass completely: the AWS Transform SDK, which ships
 #     in the ATX container image but is not a project dependency --
-#     `uv pip install "agent-builder-sdk-aws-transform>=1.0.0"` (see
+#     `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` (see
 #     tests/unit/atx_orchestrator/conftest.py). Without it, the two test
 #     modules that import it fail loudly rather than silently skipping.
 #
