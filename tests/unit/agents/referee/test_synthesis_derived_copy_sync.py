@@ -17,7 +17,7 @@ from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX
 from src.contracts.synthesis_output import ReportFacts
 from src.shared import catalog
 from src.shared.engine_names import display_engine
-from tests.unit.agents.referee.test_synthesis_llm_seam import _SCHEMA_DDB, _mock_store
+from tests.unit.agents.referee.test_synthesis_llm_seam import _COLLECTOR, _SCHEMA_DDB, _mock_store
 
 DB, JOB = "mydb", "job-1"
 
@@ -32,7 +32,7 @@ def _overlap_schema() -> dict:
             "operation": "PutItem",
             "table_name": "UsersAlt",
             "source_tables": ["users"],
-            "design_rps": 3.0,
+            "design_rps": 90.0,  # peak x growth: the sync never reads it (#1753)
             "item_size_bytes": 2000,
             "in_scope": True,
             "query_ids": ["DDB-AP-3"],
@@ -55,9 +55,24 @@ def _report(schema: dict, in_scope: bool = True) -> dict:
     store = _mock_store()
     read = store.read_json.side_effect
 
+    # #1753: the sync replays the collected average load, so the collection has the
+    # write DDB-AP-3 serves (3 calls a second, one item each).
+    collector: dict = copy.deepcopy(_COLLECTOR)
+    collector["queries"]["query_patterns"].append(
+        {
+            "query_id": "DDB-AP-3",
+            "query_text": "INSERT INTO users (user_id) VALUES (?)",
+            "query_type": "INSERT",
+            "tables_accessed": ["users"],
+            "calls_per_second": 3.0,
+        }
+    )
+
     def read_json(path: str) -> dict:
         if "schema-dynamodb/" in path and path.endswith("schema_output.json"):
             return schema
+        if path.endswith("collector/output.json"):
+            return collector
         found: dict = read(path)
         return found
 
@@ -177,6 +192,7 @@ def test_a_design_without_derived_copies_keeps_its_cost() -> None:
     )
 
 
+@pytest.mark.passes_on_main  # #1566's guard; #1753 only feeds it the collection's rate
 def test_the_sync_is_computed_once_for_the_cost_and_the_fact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -186,9 +202,9 @@ def test_the_sync_is_computed_once_for_the_cost_and_the_fact(
     calls: list[int] = []
     real = module.derived_copy_sync_facts
 
-    def counted(schema, risks):  # type: ignore[no-untyped-def]
+    def counted(*args):  # type: ignore[no-untyped-def]
         calls.append(1)
-        return real(schema, risks)
+        return real(*args)
 
     monkeypatch.setattr(module, "derived_copy_sync_facts", counted)
     report = _report(_overlap_schema())

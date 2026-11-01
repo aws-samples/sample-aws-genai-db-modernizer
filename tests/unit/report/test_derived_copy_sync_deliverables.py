@@ -13,11 +13,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from src.agents.referee.derived_copy_sync import derived_copy_sync_facts
 from src.report import escaping, executive_report, renderers
 from src.shared.report_facts import compute_report_facts
 from tests.executive_pdf import body_text
-from tests.unit.agents.referee.test_derived_copy_sync import _ap, _overlap, _risk, _schema
+from tests.unit.agents.referee.test_derived_copy_sync import _ap, _facts, _overlap, _risk, _schema
 
 
 def _report(with_fact: bool = True) -> dict[str, Any]:
@@ -44,7 +43,7 @@ def _report(with_fact: bool = True) -> dict[str, Any]:
     ]
     schema = _schema(puts, targets=("WpPosts", "wp_posts", "wp_posts_b"))
     assert schema["trade_offs"] == [_overlap(["WpPosts", "wp_posts", "wp_posts_b"])]
-    fact = derived_copy_sync_facts(schema, report["risk_assessment"]["risks"])
+    fact = _facts(schema, report["risk_assessment"]["risks"])
     report["facts"] = compute_report_facts(report, derived_copy_sync=fact if with_fact else None)
     return report
 

@@ -30,13 +30,14 @@ cost, the ranking and every deliverable's cost table agree, with one assumption 
   ``source_column``. An update whose statement does not say (an upsert, SQL the parser
   cannot read, or a ``SET`` list it reads only partly), or an index key no attribute
   definition maps, is counted as changing the index keys: two writes.
-- **Rate**: the average load, as the estimate prices it: the collected
-  ``calls_per_second`` of the write's queries times the rows each call changes, as
-  collected (``rows_affected_avg``, else ``rows_returned_avg``, else one). A fraction
-  above zero stays a fraction, so a call that usually changes no row is not counted as
-  one. An average of exactly zero is taken as missing data, like no row statistics, and
-  counts as one row: a write that changes nothing on every call is far likelier a gap in
-  the collection than real zero work, and counting it as zero would hide its cost. Only
+- **Rate**: the average load (``design_write_load``, the rule the derived-copy sync
+  reads too, #1753): the collected ``calls_per_second`` of the write's queries times the
+  rows each call changes, as collected (``rows_affected_avg``, else
+  ``rows_returned_avg``, else one). A fraction above zero stays a fraction, so a call
+  that usually changes no row is not counted as one. An average of exactly zero is taken
+  as missing data, like no row statistics, and counts as one row: a write that changes
+  nothing on every call is far likelier a gap in the collection than real zero work, and
+  counting it as zero would hide its cost. Only
   for the queries the assignment gives the engine in scope. ``design_rps`` is not used:
   it carries the design's peak and growth factors.
 
@@ -55,6 +56,11 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from src.agents.referee.design_write_load import (
+    collected_queries,
+    items_per_second,
+    pattern_queries,
+)
 from src.agents.schema_design.dynamodb_merge import WRITE_OPERATIONS
 from src.agents.schema_design.scope import normalize_table_name
 from src.shared import catalog
@@ -65,19 +71,6 @@ from src.tools.sql.facade import access_facts
 from src.tools.sql.query_facts import source_engine_of
 
 _GB = 1024**3
-
-
-def _rows(query: Mapping[str, Any]) -> float:
-    """The rows one call of a write changes, as collected: ``rows_affected_avg``, else
-    ``rows_returned_avg``, else one (a write with no row statistics). An average of
-    exactly zero counts as no value."""
-    for name in ("rows_affected_avg", "rows_returned_avg"):
-        value = query.get(name)
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            continue
-        if math.isfinite(value) and value > 0:  # exactly zero: missing data, as no value
-            return float(value)
-    return 1.0
 
 
 def _number(value: Any) -> float:
@@ -205,12 +198,7 @@ def gsi_cost_facts(
         )
     )
 
-    wanted = None if query_ids is None else {str(q) for q in query_ids}
-    queries = {
-        str(q.get("query_id")): q
-        for q in _dicts(((collector or {}).get("queries") or {}).get("query_patterns"))
-        if q.get("query_id") and (wanted is None or str(q["query_id"]) in wanted)
-    }
+    queries = collected_queries(collector, query_ids)
     writes = [
         ap
         for ap in _dicts(schema.get("access_patterns"))
@@ -245,7 +233,7 @@ def gsi_cost_facts(
                     continue
                 if not _sets_keys(table, gsi, ap):
                     continue
-                for q in (str(q) for q in ap.get("query_ids") or [] if str(q) in queries):
+                for q in pattern_queries(ap, queries):
                     n = (
                         _update_writes(table, gsi, changed(q))
                         if ap.get("operation") == "UpdateItem"
@@ -253,11 +241,9 @@ def gsi_cost_facts(
                     )
                     if n:
                         per_item[q] = max(per_item.get(q, 0), n)
+            # #1753: the rate the derived-copy sync reads too (``design_write_load``).
             units = sum(
-                _number(queries[q].get("calls_per_second"))
-                * _rows(queries[q])
-                * n
-                * write_request_units(size, STANDARD, write_bytes)
+                items_per_second(queries[q]) * n * write_request_units(size, STANDARD, write_bytes)
                 for q, n in sorted(per_item.items())
             )
             units_per_month = units * SECONDS_PER_MONTH
