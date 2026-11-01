@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -271,6 +272,125 @@ class TestWithoutTableNames:
         assert without_table_names(text, self.NAMES) == (
             "Schema design gap: 2 queries have no access pattern."
         )
+
+    GAP = "Schema design gap: these four queries have no access pattern"
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "TRUNCATE TABLE t",
+            "truncate table users",
+            "alter table orders add column c int",
+            "Drop Table orders",
+            "Vacuum Analyze users",
+            "grant select on users to app",
+            "GRANT ALL ON t TO u",
+            "call refresh(1)",
+            "CALL refresh(1)",
+            "CREATE TABLE t (id int)",
+            "CREATE UNIQUE INDEX ix ON t (c)",
+            "CREATE VIEW v AS TABLE t",
+            "CREATE GLOBAL TEMPORARY TABLE users",
+            "CREATE UNLOGGED TABLE users",
+            "ALTER INDEX ix ON t REBUILD",
+            "DROP INDEX ix ON t",
+            "UPDATE STATISTICS t",
+            "COMMENT ON TABLE t IS 'x'",
+            "OPTIMIZE TABLE shop.orders",
+            "optimize table `orders`",
+            "OPTIMIZE TABLE order_items",
+            "LOCK TABLES t READ",
+            "LOCK users IN SHARE MODE",
+            "RENAME TABLE shop.users TO people",
+            "rename table user_accounts to people",
+            "CLUSTER users USING ix",
+            "CHECK TABLE shop.users",
+            "check table `users`",
+            "REPAIR TABLE user_accounts",
+            "repair table [users]",
+            "check table users;",
+            "repair table users (c)",
+            "REINDEX TABLE users",
+            "ANALYZE shop.users",
+            "analyze user_accounts",
+            "analyze users;",
+            "REVOKE ALL ON t FROM u",
+            "EXEC dbo.refresh",
+            "execute proc_1",
+            "MERGE INTO t USING s ON t.id = s.id",
+            "DESCRIBE shop.users",
+            "describe `users`",
+            "lock table user_accounts read",
+            "call shop.refresh",
+        ],
+    )
+    def test_a_ddl_or_maintenance_statement_is_cut_like_dml(self, statement: str) -> None:
+        assert without_table_names(f"{self.GAP}: {statement}", None) == self.GAP + "."
+
+    @pytest.mark.passes_on_main
+    def test_a_comment_holding_sql_cuts_the_sentence_whatever_the_statement(self) -> None:
+        """The filter reads no comment spans: SQL words in one cut the sentence, so a
+        statement it does not recognise ("OPTIMIZE TABLE t") is cut with such a comment
+        and printed without it. That is the filter's rule, not a blanked comment."""
+        bare = f"{self.GAP}: OPTIMIZE TABLE t"
+        assert without_table_names(bare, None) == bare
+        for comment in ("-- select a from b where c", "/* select a from b where c */"):
+            assert without_table_names(f"{bare} {comment}", None) == self.GAP + "."
+
+    def test_a_statement_after_e_g_is_cut(self) -> None:
+        text = "Schema design gap: these four queries have no pattern, e.g. truncate table users"
+        assert without_table_names(text, None) == ""
+
+    @pytest.mark.passes_on_main
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "We alter the table layout and drop the index later, then analyze the results.",
+            "Grant access to the call center. Execute the plan and describe the merge.",
+            "Vacuum settings and truncate behaviour are covered in the runbook.",
+            "Next step: create a view of the results after the review.",
+            "Mitigation: drop the index after cutover and rebuild it.",
+            "Risk: analyze the read path before the move.",
+            "Steps: lock in the schedule; call the owner.",
+            "The CALL center team and the GRANT program stay. ANALYZE reports weekly.",
+            "Wave 2: EXECUTE THE PLAN after the gate passes.",
+            "Wave 3: CREATE A VIEW OF THE TOTALS and DROP THE OLD INDEX.",
+            "Before Wave 2, check table sizes.",
+            "Analyze table growth monthly.",
+            "Lock table owners in early.",
+            "Rename table groups as needed.",
+            "Repair table drift after cutover.",
+            "Steps: describe the plan; call the owner.",
+        ],
+    )
+    def test_ddl_words_in_prose_are_left_alone(self, text: str) -> None:
+        assert without_table_names(text, None) == text
+
+    def test_the_real_prose_has_no_ddl_hit(self) -> None:
+        """No sentence of the help-site pages or of a real report is read as a statement."""
+        root = Path(__file__).resolve().parents[3]
+        strings: list[str] = []
+        # The help site's pages (mkdocs.yml's nav), less code spans, which the filter
+        # cuts as quoted SQL whatever they hold.
+        for md in sorted((root / "docs").glob("*.md")):
+            for line in md.read_text(encoding="utf-8").splitlines():
+                strings.append(re.sub(r"`[^`]*`", "", line))
+        fixture = root / "tests/unit/ci/fixtures/judge-run3-wordpress/report.json"
+
+        def walk(node: Any) -> None:
+            if isinstance(node, str):
+                strings.append(" ".join(node.split()))
+            elif isinstance(node, dict):
+                for v in node.values():
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+
+        walk(json.loads(fixture.read_text(encoding="utf-8")))
+        assert len(strings) > 1000
+        hits = [t for t in strings if executive_report._SQL_DDL.search(t)]
+        assert hits == []
 
     def test_a_sentence_with_no_leading_clause_is_left_out(self) -> None:
         text = "Keep it simple. Move order_items first. Then verify."
