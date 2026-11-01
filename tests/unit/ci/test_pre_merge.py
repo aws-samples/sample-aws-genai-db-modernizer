@@ -182,3 +182,132 @@ def test_the_pr_template_has_an_adr_field_that_pre_merge_accepts():
     ).read_text(encoding="utf-8")
     assert "## ADR" in template
     assert "No ADR change: <reason>" in template
+
+
+# ---- Docs-impact map (#1162) ----
+
+_MAP = [
+    {
+        "name": "report",
+        "paths": ["src/report/**", "scripts/run_report.py"],
+        "docs": ["docs/understand-the-results.md", "README.md"],
+    },
+    {
+        "name": "launcher",
+        "paths": ["scripts/start_local_ui.py"],
+        "docs": ["docs/use-claude-code.md"],
+    },
+]
+
+
+def test_docs_glob_star_stays_in_one_folder_and_double_star_crosses_folders():
+    from ci.pre_merge import docs_glob_matches
+
+    assert docs_glob_matches("src/report/*.py", "src/report/facts.py")
+    assert not docs_glob_matches("src/report/*.py", "src/report/assets/x.py")
+    assert docs_glob_matches("src/report/**", "src/report/assets/x.png")
+    assert docs_glob_matches("scripts/run_report.py", "scripts/run_report.py")
+    assert not docs_glob_matches("scripts/run_report.py", "scripts/run_report.pyc")
+
+
+def test_docs_impact_is_quiet_when_no_mapped_path_changed():
+    from ci.pre_merge import check_docs_impact
+
+    level, _ = check_docs_impact(["src/api/main.py", "tests/unit/x.py"], False, _MAP)
+    assert level == "ok"
+
+
+def test_docs_impact_is_quiet_when_a_mapped_page_changed_too():
+    from ci.pre_merge import check_docs_impact
+
+    level, message = check_docs_impact(["src/report/facts.py", "README.md"], False, _MAP)
+    assert level == "ok"
+    assert "report" in message
+
+
+def test_docs_impact_warns_and_lists_the_pages_when_the_branch_has_a_reason():
+    from ci.pre_merge import check_docs_impact
+
+    level, message = check_docs_impact(["src/report/facts.py"], True, _MAP)
+    assert level == "warn"
+    assert "docs/understand-the-results.md" in message and "README.md" in message
+    assert "src/report/facts.py" in message
+
+
+def test_docs_impact_fails_without_a_reason_and_lists_the_pages():
+    from ci.pre_merge import check_docs_impact
+
+    level, message = check_docs_impact(["scripts/start_local_ui.py"], False, _MAP)
+    assert level == "error"
+    assert "docs/use-claude-code.md" in message
+    assert "Docs:" in message and "no PR body" not in message
+
+
+def test_docs_impact_without_a_pr_body_says_so_and_names_the_trailer():
+    from ci.pre_merge import check_docs_impact
+
+    _, message = check_docs_impact(["scripts/start_local_ui.py"], False, _MAP, body_missing=True)
+    assert "no PR body found" in message and "commit trailer" in message
+
+
+def test_docs_impact_counts_each_mapped_group_on_its_own():
+    from ci.pre_merge import check_docs_impact
+
+    # The report pages changed; the launcher's page did not.
+    changed = ["src/report/facts.py", "README.md", "scripts/start_local_ui.py"]
+    level, message = check_docs_impact(changed, False, _MAP)
+    assert level == "error"
+    assert "docs/use-claude-code.md" in message
+    assert "docs/understand-the-results.md" not in message
+
+
+def test_a_visible_docs_line_in_the_body_counts():
+    from ci.pre_merge import has_docs_line
+
+    assert has_docs_line("## Docs\n\nDocs: internal refactor, no wording changed\n", [])
+    assert has_docs_line("Docs: reason\r\nmore\r\n", [])
+
+
+def test_bulleted_docs_lines_count():
+    from ci.pre_merge import has_docs_line
+
+    assert has_docs_line("- Docs: no page describes it\n", [])
+    assert has_docs_line("* Docs: no page describes it\n", [])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "```\nDocs: hidden in a fence\n```\n",
+        "    Docs: hidden in an indented block\n",
+        "<!--\nDocs: hidden in a comment\n-->\n",
+        "<!-- Docs: one-line comment -->\n",
+        "`Docs: code span`\n",
+        "Docs: <reason>\n",
+        "Docs:   \n",
+        "see Docs: later\n",
+        "docs: lower case\n",
+    ],
+)
+def test_hidden_or_empty_docs_lines_do_not_count(body):
+    from ci.pre_merge import has_docs_line
+
+    assert not has_docs_line(body, [])
+
+
+def test_a_commit_trailer_counts_but_a_docs_subject_does_not():
+    from ci.pre_merge import has_docs_line
+
+    assert has_docs_line(None, ["fix: x\n\nbody\n\nDocs: no page describes it"])
+    assert not has_docs_line(None, ["docs: fix a typo in the README"])
+    assert not has_docs_line(None, ["Docs: subject line only"])
+    assert not has_docs_line(None, ["fix: x\n\ndocs: lower case in the body"])
+
+
+def test_the_pr_template_has_a_docs_field_that_pre_merge_accepts():
+    template = (
+        Path(__file__).resolve().parents[3] / ".github" / "pull_request_template.md"
+    ).read_text(encoding="utf-8")
+    assert "## Docs" in template
+    assert "Docs: <reason>" in template
+    assert "not affected" not in template

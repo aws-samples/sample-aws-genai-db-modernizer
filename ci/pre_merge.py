@@ -20,6 +20,9 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
 * ``adr BASE_REF``: a branch that changes ``src/agents/referee/`` or ``src/shared/`` edits
   an ADR or says ``No ADR change: <reason>`` in a commit message or the pull request
   body (``PR_BODY_FILE``, #1154; exit 1 when it does neither).
+* ``docs-impact BASE_REF``: a branch that changes a path in ``ci/docs_impact_map.toml`` (#1162)
+  edits one of that entry's pages, or says ``Docs: <reason>`` in a commit message or the pull
+  request body (``PR_BODY_FILE``); warns and lists the pages, exit 1 without the line.
 """
 
 from __future__ import annotations
@@ -29,6 +32,12 @@ import re
 import subprocess  # nosec B404 -- runs git with fixed argv
 import sys
 import tomllib
+from pathlib import Path
+
+try:  # as ``ci.pre_merge`` (tests) or as a script run from ci/ (pre_merge.sh)
+    from ci.pr_evidence import _BULLET, _visible
+except ImportError:  # pragma: no cover -- the script form
+    from pr_evidence import _BULLET, _visible  # type: ignore[no-redef]
 
 PUBLIC_REPO = "aws-samples/sample-aws-genai-db-modernizer"
 PENDING_DIR = "src/contracts/pending"
@@ -250,23 +259,113 @@ def check_adr(changed: list[str], text: str) -> tuple[str, str]:
 
 
 def _adr(base_ref: str) -> int:
+    changed, messages, body = _branch_text(base_ref)
+    text = "\n".join(messages) + "\n" + (body or "")
+    level, message = check_adr(changed, text)
+    print(f"{level}: {message}")
+    return 1 if level == "error" else 0
+
+
+# The docs-impact map (#1162): changed source paths -> the pages to review.
+DOCS_IMPACT_MAP = Path(__file__).resolve().parent / "docs_impact_map.toml"
+# "Docs: <reason>" at the start of a visible line (a "- " or "* " bullet prefix is fine, as
+# for the Evidence parser), case-sensitive, with a real reason (the template's `<reason>` is not one).
+_DOCS_LINE = re.compile(_BULLET + r"Docs:[ \t]*(?!<)\S", re.MULTILINE)
+
+
+def has_docs_line(body: str | None, messages: list[str]) -> bool:
+    """Whether the PR body or a commit message gives a ``Docs: <reason>`` line.
+
+    The body is read as ``pr_evidence`` reads it (comments, code spans, fenced and indented
+    code removed), so a line a reader cannot see does not count. A commit message counts
+    through its body or trailers only: a Conventional Commits ``docs: ...`` subject is not a
+    reason.
+    """
+    texts = [_visible(body)] if body else []
+    texts += ["\n".join(m.replace("\r\n", "\n").split("\n")[1:]) for m in messages]
+    return any(_DOCS_LINE.search(t) for t in texts)
+
+
+def load_docs_impact_map(path: Path = DOCS_IMPACT_MAP) -> list[dict]:
+    """The map's entries: ``name``, ``paths`` (globs), ``docs`` (pages) and ``why``."""
+    entries: list[dict] = tomllib.loads(path.read_text(encoding="utf-8")).get("entry", [])
+    return entries
+
+
+def docs_glob_matches(pattern: str, path: str) -> bool:
+    """``*`` matches within one folder, ``**`` across folders; no other wildcard."""
+    regex = "".join(
+        ".*" if part == "**" else "[^/]*" if part == "*" else re.escape(part)
+        for part in re.split(r"(\*\*|\*)", pattern)
+    )
+    return re.fullmatch(regex, path) is not None
+
+
+def check_docs_impact(
+    changed: list[str],
+    reasoned: bool,
+    entries: list[dict] | None = None,
+    body_missing: bool = False,
+) -> tuple[str, str]:
+    """The docs-impact rule: ``(level, message)`` for a branch's changed files and whether it
+    gives a ``Docs:`` reason (``has_docs_line``); ``body_missing`` is for the error text. An entry is *unreviewed* when a changed file matches
+    its paths and no changed file is one of its pages."""
+    entries = load_docs_impact_map() if entries is None else entries
+    touched, unreviewed = [], []
+    for entry in entries:
+        hits = [f for f in changed if any(docs_glob_matches(g, f) for g in entry["paths"])]
+        if not hits:
+            continue
+        touched.append(entry["name"])
+        if not any(page in changed for page in entry["docs"]):
+            unreviewed.append((entry, hits))
+    if not touched:
+        return "ok", "no path in the docs-impact map changed"
+    if not unreviewed:
+        return "ok", f"mapped path(s) changed with a page edit too ({', '.join(touched)})"
+    lines = []
+    for entry, hits in unreviewed:
+        first = hits[0] + (f" (+{len(hits) - 1} more)" if len(hits) > 1 else "")
+        lines.append(f"{entry['name']}: {first} changed; review {', '.join(entry['docs'])}")
+    detail = "; ".join(lines)
+    if reasoned:
+        return "warn", f"{detail}. The PR states 'Docs: <reason>'"
+    hint = (
+        "no PR body found; add a 'Docs: <reason>' commit trailer, or rerun after opening the PR"
+        if body_missing
+        else "write 'Docs: <reason>' in the PR body (the Docs field) or as a commit trailer"
+    )
+    return "error", f"{detail}. Edit a page, or {hint}, saying why the pages need no change"
+
+
+def _branch_text(base_ref: str) -> tuple[list[str], list[str], str | None]:
+    """Changed files, commit messages (oldest first) and the PR body (``None`` without one)."""
     changed = subprocess.run(  # nosec B603 B607 -- fixed argv
         ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
         capture_output=True,
         text=True,
         check=False,
-    ).stdout.split()
-    messages = subprocess.run(  # nosec B603 B607 -- fixed argv
-        ["git", "log", "--format=%B", f"{base_ref}..HEAD"],
+    ).stdout.splitlines()
+    log = subprocess.run(  # nosec B603 B607 -- fixed argv
+        ["git", "log", "--format=%B%x00", f"{base_ref}..HEAD"],
         capture_output=True,
         text=True,
         check=False,
     ).stdout
+    messages = [m.strip("\n") for m in log.split("\0") if m.strip()]
     body_file = os.environ.get("PR_BODY_FILE")
-    body = (
-        open(body_file, encoding="utf-8").read() if body_file and os.path.exists(body_file) else ""
+    body = None
+    if body_file and os.path.exists(body_file):
+        with open(body_file, encoding="utf-8") as fh:
+            body = fh.read() or None
+    return changed, messages, body
+
+
+def _docs_impact(base_ref: str) -> int:
+    changed, messages, body = _branch_text(base_ref)
+    level, message = check_docs_impact(
+        changed, has_docs_line(body, messages), body_missing=body is None
     )
-    level, message = check_adr(changed, f"{messages}\n{body}")
     print(f"{level}: {message}")
     return 1 if level == "error" else 0
 
@@ -286,6 +385,8 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "adr" and rest:
         return _adr(rest[0])
+    if cmd == "docs-impact" and rest:
+        return _docs_impact(rest[0])
     if cmd == "contracts" and rest:
         return _contracts(rest[0], rest[1:])
     print(__doc__, file=sys.stderr)
