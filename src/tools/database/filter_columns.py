@@ -53,8 +53,9 @@ def _read_word(sql: str, start: int, end: int, quote: str) -> tuple[str, int] | 
 def where_columns(sql: str, quote: str) -> list[str]:
     """Each column the WHERE regex found in ``sql``, in order, with ``quote`` as the
     identifier quote (a backtick for MySQL, a double quote for PostgreSQL). ``sql`` is
-    code text (:func:`src.shared.sql_spans.code_text`): the collectors blank comments
-    and literals first, so a WHERE inside one is never read (#1420)."""
+    column text (:func:`src.tools.database.live_sql.column_text`): the collectors blank
+    comments and literals first, so a WHERE inside one is never read (#1420), and write
+    each quoted name as one placeholder word, so a WHERE inside one is not either (#1737)."""
     found: list[str] = []
     pos = 0
     scanned_line_end = -1  # the end of a line already scanned to its end with no reading

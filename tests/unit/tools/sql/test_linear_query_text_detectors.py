@@ -26,8 +26,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from src.shared.sql_spans import code_text
 from src.tools.database.filter_columns import where_columns
+from src.tools.database.live_sql import column_text
 from src.tools.database.mysql_tools import _extract_filter_columns as mysql_filter_columns
 from src.tools.database.postgres_tools import _extract_filter_columns as postgres_filter_columns
 from src.tools.sql import query_facts as query_facts_module
@@ -82,12 +82,15 @@ def test_each_detector_answers_what_its_old_regex_did_on_the_corpus(corpus):  # 
     assert any(not _OLD_MYSQL_WHERE_COL_RE.findall(t) for t in corpus)
     for text in corpus:
         _check(text)
-        # The collector reads the code the engine runs, comments and literals blanked (#1420).
-        code = code_text(text, "mysql")
+        # The collector reads the code the engine runs, comments and literals blanked (#1420),
+        # each quoted name one placeholder word read back as its name (#1737).
+        columns = column_text(text, "mysql")
+        code = columns.text
         assert mysql_filter_columns(text) == (
             list(
                 dict.fromkeys(
-                    _OLD_MYSQL_WHERE_COL_RE.findall(code)
+                    columns.name(c)
+                    for c in _OLD_MYSQL_WHERE_COL_RE.findall(code)
                     + re.findall(
                         r"(?:AND|OR)\s+`?(\w+)`?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", code, re.I
                     )

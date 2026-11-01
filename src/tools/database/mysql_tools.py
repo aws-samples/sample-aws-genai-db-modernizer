@@ -12,7 +12,6 @@ import hashlib
 import logging
 import re
 
-from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -421,20 +420,22 @@ def _estimate_rows_p95(avg_rows: float, avg_ms: float, p95_ms: float) -> float |
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
-    sql = code_text(sql, "mysql")  # comments and literals are not SQL (#1420)
-    cols = where_columns(sql, "`") + _AND_COL_RE.findall(sql)
-    return list(dict.fromkeys(cols)) or None
+    # Comments and literals are not SQL (#1420); a quoted name is one name (#1737).
+    text = live_sql.column_text(sql, "mysql")
+    cols = where_columns(text.text, "`") + _AND_COL_RE.findall(text.text)
+    return list(dict.fromkeys(text.name(c) for c in cols)) or None
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
-    sql = code_text(sql, "mysql")  # comments and literals are not SQL (#1420)
-    m = _ORDER_COL_RE.search(sql)
+    # Comments and literals are not SQL (#1420); a quoted name is one name (#1737).
+    text = live_sql.column_text(sql, "mysql")
+    m = _ORDER_COL_RE.search(text.text)
     if not m:
         return None
-    raw = m.group(1)
-    cols = [c.strip().strip("`").split()[0] for c in raw.split(",")]
+    words = [c.split() for c in m.group(1).split(",")]
+    cols = [w[0] for w in words if w]
     # A literal (a placeholder once blanked) sorts by a constant: it names no column.
-    return [c for c in cols if c and c != "?" and not c.upper().startswith(("ASC", "DESC"))] or None
+    return [text.name(c) for c in cols if c != "?" and c.upper() not in ("ASC", "DESC")] or None
 
 
 def _hash(text: str) -> str:

@@ -17,7 +17,6 @@ import hashlib
 import logging
 import re
 
-from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
@@ -584,28 +583,41 @@ def _extract_tables(sql: str) -> list[str]:
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
     """Best-effort extraction of column names appearing in WHERE clauses."""
-    sql = code_text(sql, "sqlserver")  # comments and literals are not SQL (#1420)
+    # Comments and literals are not SQL (#1420); a quoted name is one name (#1737).
+    text = live_sql.column_text(sql, "sqlserver")
     where_match = re.search(
         r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b|$)",
-        sql,
+        text.text,
         re.IGNORECASE | re.DOTALL,
     )
     if not where_match:
         return None
     where_clause = where_match.group(1)
-    cols = re.findall(r"\[?(\w+)\]?\s*(?:=|<|>|<=|>=|<>|!=|LIKE|IN)", where_clause, re.IGNORECASE)
-    return sorted(set(cols)) if cols else None
+    # A column is a whole word (``JOIN`` is no ``JO`` before ``IN``), and so is an operator.
+    cols = re.findall(r"\b(\w+)\b\s*(?:=|<|>|<=|>=|<>|!=|LIKE\b|IN\b)", where_clause, re.IGNORECASE)
+    return sorted({text.name(c) for c in cols}) if cols else None
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
-    sql = code_text(sql, "sqlserver")  # comments and literals are not SQL (#1420)
+    # Comments and literals are not SQL (#1420); a quoted name is one name (#1737).
+    text = live_sql.column_text(sql, "sqlserver")
     order_match = re.search(
-        r"\bORDER\s+BY\b(.*?)(?:\bLIMIT\b|\bOFFSET\b|$)", sql, re.IGNORECASE | re.DOTALL
+        r"\bORDER\s+BY\b(.*?)(?:\bLIMIT\b|\bOFFSET\b|$)",
+        text.text,
+        re.IGNORECASE | re.DOTALL,
     )
     if not order_match:
         return None
-    cols = re.findall(r"\[?(\w+)\]?", order_match.group(1))
-    return sorted({c for c in cols if c.upper() not in ("ASC", "DESC")}) if cols else None
+    # A qualified name is one sort column (``[t].[x]`` reads ``t.x``, as ``t.x`` does and as
+    # the other collectors read it).
+    cols = re.findall(r"\w+(?:\.\w+)*", order_match.group(1))
+    return (
+        sorted(
+            {text.name(c) for c in cols if text.is_quoted(c) or c.upper() not in ("ASC", "DESC")}
+        )
+        if cols
+        else None
+    )
 
 
 def _hash(text: str) -> str:

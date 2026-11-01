@@ -50,8 +50,15 @@ from src.agents.referee.table_resolution import SourceScope
 from src.assessment import cut
 from src.report import executive_report
 from src.shared import prose_style, unsupported_pattern
-from src.shared.sql_spans import code_text, replace_strings_and_comments
-from src.tools.database import mysql_tools, oracle_tools, postgres_tools, sql_cte, sqlserver_tools
+from src.shared.sql_spans import replace_strings_and_comments
+from src.tools.database import (
+    live_sql,
+    mysql_tools,
+    oracle_tools,
+    postgres_tools,
+    sql_cte,
+    sqlserver_tools,
+)
 from src.tools.database.filter_columns import where_columns
 from src.tools.sql import facade, redact, regex_facts
 from src.tools.sql.query_facts import QueryFacts
@@ -187,6 +194,23 @@ _KEEPS_IDENTIFIER_NAMES = {
             "where_as_bracket_identifier",
         ),
         ("IN",),
+    ),
+    # A sort clause and an escaped quote in a quoted name (#1737): the name is kept.
+    **dict.fromkeys(
+        (
+            "order_by_as_backtick_identifier",
+            "order_by_as_double_quoted_identifier",
+            "order_by_as_bracket_identifier",
+        ),
+        ("BY", "LIMIT", "ORDER"),
+    ),
+    **dict.fromkeys(
+        (
+            "escaped_backtick_in_identifier",
+            "escaped_double_quote_in_identifier",
+            "escaped_bracket_in_identifier",
+        ),
+        ("BY", "ORDER"),
     ),
 }
 
@@ -330,21 +354,6 @@ _FILTERS_ON_LIMIT: dict[str, object] = {
 }
 
 
-# A quoted name read as SQL (#1737): words inside it read as a filter, and Oracle reads no
-# column from a double-quoted name (``"join"`` reads ``jo``).
-_QUOTED_NAME_BUGS = {
-    "mysql": _bug(1737, "where_as_backtick_identifier"),
-    "postgresql": _bug(1737, "where_as_double_quoted_identifier", dialects=("postgresql",)),
-    "sqlserver": _bug(1737, "where_as_bracket_identifier"),
-    "oracle": _bug(
-        1737,
-        "double_quoted_identifiers",
-        "where_as_double_quoted_identifier",
-        "bare_name_clauses_double_quoted",
-        dialects=("oracle",),
-    ),
-}
-
 # DDL and maintenance statements the quoted-SQL filter does not know (#1738): cut only when
 # a comment after one holds SELECT-like words, so the twin prints.
 _UNCUT_STATEMENTS = _bug(
@@ -420,6 +429,12 @@ def _report_line(text: str, dialect: str) -> str:
     return executive_report.without_table_names(f"{_GAP_CLAUSE}: {text}", None)
 
 
+def _where_columns(text: str, dialect: str) -> list[str]:
+    """``where_columns`` as the MySQL and PostgreSQL collectors call it."""
+    columns = live_sql.column_text(text, dialect)
+    return [columns.name(c) for c in where_columns(columns.text, _WHERE_QUOTE[dialect])]
+
+
 def _text_only(read: Callable[[str], object]) -> Callable[[str, str], object]:
     """A collector's parser takes the text alone: it reads its own engine's dialect."""
     return lambda text, _dialect: read(text)
@@ -435,7 +450,6 @@ def _collector_detectors() -> tuple[SqlDetector, ...]:
                 f"{path}:_extract_filter_columns",
                 _text_only(module._extract_filter_columns),
                 expect={k: v for k, v in _FILTERS_ON_LIMIT.items() if k.endswith(f"@{dialect}")},
-                bugs=_QUOTED_NAME_BUGS[dialect],
                 dialects=own,
             ),
             SqlDetector(
@@ -465,8 +479,9 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
     ),
     SqlDetector(
         "src/tools/database/filter_columns.py:where_columns",
-        # Its callers pass code text: comments blanked, each literal a placeholder.
-        lambda text, dialect: where_columns(code_text(text, dialect), _WHERE_QUOTE[dialect]),
+        # Its callers pass column text: comments blanked, each literal a placeholder, each
+        # quoted name one placeholder word read back as its name (#1737).
+        _where_columns,
         expect={k: v for k, v in _FILTERS_ON_LIMIT.items() if k.endswith(("mysql", "postgresql"))},
         dialects=tuple(_WHERE_QUOTE),
     ),
