@@ -59,15 +59,18 @@ jobs:
       - name: Refresh the price table
         # Exits 1 with one line, and leaves the table untouched, when a
         # download fails or a price cannot be read unambiguously.
-        run: uv run python scripts/refresh_prices.py
+        # --update-fixtures also rewrites the trimmed offer files the tests compare
+        # the table with, so one refresh pull request carries both.
+        run: uv run python scripts/refresh_prices.py --update-fixtures tests/fixtures/price_list
       - name: Open or update the refresh pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           table=src/catalog/prices.toml
+          fixtures=tests/fixtures/price_list
           open_pr=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
-          if git diff --quiet -- "$table"; then
+          if git diff --quiet -- "$table" "$fixtures"; then
             echo "The price table matches main's; nothing to propose."
             if [ -n "$open_pr" ]; then
               gh pr close "$open_pr" --delete-branch \
@@ -79,12 +82,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
-          git add "$table"
+          git add "$table" "$fixtures"
           git commit -q -F - <<EOF
           chore(pricing): refresh the AWS price table ($retrieved)
 
           The scheduled refresh read the public AWS Price List bulk files.
-          src/catalog/prices.toml is what scripts/refresh_prices.py wrote.
+          src/catalog/prices.toml and the trimmed offer files in
+          tests/fixtures/price_list are what scripts/refresh_prices.py wrote.
 
           Refs #1196
           EOF
