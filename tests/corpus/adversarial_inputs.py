@@ -595,6 +595,50 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         ("sqlserver",),
         "a WHERE and a key equality as bracket-quoted SQL Server names, no real WHERE (#1478)",
     ),
+    # A sort clause and an escaped quote inside a quoted name (#1737): the name is one
+    # column, never SQL.
+    SqlEntry(
+        "order_by_as_backtick_identifier",
+        "SELECT `ORDER BY x`, `LIMIT` FROM t WHERE id = 1",
+        "SELECT c1, c2 FROM t WHERE id = 1",
+        ("mysql",),
+        "an ORDER BY and a LIMIT as backtick-quoted MySQL names, no real sort",
+    ),
+    SqlEntry(
+        "order_by_as_double_quoted_identifier",
+        'SELECT "ORDER BY x", "LIMIT" FROM t WHERE id = 1',
+        "SELECT c1, c2 FROM t WHERE id = 1",
+        ("postgresql", "oracle"),
+        "an ORDER BY and a LIMIT as double-quoted names, no real sort",
+    ),
+    SqlEntry(
+        "order_by_as_bracket_identifier",
+        "SELECT [ORDER BY x], [LIMIT] FROM t WHERE id = 1",
+        "SELECT c1, c2 FROM t WHERE id = 1",
+        ("sqlserver",),
+        "an ORDER BY and a LIMIT as bracket-quoted SQL Server names, no real sort",
+    ),
+    SqlEntry(
+        "escaped_backtick_in_identifier",
+        "SELECT `x`` WHERE b = 1 ORDER BY z` FROM t",
+        "SELECT c1 FROM t",
+        ("mysql",),
+        "a doubled backtick inside a MySQL name holding a WHERE and an ORDER BY: one name",
+    ),
+    SqlEntry(
+        "escaped_double_quote_in_identifier",
+        'SELECT "x"" WHERE b = 1 ORDER BY z" FROM t',
+        "SELECT c1 FROM t",
+        ("postgresql", "oracle"),
+        "a doubled double quote inside a name holding a WHERE and an ORDER BY: one name",
+    ),
+    SqlEntry(
+        "escaped_bracket_in_identifier",
+        "SELECT [x]] WHERE b = 1 ORDER BY z] FROM t",
+        "SELECT c1 FROM t",
+        ("sqlserver",),
+        "a ]] escape inside a SQL Server name holding a WHERE and an ORDER BY: one name",
+    ),
     SqlEntry(
         "bare_name_clauses_double_quoted",
         'UPDATE t SET a = 1 WHERE "status" = $1 AND EXISTS '

@@ -16,7 +16,6 @@ import hashlib
 import logging
 import re
 
-from src.shared.sql_spans import code_text
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.index_keys import add_index_key
@@ -608,23 +607,38 @@ def _extract_tables(sql: str) -> list[str]:
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
-    sql = code_text(sql, "oracle")  # comments and literals are not SQL (#1420)
-    # Match columns in comparisons (col = val, col > val, col != val, etc.)
-    matches = re.findall(r"\b(\w+)\s*(?:[=<>!]+|(?:NOT\s+)?IN|(?:NOT\s+)?LIKE|IS)", sql, re.I)
-    # Filter out SQL keywords that regex might capture
+    # Comments and literals are not SQL (#1420); a quoted name is one name (#1737). Every
+    # name is lower-cased, quoted or not, as the rest of the Oracle collection writes its
+    # names (catalog columns, tables_accessed): "STATUS" and status are one column.
+    text = live_sql.column_text(sql, "oracle")
+    # Match columns in comparisons (col = val, col > val, col != val, etc.): a column is a
+    # whole word (``JOIN`` is no ``JO`` before ``IN``), and so is an operator.
+    matches = re.findall(
+        r"\b(\w+)\b\s*(?:[=<>!]+|(?:NOT\s+)?IN\b|(?:NOT\s+)?LIKE\b|IS\b)", text.text, re.I
+    )
+    # Filter out SQL keywords that regex might capture (a quoted keyword is a name)
     keywords = {"where", "and", "or", "not", "between", "case", "when", "then", "else", "end"}
-    result = list(dict.fromkeys(m.lower() for m in matches if m.lower() not in keywords))
+    result = list(
+        dict.fromkeys(
+            text.name(m).lower() for m in matches if text.is_quoted(m) or m.lower() not in keywords
+        )
+    )
     return result or None
 
 
 def _extract_sort_columns(sql: str) -> list[str] | None:
-    sql = code_text(sql, "oracle")  # comments and literals are not SQL (#1420)
-    m = re.search(r"order\s+by\s+(.+?)(?:;|\)|$)", sql, re.I)
+    # Comments and literals are not SQL (#1420); a quoted name is one name, lower-cased as
+    # every Oracle name in the collection is (#1737).
+    text = live_sql.column_text(sql, "oracle")
+    m = re.search(r"order\s+by\s+(.+?)(?:;|\)|$)", text.text, re.I)
     if not m:
         return None
-    cols = [c.strip().split()[0].lower() for c in m.group(1).split(",")]
+    words = [c.split() for c in m.group(1).split(",")]
+    cols = [w[0] for w in words if w]
     # A literal (a placeholder once blanked) sorts by a constant: it names no column.
-    return [c for c in cols if c and c != "?" and c not in ("asc", "desc")] or None
+    return [
+        text.name(c).lower() for c in cols if c != "?" and c.lower() not in ("asc", "desc")
+    ] or None
 
 
 def _has_time_range_filter(query_text: str) -> bool:

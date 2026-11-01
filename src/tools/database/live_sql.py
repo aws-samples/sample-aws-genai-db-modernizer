@@ -33,9 +33,10 @@ the pipeline (``TableNameResolver``); a live collector reads its queries
 before it has a table list to resolve against.
 
 A collector's own filter, sort and time-range parsing reads the text the engine
-runs (#1420): :func:`src.shared.sql_spans.code_text` for the columns, :func:`time_range_text` for the
+runs (#1420): :func:`column_text` for the columns, :func:`time_range_text` for the
 time range, so a keyword or a column name inside a comment or a string literal
-(a query tag, a note) is never read as SQL.
+(a query tag, a note) is never read as SQL, and a quoted identifier is one name whose
+words are never SQL either (#1737).
 """
 
 from __future__ import annotations
@@ -43,9 +44,16 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
-from src.shared.sql_spans import literals_and_comments_for, opens_routine_body, spans
+from src.shared.sql_spans import (
+    NEUTRAL_NAME,
+    literals_and_comments_for,
+    opens_routine_body,
+    spans,
+)
 from src.tools.sql import facade
 from src.tools.sql.facade import SqlReading, TableRef, TableReferences
 from src.tools.sql.query_facts import query_facts, remember_stored_facts
@@ -211,3 +219,96 @@ def time_range_text(sql: str, source_engine: str) -> str:
             out.append(span if _TIME_LITERAL_RE.fullmatch(span) else "''")
     out.append(text[last:])
     return "".join(out)
+
+
+# The quote that closes each quoted-identifier opener; a doubled closer inside the name is
+# one quote of the name.
+_IDENTIFIER_CLOSERS = {"`": "`", '"': '"', "[": "]"}
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+@dataclass(frozen=True)
+class ColumnText:
+    """A query's text for a collector's filter and sort parsing (:func:`column_text`):
+    ``text`` with each quoted identifier one placeholder word, and the name each
+    placeholder stands for."""
+
+    text: str
+    names: Mapping[str, str]
+
+    def is_quoted(self, word: str) -> bool:
+        """Whether ``word`` is a quoted identifier's placeholder."""
+        return word in self.names
+
+    def name(self, word: str, fold: Callable[[str], str] = str) -> str:
+        """The column ``word`` names: each dot-separated part that is a placeholder is its
+        quoted name as written (``"t"."My Col"`` reads ``t.My Col``), and every other part
+        is ``fold(part)`` (PostgreSQL folds an unquoted name to lower case, never a quoted
+        one)."""
+        return ".".join(
+            self.names[part] if part in self.names else fold(part) for part in word.split(".")
+        )
+
+
+def column_text(sql: str, source_engine: str) -> ColumnText:
+    """``sql`` for a collector's filter and sort parsing (#1420, #1737), read in
+    ``source_engine``'s forms (:func:`src.shared.sql_spans.literals_and_comments_for`):
+    each comment a space, each string literal a ``?`` placeholder, and each quoted
+    identifier (MySQL and MariaDB backticks, ``"..."`` in every other dialect, SQL Server
+    brackets) one placeholder word that no keyword or operator is, with the name it
+    stands for (:meth:`ColumnText.name`). A quoted name is one column: its words are never
+    SQL (`` `a = 1 AND b IN (2)` `` is no filter), and a name that is not one word keeps
+    its spaces and escaped quotes.
+
+    A PostgreSQL ``DO`` block or ``AS $$ ... $$`` routine body is SQL the engine runs, so
+    it is read the same way, as :func:`src.shared.sql_spans.code_text` reads it (#1416).
+    """
+    text = sql or ""
+    grammar = literals_and_comments_for(source_engine)
+    # A placeholder prefix the text does not hold, so a bare name is never read as one.
+    prefix = NEUTRAL_NAME
+    while prefix in text.lower():
+        prefix += "x"
+    names: dict[str, str] = {}
+
+    def read(part: str) -> str:
+        out: list[str] = []
+        last = 0
+        previous_name_end = -1  # where the last quoted identifier ended
+        for start, end, opener in spans(part, grammar):
+            out.append(part[last:start])
+            last = end
+            if opener in ("--", "/*", "#"):
+                out.append(" ")
+            elif opener in grammar.identifiers:
+                closer = _IDENTIFIER_CLOSERS[opener]
+                name = part[start + 1 : end - 1].replace(closer * 2, closer)
+                if opener == "`" and start == previous_name_end and names:
+                    # A doubled backtick ends one span and opens the next: one name.
+                    token = next(reversed(names))
+                    names[token] += "`" + name
+                else:
+                    token = f"{prefix}_{len(names)}"
+                    names[token] = name
+                    before = next((piece[-1] for piece in reversed(out) if piece), "")
+                    after = part[end : end + 1]
+                    left = " " if before and _is_word_char(before) else ""
+                    right = " " if after and _is_word_char(after) else ""
+                    out.append(f"{left}{token}{right}")
+                previous_name_end = end
+            elif (
+                opener[0] == "$"
+                and end - start >= 2 * len(opener)
+                and opens_routine_body("".join(out[-4:]))
+            ):
+                body = part[start + len(opener) : end - len(opener)]
+                out.append(" " + read(body) + " ")
+            else:
+                out.append("?")
+        out.append(part[last:])
+        return "".join(out)
+
+    return ColumnText(read(text), names)
