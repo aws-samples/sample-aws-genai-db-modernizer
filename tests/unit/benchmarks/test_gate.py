@@ -73,8 +73,8 @@ def _bias_toward(engine: str, bonus: int = 60):
     forbids), applied where the resolver calls it."""
     real = assignment_resolver.score_query_for_engine
 
-    def biased(query, candidate, ctx):
-        result = real(query, candidate, ctx)
+    def biased(query, candidate, ctx, **kwargs):
+        result = real(query, candidate, ctx, **kwargs)
         if candidate == engine and result.score is not None:
             result = dataclasses.replace(result, score=min(100, result.score + bonus))
         return result

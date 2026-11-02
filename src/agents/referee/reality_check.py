@@ -204,6 +204,8 @@ def run_reality_check(
       - recommendations: list of human-readable recommendations
       - unique_value_assessment: per-engine analysis of unique vs redundant queries
       - move_ledger: the ledger holding this check's Moves (#616)
+      - settled_counts: the resolver's settled-workload snapshot (#746)
+      - score_dimensions: the re-run's explained scores (#1471), for the record
     """
     query_assignments = assignment.get("query_assignments", [])
     if ledger is None:
@@ -290,12 +292,16 @@ def run_reality_check(
         if sources_of_truth is not None
         else assignment_sources_of_truth(assignment)
     )
+    # The same run's scores, each explained by the scorer call that made it, for the
+    # revised version's access-pattern record (#1471); nothing in this check reads them.
+    score_dimensions: dict = {}
     AssignmentResolver().resolve(
         triage,
         analysis_outputs,
         collector_output,
         routing_trace=_trace,
         sources_of_truth=sources,
+        score_dimensions=score_dimensions,
     )
     trace_by_query = _trace.by_query
     # The one shared scoring context (#490/#549): the mandatory-engine
@@ -466,4 +472,7 @@ def run_reality_check(
         # The resolver's settled-workload snapshot this check's ties used
         # (ADR-031 Decision 12), for the later steps to reuse (#746).
         "settled_counts": dict(settled_counts),
+        # ``{query_id: {engine: EngineScore}}`` of the re-run above (#1471): the revised
+        # version's access-pattern record keeps their dimensions.
+        "score_dimensions": score_dimensions,
     }

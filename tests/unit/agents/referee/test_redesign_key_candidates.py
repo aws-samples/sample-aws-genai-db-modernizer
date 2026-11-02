@@ -95,7 +95,7 @@ class TestTheDiscourseSweep:
 
     def test_the_record_lists_the_refusal_and_routing_still_has_no_redesign(self, discourse):
         record = access_patterns_record(discourse, {})
-        assert record["schema_version"] == 3
+        assert record["schema_version"] == 4
         row = next(r for r in record["queries"] if r["query_id"] == SWEEP)
         assert row["redesign"] is None
         (entry,) = row["candidate_keys"]

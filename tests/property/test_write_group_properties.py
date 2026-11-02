@@ -60,7 +60,7 @@ def workloads(draw: st.DrawFn) -> tuple[list[dict], dict[tuple[str, str], float]
 
 
 def _resolve(queries: list[dict], scores: dict[tuple[str, str], float]):
-    def fake(query, engine, ctx):
+    def fake(query, engine, ctx, **_):
         return EngineScore(scores[(query["query_id"], engine)])
 
     tables = sorted({t for q in queries for t in q["tables_accessed"]})

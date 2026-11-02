@@ -87,8 +87,10 @@ from src.agents.referee.move_ledger import (
 from src.agents.referee.query_scoring import (
     GATE_KIND_CAPABILITY,
     GATE_KIND_WRITE,
+    EngineScore,
     ScoringContext,
     compute_query_confidence,
+    explained_breakdown,
     score_query_for_engine,
     waiver_table,
 )
@@ -200,8 +202,15 @@ class AssignmentResolver:
         *,
         routing_trace: RoutingTrace | None = None,
         sources_of_truth: Mapping[str, str] | None = None,
+        score_dimensions: dict[str, dict[str, EngineScore]] | None = None,
     ) -> Assignment:
         """Produce initial assignment based on query-level scoring.
+
+        ``score_dimensions`` (#1471), when given, is filled with ``{query_id: {engine:
+        EngineScore}}``: each score the passes compare, explained by the very scorer call
+        that computed it (``score_query_for_engine(..., explain=True)``), for the
+        assignment's access-pattern record. A gated engine has no entry. Nothing here
+        reads it, and explaining a score never changes it, so it changes no routing.
 
         ``sources_of_truth`` (``{table: engine}``) overrides the sources of truth the
         capability waivers read (Step 6d, ADR-031 Decision 2 Amendment 12, #377): the
@@ -308,7 +317,11 @@ class AssignmentResolver:
                 qid = query["query_id"]
                 scores.setdefault(qid, {})
 
-                result = score_query_for_engine(query, engine, scoring_ctx)
+                result = (
+                    score_query_for_engine(query, engine, scoring_ctx)
+                    if score_dimensions is None
+                    else score_query_for_engine(query, engine, scoring_ctx, explain=True)
+                )
                 if result.score is None:
                     scores[qid][engine] = 0
                     # A gated EngineScore always carries its reason and kind (see
@@ -325,6 +338,8 @@ class AssignmentResolver:
                     continue
 
                 scores[qid][engine] = int(result.score)
+                if score_dimensions is not None:
+                    score_dimensions.setdefault(qid, {})[engine] = result
 
         # Step 4b: Collapse a heterogeneous source's two competing Aurora engines to
         # one (#381). A source with no Aurora dialect of its own (SQL Server, Oracle,
@@ -349,6 +364,8 @@ class AssignmentResolver:
             analysis_outputs = {e: a for e, a in analysis_outputs.items() if e != loser}
             for qid_scores in scores.values():
                 qid_scores.pop(loser, None)
+            for explained in (score_dimensions or {}).values():
+                explained.pop(loser, None)
             aurora_engine_choice = AuroraEngineChoice(
                 source_engine=source_engine,
                 engine=winner,
@@ -395,6 +412,10 @@ class AssignmentResolver:
             analysis = analysis_outputs[homogeneous_aurora]
             for query in queries:
                 qid = query["query_id"]
+                # The call explains itself when the dimensions are recorded (#1471).
+                guarantee_trace: dict[str, object] | None = (
+                    {} if score_dimensions is not None else None
+                )
                 base_score = compute_query_confidence(
                     qid,
                     query,
@@ -402,9 +423,17 @@ class AssignmentResolver:
                     analysis,
                     pattern_model=scoring_ctx.pattern_model,
                     cost_score=scoring_ctx.cost_score(query, homogeneous_aurora),
+                    trace=guarantee_trace,
                 )
                 penalty = anti_pattern_map.get((qid, homogeneous_aurora), 0)
                 scores.setdefault(qid, {})[homogeneous_aurora] = max(0, base_score - penalty)
+                if score_dimensions is not None and guarantee_trace is not None:
+                    guarantee_trace.update(gate=None, fit=max(0, base_score - penalty))
+                    score_dimensions.setdefault(qid, {})[homogeneous_aurora] = EngineScore(
+                        score=float(max(0, base_score - penalty)),
+                        breakdown=explained_breakdown(guarantee_trace),
+                        penalty=penalty,
+                    )
                 if qid in exclusion_notes:
                     exclusion_notes[qid] = [
                         n for n in exclusion_notes[qid] if n["engine"] != homogeneous_aurora
@@ -835,7 +864,11 @@ class AssignmentResolver:
                 waived = waiver_ctx.capability_waivers(query, engine)
                 if gate_kind != GATE_KIND_CAPABILITY or not waived:
                     continue
-                result = score_query_for_engine(query, engine, waiver_ctx)
+                result = (
+                    score_query_for_engine(query, engine, waiver_ctx)
+                    if score_dimensions is None
+                    else score_query_for_engine(query, engine, waiver_ctx, explain=True)
+                )
                 if result.score is None:
                     continue
                 table = str(waiver_table(query))
@@ -849,6 +882,8 @@ class AssignmentResolver:
                     for w in waived
                 ]
                 scores.setdefault(qid, {})[engine] = int(result.score)
+                if score_dimensions is not None:
+                    score_dimensions.setdefault(qid, {})[engine] = result
                 exclusion_notes[qid] = [n for n in exclusion_notes[qid] if n["engine"] != engine]
                 if not exclusion_notes[qid]:
                     del exclusion_notes[qid]

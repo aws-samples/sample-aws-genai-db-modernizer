@@ -68,7 +68,11 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
 
     # --- Resolve assignment ---
     resolver = AssignmentResolver()
-    assignment = resolver.resolve(triage, analysis_outputs, collector_output)
+    # Each compared score explained by the scorer call that made it, for the record (#1471).
+    score_dimensions: dict = {}
+    assignment = resolver.resolve(
+        triage, analysis_outputs, collector_output, score_dimensions=score_dimensions
+    )
     # Override version from resolver (which defaults to 1)
     assignment = assignment.model_copy(update={"version": version})
     say(
@@ -101,7 +105,13 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
 
     # --- The access-pattern class of each query, as routing scored it (#728, #936) ---
     record_key = write_access_patterns(
-        store, database_name, job_id, version, collector_output, analysis_outputs
+        store,
+        database_name,
+        job_id,
+        version,
+        collector_output,
+        analysis_outputs,
+        score_dimensions=score_dimensions,
     )
     say(f"[assignment] Access-pattern record written to {record_key}")
 

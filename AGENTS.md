@@ -182,7 +182,10 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `assignment/v<N>/access_patterns.json`: each query's access-pattern
   class, class scores and parity-anchor notes, as routing scored it (#728, #936),
   its redesigned class and the keys routing assumed when a redesign applies, and its
-  anti-pattern findings, each fixable by redesign or intrinsic (#1231)
+  anti-pattern findings, each fixable by redesign or intrinsic (#1231), and the
+  score dimensions routing combined per scored engine (pattern, cost, base, applied
+  penalty, score; per-table complexity, performance and weights), a record routing
+  never reads (#1471)
 - `reality-check/` (`llm_input.json`, `output.json` for the latest run, and
   `v<N>/output.json` for each completed run, keyed on the assignment version it
   wrote or, when it changed nothing, checked; readers take the record of the run

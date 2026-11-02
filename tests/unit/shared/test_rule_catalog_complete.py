@@ -310,6 +310,11 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/agents/referee/query_pattern.py": (
+        frozenset({"SCORE_DIMENSIONS_SCHEMA_VERSION"}),
+        "a file format version, not a routing rule: the access-pattern record's schema "
+        "version that adds each query's score dimensions (#1471); routing reads none of it",
+    ),
     "src/shared/row_counts.py": (
         frozenset({"ONE_PAGE_MB", "UNKNOWN_SIZE_MB", "DDL_TABLE_THRESHOLD_ROWS"}),
         "a collection fact, not a routing rule: one 16 KB InnoDB page as the scripts round "
