@@ -171,6 +171,15 @@ export function unservableOf(synthesis) {
   return u;
 }
 
+// #802: the DynamoDB group merge's unresolved conflicts (facts.dynamodb_merge_conflicts),
+// each failure with the access patterns and queries the merged design does not serve,
+// or null when the merge left none and for a report written before the fact.
+export function dynamodbMergeConflictsOf(synthesis) {
+  const f = factsOf(synthesis) && factsOf(synthesis).dynamodb_merge_conflicts;
+  if (!f || !Array.isArray(f.conflicts) || f.conflicts.length === 0) return null;
+  return f;
+}
+
 // #992: each written table's source of truth and the replicas serving its reads
 // (facts.table_sources), or null when no query writes a table or the report
 // predates them. Every figure is the facts layer's.

@@ -80,6 +80,7 @@ from src.agents.referee.synthesis_report import (
 from src.agents.referee.table_assignments import retained_engine_for
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
 from src.agents.referee.write_groups import table_sources, unservable_write_groups
+from src.agents.schema_design.dynamodb_merge import unresolved_merge_conflicts
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -1767,6 +1768,12 @@ def _build_standard_schema_summary(schema):
         "trade_offs": field_list(schema, "trade_offs"),
         "unsupported_patterns": field_list(schema, "unsupported_patterns"),
         "migration_notes": field_list(schema, "migration_notes"),
+        # #802: the merge failures, each with the access patterns it leaves unserved.
+        **(
+            {"unresolved_merge_conflicts": conflicts}
+            if (conflicts := unresolved_merge_conflicts(schema))
+            else {}
+        ),
     }
 
 

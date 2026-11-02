@@ -30,6 +30,7 @@ from src.agents.schema_design.dynamodb_merge import (
     merge_warnings,
     pattern_id_maps,
     rewrite_pattern_ids,
+    unresolved_merge_conflicts,
 )
 from src.agents.schema_design.output_contract import write_schema_output
 from src.agents.schema_design.pattern_input import PATTERN_ENGINES, complete_pattern_members
@@ -452,6 +453,9 @@ def merge_schema_groups(
             merged, _input_patterns(store, base_key, manifest)
         )
         notes.extend(member_notes)
+        if engine == "dynamodb" and "unresolved_merge_conflicts" in merged:
+            # #802: the members just added to an unserved pattern are unserved too.
+            merged["unresolved_merge_conflicts"] = unresolved_merge_conflicts(merged)
 
     # Carry the manifest's excluded_queries (--split's "not designed: no source
     # table" list, #276/#369) into the final output, so a query that never

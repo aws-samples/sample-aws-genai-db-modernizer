@@ -1,0 +1,153 @@
+{
+  "about": "#802: DynamoDB schema design summaries with unresolved merge conflicts, one of each kind of line (unserved, a pattern an earlier conflict lists, at risk, none named), and one design merged before the merge recorded its patterns (legacy), with the facts blocks the facts layer computes from them (tests/unit/report/test_merge_conflict_sections.py checks they are that output). not_served_lines is each conflict's line, as both the engineering report (without its code spans) and the results page print it. The engineering report, the executive report and the results page render them.",
+  "schema_design": {
+    "status": "completed",
+    "validation_passed": false,
+    "unresolved_merge_conflicts": [
+      {
+        "failure": "DynamoDB merge: table 'Main' is designed differently in group 2 and group 1 (sort key META#{meta_key} vs META#{meta_id}); the merge kept the group 2 design. Give the tables different names or reconcile them into one design.",
+        "status": "unserved",
+        "table_name": "Main",
+        "pattern_ids": [
+          "DDB-AP-1",
+          "DDB-AP-2"
+        ],
+        "query_ids": [
+          "q-users-by-id",
+          "q-users-by-login"
+        ]
+      },
+      {
+        "failure": "DynamoDB merge: access pattern DDB-AP-2 uses GSI 'ByEmail', but table 'Main' has no GSI of that name",
+        "status": "unserved",
+        "table_name": "Main",
+        "pattern_ids": [
+          "DDB-AP-2"
+        ],
+        "query_ids": [
+          "q-users-by-login"
+        ]
+      },
+      {
+        "failure": "DynamoDB merge: table 'Orders' has 21 GSIs after the merge, over the DynamoDB default limit of 20. Drop or combine GSIs, or move some access patterns to another table.",
+        "status": "at_risk",
+        "table_name": "Orders",
+        "pattern_ids": [
+          "DDB-AP-3"
+        ],
+        "query_ids": [
+          "q-order-lines"
+        ]
+      },
+      {
+        "failure": "DynamoDB merge: hot-partition entry runs on table 'Gone', but no table of that name is defined",
+        "status": "none_named",
+        "table_name": null,
+        "pattern_ids": [],
+        "query_ids": []
+      }
+    ]
+  },
+  "facts": {
+    "conflicts": [
+      {
+        "failure": "DynamoDB merge: table 'Main' is designed differently in group 2 and group 1 (sort key META#{meta_key} vs META#{meta_id}); the merge kept the group 2 design. Give the tables different names or reconcile them into one design.",
+        "status": "unserved",
+        "table_name": "Main",
+        "pattern_ids": [
+          "DDB-AP-1",
+          "DDB-AP-2"
+        ],
+        "query_ids": [
+          "q-users-by-id",
+          "q-users-by-login"
+        ],
+        "repeated_pattern_ids": []
+      },
+      {
+        "failure": "DynamoDB merge: access pattern DDB-AP-2 uses GSI 'ByEmail', but table 'Main' has no GSI of that name",
+        "status": "unserved",
+        "table_name": "Main",
+        "pattern_ids": [
+          "DDB-AP-2"
+        ],
+        "query_ids": [
+          "q-users-by-login"
+        ],
+        "repeated_pattern_ids": [
+          "DDB-AP-2"
+        ]
+      },
+      {
+        "failure": "DynamoDB merge: table 'Orders' has 21 GSIs after the merge, over the DynamoDB default limit of 20. Drop or combine GSIs, or move some access patterns to another table.",
+        "status": "at_risk",
+        "table_name": "Orders",
+        "pattern_ids": [
+          "DDB-AP-3"
+        ],
+        "query_ids": [
+          "q-order-lines"
+        ],
+        "repeated_pattern_ids": []
+      },
+      {
+        "failure": "DynamoDB merge: hot-partition entry runs on table 'Gone', but no table of that name is defined",
+        "status": "none_named",
+        "table_name": null,
+        "pattern_ids": [],
+        "query_ids": [],
+        "repeated_pattern_ids": []
+      }
+    ],
+    "conflict_count": 4,
+    "unserved_pattern_count": 2,
+    "unserved_query_count": 2,
+    "at_risk_pattern_count": 1,
+    "at_risk_query_count": 1,
+    "unrecorded_conflict_count": 0,
+    "summary_line": "The DynamoDB group merge left 4 conflicts unresolved: the merged design does not serve 2 access patterns (2 queries); 1 more access pattern (1 query) is at risk until the conflicts are resolved."
+  },
+  "not_served_lines": [
+    "Not served: DDB-AP-1, DDB-AP-2 on Main; queries q-users-by-id, q-users-by-login.",
+    "Not served: DDB-AP-2 (also listed above) on Main; queries q-users-by-login.",
+    "At risk until this conflict is resolved: DDB-AP-3 on Orders; queries q-order-lines.",
+    "The merge names no access pattern this failure leaves unserved."
+  ],
+  "legacy": {
+    "schema_design": {
+      "status": "completed",
+      "validation_passed": false,
+      "unresolved_merge_conflicts": [
+        {
+          "failure": "DynamoDB merge: table 'Main' is designed differently in group 2 and group 1 (sort key META#{meta_key} vs META#{meta_id}); the merge kept the group 2 design. Give the tables different names or reconcile them into one design.",
+          "status": "not_recorded",
+          "table_name": null,
+          "pattern_ids": [],
+          "query_ids": []
+        }
+      ]
+    },
+    "facts": {
+      "conflicts": [
+        {
+          "failure": "DynamoDB merge: table 'Main' is designed differently in group 2 and group 1 (sort key META#{meta_key} vs META#{meta_id}); the merge kept the group 2 design. Give the tables different names or reconcile them into one design.",
+          "status": "not_recorded",
+          "table_name": null,
+          "pattern_ids": [],
+          "query_ids": [],
+          "repeated_pattern_ids": []
+        }
+      ],
+      "conflict_count": 1,
+      "unserved_pattern_count": 0,
+      "unserved_query_count": 0,
+      "at_risk_pattern_count": 0,
+      "at_risk_query_count": 0,
+      "unrecorded_conflict_count": 1,
+      "summary_line": "The DynamoDB group merge left 1 conflict unresolved: the unserved access patterns were not recorded for 1 conflict."
+    },
+    "not_served_lines": [
+      "Unserved access patterns were not recorded for this design (it was merged before they were); merge it again to list them."
+    ]
+  }
+}

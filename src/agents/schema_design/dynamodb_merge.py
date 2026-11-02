@@ -66,7 +66,10 @@ Merge rule
    groups, a merged table with more GSIs than DynamoDB allows by default, and
    a table or GSI name over DynamoDB's 255-character limit (#866), and an access
    pattern or hot-partition entry on a table or GSI the merged design does not
-   define (:func:`dangling_references`, #1243).
+   define (:func:`dangling_references`, #1243). ``unresolved_merge_conflicts``
+   lists each failure with the access patterns and queries it leaves unserved
+   (#802, :func:`unresolved_merge_conflicts`): the dropped design's patterns, now
+   pointed at the kept table, or a pattern on a table or GSI that is not defined.
 4. **Independent homes get one authoritative home.** When a source table is
    still the *primary entity* (its own entity in an item collection, or the
    base entity of a single-entity table) of two or more tables designed by
@@ -416,6 +419,47 @@ class TableReconciliation:
     renames: list[dict[str, str]]  # per draft: absorbed table name -> survivor name
     failures: list[str]
     trade_offs: list[dict]
+    # #802: per failure (same order), what it leaves unserved: an entry, or a pending
+    # ``{"failure", "source"}`` for an ownership failure the final design resolves
+    conflicts: list[dict] = field(default_factory=list)
+
+
+# What a conflict entry's patterns are (#802). Unserved: the merged design runs them on
+# a table or GSI not designed for them. At risk: they run on a table the failure
+# concerns, which cannot be created as designed or holds rows another table keys
+# differently, until the conflict is resolved. None named: the failure names no
+# access pattern. Not recorded: a design merged before the merge recorded them.
+UNSERVED = "unserved"
+AT_RISK = "at_risk"
+NONE_NAMED = "none_named"
+NOT_RECORDED = "not_recorded"
+PATTERN_STATUSES = (UNSERVED, AT_RISK, NONE_NAMED, NOT_RECORDED)
+
+
+def conflict_entry(
+    failure: str,
+    table_name: str | None = None,
+    patterns: list[dict] | None = None,
+    status: str | None = None,
+) -> dict:
+    """One ``unresolved_merge_conflicts`` entry (#802): a merge failure, what its
+    patterns are (``status``, :data:`PATTERN_STATUSES`; unserved when ``patterns`` are
+    given, else none named), the merged table they run on, their pattern IDs and their
+    query IDs."""
+    patterns = patterns or []
+    return {
+        "failure": failure,
+        "status": status or (UNSERVED if patterns else NONE_NAMED),
+        "table_name": table_name,
+        "pattern_ids": list(
+            dict.fromkeys(str(ap["pattern_id"]) for ap in patterns if ap.get("pattern_id"))
+        ),
+        "query_ids": list(
+            dict.fromkeys(
+                q for ap in patterns for q in ap.get("query_ids") or [] if isinstance(q, str)
+            )
+        ),
+    }
 
 
 def _table_order(drafts: list[dict]) -> list[tuple[int, int, dict]]:
@@ -549,6 +593,7 @@ def reconcile_tables(
     homes: list[_Home] = []
     members: list[list[_Member]] = []
     dropped_into: list[list[tuple[int, str]]] = []
+    dropped_designs: list[tuple[int, int, str, int]] = []  # (home, draft, table, failure #)
     first_seen: list[tuple[int, int]] = []
     renames: list[dict[str, str]] = [{} for _ in drafts]
     failures: list[str] = []
@@ -590,6 +635,7 @@ def reconcile_tables(
                     "names or reconcile them into one design."
                 )
                 dropped_into[i].append((pos, name))
+                dropped_designs.append((i, pos, name, len(failures) - 1))
                 dropped = True
                 break
         if dropped:
@@ -675,8 +721,23 @@ def reconcile_tables(
                     "engine": "dynamodb",
                 }
             )
+    # #802: the dropped design's access patterns now point at the kept table, which
+    # was not designed for them: the merged design does not serve them.
+    unserved = {
+        i_failure: conflict_entry(
+            failures[i_failure],
+            str(homes[i].table.get("table_name")),
+            [
+                ap
+                for ap in _dicts(drafts[pos].get("access_patterns"))
+                if ap.get("table_name") == name
+            ],
+        )
+        for i, pos, name, i_failure in dropped_designs
+    }
+    conflicts = [unserved.get(i) or conflict_entry(f) for i, f in enumerate(failures)]
     listed = sorted(range(len(homes)), key=lambda i: first_seen[i])
-    return TableReconciliation([homes[i] for i in listed], renames, failures, trade_offs)
+    return TableReconciliation([homes[i] for i in listed], renames, failures, trade_offs, conflicts)
 
 
 def _renamed(name: Any, renames: dict[str, str]) -> Any:
@@ -785,6 +846,12 @@ def aggregate_hot_partitions(entries: Any, tables: set[str]) -> Any:
 
 def entity_conflicts(homes: list[_Home]) -> list[str]:
     """Same entity type for the same source table with contradictory PK/SK templates."""
+    return [text for text, _, _ in _entity_conflicts(homes)]
+
+
+def _entity_conflicts(homes: list[_Home]) -> list[tuple[str, list[str], str]]:
+    """:func:`entity_conflicts`, each with the tables that hold the entity and its
+    normalised source table (#802)."""
     seen: dict[tuple[str, str], list[tuple[int, dict]]] = {}
     for i, home in enumerate(homes):
         for entity in _dicts(home.table.get("entities")):
@@ -793,8 +860,8 @@ def entity_conflicts(homes: list[_Home]) -> list[str]:
                 seen.setdefault(sig[:2], []).append((i, entity))
     from src.agents.schema_design.dynamodb_key_reconcile import canon_template
 
-    failures: list[str] = []
-    for (entity_type, _), defs in seen.items():
+    failures: list[tuple[str, list[str], str]] = []
+    for (entity_type, source), defs in seen.items():
         # Tokens compared by the source column they copy: {ID} and {post_id}
         # (an attribute copying ID) are the same key.
         variants = {
@@ -814,9 +881,14 @@ def entity_conflicts(homes: list[_Home]) -> list[str]:
             for i, e in defs
         )
         failures.append(
-            f"{MERGE_FAILURE_PREFIX}entity {entity_type} for source table "
-            f"'{defs[0][1].get('source_table')}' has contradictory key templates: {described}. "
-            "Use one PK/SK template for the same rows, or rename one entity type."
+            (
+                f"{MERGE_FAILURE_PREFIX}entity {entity_type} for source table "
+                f"'{defs[0][1].get('source_table')}' has contradictory key templates: "
+                f"{described}. Use one PK/SK template for the same rows, or rename one "
+                "entity type.",
+                list(dict.fromkeys(str(homes[i].table.get("table_name")) for i, _ in defs)),
+                source,
+            )
         )
     return failures
 
@@ -975,6 +1047,57 @@ def merge_failures(schema_output: Any) -> list[str]:
     return [f for f in failures if isinstance(f, str) and f.startswith(MERGE_FAILURE_PREFIX)]
 
 
+def _strings(value: Any) -> list[str]:
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def unresolved_merge_conflicts(schema_output: Any) -> list[dict]:
+    """The merge failures in ``schema_output``, each with the access patterns it
+    concerns (#802): ``failure``, ``status`` (:data:`PATTERN_STATUSES`), ``table_name``
+    (the merged table those patterns run on, or None), ``pattern_ids`` and
+    ``query_ids``.
+
+    Each entry's queries are read again from the design's own access patterns, so the
+    statements a later step adds to a pattern (``complete_pattern_members``, #1602) are
+    listed too. A design saved before the field lists each merge failure as not
+    recorded: what it leaves unserved is unknown, not none. An entry whose failure is
+    no longer in ``validation_failures`` (a hand fix cleared it) is not listed.
+    """
+    if not isinstance(schema_output, dict):
+        return []
+    failures = merge_failures(schema_output)
+    stored = schema_output.get("unresolved_merge_conflicts")
+    if not isinstance(stored, list):
+        return [conflict_entry(f, status=NOT_RECORDED) for f in failures]
+    queries: dict[str, list[str]] = {}
+    for ap in _dicts(schema_output.get("access_patterns")):
+        if isinstance(ap.get("pattern_id"), str):
+            queries.setdefault(ap["pattern_id"], []).extend(_strings(ap.get("query_ids")))
+    out = []
+    for c in _dicts(stored):
+        if c.get("failure") not in failures:
+            continue
+        patterns = _strings(c.get("pattern_ids"))
+        status = c.get("status")
+        out.append(
+            {
+                "failure": c["failure"],
+                "status": (
+                    status if status in PATTERN_STATUSES else (UNSERVED if patterns else NONE_NAMED)
+                ),
+                "table_name": c["table_name"] if isinstance(c.get("table_name"), str) else None,
+                "pattern_ids": patterns,
+                "query_ids": list(
+                    dict.fromkeys(
+                        _strings(c.get("query_ids"))
+                        + [q for p in patterns for q in queries.get(p, [])]
+                    )
+                ),
+            }
+        )
+    return out
+
+
 def merge_overlaps(schema_output: Any) -> list[dict]:
     """Return the unresolved cross-group overlap trade-offs in ``schema_output``.
 
@@ -1020,6 +1143,7 @@ def _draft_passed(draft: dict) -> bool:
 def _without_stale(draft: dict) -> dict:
     """Drop merge output a draft may have copied from an earlier merged design."""
     result = dict(draft)
+    result.pop("unresolved_merge_conflicts", None)
     if isinstance(draft.get("validation_failures"), list):
         stale = set(merge_failures(draft))
         result["validation_failures"] = [f for f in draft["validation_failures"] if f not in stale]
@@ -1058,6 +1182,7 @@ def prepare_drafts(
         renumber_draft(d, m) for d, m in zip(cleaned, pattern_id_maps(cleaned), strict=True)
     ]
     owner_failures: list[str] = []  # what the split's ownership cannot reconcile (#1243)
+    owner_sources: list[str] = []  # the source table of each (#802)
     renumbered, key_trade_offs = reconcile_shared_tables(
         renumbered,
         group_indices,
@@ -1066,10 +1191,15 @@ def prepare_drafts(
         column_types=column_types,
         owners=owners,
         failures=owner_failures,
+        failure_sources=owner_sources,
     )
     reconciliation = reconcile_tables(renumbered, group_indices, notes)
     reconciliation.trade_offs[:0] = key_trade_offs
     reconciliation.failures[:0] = [f"{MERGE_FAILURE_PREFIX}{f}" for f in owner_failures]
+    reconciliation.conflicts[:0] = [
+        {"failure": f"{MERGE_FAILURE_PREFIX}{f}", "source": source}
+        for f, source in zip(owner_failures, owner_sources, strict=True)
+    ]
     prepared = [
         apply_renames(d, r) for d, r in zip(renumbered, reconciliation.renames, strict=True)
     ]
@@ -1080,11 +1210,17 @@ def dangling_references(design: dict) -> list[str]:
     """A failure for each access pattern or hot-partition entry naming a table or GSI
     the design does not define (#1243): such a design cannot run its queries, so it
     never passes validation."""
+    return [c["failure"] for c in _dangling_conflicts(design)]
+
+
+def _dangling_conflicts(design: dict) -> list[dict]:
+    """:func:`dangling_references` as conflict entries: a dangling access pattern is
+    one the merged design does not serve (#802); a hot-partition entry is no pattern."""
     gsis = {
         str(t.get("table_name")): {str(g.get("gsi_name")) for g in _dicts(t.get("gsis"))}
         for t in _dicts(design.get("table_definitions"))
     }
-    failures: list[str] = []
+    conflicts: list[dict] = []
     for list_field, label in (
         ("access_patterns", "access pattern"),
         ("hot_partition_analysis", "hot-partition entry"),
@@ -1093,16 +1229,20 @@ def dangling_references(design: dict) -> list[str]:
             what = f"{label} {item.get('pattern_id') or ''}".rstrip()
             table, gsi = str(item.get("table_name") or ""), item.get("gsi_name")
             if table not in gsis:
-                failures.append(
+                text = (
                     f"{MERGE_FAILURE_PREFIX}{what} runs on table '{table}', but no table "
                     "of that name is defined"
                 )
             elif gsi and str(gsi) not in gsis[table]:
-                failures.append(
+                text = (
                     f"{MERGE_FAILURE_PREFIX}{what} uses GSI '{gsi}', but table '{table}' "
                     "has no GSI of that name"
                 )
-    return failures
+            else:
+                continue
+            unserved = [item] if list_field == "access_patterns" else []
+            conflicts.append(conflict_entry(text, table if unserved else None, unserved))
+    return conflicts
 
 
 def finish_merge(
@@ -1136,15 +1276,56 @@ def finish_merge(
     if "trade_offs" in merged or trade_offs:
         merged["trade_offs"] = trade_offs
 
-    failures = (
-        reconciliation.failures
-        + entity_conflicts(homes)
-        + gsi_limit_failures([h.table for h in homes], MERGE_FAILURE_PREFIX)
-        + name_length_failures([h.table for h in homes], MERGE_FAILURE_PREFIX)
-        + dangling_references(merged)
-    )
+    # #802: every failure with what it leaves unserved or at risk, in failure order.
+    patterns = _dicts(merged.get("access_patterns"))
+    conflicts = [
+        (_at_risk(c["failure"], patterns, sources={c["source"]}) if "source" in c else c)
+        for c in reconciliation.conflicts
+    ]
+    conflicts += [
+        _at_risk(text, patterns, tables=set(tables), sources={source})
+        for text, tables, source in _entity_conflicts(homes)
+    ]
+    for h in homes:
+        name = str(h.table.get("table_name"))
+        conflicts += [
+            _at_risk(text, patterns, tables={name})
+            for text in gsi_limit_failures([h.table], MERGE_FAILURE_PREFIX)
+            + name_length_failures([h.table], MERGE_FAILURE_PREFIX)
+        ]
+    conflicts += _dangling_conflicts(merged)
+    failures = [c["failure"] for c in conflicts]
     existing = [f for f in merged.get("validation_failures") or [] if isinstance(f, str)]
     if "validation_failures" in merged or failures:
         merged["validation_failures"] = existing + failures
     merged["validation_passed"] = passed and not failures
+    # A clean merge, like a draft, has none (the drafts' stale lists were dropped).
+    if conflicts:
+        merged["unresolved_merge_conflicts"] = conflicts
     return merged
+
+
+def _touches(ap: dict, sources: set[str]) -> bool:
+    named = {normalize_table_name(s) for s in ap.get("source_tables") or [] if isinstance(s, str)}
+    return bool(named & sources)
+
+
+def _at_risk(
+    failure: str,
+    access_patterns: list[dict],
+    tables: set[str] | None = None,
+    sources: set[str] | None = None,
+) -> dict:
+    """The conflict entry of a failure that leaves ``tables`` (or the rows of
+    ``sources``) not buildable as designed (#802): the access patterns on them are at
+    risk until it is resolved. With ``sources``, only the patterns that touch those
+    rows; with neither table nor pattern found, the failure names no pattern."""
+    at_risk = [
+        ap
+        for ap in access_patterns
+        if (tables is None or ap.get("table_name") in tables)
+        and (sources is None or _touches(ap, sources))
+    ]
+    on = {str(ap.get("table_name")) for ap in at_risk}
+    table = next(iter(on)) if len(on) == 1 else None
+    return conflict_entry(failure, table, at_risk, AT_RISK if at_risk else NONE_NAMED)

@@ -41,7 +41,7 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
 3. **Query flow**: a Sankey diagram of the queries from the source to their engines.
 4. **Cost breakdown**: the projected monthly cost per engine.
 5. **Migration roadmap**: the waves, each with its gate; a table list in a gate opens in place.
-6. **Banners**, when they apply: queries on a fallback engine, and close calls (queries whose engine scored less than 5 points above another engine the plan keeps).
+6. **Banners**, when they apply: queries on a fallback engine, the access patterns an unresolved DynamoDB merge leaves unserved, and close calls (queries whose engine scored less than 5 points above another engine the plan keeps).
 7. **Query routing**, collapsed: every query and its engine, with search and filters; open a query to see its history and why it ended on its engine.
 8. **Access pattern explorer**: the target data model, by access pattern or by source table, filtered by engine, operation or table (on a run with access patterns).
 9. **Table owners**, collapsed: each mapped table's owner, the engines that also read it and the cache in front of it, as in the engineering report's Migration map.
@@ -81,6 +81,10 @@ All of a table's writes land on one engine, its source of truth. When another en
 ## Close calls
 
 A close call is a query whose engine scored less than 5 points above another engine the plan keeps, which could serve it too. The assessment still decides, deterministically; the engineering report and the results page list them so you can move any of them yourself in the assignment review. Exact ties a routing rule settled are counted apart from them.
+
+## Unresolved DynamoDB merge conflicts
+
+DynamoDB is designed in parallel query groups, and their designs are merged into one. When two groups design the same table differently and the merge cannot reconcile them, it keeps one design and fails validation. `/modernize` sends the conflict back to the designers, but a run with no fix round (`--llm-mode bedrock`) keeps it. The engineering report and the results page then list each conflict under "Access patterns the merged DynamoDB design does not serve": the failure, and the access patterns and queries it concerns. Patterns are **not served** when the merged design runs them on a table or index that was not designed for them (the dropped design's patterns, or a pattern on a table or index the design does not define). They are **at risk until the conflict is resolved** when they run on a table the failure concerns: one that cannot be created as designed (more global secondary indexes than the default limit, a name over 255 characters), the tables holding rows with contradictory keys, or rows the merge could keep no safe key for. A failure that names no access pattern says so. A design merged before the assessment recorded these lists says its unserved patterns were not recorded; merge it again to list them. The executive report states the totals. Resolve each conflict in the DynamoDB schema design and merge again before migration.
 
 ## Costs
 
