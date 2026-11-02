@@ -730,6 +730,27 @@ def test_a_key_token_is_read_through_the_entity_attribute_not_as_a_column() -> N
     assert _kinds(wave3, "key_design") == [("shop.orders", "Forum#POST STATUS#{state}")]
 
 
+@pytest.mark.passes_on_main  # main already skips any attribute with a calculation
+def test_a_constant_dynamodb_attribute_is_not_a_gap() -> None:
+    """``entity_name = "wp_comments"`` and a sparse-index flag (#1531): the design carries the
+    literal, so a writer can build the attribute with no source column."""
+    attrs = [
+        {"name": "post_id", "source_table": "shop.orders", "source_column": "id"},
+        {
+            "name": "entity_name",
+            "type": "S",
+            "calculation": {"type": "constant", "value": "wp_comments"},
+        },
+        {"name": "is_open", "type": "BOOL", "calculation": {"type": "constant", "value": True}},
+    ]
+    design = _post_design("POST#{post_id}", "ENTITY#{entity_name}", attrs)
+    wave3 = _plans(designs={"dynamodb": ("schema-dynamodb/v2/schema_output.json", design)})[2]
+    assert _kinds(wave3, "attribute") == []
+    assert _kinds(wave3, "key_design") == []
+    ref = next(t.transformation for t in wave3.targets if t.engine == "dynamodb")
+    assert ref is not None and ref.artifact == "schema-dynamodb/v2/schema_output.json"
+
+
 def test_a_job_with_no_aurora_wave_plans_no_dms_move() -> None:
     waves = [w for w in _waves() if w["wave"] != 1]
     for i, w in enumerate(waves, start=1):

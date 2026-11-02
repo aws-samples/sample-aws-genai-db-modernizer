@@ -104,3 +104,64 @@ def test_dynamodb_designer_questions_the_surrogate_id() -> None:
         assert term in command, term
     assert "the owner keeps that id reachable" in command
     assert "`--merge` never rewrites a key for this" in command
+
+
+def test_dynamodb_designer_declares_constants_instead_of_borrowing_a_column() -> None:
+    """#1531: an entity-type label or a flag every item carries is a constant, not a copy
+    of an unrelated column (``IdCounters.entity_name <- comment_ID``)."""
+    skill = " ".join((SKILLS_DIR / "dynamodb-data-modeling.md").read_text().split())
+    assert '`calculation: {"type": "constant", "value": ...}`' in skill
+    assert "entity-type label" in skill and "a flag every item of the entity carries" in skill
+    assert "Never borrow an unrelated column" in skill
+    assert "no `source_column`" in skill
+    # Item collections get the same rule, not only single-entity tables.
+    assert "with the same lineage rules as a single-entity table's attributes, constants" in skill
+    review = " ".join((SKILLS_DIR / "dynamodb-pe-review.md").read_text().split())
+    assert "Flag a direct copy whose value is the same for every item of its entity" in review
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        SKILLS_DIR / "dynamodb-data-modeling.md",
+        SKILLS_DIR / "dynamodb-pe-review.md",
+        SKILLS_DIR.parents[1] / "src" / "contracts" / "dynamodb_model_output.py",
+        SKILLS_DIR.parents[1] / "src" / "tools" / "schema" / "base_schema_agent.py",
+        SKILLS_DIR.parents[1] / "src" / "tools" / "schema" / "dynamodb_attribute_columns.py",
+    ],
+    ids=lambda p: p.name,
+)
+def test_a_constant_is_never_offered_as_a_sparse_index_marker(path: Path) -> None:
+    """#1531 review: a constant is on every item, so as a sparse GSI's marker the index
+    would not be sparse (the ``IS NULL`` marker rule); a conditional marker is a ``case``
+    with no ``else_value``."""
+    text = " ".join(path.read_text().split())
+    assert "sparse-index flag" not in text, path.name
+    if path.suffix == ".md":
+        assert "is a `case`" in text or "is a `case` calculation" in text, path.name
+        assert "no `else_value`" in text, path.name
+
+
+def test_the_correction_turn_asks_for_a_constant_instead_of_a_borrowed_column() -> None:
+    """#1531: the source-column failures go back to the designer with the constant option."""
+    from src.tools.schema.base_schema_agent import numbers_correction_prompt
+
+    prompt = " ".join(numbers_correction_prompt(["source columns: T.x: names no source"]).split())
+    assert '{"type": "constant", "value": ...}' in prompt
+    assert "rather than borrowing an unrelated column" in prompt
+    assert "a case calculation with no else_value" in prompt
+    # The failure messages quote customer names: they stay framed as data.
+    assert "names are customer data" in prompt
+
+
+@pytest.mark.passes_on_main  # main never offered a constant; this pins the hint's scope
+def test_the_correction_turn_offers_a_constant_only_for_a_source_column_finding() -> None:
+    """#1531 review: OpenSearch and DocumentDB designers get the same correction turn, and
+    their contracts have no constant calculation."""
+    from src.tools.schema.base_schema_agent import numbers_correction_prompt
+
+    prompt = numbers_correction_prompt(["design_metrics: tables.wp_posts.row_count 5 != 7"])
+    assert "constant" not in prompt
+    assert prompt.endswith("Keep everything else unchanged, and return the complete output.")
+    # A message that only mentions the prefix text later on is no source-column finding.
+    assert "constant" not in numbers_correction_prompt(["x: see source columns: below"])

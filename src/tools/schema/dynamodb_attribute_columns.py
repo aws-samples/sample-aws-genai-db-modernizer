@@ -16,9 +16,13 @@ adds nothing to check: a direct attribute's ``source_column`` is checked on its 
 and a derived one is built by its join or calculation. Only a token that matches no
 attribute is checked as a column name.
 
-An attribute with no source column and no join or calculation is a warning, not a
-failure: the contract cannot express a constant (a label, a sparse-index flag), so
-such an attribute may be a deliberate literal.
+A ``constant`` calculation (an entity-type label, a flag every item carries, #1531) names no
+source column, like any calculation, so it is not checked. An attribute with no source
+column and no join, calculation or transformation fails: now that the contract can say
+"constant", nothing else can build it. One that has only a ``transformation`` stays a
+warning, because the transformation's own format may build the value and the check
+cannot tell. The check runs only where a design is finalized, never when a saved design
+is read, so a design written before constants existed loads as it was.
 
 Identifiers match case-insensitively. This is deliberately lenient: PostgreSQL
 quoted identifiers and case-sensitive SQL Server collations tell ``Id`` from ``ID``,
@@ -131,10 +135,17 @@ def _check_attribute(
         return  # derived on purpose; the design says how
     columns = _columns_of(attr)
     if not columns:
-        out.warnings.append(
-            f"{where}: names no source column and no join or calculation; "
-            "it is fine only if it is a constant"
-        )
+        if attr.get("transformation"):
+            out.warnings.append(
+                f"{where}: names no source column, only a transformation; it is fine only "
+                "if the transformation builds the value on its own"
+            )
+        else:
+            out.failures.append(
+                f"{where}: names no source column and no join or calculation; for the same "
+                "value on every item of the entity, declare calculation "
+                '{"type": "constant", "value": ...}'
+            )
         return
     table = attr.get("source_table") or default_table
     out.failures.extend(_check_columns(where, table, columns, schema, siblings))

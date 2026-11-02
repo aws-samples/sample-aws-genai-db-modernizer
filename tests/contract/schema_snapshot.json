@@ -12829,6 +12829,42 @@
                                           }
                                         }
                                       }
+                                    },
+                                    {
+                                      "kind": "object",
+                                      "properties": {
+                                        "type": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "const",
+                                            "value": "constant"
+                                          }
+                                        },
+                                        "value": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "anyOf",
+                                            "members": [
+                                              {
+                                                "kind": "scalar",
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "integer"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "number"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      }
                                     }
                                   ]
                                 },
@@ -13399,7 +13435,7 @@
                             }
                           },
                           "source_column": {
-                            "required": true,
+                            "required": false,
                             "schema": {
                               "kind": "anyOf",
                               "members": [
@@ -13409,6 +13445,10 @@
                                     "type": "string"
                                   },
                                   "kind": "array"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
                                 },
                                 {
                                   "kind": "scalar",
@@ -13633,6 +13673,42 @@
                                                   "schema": {
                                                     "kind": "const",
                                                     "value": "aggregate"
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "kind": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "const",
+                                                    "value": "constant"
+                                                  }
+                                                },
+                                                "value": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "anyOf",
+                                                    "members": [
+                                                      {
+                                                        "kind": "scalar",
+                                                        "type": "boolean"
+                                                      },
+                                                      {
+                                                        "kind": "scalar",
+                                                        "type": "integer"
+                                                      },
+                                                      {
+                                                        "kind": "scalar",
+                                                        "type": "number"
+                                                      },
+                                                      {
+                                                        "kind": "scalar",
+                                                        "type": "string"
+                                                      }
+                                                    ]
                                                   }
                                                 }
                                               }
@@ -14206,7 +14282,7 @@
                                     }
                                   },
                                   "source_column": {
-                                    "required": true,
+                                    "required": false,
                                     "schema": {
                                       "kind": "anyOf",
                                       "members": [
@@ -14216,6 +14292,10 @@
                                             "type": "string"
                                           },
                                           "kind": "array"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
                                         },
                                         {
                                           "kind": "scalar",
@@ -14727,8 +14807,8 @@
         }
       }
     },
-    "schema_hash": "4fe4dcc956923f55ea9a92762fad1f24f387c567a4d9d17fd2326dc6852f44a5",
-    "version": "1.2"
+    "schema_hash": "501252e14215fda23dc142c685ddbf9b78def78ea1f6dd9a7da3314b15900cf6",
+    "version": "1.3"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {
