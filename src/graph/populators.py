@@ -16,6 +16,7 @@ from src.contracts.move_ledger import Move
 from src.graph.inputs_digest import graph_inputs_digest
 from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
+from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.query_trace import assignment_lineage, candidate_keys_by_query
 from src.storage.artifact_store import ArtifactStore
@@ -716,15 +717,12 @@ def rebuild_graph(
     if triage:
         populate_from_triage(triage, graph_store)
 
+    # Every active engine in the rule catalog (#306): analysis, schema design and
+    # load test read the same list, so a new engine is never skipped.
+    engines = sorted(catalog.engine_ids(status=catalog.ACTIVE))
+
     # 3. Analysis (multiple engines)
-    for engine in [
-        "dynamodb",
-        "documentdb",
-        "opensearch",
-        "elasticache",
-        "aurora_postgresql",
-        "aurora_mysql",
-    ]:
+    for engine in engines:
         analysis = _read_safe(f"{prefix}/analysis-{engine}/analysis.json")
         if analysis:
             populate_from_analysis(analysis, engine, graph_store)
@@ -733,6 +731,7 @@ def rebuild_graph(
     from src.storage.assignment_versioning import (
         assignment_artifact_path,
         reality_check_output_candidates,
+        resolve_downstream_assignment_version,
         resolve_effective_assignment_version,
     )
 
@@ -784,26 +783,27 @@ def rebuild_graph(
     if reality:
         populate_from_reality_check(reality, graph_store)
 
-    # 6. Schema design (multiple engines, latest version)
-    for engine in ["dynamodb", "documentdb", "opensearch", "elasticache"]:
-        for v in range(10, 0, -1):
-            schema = _read_safe(f"{prefix}/schema-{engine}/v{v}/schema_output.json")
-            if schema:
-                populate_from_schema_design(schema, engine, v, graph_store)
-                break
+    # 6. Schema design: every engine, at the effective assignment
+    # version (#306). ``schema-<engine>/v<N>`` is designed from assignment v<N>
+    # (ADR-028), and a rollback restates the designs of the version it restores on
+    # its own version, so an older or abandoned version's design is never read.
+    # With no assignment yet, schema design writes v1 (ADR-026).
+    design_version = resolve_downstream_assignment_version(artifact_store, db_name, job_id)
+    for engine in engines:
+        schema = _read_safe(f"{prefix}/schema-{engine}/v{design_version}/schema_output.json")
+        if schema:
+            populate_from_schema_design(schema, engine, design_version, graph_store)
 
     # 7. Post-schema router
     router = _read_safe(f"{prefix}/post-schema-router/router_output.json")
     if router:
         populate_from_post_schema_router(router, graph_store)
 
-    # 8. Load test (multiple engines, latest version)
-    for engine in ["dynamodb", "documentdb", "opensearch", "elasticache"]:
-        for v in range(10, 0, -1):
-            lt = _read_safe(f"{prefix}/load-test-{engine}/v{v}/results/summary.json")
-            if lt:
-                populate_from_load_test(lt, engine, v, graph_store)
-                break
+    # 8. Load test: every engine, on the design it tested (the same version).
+    for engine in engines:
+        lt = _read_safe(f"{prefix}/load-test-{engine}/v{design_version}/results/summary.json")
+        if lt:
+            populate_from_load_test(lt, engine, design_version, graph_store)
 
     # 9. Synthesis
     # The effective version's report first, then the legacy keys (#1520).

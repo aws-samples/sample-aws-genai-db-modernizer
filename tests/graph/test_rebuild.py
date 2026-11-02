@@ -203,3 +203,281 @@ def test_inputs_digest_covers_versioned_synthesis_report(artifact_dir, sample_as
     (base / db_name / job_id / "synthesis/v1/report.json").write_text(json.dumps(_report("risk-b")))
     assert graph_inputs_digest(store, db_name, job_id) != before
     graph_store.close()
+
+
+# --- Schema design and load test: every engine, the effective version (#306) ---
+
+
+def _aurora_design(engine, query_id="q1"):
+    """An Aurora schema output as the schema-design merge writes it: one pattern
+    per source query, keyed on the query id, linked by ``source_query_ids``."""
+    return {
+        "target_engine": engine,
+        "migration_strategy": "carry_over",
+        "access_patterns": [
+            {
+                "pattern_id": query_id,
+                "description": "Orders by customer",
+                "operation": "SELECT",
+                "sql_text": "SELECT * FROM orders WHERE customer_id = ?",
+                "source_tables": ["orders"],
+                "source_query_ids": [query_id],
+                "index_used": "idx_orders_customer_id",
+                "design_rps": 423.0,
+                "script_derived": True,
+                "in_scope": True,
+                "load_testable": True,
+            }
+        ],
+        "trade_offs": [
+            {
+                "description": "Keep the orders table as is",
+                "impact": "No application change",
+                "query_ids": [query_id],
+            }
+        ],
+    }
+
+
+def _design(pattern_id, query_ids=("q1",)):
+    return {
+        "access_patterns": [
+            {
+                "pattern_id": pattern_id,
+                "description": pattern_id,
+                "operation": "GetItem",
+                "design_rps": 10.0,
+                "query_ids": list(query_ids),
+                "in_scope": True,
+            }
+        ]
+    }
+
+
+def _patterns(graph_store):
+    return sorted(
+        (r["id"], r["engine"], r["ver"])
+        for r in graph_store.query(
+            "MATCH (ap:AccessPattern) RETURN ap.id AS id, ap.engine AS engine, "
+            "ap.schema_version AS ver"
+        )
+    )
+
+
+def _load_test_runs(graph_store):
+    return sorted(
+        (r["engine"], r["ver"])
+        for r in graph_store.query(
+            "MATCH (lt:LoadTestRun) RETURN lt.engine AS engine, lt.schema_version AS ver"
+        )
+    )
+
+
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+def test_rebuild_graph_reads_aurora_schema_design(artifact_dir, engine):
+    """An Aurora design's access patterns and trade-offs land in the graph,
+    linked to their source queries."""
+    *_, graph_store = _rebuild_with_files(
+        artifact_dir, {f"schema-{engine}/v1/schema_output.json": _aurora_design(engine)}
+    )
+    assert _patterns(graph_store) == [("q1", engine, 1)]
+    linked = graph_store.query(
+        "MATCH (q:Query)-[:PART_OF]->(ap:AccessPattern) RETURN q.id AS q, ap.id AS ap"
+    )
+    assert linked == [{"q": "q1", "ap": "q1"}]
+    informed = graph_store.query(
+        "MATCH (d:Decision {category: 'trade_off'})-[:INFORMED_BY]->(q:Query) "
+        "RETURN d.id AS d, q.id AS q"
+    )
+    assert informed == [{"d": f"trade_off-{engine}-0", "q": "q1"}]
+    graph_store.close()
+
+
+# The engines schema design can design (scripts/run_schema_design.py's
+# _ALL_ENGINES), pinned here so a wrong catalog filter can't pass the tests below.
+_DESIGN_ENGINES = [
+    "aurora_mysql",
+    "aurora_postgresql",
+    "documentdb",
+    "dynamodb",
+    "elasticache",
+    "opensearch",
+]
+
+
+@pytest.mark.passes_on_main
+def test_the_catalog_engines_are_the_designable_engines():
+    """The rebuild reads the catalog's active engines: exactly the six schema design
+    designs, so no designed engine is skipped and no other engine is read."""
+    from scripts.run_schema_design import _ALL_ENGINES
+    from src.shared import catalog
+
+    assert sorted(catalog.engine_ids(status=catalog.ACTIVE)) == _DESIGN_ENGINES
+    assert sorted(_ALL_ENGINES) == _DESIGN_ENGINES
+
+
+def test_rebuild_graph_reads_the_design_of_every_catalog_engine(artifact_dir):
+    """Every designable engine's design is read, so a new engine is never skipped
+    by a hard-coded list; a legacy or future catalog engine's is not."""
+    files = {
+        f"schema-{engine}/v1/schema_output.json": _design(f"AP-{engine}")
+        for engine in [*_DESIGN_ENGINES, "aurora", "keyspaces", "neptune"]
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _patterns(graph_store) == sorted((f"AP-{e}", e, 1) for e in _DESIGN_ENGINES)
+    graph_store.close()
+
+
+@pytest.mark.passes_on_main
+def test_rebuild_graph_reads_the_analysis_of_every_catalog_engine(artifact_dir):
+    """The analysis loop reads the same engine list as schema design and load test."""
+    files = {
+        f"analysis-{engine}/analysis.json": {
+            "workload_analysis": {
+                "anti_patterns_detected": [
+                    {
+                        "anti_pattern_id": f"AP-{engine}",
+                        "anti_pattern_type": "t",
+                        "query_ids": ["q1"],
+                    }
+                ]
+            }
+        }
+        for engine in _DESIGN_ENGINES
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    rows = graph_store.query(
+        "MATCH (ap:AntiPattern)-[:PRODUCED_BY]->(a:Agent) RETURN ap.id AS ap, a.id AS agent"
+    )
+    assert sorted((r["ap"], r["agent"]) for r in rows) == [
+        (f"AP-{e}", f"analysis-{e}") for e in _DESIGN_ENGINES
+    ]
+    graph_store.close()
+
+
+def test_rebuild_graph_reads_design_and_load_test_past_version_10(
+    artifact_dir, sample_assignment, sample_load_test_output
+):
+    """No cap at v10: the effective version v11's design and load test are read."""
+    files = {
+        "assignment/v11/assignment.json": {**sample_assignment, "version": 11},
+        "schema-dynamodb/v11/schema_output.json": _design("DDB-AP-11"),
+        "load-test-dynamodb/v11/results/summary.json": sample_load_test_output,
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _patterns(graph_store) == [("DDB-AP-11", "dynamodb", 11)]
+    assert _load_test_runs(graph_store) == [("dynamodb", 11)]
+    graph_store.close()
+
+
+def test_rebuild_graph_after_a_rollback_reads_the_restated_design(
+    artifact_dir, sample_assignment, sample_load_test_output
+):
+    """v2 is a post-schema reroute whose redesign failed; v3 rolls it back and
+    restates v1 with its designs. The graph reads v3's (v1's) designs, never the
+    abandoned v2's, even for an engine v3 has no design for."""
+    files = {
+        "assignment/v2/assignment.json": {
+            **sample_assignment,
+            "version": 2,
+            "previous_version": 1,
+            "status": "rerouted_after_approval",
+        },
+        "assignment/v3/assignment.json": {
+            **sample_assignment,
+            "version": 3,
+            "previous_version": 2,
+            "status": "reroute_rolled_back",
+            "rolled_back_version": 2,
+        },
+        "schema-dynamodb/v1/schema_output.json": _design("DDB-AP-1"),
+        "schema-dynamodb/v2/schema_output.json": _design("DDB-AP-ABANDONED"),
+        "schema-dynamodb/v3/schema_output.json": _design("DDB-AP-1"),
+        # The abandoned reroute's redesign of an engine v3 does not restate.
+        "schema-documentdb/v2/schema_output.json": _design("DOC-AP-ABANDONED"),
+        "load-test-documentdb/v2/results/summary.json": sample_load_test_output,
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _patterns(graph_store) == [("DDB-AP-1", "dynamodb", 3)]
+    assert _load_test_runs(graph_store) == []
+    graph_store.close()
+
+
+def test_rebuild_graph_ignores_a_design_of_an_older_version(artifact_dir, sample_assignment):
+    """A customer edit made v2 and schema design has not run on it yet: v1's
+    design is stale (ADR-028), so the graph does not present it as current."""
+    files = {
+        "assignment/v2/assignment.json": {**sample_assignment, "version": 2},
+        "schema-dynamodb/v1/schema_output.json": _design("DDB-AP-1"),
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _patterns(graph_store) == []
+    graph_store.close()
+
+
+@pytest.mark.passes_on_main
+def test_rebuild_graph_without_a_design_has_no_design_nodes(artifact_dir):
+    """A job with no schema design or load test builds as before: complete, with
+    no access pattern or load-test nodes."""
+    base, db_name, job_id = artifact_dir
+    store = LocalArtifactStore(str(base))
+    graph_path = str(base / db_name / job_id / "graph" / "context.lbug")
+    Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+    graph_store = GraphStore(graph_path)
+    initialize_schema(graph_store)
+    stats = rebuild_graph(db_name, job_id, store, graph_store)
+    assert stats["complete"] is True
+    assert _patterns(graph_store) == []
+    assert _load_test_runs(graph_store) == []
+    assert graph_store.query("MATCH (q:Query) RETURN COUNT(q) AS c")[0]["c"] == 3
+    graph_store.close()
+
+
+@pytest.mark.passes_on_main
+def test_rebuild_graph_without_an_assignment_reads_the_v1_design(tmp_path, sample_collector_output):
+    """A job with no assignment yet: schema design writes v1 (ADR-026), and it is read."""
+    base = tmp_path / "artifacts"
+    for path, data in {
+        "collector/output.json": sample_collector_output,
+        "schema-dynamodb/v1/schema_output.json": _design("DDB-AP-1"),
+    }.items():
+        full = base / "testdb" / "job-1" / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(json.dumps(data))
+    graph_store = GraphStore(str(tmp_path / "g.lbug"))
+    initialize_schema(graph_store)
+    rebuild_graph("testdb", "job-1", LocalArtifactStore(str(base)), graph_store)
+    assert _patterns(graph_store) == [("DDB-AP-1", "dynamodb", 1)]
+    graph_store.close()
+
+
+_REAL_RUN = Path(__file__).parents[1] / "fixtures/real_runs/wordpress-both/job"
+
+
+def test_rebuild_graph_reads_the_aurora_design_of_a_real_run(tmp_path):
+    """A real wordpress run (effective v2): its Aurora MySQL design's 68 access
+    patterns land at v2, each linked to its source query."""
+    import shutil
+
+    base = tmp_path / "artifacts"
+    shutil.copytree(_REAL_RUN, base / "wordpress" / "job")
+    design = json.loads((_REAL_RUN / "schema-aurora_mysql/v2/schema_output.json").read_text())
+    expected = sorted(
+        (qid, ap["pattern_id"])
+        for ap in design["access_patterns"]
+        for qid in ap["source_query_ids"]
+    )
+    graph_store = GraphStore(str(tmp_path / "g.lbug"))
+    initialize_schema(graph_store)
+    rebuild_graph("wordpress", "job", LocalArtifactStore(str(base)), graph_store)
+
+    aurora = [p for p in _patterns(graph_store) if p[1] == "aurora_mysql"]
+    assert len(aurora) == 68
+    assert {p[2] for p in aurora} == {2}
+    linked = graph_store.query(
+        "MATCH (q:Query)-[:PART_OF]->(ap:AccessPattern {engine: 'aurora_mysql'}) "
+        "RETURN q.id AS q, ap.id AS ap"
+    )
+    assert len(expected) == 68
+    assert sorted((r["q"], r["ap"]) for r in linked) == expected
+    graph_store.close()

@@ -208,6 +208,8 @@ The graph is populated on the API node after each pipeline stage completes. The 
 | LOAD_TEST | LoadTestRun | TESTED_IN, VALIDATES |
 | ASSIGNMENT_REVIEW | Decision (overrides) | SUPERSEDES |
 
+Analysis, schema design and load test are read for every active engine in the rule catalog (Aurora included). Schema design and load test are read at the effective assignment version only: `schema-<engine>/v<N>` and `load-test-<engine>/v<N>`, where N is the version the assignment resolver picks (v1 when there is no assignment yet). A design of an older or abandoned version is never read (#306). A rollback restates the designs of the version it restores on its own version; a design that fails its output contract is not restated, so that engine has no design in the graph, as in synthesis. A rollback does not restate load tests: the load test runs after post-schema routing, so the restored version has none in a normal run, and a load test run on it earlier is not read after the rollback.
+
 Each populator is idempotent. Re-running it with the same artifact data produces the same graph state. You can rebuild the graph from scratch by replaying all artifacts in order.
 
 For a full rebuild of a 3,500-query assessment (the largest workload tested), expect < 2 seconds. This is fast enough to run on API startup or on-demand when an assessment completes.
