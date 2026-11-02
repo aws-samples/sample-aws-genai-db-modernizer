@@ -24,6 +24,7 @@ Two files are numbered ADR-028: the Aurora schema-design agents and the customer
 | [ADR-030](ADR-030-assessment-quality-benchmark.md) | Assessment quality benchmark | |
 | [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md) | Query-first routing model and engine rule catalog | The routing model |
 | [ADR-032](ADR-032-one-facts-layer-renderers-only-format.md) | One facts layer in synthesis; renderers only format | |
+| [ADR-033](ADR-033-data-movement-transformation-contract.md) | Data movement driven by a transformation contract | Contract implemented by epic #1777; open questions listed in the ADR |
 
 ## Partly superseded
 
