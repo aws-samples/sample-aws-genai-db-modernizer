@@ -646,6 +646,7 @@ def test_restart_waits_for_ports_to_be_released(
         ("summary", "/analysis/monitor/summary/job-1a2b"),
         ("results", "/analysis/results/job-1a2b"),
         ("assignments", "/analysis/assignments/job-1a2b"),
+        ("explore", "/analysis/explore/job-1a2b"),
     ],
 )
 def test_page_prints_the_job_page_url_and_starts_nothing(
@@ -717,3 +718,181 @@ def test_page_and_sandbox_share_one_name_rule(monkeypatch: pytest.MonkeyPatch) -
         )
         monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
         assert (page["status"] == "url") == (unsandboxed["status"] == "url"), job_id
+
+
+# Issue #308: --experimental-graph-explorer is the opt-in way to run the
+# explorer; without it nothing changes.
+def _capture_api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    seen: dict[str, str] = {}
+
+    class _Popen:
+        def __init__(self, cmd: Any, **kwargs: Any) -> None:
+            seen.update(kwargs["env"])
+            self.pid = 111
+
+    monkeypatch.setattr(start_local_ui.subprocess, "Popen", _Popen)
+    return seen
+
+
+@pytest.mark.parametrize("graph_explorer", [False, True])
+def test_start_api_sets_the_explorer_flag_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, graph_explorer: bool
+) -> None:
+    monkeypatch.delenv(start_local_ui.GRAPH_EXPLORER_ENV, raising=False)
+    env = _capture_api_env(monkeypatch)
+
+    if graph_explorer:
+        start_local_ui.start_api(tmp_path, tmp_path, graph_explorer=True)
+    else:
+        start_local_ui.start_api(tmp_path, tmp_path)
+
+    assert (env.get(start_local_ui.GRAPH_EXPLORER_ENV) == "1") is graph_explorer
+    assert env["ARTIFACT_DIR"] == str(tmp_path)
+
+
+@pytest.mark.parametrize("graph_explorer", [False, True])
+def test_an_exported_flag_does_not_outvote_the_option(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, graph_explorer: bool
+) -> None:
+    # Without the option the API runs with the explorer off even when the
+    # shell exported the flag, so options.json and the API agree.
+    monkeypatch.setenv(start_local_ui.GRAPH_EXPLORER_ENV, "1")
+    env = _capture_api_env(monkeypatch)
+
+    if graph_explorer:
+        start_local_ui.start_api(tmp_path, tmp_path, graph_explorer=True)
+    else:
+        start_local_ui.start_api(tmp_path, tmp_path)
+
+    assert (start_local_ui.GRAPH_EXPLORER_ENV in env) is graph_explorer
+
+
+def _fresh_start(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    flags: list[bool] = []
+    _patch_common(monkeypatch)
+
+    def _api(root: Path, log_dir: Path, graph_explorer: bool = False) -> FakeProc:
+        flags.append(graph_explorer)
+        return FakeProc(111)
+
+    monkeypatch.setattr(start_local_ui, "start_api", _api)
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(222))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    return flags
+
+
+def test_without_the_option_the_ready_line_and_api_are_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flags = _fresh_start(monkeypatch)
+
+    result, code = start_local_ui.run(start_local_ui.parse_args([]))
+
+    assert code == 0
+    assert flags == [False]
+    assert "experimental_graph_explorer" not in result
+    assert set(result) == {"status", "api", "ui", "pids", "ui_build"}
+    assert start_local_ui.recorded_graph_explorer() is False
+
+
+def test_the_option_starts_the_api_with_the_explorer_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flags = _fresh_start(monkeypatch)
+
+    result, code = start_local_ui.run(start_local_ui.parse_args(["--experimental-graph-explorer"]))
+
+    assert code == 0
+    assert flags == [True]
+    assert result["status"] == "ready"
+    assert result["experimental_graph_explorer"] is True
+    assert "ui_url" not in result
+    assert start_local_ui.recorded_graph_explorer() is True
+
+
+def test_the_option_with_page_explore_starts_and_prints_the_explorer_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flags = _fresh_start(monkeypatch)
+
+    result, code = start_local_ui.run(
+        start_local_ui.parse_args(
+            ["--experimental-graph-explorer", "--page", "explore", "--job-id", "job-1a2b"]
+        )
+    )
+
+    assert code == 0
+    assert flags == [True]
+    assert result["status"] == "ready"
+    assert result["experimental_graph_explorer"] is True
+    assert result["ui_url"] == f"{result['ui']}/analysis/explore/job-1a2b"
+
+
+def test_the_option_with_an_unsafe_job_id_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flags = _fresh_start(monkeypatch)
+
+    result, code = start_local_ui.run(
+        start_local_ui.parse_args(
+            ["--experimental-graph-explorer", "--page", "explore", "--job-id", "../etc"]
+        )
+    )
+
+    assert code == 1
+    assert result["status"] == "error"
+    assert flags == []
+
+
+@pytest.mark.parametrize(("recorded", "wanted"), [(False, True), (True, False)])
+def test_servers_running_with_the_other_setting_are_restarted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolated_state_dir: Path,
+    recorded: bool,
+    wanted: bool,
+) -> None:
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    start_local_ui.write_options(recorded)
+    _all_processes_match(monkeypatch)
+    _stamp_build()
+    killed: list[dict[str, int]] = []
+    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: killed.append(dict(pids)) or {})
+    flags = _fresh_start(monkeypatch)
+
+    result, code = start_local_ui.run_start(
+        tmp_path, rebuild=False, timeout=30, graph_explorer=wanted
+    )
+
+    assert code == 0
+    assert killed == [{"api": 111, "serve": 222}]
+    assert flags == [wanted]
+    assert ("experimental_graph_explorer" in result) is wanted
+    assert start_local_ui.recorded_graph_explorer() is wanted
+
+
+@pytest.mark.parametrize("graph_explorer", [False, True])
+def test_servers_running_with_the_same_setting_are_reused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolated_state_dir: Path,
+    graph_explorer: bool,
+) -> None:
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    if graph_explorer:
+        start_local_ui.write_options(True)
+    _all_processes_match(monkeypatch)
+    _stamp_build()
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    for name in ("check_port_available", "build_ui", "start_api", "start_serve", "kill_pids"):
+        monkeypatch.setattr(start_local_ui, name, lambda *a, **k: pytest.fail("restarted"))
+
+    result, code = start_local_ui.run_start(
+        tmp_path, rebuild=False, timeout=30, graph_explorer=graph_explorer
+    )
+
+    assert code == 0
+    assert result["ui_build"] == "reused"
+    assert ("experimental_graph_explorer" in result) is graph_explorer

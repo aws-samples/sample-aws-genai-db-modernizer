@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 
 // Pages
@@ -10,6 +11,10 @@ import JobMonitoringSummary from "./pages/JobMonitoringSummary";
 import PatternAnalysis from "./pages/PatternAnalysis";
 import AssignmentGate from "./pages/AssignmentGate";
 import AnalysisResults from "./pages/AnalysisResults";
+// Experimental (#308): renders only when the server flag is on, otherwise it
+// redirects home like an unknown path. Loaded on demand, so its graph library
+// (cytoscape, cola) stays out of the main bundle.
+const GraphExplorer = lazy(() => import("./pages/GraphExplorer"));
 
 // Old results URLs redirect to /analysis/results/:jobId so bookmarks keep
 // working: /analysis/results-v2/:jobId was the results page's name until its
@@ -34,6 +39,14 @@ export default function AppRoutes() {
       <Route path="/analysis/monitor/summary/:jobId" element={<JobMonitoringSummary />} />
       <Route path="/analysis/patterns/:jobId" element={<PatternAnalysis />} />
       <Route path="/analysis/assignments/:jobId" element={<AssignmentGate />} />
+      <Route
+        path="/analysis/explore/:jobId"
+        element={
+          <Suspense fallback={null}>
+            <GraphExplorer />
+          </Suspense>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -48,6 +48,8 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
 10. **Sources of truth and replicas**, collapsed: each written table's source of truth, its replicas, the CDC direction and the reads a replica serves.
 11. **Risk assessment** (the open risks by severity, and the risks the assignment already resolved in a collapsed list), **Trade-offs and design decisions**, and **Table design**: the Aurora design (its tables, DDL, optimizations and the queries routed to it), each part in a collapsed section; each tab names the tables in that engine's design, which is not the roadmap's count of source tables and views (wave 1 counts every source table, including those no query reads); it appears once schema design has run. The other engines' designs are in the access pattern explorer.
 
+When the local API runs with the experimental graph explorer on, the page also has an **Explore (experimental)** button that opens the job's graph; see [Explore the graph](explore-the-graph.md). Without it the page is as above.
+
 ## How to read an assignment
 
 Assignments map **queries** to engines, not tables. Several engines can serve the same table. The deliverables state one line per source table, computed from the final assignment:

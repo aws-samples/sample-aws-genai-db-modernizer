@@ -19,7 +19,8 @@
  * - the owned keys are every figure field of the ReportFacts contract (read
  *   from tests/contract/schema_snapshot.json, so a new fact is owned the
  *   moment it joins the contract), plus the report.json inputs the facts are
- *   computed from (INPUT_KEYS);
+ *   computed from (INPUT_KEYS); in the graph explorer's files (EXPLORER_UI_FILES,
+ *   #308) also the explorer API's own figure fields (EXPLORER_FIGURE_KEYS);
  * - a source is a read of an owned key (`x.risks`, `x['risks']`), any field
  *   read off the facts block (`synthesis.facts.*`, a name assigned from it,
  *   `waveFacts(...)`), a call to a helper that returns a facts-owned list,
@@ -118,6 +119,23 @@ const GUARDED_UI_FILES = [
   'components/ChartSankey.js',
   'components/SummaryFallbackNotice.js',
   'components/QueryDecisionTrace.js',
+  // #308: every experimental graph explorer file (EXPLORER_UI_FILES below).
+  'pages/GraphExplorer.js',
+  'components/ExploreGraphButton.js',
+  'components/GraphExplorerCanvas.js',
+  'components/GraphExplorerLegendCard.js',
+  'components/graphExplorerPhysics.js',
+  'components/GraphExplorerQueryList.js',
+  'components/GraphExplorerQueryPanel.js',
+  'components/GraphExplorerSidePanel.js',
+  'components/GraphExplorerToolbar.js',
+  'components/GraphExplorerViewBar.js',
+  'components/GraphExplorerWalkthroughs.js',
+  'hooks/useGraphExplorerFlag.js',
+  'utils/explorerLayout.js',
+  'utils/graphExplorer.js',
+  'utils/graphExplorerFlag.js',
+  'utils/nodeIcons.js',
   'components/QueryRoutingTable.js',
   'components/CloseCallCallout.js',
   'components/UnservableQueriesCallout.js',
@@ -169,6 +187,45 @@ function loadOwnedKeys() {
 }
 
 const OWNED_KEYS = loadOwnedKeys();
+
+// #308: the experimental graph explorer's own figures. Its API (src/api/models/
+// graph_explorer_responses.py) computes them from the context graph at read time
+// (ADR-032 Decision 1, the explorer's family) or reads them from report.json; the
+// explorer UI may only format them. Owned in the explorer files only: other pages
+// use some of these names for their own values.
+const EXPLORER_FIGURE_KEYS = new Set([
+  'query_count', 'calls_per_second', 'total_bundles', 'hidden_count', 'unit_size',
+  'workload_percent', 'monthly_cost_usd', 'table_count', 'group_total', 'busiest_tables',
+  'confidence',
+]);
+// Every explorer UI file (#308): GUARDED_UI_FILES lists them all, and the explorer's
+// figure keys are owned in each.
+const EXPLORER_UI_FILES = [
+  'pages/GraphExplorer.js',
+  'components/ExploreGraphButton.js',
+  'components/GraphExplorerCanvas.js',
+  'components/GraphExplorerLegendCard.js',
+  'components/graphExplorerPhysics.js',
+  'components/GraphExplorerQueryList.js',
+  'components/GraphExplorerQueryPanel.js',
+  'components/GraphExplorerSidePanel.js',
+  'components/GraphExplorerToolbar.js',
+  'components/GraphExplorerViewBar.js',
+  'components/GraphExplorerWalkthroughs.js',
+  'hooks/useGraphExplorerFlag.js',
+  'utils/explorerLayout.js',
+  'utils/graphExplorer.js',
+  'utils/graphExplorerFlag.js',
+  'utils/nodeIcons.js',
+];
+const EXPLORER_OWNED_KEYS = new Set([...OWNED_KEYS, ...EXPLORER_FIGURE_KEYS]);
+
+function ownedKeysFor(label) {
+  return EXPLORER_UI_FILES.some(f => label === `src/ui/src/${f}`) ? EXPLORER_OWNED_KEYS : OWNED_KEYS;
+}
+
+// The owned keys of the file being checked (violationsIn sets it).
+let activeOwnedKeys = OWNED_KEYS;
 
 function parseSource(code) {
   return parse(code, {
@@ -313,7 +370,7 @@ class Analysis {
     if (isMember(n)) {
       if (this.isFactsBlock(n.object)) return true;
       const k = propName(n);
-      return k !== null && OWNED_KEYS.has(k);
+      return k !== null && activeOwnedKeys.has(k);
     }
     if (isCall(n)) return LIST_HELPERS.has(calleeName(n));
     return false;
@@ -374,7 +431,7 @@ class Analysis {
       const key = t.isIdentifier(prop.key) && !prop.computed ? prop.key.name
         : (t.isStringLiteral(prop.key) ? prop.key.value : null);
       const value = t.isAssignmentPattern(prop.value) ? prop.value.left : prop.value;
-      const owned = inFacts || inSource || (key !== null && OWNED_KEYS.has(key));
+      const owned = inFacts || inSource || (key !== null && activeOwnedKeys.has(key));
       const isFactsKey = key === 'facts';
       if (owned) bound(value).forEach(x => this.tainted.add(x));
       if (isFactsKey && t.isIdentifier(value)) this.facts.add(value.name);
@@ -520,7 +577,8 @@ function bound(target) {
   return [];
 }
 
-function violationsIn(code, label) {
+function violationsIn(code, label, owned = ownedKeysFor(label)) {
+  activeOwnedKeys = owned;
   const ast = parseSource(code);
   const lines = code.split('\n');
   const found = new Map();
@@ -706,6 +764,37 @@ describe('renderers only format (#748, ADR-032)', () => {
       'moving_tables', 'kept_in_sync', 'served_tables', 'reality_check_decisions',
     ].forEach(k => expect(OWNED_KEYS.has(k)).toBe(true));
     NOT_A_FIGURE.forEach(k => expect(OWNED_KEYS.has(k)).toBe(false));
+  });
+
+  // #308 review: the guard covers every explorer file and the explorer API's own figures.
+  test('every graph explorer UI file is guarded with the explorer figures owned', () => {
+    const explorerNamed = nonTestUiFiles()
+      .map(([label]) => label.replace('src/ui/src/', ''))
+      .filter(f => /graphExplorer|GraphExplorer|ExploreGraph|explorerLayout|nodeIcons/.test(f));
+    expect(explorerNamed.filter(f => !EXPLORER_UI_FILES.includes(f))).toEqual([]);
+    EXPLORER_UI_FILES.forEach(f => {
+      expect(GUARDED_UI_FILES).toContain(f);
+      expect(fs.existsSync(`${UI_SRC}/${f}`)).toBe(true);
+      expect(ownedKeysFor(`src/ui/src/${f}`)).toBe(EXPLORER_OWNED_KEYS);
+    });
+    expect(ownedKeysFor('src/ui/src/pages/AnalysisResults.js')).toBe(OWNED_KEYS);
+  });
+
+  test('a total or arithmetic on an explorer figure is caught', () => {
+    const walkthrough = `export function StepText({ step }) {
+  const total = step.busiest_tables.reduce((sum, r) => sum + r.calls_per_second, 0) * 2;
+  return total;
+}`;
+    const page = `export default function GraphExplorer({ lastLinks, below }) {
+  return lastLinks.total_bundles + 1 + below.hidden_count * 2;
+}`;
+    const bundle = `const label = (b) => b.query_count - 1;`;
+    expect(violationsIn(walkthrough, 'src/ui/src/components/GraphExplorerWalkthroughs.js').length).toBeGreaterThan(0);
+    expect(violationsIn(page, 'src/ui/src/pages/GraphExplorer.js').join(' ')).toMatch('lastLinks.total_bundles + 1');
+    expect(violationsIn(page, 'src/ui/src/pages/GraphExplorer.js').join(' ')).toMatch('below.hidden_count * 2');
+    expect(violationsIn(bundle, 'src/ui/src/utils/graphExplorer.js').length).toBeGreaterThan(0);
+    // Formatting one is fine.
+    expect(violationsIn(`const s = (b) => t('x', { count: b.query_count });`, 'src/ui/src/utils/graphExplorer.js')).toEqual([]);
   });
 
   test('presentation exemptions carry a reason and are pinned', () => {

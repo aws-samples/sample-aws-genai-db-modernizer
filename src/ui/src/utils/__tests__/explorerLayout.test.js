@@ -1,0 +1,51 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
+
+import { DEFAULT_LAYOUT, LAYOUT_KEY, PANEL_MAX, PANEL_MIN, clampWidth, isTyping, loadLayout, resetLayout, saveLayout } from '../explorerLayout';
+
+function memoryStorage(initial = {}) {
+  const data = { ...initial };
+  return {
+    getItem: (k) => (k in data ? data[k] : null),
+    setItem: (k, v) => {
+      data[k] = String(v);
+    },
+    removeItem: (k) => {
+      delete data[k];
+    },
+    data,
+  };
+}
+
+test('the layout round-trips through storage', () => {
+  const storage = memoryStorage();
+  saveLayout({ panelWidth: 500, collapsed: true, tab: 'details', noticeDismissed: true }, storage);
+  expect(loadLayout(storage)).toEqual({ panelWidth: 500, collapsed: true, tab: 'details', noticeDismissed: true });
+});
+
+test('a missing, broken or odd saved layout falls back field by field', () => {
+  expect(loadLayout(memoryStorage())).toEqual(DEFAULT_LAYOUT);
+  expect(loadLayout(memoryStorage({ [LAYOUT_KEY]: '{not json' }))).toEqual(DEFAULT_LAYOUT);
+  const odd = loadLayout(memoryStorage({ [LAYOUT_KEY]: JSON.stringify({ panelWidth: 99999, collapsed: 'yes', tab: 'nope' }) }));
+  expect(odd).toEqual({ ...DEFAULT_LAYOUT, panelWidth: PANEL_MAX });
+  expect(loadLayout(null)).toEqual(DEFAULT_LAYOUT);
+});
+
+test('the panel width stays between its bounds', () => {
+  expect(clampWidth(10)).toBe(PANEL_MIN);
+  expect(clampWidth(10000)).toBe(PANEL_MAX);
+  expect(clampWidth('abc')).toBe(DEFAULT_LAYOUT.panelWidth);
+});
+
+test('reset forgets the saved layout', () => {
+  const storage = memoryStorage({ [LAYOUT_KEY]: JSON.stringify({ collapsed: true }) });
+  expect(resetLayout(storage)).toEqual(DEFAULT_LAYOUT);
+  expect(storage.data[LAYOUT_KEY]).toBeUndefined();
+});
+
+test('a key typed into a field is not a shortcut', () => {
+  expect(isTyping({ tagName: 'INPUT' })).toBe(true);
+  expect(isTyping({ tagName: 'DIV', isContentEditable: true })).toBe(true);
+  expect(isTyping({ tagName: 'DIV' })).toBe(false);
+  expect(isTyping(null)).toBe(false);
+});

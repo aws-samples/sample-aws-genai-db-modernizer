@@ -44,6 +44,23 @@ docs = [
 why = "The pages and the /modernize command describe how the UI starts, its ports and the job-page links."
 
 [[entry]]
+name = "graph-explorer"
+paths = [
+  "src/api/routes/graph_explorer.py",
+  "src/api/models/graph_explorer_responses.py",
+  "src/graph/explorer.py",
+  "src/graph/explorer_overlays.py",
+  "src/ui/src/pages/GraphExplorer.js",
+  "src/ui/src/components/GraphExplorer*.js",
+  "src/ui/src/utils/graphExplorer.js",
+  "src/ui/src/utils/nodeIcons.js",
+  "src/ui/src/assets/aws-icons/**",
+  "src/ui/src/assets/lucide-icons/**",
+]
+docs = ["docs/explore-the-graph.md", "src/api/README.md"]
+why = "The help page describes the experimental explorer's workspace, views, waves, walkthroughs, limits, icon sources and how to turn it on; the API README lists its routes and bounds."
+
+[[entry]]
 name = "triage"
 paths = ["src/agents/referee/triage.py", "scripts/run_triage.py"]
 docs = [

@@ -24,7 +24,7 @@ API_HOST        ?= 127.0.0.1
 # Top-level targets
 # =====================================================================
 
-.PHONY: help local local-api test lint e2e e2e-llm setup assess
+.PHONY: help local local-api explore test lint e2e e2e-llm setup assess
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -44,6 +44,14 @@ local: ## Start local API + UI for development
 local-api: ## Start only the local API server
 	ARTIFACT_DIR=./artifacts \
 		uv run uvicorn src.api.main:app --host $(API_HOST) --port 8000 --reload
+
+# Experimental graph explorer (#308): `make explore JOB=<job_id>` starts the
+# local API (with MODERNIZER_EXPERIMENTAL_GRAPH_UI=1) and UI and prints the
+# job's explorer URL; without JOB it only starts them. Off everywhere else.
+JOB             ?=
+
+explore: ## Start the local API + UI with the experimental graph explorer on (JOB=<job_id> prints its URL)
+	uv run python scripts/start_local_ui.py --experimental-graph-explorer $(if $(JOB),--page explore --job-id $(JOB))
 
 test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Needs agent-builder-sdk-aws-transform (see header above) for full green.
 	./ci/test.sh --cov=src --cov-report=term

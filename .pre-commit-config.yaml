@@ -13,12 +13,14 @@ repos:
     hooks:
       - id: trailing-whitespace
         name: Trim trailing whitespace
-        exclude: ^contrib/
+        # The vendored AWS Architecture Icons stay byte-for-byte as published.
+        exclude: (^contrib/|^src/ui/src/assets/aws-icons/.*\.svg$)
       - id: end-of-file-fixer
         name: Fix end of files
         # .test_durations is written by pytest-split (./ci/test.sh --store-durations),
         # which ends it without a newline; leave it exactly as the tool writes it.
-        exclude: (^\.test_durations$|^contrib/)
+        # The vendored AWS Architecture Icons stay byte-for-byte as published.
+        exclude: (^\.test_durations$|^contrib/|^src/ui/src/assets/aws-icons/.*\.svg$)
       - id: check-yaml
         name: Check YAML syntax
         exclude: ^contrib/

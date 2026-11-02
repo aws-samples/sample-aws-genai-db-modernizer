@@ -45,6 +45,8 @@ import ChartSankey from "../components/ChartSankey";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import QueryRoutingTable from "../components/QueryRoutingTable";
+import ExploreGraphButton from "../components/ExploreGraphButton";
+import useGraphExplorerFlag from "../hooks/useGraphExplorerFlag";
 import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import NoOpenRisksNote from "../components/NoOpenRisksNote";
@@ -221,6 +223,8 @@ const AnalysisResultsPage = memo(() => {
   const { t } = useTranslation();
   const { jobId } = useParams();
   const [navigationOpen, setNavigationOpen] = useState(false);
+  // The experimental graph explorer (#308): its entry shows only when the server flag is on.
+  const graphExplorer = useGraphExplorerFlag();
   const [resultsData, setResultsData] = useState(null);
   const [schemaDesigns, setSchemaDesigns] = useState([]);
   const [collectorData, setCollectorData] = useState(null);
@@ -1901,6 +1905,7 @@ const AnalysisResultsPage = memo(() => {
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
                   <Button iconName="refresh" variant="normal" onClick={fetchData} loading={loading} ariaLabel={t('common.actions.refresh')} />
+                  {graphExplorer.enabled && <ExploreGraphButton jobId={jobId} enabled={graphExplorer.enabled} />}
                   <Button href={`/analysis/monitor/summary/${jobId}`}>{t('analysis-results.actions.back-to-assessment')}</Button>
                 </SpaceBetween>
               }

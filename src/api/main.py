@@ -151,6 +151,7 @@ from src.api.routes import (  # noqa: E402
     assignments,
     dashboard,
     graph,
+    graph_explorer,
     phases,
     query_journeys,
     results,
@@ -225,6 +226,9 @@ app.include_router(agent_interaction.router)
 app.include_router(schema_revisions.router)
 app.include_router(query_journeys.router)
 app.include_router(graph.router)
+# Experimental, off unless MODERNIZER_EXPERIMENTAL_GRAPH_UI=1 (#308).
+app.include_router(graph_explorer.status_router)
+app.include_router(graph_explorer.router)
 
 
 if __name__ == "__main__":
