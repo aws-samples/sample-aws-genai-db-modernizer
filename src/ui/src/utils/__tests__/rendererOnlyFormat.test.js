@@ -145,6 +145,7 @@ const GUARDED_UI_FILES = [
   'components/ExecutiveSummaryStats.js',
   'components/DeliverablesPanel.js',
   'components/SourcesOfTruthCallout.js',
+  'components/DynamoDBMergeConflictsCallout.js',
 ];
 
 function figureFields(schema, out) {

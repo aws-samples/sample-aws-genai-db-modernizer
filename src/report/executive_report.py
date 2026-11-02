@@ -98,6 +98,7 @@ from .formatting import (
     plural_verb,
     price_list_text,
 )
+from .merge_conflicts import MERGE_CONFLICTS_TITLE, merge_conflicts_pdf
 from .query_patterns import query_pattern_count_text
 from .relational_gaps import heterogeneous_wave, wave_gap_groups
 from .risks import (
@@ -1372,6 +1373,19 @@ def _decisions(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any
                         else []
                     ),
                     *(_para(line, st["small"]) for line in unservable_rerun_lines(unservable)),
+                ],
+                ORANGE,
+            )
+        )
+    # #802: the access patterns an unresolved DynamoDB merge leaves unserved, as totals.
+    merge_lines = merge_conflicts_pdf(report)
+    if merge_lines:
+        cards.append(
+            _Panel(
+                [
+                    _para(MERGE_CONFLICTS_TITLE, st["card_title"]),
+                    _para(merge_lines[0], st["body"]),
+                    *(_para(line, st["small"]) for line in merge_lines[1:]),
                 ],
                 ORANGE,
             )

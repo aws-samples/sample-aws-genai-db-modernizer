@@ -563,6 +563,10 @@ Version History:
   collection's row counts by basis (exact, estimate, unknown), the range of statistics
   refresh times, and the one sentence every deliverable prints for the sizing assumption
   that stands in for an unknown count. Backward compatible: None in an older report.
+- 1.72 (2026-11-03, #802): Added optional ``facts.dynamodb_merge_conflicts``
+  (DynamoDBMergeConflictFacts, #802): the DynamoDB group merge's unresolved conflicts,
+  each with the access patterns and queries the merged design does not serve, and their
+  distinct totals. Backward compatible: None in an older report.
 """
 
 from datetime import datetime
@@ -1814,6 +1818,57 @@ class DerivedCopyFacts(BaseModel):
     cost_usd: float = Field(0.0, ge=0, description="Their on-demand cost a month")
 
 
+class DynamoDBMergeConflictRow(BaseModel):
+    """One unresolved DynamoDB merge failure and what it leaves unserved (#802)."""
+
+    failure: str = Field(..., description="The merge failure, as the schema design states it")
+    status: Literal["unserved", "at_risk", "none_named", "not_recorded"] = Field(
+        "unserved",
+        description=(
+            "What pattern_ids are: unserved, at risk until the conflict is resolved, none "
+            "named by the failure, or not recorded (a design merged before they were)"
+        ),
+    )
+    table_name: str | None = Field(
+        None, description="The merged table the listed access patterns run on, if one"
+    )
+    pattern_ids: list[str] = Field(
+        default_factory=list, description="The access patterns the merged design does not serve"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The queries those access patterns serve"
+    )
+    repeated_pattern_ids: list[str] = Field(
+        default_factory=list, description="Of pattern_ids, those an earlier conflict lists"
+    )
+
+
+class DynamoDBMergeConflictFacts(BaseModel):
+    """The DynamoDB group merge's unresolved conflicts and their totals (#802)."""
+
+    conflicts: list[DynamoDBMergeConflictRow] = Field(default_factory=list)
+    conflict_count: int = Field(0, ge=0)
+    unserved_pattern_count: int = Field(
+        0, ge=0, description="Distinct access patterns the merged design does not serve"
+    )
+    unserved_query_count: int = Field(
+        0, ge=0, description="Distinct queries those access patterns serve"
+    )
+    at_risk_pattern_count: int = Field(
+        0, ge=0, description="Distinct access patterns at risk and not already unserved"
+    )
+    at_risk_query_count: int = Field(
+        0, ge=0, description="Distinct queries of those, not already unserved"
+    )
+    unrecorded_conflict_count: int = Field(
+        0, ge=0, description="Conflicts whose unserved access patterns were not recorded"
+    )
+    summary_line: str = Field(
+        "",
+        description="The conflicts and their totals in one sentence, as every deliverable states it",
+    )
+
+
 class DerivedCopySyncRow(BaseModel):
     """One source table's stream sync: the authoritative home to its derived copies (#1527)."""
 
@@ -2482,6 +2537,14 @@ class ReportFacts(BaseModel):
             "ones (#1636); None in a report rebuilt without the collection, or written before"
         ),
     )
+    dynamodb_merge_conflicts: DynamoDBMergeConflictFacts | None = Field(
+        None,
+        description=(
+            "The DynamoDB group merge's unresolved conflicts (#802): each failure with the "
+            "access patterns and queries the merged design does not serve; None when the "
+            "merge left none (and in a report written before it)"
+        ),
+    )
     derived_copy_sync: DerivedCopySyncFacts | None = Field(
         None,
         description=(
@@ -2622,7 +2685,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.71",
+        default="1.72",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

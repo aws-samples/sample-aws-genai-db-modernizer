@@ -24,6 +24,7 @@ from src.shared.report_facts import (
     cache_layer_facts,
     compute_report_facts,
     cost_assumptions,
+    dynamodb_merge_conflict_facts,
     engine_served_split,
     engine_table_split_facts,
     map_split_facts,
@@ -90,6 +91,12 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "cache_layer" not in facts:
             # A block written before #1252.
             missing["cache_layer"] = cache_layer_facts(report)
+        if "dynamodb_merge_conflicts" not in facts:
+            # A block written before #802: the same function over schema_designs (such a
+            # report carries no conflicts, so it reads back unchanged).
+            conflicts = dynamodb_merge_conflict_facts(report)
+            if conflicts is not None:
+                missing["dynamodb_merge_conflicts"] = conflicts
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:

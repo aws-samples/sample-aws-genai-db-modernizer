@@ -49,6 +49,7 @@ import ExploreGraphButton from "../components/ExploreGraphButton";
 import useGraphExplorerFlag from "../hooks/useGraphExplorerFlag";
 import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
+import DynamoDBMergeConflictsCallout from "../components/DynamoDBMergeConflictsCallout";
 import NoOpenRisksNote from "../components/NoOpenRisksNote";
 import PinRuleNote from "../components/PinRuleNote";
 import NoOpenRisksSection from "../components/NoOpenRisksSection";
@@ -2087,6 +2088,10 @@ const AnalysisResultsPage = memo(() => {
               onOpen={fetchQueryJourney}
               t={t}
             />
+
+            {/* DynamoDB merge conflicts (#802): the access patterns the merged
+                design does not serve, as both reports state them. */}
+            <DynamoDBMergeConflictsCallout synthesis={resultsData?.synthesis} t={t} />
 
             {/* Close calls (#730): queries a kept engine could serve almost
                 as well, with the way into each one's decision trace and the

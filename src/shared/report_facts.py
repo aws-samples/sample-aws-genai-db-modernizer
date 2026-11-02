@@ -2066,6 +2066,116 @@ NO_SOURCE_TABLE_GROUP_LABELS = frozenset({UNRESOLVED_TABLE_GROUP_LABEL}) | (
 BLAME_GROUP_LABELS = frozenset({UTILITY_GROUP_LABEL}) | NO_SOURCE_TABLE_GROUP_LABELS
 
 
+def _strings(value: Any) -> list[str]:
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+# What a conflict's patterns are (``dynamodb_merge.PATTERN_STATUSES``, #802).
+MERGE_UNSERVED, MERGE_AT_RISK, MERGE_NONE_NAMED, MERGE_NOT_RECORDED = (
+    "unserved",
+    "at_risk",
+    "none_named",
+    "not_recorded",
+)
+_MERGE_STATUSES = (MERGE_UNSERVED, MERGE_AT_RISK, MERGE_NONE_NAMED, MERGE_NOT_RECORDED)
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _merge_summary(
+    n: int, unserved: tuple[int, int], at_risk: tuple[int, int], unknown: int
+) -> str:
+    """The one sentence every deliverable prints for the conflicts (#802)."""
+    parts: list[str] = []
+    if unserved[0]:
+        parts.append(
+            f"the merged design does not serve {_plural(unserved[0], 'access pattern', 'access patterns')} "
+            f"({_query_count(unserved[1])})"
+        )
+    if at_risk[0]:
+        verb = "is" if at_risk[0] == 1 else "are"
+        more = " more" if unserved[0] else ""
+        parts.append(
+            f"{at_risk[0]}{more} access {'pattern' if at_risk[0] == 1 else 'patterns'} "
+            f"({_query_count(at_risk[1])}) {verb} at risk until the conflicts are resolved"
+        )
+    if unknown:
+        parts.append(
+            "the unserved access patterns were not recorded for "
+            f"{_plural(unknown, 'conflict', 'conflicts')}"
+        )
+    if not parts:
+        parts.append("the merge names no access pattern they leave unserved")
+    left = f"The DynamoDB group merge left {_plural(n, 'conflict', 'conflicts')} unresolved"
+    return f"{left}: {'; '.join(parts)}."
+
+
+def dynamodb_merge_conflict_facts(report: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The DynamoDB group merge's unresolved conflicts (#802), each with its access
+    patterns and queries and what they are (unserved, at risk, none named, or not
+    recorded for a design merged before they were), and the distinct totals and the one
+    sentence every deliverable states; None when the merge left none (and in a report
+    written before synthesis copied them into its schema design summary). Only the
+    DynamoDB merge records them, so any design summary that carries them is read.
+
+    A pattern an earlier conflict already lists is in ``repeated_pattern_ids``, so the
+    lists can say so; every total counts it once, as unserved when any conflict leaves
+    it unserved."""
+    designs = report.get("schema_designs")
+    conflicts: list[dict[str, Any]] = []
+    listed: set[str] = set()
+    for design in designs.values() if isinstance(designs, Mapping) else []:
+        if not isinstance(design, Mapping):
+            continue
+        for c in design.get("unresolved_merge_conflicts") or []:
+            if not (isinstance(c, Mapping) and isinstance(c.get("failure"), str) and c["failure"]):
+                continue
+            patterns = _strings(c.get("pattern_ids"))
+            status = c.get("status")
+            if status not in _MERGE_STATUSES:
+                status = MERGE_UNSERVED if patterns else MERGE_NONE_NAMED
+            conflicts.append(
+                {
+                    "failure": c["failure"],
+                    "status": status,
+                    "table_name": c["table_name"] if isinstance(c.get("table_name"), str) else None,
+                    "pattern_ids": patterns,
+                    "query_ids": _strings(c.get("query_ids")),
+                    "repeated_pattern_ids": [p for p in patterns if p in listed],
+                }
+            )
+            listed.update(patterns)
+    if not conflicts:
+        return None
+
+    def ids(status: str, field: str) -> set[str]:
+        return {v for c in conflicts if c["status"] == status for v in c[field]}
+
+    unserved = (ids(MERGE_UNSERVED, "pattern_ids"), ids(MERGE_UNSERVED, "query_ids"))
+    at_risk = (
+        ids(MERGE_AT_RISK, "pattern_ids") - unserved[0],
+        ids(MERGE_AT_RISK, "query_ids") - unserved[1],
+    )
+    unknown = sum(1 for c in conflicts if c["status"] == MERGE_NOT_RECORDED)
+    return {
+        "conflicts": conflicts,
+        "conflict_count": len(conflicts),
+        "unserved_pattern_count": len(unserved[0]),
+        "unserved_query_count": len(unserved[1]),
+        "at_risk_pattern_count": len(at_risk[0]),
+        "at_risk_query_count": len(at_risk[1]),
+        "unrecorded_conflict_count": unknown,
+        "summary_line": _merge_summary(
+            len(conflicts),
+            (len(unserved[0]), len(unserved[1])),
+            (len(at_risk[0]), len(at_risk[1])),
+            unknown,
+        ),
+    }
+
+
 def display_group_name(name: Any) -> str:
     """A query group's name as a deliverable shows it (#1536): the label a saved report
     carries for a group with no source table is shown as the current one."""
@@ -3331,6 +3441,8 @@ def compute_report_facts(
         "close_calls": close_call_facts(report),
         # #729: the queries that landed on a fallback engine.
         "unservable": unservable_query_facts(report),
+        # #802: the access patterns an unresolved DynamoDB merge leaves unserved.
+        "dynamodb_merge_conflicts": dynamodb_merge_conflict_facts(report),
         # #792: the access-pattern totals the results page shows.
         "access_pattern_totals": access_pattern_facts(report),
         # #1410: the query groups the engineering report lists, and the rest.

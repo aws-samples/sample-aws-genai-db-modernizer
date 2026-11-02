@@ -20,6 +20,10 @@ Version History:
   its entity (an entity-type label, a flag every item carries) names no source column;
   AttributeDefinition.source_column becomes optional for a constant and stays required
   for every other attribute
+- 1.4 (2026-11-03, #802): Added optional ``unresolved_merge_conflicts``
+  (UnresolvedMergeConflict): each group-merge failure with its access patterns and
+  queries and a required ``status`` (unserved, at_risk, none_named, not_recorded); empty
+  for a clean merge and in a design written before it, which still validates.
 """
 
 from typing import Annotated, Literal
@@ -657,6 +661,39 @@ class HotPartitionEntry(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class UnresolvedMergeConflict(BaseModel):
+    """One DynamoDB merge failure and the access patterns it leaves unserved (#802)."""
+
+    failure: str = Field(..., description="The merge failure, as in validation_failures")
+    status: Literal["unserved", "at_risk", "none_named", "not_recorded"] = Field(
+        ...,
+        description=(
+            "What pattern_ids are: unserved (the merged design runs them on a table or "
+            "GSI not designed for them), at_risk (they run on a table the failure "
+            "concerns, which cannot be built as designed until it is resolved), "
+            "none_named (the failure names no access pattern), or not_recorded (a "
+            "design merged before the merge recorded them)"
+        ),
+    )
+    table_name: str | None = Field(
+        None,
+        description=(
+            "The merged table the unserved access patterns run on (the kept design of a "
+            "table two groups designed differently); None when the failure leaves no "
+            "pattern unserved"
+        ),
+    )
+    pattern_ids: list[str] = Field(
+        default_factory=list,
+        description="The access patterns the merged design does not serve (its own IDs)",
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The queries those access patterns serve"
+    )
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class DynamoDBModelOutputContract(BaseModel):
     """
     Output contract for the DynamoDB data modeling agent.
@@ -668,7 +705,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.3",
+        default="1.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -711,6 +748,14 @@ class DynamoDBModelOutputContract(BaseModel):
     validation_passed: bool = Field(..., description="Whether all validation checks passed")
     validation_failures: list[str] = Field(
         default_factory=list, description="Validation check failures when validation_passed=false"
+    )
+    unresolved_merge_conflicts: list[UnresolvedMergeConflict] = Field(
+        default_factory=list,
+        description=(
+            "The group merge's failures (#802), each with the access patterns and queries "
+            "the merged design leaves unserved; empty for a clean merge, and in a design "
+            "written before the field"
+        ),
     )
 
     model_config = ConfigDict(extra="ignore")

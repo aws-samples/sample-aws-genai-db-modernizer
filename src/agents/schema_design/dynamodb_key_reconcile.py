@@ -306,6 +306,7 @@ class _Drafts:
         self.trade_offs: list[dict] = []
         self.notes: list[str] = []  # mechanical changes, for the merge trace
         self.failures: list[str] = []  # what the merge must fail on (#1243)
+        self.failure_sources: list[str] = []  # the source table of each failure (#802)
 
     def refs(self) -> list[_Ref]:
         return [
@@ -1451,6 +1452,7 @@ def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> Non
                     )
         if problems:
             drafts.failures.extend(problems)
+            drafts.failure_sources.extend(base for _ in problems)
             continue
         drafts.settle(base, coll, [ref])
         # Every attribute of the placeholder the entity does not have yet, as rule 4
@@ -1538,6 +1540,7 @@ def _unify_single_keys(
                 )
                 drafts.notes.append(text)
                 drafts.failures.append(text)
+                drafts.failure_sources.append(base)
                 continue
         if not allowed:
             reasons = "; ".join(f"{_describe(*p.key)}: {p.blocked}" for p in plans)
@@ -1975,6 +1978,7 @@ def reconcile_shared_tables(
     column_types: ColumnTypes | None = None,
     owners: dict[str, int] | None = None,
     failures: list[str] | None = None,
+    failure_sources: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Rewrite group drafts so the merge sees compatible shared tables.
 
@@ -1986,8 +1990,8 @@ def reconcile_shared_tables(
     group's key has other columns. ``owners`` (normalised source table -> owning
     group index, from the split's manifest, #1243) points context placeholders at
     the owner's table and keeps the owner's key schema (rule 3); what that cannot
-    reconcile is appended to ``failures`` when given. See the module docstring for
-    the rules.
+    reconcile is appended to ``failures`` when given, and the normalised source table
+    of each to ``failure_sources`` (#802). See the module docstring for the rules.
     """
     state = _Drafts(copy.deepcopy(drafts), list(group_indices))
     if len(drafts) < 2:
@@ -2007,6 +2011,8 @@ def reconcile_shared_tables(
         notes.extend(state.notes)
     if failures is not None:
         failures.extend(state.failures)
+    if failure_sources is not None:
+        failure_sources.extend(state.failure_sources)
     return state.drafts, state.trade_offs
 
 
