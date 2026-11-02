@@ -470,7 +470,9 @@ def test_without_carried_writes_a_poor_fit_is_its_own_score_below_the_floor(tmp_
     assert not group["guidance_recorded"] and not detail["has_carried_writes"]
 
 
-def test_the_renderer_formats_and_escapes(detail):
+def test_the_renderer_formats_and_escapes(tmp_path):
+    # Every record a run of this release saves, the score dimensions (#1471) included.
+    detail = _v4_detail(tmp_path, _v4_record())
     md = detailed_report.render_detailed_engineering_report_md(_report(), detail)
     assert "# Database Modernization: Detailed Engineering Report" in md
     assert "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)." in md
@@ -483,6 +485,8 @@ def test_the_renderer_formats_and_escapes(detail):
     assert "Use a partition \\| drop &lt;b&gt;per&lt;/b&gt; month" in md
     assert "<b>" not in md
     assert "## Records not available" not in md
+    # The recorded dimensions are formatted too: no record is stated missing.
+    assert "| Aurora PostgreSQL | 74 | 74 | 70 | 80 | 55 | 0 |" in md
 
 
 def test_a_job_saved_without_routing_records_states_each_absence(tmp_path):
@@ -558,3 +562,136 @@ def test_the_facts_need_no_record_at_all():
     assert not (detail["has_ledger"] or detail["has_access_record"] or detail["has_analysis"])
     md = detailed_report.render_detailed_engineering_report_md({}, detail)
     assert "No assignment is saved next to this report" in md
+
+
+# -- the score dimensions routing recorded (#1471) -------------------------------------
+
+WEIGHTS_APG = {"pattern": 0.4, "complexity": 0.3, "performance": 0.2, "cost": 0.1}
+WEIGHTS_DDB = {"pattern": 0.64, "complexity": 0.21, "performance": 0.05, "cost": 0.1}
+
+
+def _v4_record(**ddb: Any) -> dict[str, Any]:
+    """The access record as schema version 4 writes it: r1's dimensions on each engine the
+    scorer scored (``ddb`` overrides DynamoDB's), and each engine's table ratings."""
+    record = json.loads(json.dumps(ACCESS_RECORD))
+    record["schema_version"] = 4
+    record["table_dimensions"] = {
+        "aurora_postgresql": {
+            "weights": WEIGHTS_APG,
+            "tables": {
+                "shop.orders": {"complexity": 100, "performance": 60},
+                "shop.items": {"complexity": 90, "performance": 50},
+            },
+        },
+        "dynamodb": {
+            "weights": WEIGHTS_APG,
+            "tables": {
+                "shop.orders": {"complexity": 70, "performance": 40, "weights": WEIGHTS_DDB},
+            },
+        },
+    }
+    # No penalty, a score equal to the base and a pattern equal to the class score (the
+    # better of 70 as written and 80 after redesign) are left out, as the record writes them.
+    record["queries"][0]["score_dimensions"] = {
+        "aurora_postgresql": {"cost": 55, "base": 74},
+        "dynamodb": {"pattern": 100, "cost": 90, "base": 96, "penalty": 20, "fit": 76, **ddb},
+    }
+    return record
+
+
+def _v4_detail(tmp_path: Path, record: dict[str, Any], ladder: list | None = None):
+    store = _store(tmp_path)
+    store.write_json(f"{ROOT}/assignment/v2/access_patterns.json", record)
+    if ladder is not None:
+        v2 = store.read_json(f"{ROOT}/assignment/v2/assignment.json")
+        v2["moves"][0]["evidence"]["candidates"] = ladder
+        store.write_json(f"{ROOT}/assignment/v2/assignment.json", v2)
+    return load_routing_detail(
+        store, REPORT_KEY, _report(), store.read_json(f"{ROOT}/collector/output.json")
+    )
+
+
+def test_the_recorded_dimensions_give_the_cost_base_and_weights(tmp_path):
+    detail = _v4_detail(tmp_path, _v4_record())
+    assert detail["has_score_dimensions"]
+    apg = {d["engine"]: d for d in _query(detail, "r1")["dimensions"]}["aurora_postgresql"]
+    assert apg["dimensions_recorded"]
+    assert (apg["cost_score"], apg["base_score"], apg["intrinsic_penalty"]) == (55.0, 74.0, 0.0)
+    assert apg["weights"] == WEIGHTS_APG
+    assert apg["routed_pattern_score"] == 80.0  # read back from the class score
+    assert [t["weights"] for t in apg["tables"]] == [WEIGHTS_APG, WEIGHTS_APG]
+    md = detailed_report.render_detailed_engineering_report_md(_report(), detail)
+    assert (
+        "| Engine | Routed score | Base | Pattern | After redesign | Cost | Penalty | "
+        "Complexity / performance by table | Weights (pattern / complexity / performance / "
+        "cost) |"
+    ) in md
+    assert "| Aurora PostgreSQL | 74 | 74 | 70 | 80 | 55 | 0 |" in md
+    assert "| 0.4 / 0.3 / 0.2 / 0.1 |" in md
+    assert "not shown separately" not in md
+    assert "score dimensions are not recorded for this assignment version" not in md
+
+
+def test_a_recorded_score_the_ladder_does_not_hold_is_not_shown(tmp_path):
+    """The v2 ladder gates DynamoDB for r1: the dimensions recorded for a score it does not
+    compare (76) are not shown beside it, so the report never states two disagreeing
+    numbers."""
+    detail = _v4_detail(tmp_path, _v4_record())
+    ddb = {d["engine"]: d for d in _query(detail, "r1")["dimensions"]}["dynamodb"]
+    assert not ddb["dimensions_recorded"]
+    assert ddb["cost_score"] is None and ddb["base_score"] is None and ddb["weights"] is None
+    # The penalty falls back to the biggest intrinsic finding, as for an older record.
+    assert ddb["intrinsic_penalty"] == 30.0
+
+
+def test_the_recorded_penalty_is_the_one_shown(tmp_path):
+    """With the dimensions recorded, the penalty is routing's own (here 20), read as is,
+    not the biggest intrinsic finding (30) worked out again."""
+    ladder = [_rung("aurora_postgresql", 74.0), _rung("dynamodb", 76.0)]
+    detail = _v4_detail(tmp_path, _v4_record(), ladder)
+    ddb = {d["engine"]: d for d in _query(detail, "r1")["dimensions"]}["dynamodb"]
+    assert ddb["dimensions_recorded"] and ddb["intrinsic_penalty"] == 20.0
+    assert ddb["routed_pattern_score"] == 100.0
+    assert (ddb["cost_score"], ddb["base_score"], ddb["weights"]) == (90.0, 96.0, WEIGHTS_DDB)
+
+
+def test_a_version_3_record_states_the_dimensions_are_not_recorded(detail):
+    """The record a job saved before #1471 (schema version 3) has no score dimensions: the
+    report says so and shows a dash in the cost, base and weights columns."""
+    assert detail["has_access_record"] and not detail["has_score_dimensions"]
+    assert not any(d["dimensions_recorded"] for q in detail["queries"] for d in q["dimensions"])
+    md = detailed_report.render_detailed_engineering_report_md(_report(), detail)
+    assert "## Records not available" in md
+    assert "score dimensions are not recorded for this assignment version" in md
+    assert "| Aurora PostgreSQL | 74 | — | 70 | 80 | — | 0 |" in md
+
+
+def test_the_released_beta_2_job_renders_without_score_dimensions(tmp_path):
+    """The v0.4.0-beta.2 job (``tests/fixtures/old_jobs``), whose access-pattern record is
+    schema version 3, as that release wrote it: it loads, and the absence is stated."""
+    import shutil
+
+    src = REPO / "tests" / "fixtures" / "old_jobs" / "v0.4.0-beta.2"
+    shutil.copytree(src, tmp_path / "artifacts")
+    store = LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
+    key = "wordpress/aa4e840a/synthesis/v2/report.json"
+    record = store.read_json("wordpress/aa4e840a/assignment/v2/access_patterns.json")
+    assert record["schema_version"] == 3
+    report = store.read_json(key)
+    detail = load_routing_detail(store, key, report)
+    assert detail["has_access_record"] and not detail["has_score_dimensions"]
+    md = detailed_report.render_detailed_engineering_report_md(report, detail)
+    assert "score dimensions are not recorded for this assignment version" in md
+
+
+def test_a_version_4_record_carried_from_a_version_3_one_states_the_absence(tmp_path):
+    """A writer that records no new ladder carries its predecessor's dimensions; from a
+    version 3 record that is none, and the report states it for this version."""
+    record = _v4_record()
+    record["table_dimensions"] = {}
+    for row in record["queries"]:
+        row["score_dimensions"] = {}
+    detail = _v4_detail(tmp_path, record)
+    assert detail["has_access_record"] and not detail["has_score_dimensions"]
+    md = detailed_report.render_detailed_engineering_report_md(_report(), detail)
+    assert "score dimensions are not recorded for this assignment version" in md

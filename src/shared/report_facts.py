@@ -3538,17 +3538,73 @@ def _table_breakdowns(
     return out
 
 
+def class_pattern_score(row: Mapping[str, Any], engine: str) -> float | None:
+    """The pattern dimension an access-pattern record row implies for ``engine``: the
+    better of its class score as written and after redesign (``QueryPatternModel.
+    pattern_score``, ADR-031 Decision 2 Amendment 13), or None for a row with no class
+    score (a ``utility`` or ``unparsed`` statement). The record leaves a recorded
+    ``pattern`` out when it is this value (#1471), and the reader falls back to it."""
+    written = row.get("class_scores") or {}
+    if not written:
+        return None
+    scores = [written.get(engine, 0)]
+    redesigned = (row.get("redesign") or {}).get("class_scores") or {}
+    if engine in redesigned:
+        scores.append(redesigned[engine])
+    return max(float(x) for x in scores if isinstance(x, (int, float)))
+
+
+def recorded_pattern_score(row: Mapping[str, Any], engine: str) -> float | None:
+    """The pattern dimension routing recorded for ``engine`` on a record row (#1471): the
+    entry's ``pattern`` when written, else the class score it was left out for; None when
+    the row records no dimensions for the engine or the statement reads no pattern."""
+    entry = (row.get("score_dimensions") or {}).get(engine)
+    if not isinstance(entry, Mapping):
+        return None
+    if "pattern" in entry:
+        return _detail_round(entry["pattern"])
+    if "cost" not in entry:  # a statement with no access-pattern class reads neither
+        return None
+    return _detail_round(class_pattern_score(row, engine))
+
+
+def _recorded_entry(
+    row: Mapping[str, Any], engine: str, ladder: Mapping[str, Mapping[str, Any]]
+) -> Mapping[str, Any] | None:
+    """The score dimensions the access-pattern record holds for ``engine`` (#1471), when
+    their score is the routed score the ladder shows; else None, so the report never puts
+    the dimensions of one score beside another. The record leaves out a penalty of 0 and
+    a score equal to the base (``query_pattern.recorded_dimensions``)."""
+    entry = (row.get("score_dimensions") or {}).get(engine)
+    if not isinstance(entry, Mapping):
+        return None
+    shown = (ladder.get(engine) or {}).get("score")
+    recorded = _detail_round(entry.get("fit", entry.get("base")))
+    return entry if shown is not None and recorded == shown else None
+
+
+def _weights(value: Any) -> dict[str, float] | None:
+    if not isinstance(value, Mapping):
+        return None
+    out = {str(k): float(v) for k, v in value.items() if _detail_round(v) is not None}
+    return out or None
+
+
 def _dimension_rows(
     engines: list[str],
     ladder: Mapping[str, Mapping[str, Any]],
     row: Mapping[str, Any] | None,
     breakdowns: Mapping[str, Mapping[str, Mapping[str, Any]]],
     tables: list[str],
+    table_dimensions: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """A query's scores by dimension per analysed engine, as the artifacts hold them: the
     routed score (the Move's ladder), the pattern dimension (its class score, and after
     redesign), the intrinsic anti-pattern penalty, and each table's complexity and
-    performance in the engine's analysis."""
+    performance in the engine's analysis. Where the access-pattern record holds the
+    dimensions of that routed score (#1471): the cost dimension, the base score, the
+    penalty routing applied and the weights, read as recorded (``table_dimensions`` is the
+    record's per-engine, per-table ratings and weights)."""
     row = row or {}
     written = row.get("class_scores") or {}
     redesigned = (row.get("redesign") or {}).get("class_scores") or {}
@@ -3559,6 +3615,48 @@ def _dimension_rows(
         mine = [f for f in findings if f.get("engine") == engine]
         intrinsic = [f for f in mine if f.get("kind") != "fixable"]
         by_table = breakdowns.get(engine) or {}
+        rated_engine = (table_dimensions or {}).get(engine)
+        rated_engine = rated_engine if isinstance(rated_engine, Mapping) else {}
+        rated = rated_engine.get("tables") or {}
+        recorded = _recorded_entry(row, engine, ladder)
+        table_rows = []
+        for t in tables:
+            if t not in by_table:
+                continue
+            own = rated.get(t) if recorded is not None and isinstance(rated, Mapping) else None
+            own = own if isinstance(own, Mapping) else {}
+            table_rows.append(
+                {
+                    "table": t,
+                    "complexity": _detail_round(
+                        own.get("complexity", (by_table.get(t) or {}).get("complexity_score"))
+                    ),
+                    "performance": _detail_round(
+                        own.get("performance", (by_table.get(t) or {}).get("performance_score"))
+                    ),
+                    "weights": (
+                        _weights(own.get("weights") or rated_engine.get("weights")) if own else None
+                    ),
+                }
+            )
+        # One weight set when every table the query read on the engine used the same one.
+        sets = [r["weights"] for r in table_rows if r["weights"] is not None]
+        weights = sets[0] if sets and all(w == sets[0] for w in sets) else None
+        if recorded is not None:
+            # The penalty routing applied, as the scorer call recorded it (#1471).
+            penalty = _detail_round(recorded.get("penalty", 0)) or 0.0
+        else:
+            # The biggest intrinsic penalty is the one routing applies (ADR-031
+            # Decision 8, ``query_scoring.build_anti_pattern_map``), never their sum.
+            penalty = max(
+                (
+                    float(f["penalty"])
+                    for f in intrinsic
+                    if isinstance(f.get("penalty"), (int, float))
+                    and not isinstance(f.get("penalty"), bool)
+                ),
+                default=0.0,
+            )
         out.append(
             {
                 "engine": engine,
@@ -3566,34 +3664,19 @@ def _dimension_rows(
                 "pattern_score": _detail_round(written.get(engine)),
                 "redesigned_pattern_score": _detail_round(redesigned.get(engine)),
                 "parity_anchor": anchors.get(engine),
-                # The biggest intrinsic penalty is the one routing applies (ADR-031
-                # Decision 8, ``query_scoring.build_anti_pattern_map``), never their sum.
-                "intrinsic_penalty": max(
-                    (
-                        float(f["penalty"])
-                        for f in intrinsic
-                        if isinstance(f.get("penalty"), (int, float))
-                        and not isinstance(f.get("penalty"), bool)
-                    ),
-                    default=0.0,
+                "dimensions_recorded": recorded is not None,
+                "routed_pattern_score": (
+                    recorded_pattern_score(row, engine) if recorded is not None else None
                 ),
+                "base_score": _detail_round((recorded or {}).get("base")),
+                "cost_score": _detail_round((recorded or {}).get("cost")),
+                "weights": weights if recorded is not None else None,
+                "intrinsic_penalty": penalty,
                 "intrinsic_findings": [str(f.get("pattern") or "") for f in intrinsic],
                 "fixable_findings": [
                     str(f.get("pattern") or "") for f in mine if f.get("kind") == "fixable"
                 ],
-                "tables": [
-                    {
-                        "table": t,
-                        "complexity": _detail_round(
-                            (by_table.get(t) or {}).get("complexity_score")
-                        ),
-                        "performance": _detail_round(
-                            (by_table.get(t) or {}).get("performance_score")
-                        ),
-                    }
-                    for t in tables
-                    if t in by_table
-                ],
+                "tables": table_rows,
             }
         )
     return out
@@ -3793,7 +3876,14 @@ def routing_detail_facts(
                     for k in redesign.get("assumed_keys") or []
                     if isinstance(k, Mapping) and k.get("column")
                 ],
-                "dimensions": _dimension_rows(engines, ladder, row, breakdowns, record_tables),
+                "dimensions": _dimension_rows(
+                    engines,
+                    ladder,
+                    row,
+                    breakdowns,
+                    record_tables,
+                    (access_record or {}).get("table_dimensions"),
+                ),
                 "steps": [
                     {
                         "version": int(s.get("version") or 0),
@@ -3926,6 +4016,7 @@ def routing_detail_facts(
             "has_access_record": bool(rows),
             "has_analysis": bool(analyses),
             "has_carried_writes": carried_by_table is not None,
+            "has_score_dimensions": any(r.get("score_dimensions") for r in rows.values()),
             "analysed_engines": engines,
             "engine_scope": list((facts_block or {}).get("engine_scope") or []),
             "poor_fit_floor": poor_fit_floor,

@@ -80,6 +80,13 @@ def _absences(detail: dict[str, Any]) -> list[str]:
             "No access-pattern record for this assignment version: classes, pattern scores, "
             "anti-pattern findings and key candidates are not shown."
         )
+    if detail.get("has_access_record") and not detail.get("has_score_dimensions"):
+        out.append(
+            "The score dimensions are not recorded for this assignment version: its "
+            "access-pattern record was written before they were, or carries those of a "
+            "version that was. Each query's base score, cost dimension and weights are not "
+            "shown, and the penalty is the biggest intrinsic finding."
+        )
     if not detail.get("has_analysis"):
         out.append(
             "No engine analysis is saved with this job: the complexity and performance "
@@ -108,11 +115,17 @@ def _how_to_read(detail: dict[str, Any]) -> list[str]:
         "exist, which routing uses when it is higher.",
         "- **Complexity** and **performance**: each of the query's tables as the engine's "
         "analysis rated it.",
-        "- **Cost**: the query's own cost on each engine is part of the routed score; it is "
-        "not saved on its own, so it is not shown separately.",
+        "- **Cost**: the query's own cost on the engine (0 to 100, higher is cheaper): its "
+        "share of the engine's standing cost and its own variable cost.",
+        "- **Base**: the four dimensions combined with the **weights** (pattern / complexity "
+        "/ performance / cost) the engine's analysis used for each table, averaged over the "
+        "query's tables, before the penalty; the routed score is the base less the penalty, "
+        "at least 0.",
         "- **Penalty**: the points routing took off for the query's intrinsic anti-pattern "
         "findings on the engine: the biggest one applies, not their sum; a fixable finding "
         "costs nothing, since a redesign removes it.",
+        "- Base, cost and weights are read from what routing recorded when it scored the "
+        "query; a dash means no record of them is saved for that score.",
     ]
     if isinstance(floor, (int, float)):
         lines.append(
@@ -172,16 +185,26 @@ def _dimension_table(q: dict[str, Any]) -> list[str]:
     if not rows:
         return []
     out = [
-        "| Engine | Routed score | Pattern | After redesign | Penalty | Complexity / performance by table |",
-        "|---|---|---|---|---|---|",
+        "| Engine | Routed score | Base | Pattern | After redesign | Cost | Penalty | "
+        "Complexity / performance by table | Weights (pattern / complexity / performance / "
+        "cost) |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for d in rows:
         tables = "; ".join(
             f"{_cell_code(t['table'])} {_score(t.get('complexity'))} / {_score(t.get('performance'))}"
             for t in d.get("tables") or []
         )
+        if d.get("weights"):
+            weights = _weight_set(d["weights"])
+        else:
+            weights = "; ".join(
+                f"{_cell_code(t['table'])} {_weight_set(t['weights'])}"
+                for t in d.get("tables") or []
+                if t.get("weights")
+            )
         findings = [_cell_code(f) for f in d.get("intrinsic_findings") or [] if f]
-        penalty = _score(d.get("intrinsic_penalty")) if findings else "0"
+        penalty = _score(d.get("intrinsic_penalty"))
         if findings:
             penalty += f" ({', '.join(findings)})"
         fixable = [_cell_code(f) for f in d.get("fixable_findings") or [] if f]
@@ -191,10 +214,20 @@ def _dimension_table(q: dict[str, Any]) -> list[str]:
         if d.get("parity_anchor"):
             pattern += " (parity anchor)"
         out.append(
-            f"| {_engine(d['engine'])} | {_cell(d.get('routed'))} | {pattern} | "
-            f"{_score(d.get('redesigned_pattern_score'))} | {penalty} | {tables or '—'} |"
+            f"| {_engine(d['engine'])} | {_cell(d.get('routed'))} | "
+            f"{_score(d.get('base_score'))} | {pattern} | "
+            f"{_score(d.get('redesigned_pattern_score'))} | {_score(d.get('cost_score'))} | "
+            f"{penalty} | {tables or '—'} | {weights or '—'} |"
         )
     return out + [""]
+
+
+def _weight_set(weights: dict[str, Any]) -> str:
+    """A weight set, in the order the column names them."""
+    return " / ".join(
+        fmt_num(weights.get(k), 2) if isinstance(weights.get(k), (int, float)) else "—"
+        for k in ("pattern", "complexity", "performance", "cost")
+    )
 
 
 def _query_md(q: dict[str, Any]) -> list[str]:

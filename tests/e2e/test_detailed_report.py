@@ -61,7 +61,28 @@ def test_a_fresh_run_has_every_routing_record(run: PipelineResult) -> None:
     absence, and every query has a move history."""
     md = _detailed(run)
     assert "## Records not available" not in md
-    assert "Move history:" in md and "| Engine | Routed score | Pattern |" in md
+    assert "Move history:" in md and "| Engine | Routed score | Base | Pattern |" in md
+    assert "| Cost |" in md and "| Weights (pattern / complexity / performance / cost) |" in md
+
+
+@pytest.mark.deterministic
+def test_every_routed_score_shows_the_dimensions_routing_recorded(run: PipelineResult) -> None:
+    """A fresh run records each scored engine's dimensions (#1471): every scored rung the
+    detailed report shows has its base, cost and penalty beside it, and the routed score is
+    the base less the penalty, at least 0."""
+    detail = _detail(run)
+    assert detail["has_score_dimensions"]
+    rows = [
+        d
+        for q in detail["queries"]
+        for d in q["dimensions"]
+        if d["routed"].get("score") is not None
+    ]
+    assert rows
+    for d in rows:
+        assert d["dimensions_recorded"], d["engine"]
+        assert d["routed"]["score"] == max(0.0, d["base_score"] - d["intrinsic_penalty"])
+    assert any(d["cost_score"] is not None and d["weights"] for d in rows)
 
 
 @pytest.mark.deterministic

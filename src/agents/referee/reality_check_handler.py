@@ -258,6 +258,9 @@ def run_reality_check_deterministic(
         # The resolver's settled-workload snapshot (ADR-031 Decision 12,
         # ``RoutingTrace.settled_counts``) the placement's ties used (#746).
         "settled_counts": result.get("settled_counts"),
+        # The same re-run's explained scores (#1471), for the revised version's
+        # access-pattern record; never part of the model's input.
+        "score_dimensions": result.get("score_dimensions"),
         # The stored input's (engine, tied_engines) per query: what the
         # revision replays from (before the cache owner normalisation).
         "input_state": input_state,
@@ -651,6 +654,7 @@ def write_reality_check_result(
         new_version,
         result["collector_output"],
         result["analysis_outputs"],
+        score_dimensions=result.get("score_dimensions"),
     )
     say(
         f"[reality-check] Revised assignment v{assignment_version} written to v{new_version} "

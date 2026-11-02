@@ -56,16 +56,30 @@ class TableDimension(BaseModel):
     table: str
     complexity: float | None = None
     performance: float | None = None
+    # The weights routing combined the table's dimensions with (#1471), as the
+    # access-pattern record keeps them; None for a record written before them.
+    weights: dict[str, float] | None = None
 
 
 class DimensionRow(BaseModel):
-    """A query's scores by dimension on one analysed engine, as the artifacts record them."""
+    """A query's scores by dimension on one analysed engine, as the artifacts record them.
+
+    ``dimensions_recorded`` (#1471): the access-pattern record holds the dimensions of the
+    routed score shown (its recorded score is the ladder's); then ``cost_score``,
+    ``base_score``, the applied ``intrinsic_penalty`` and ``weights`` (the one set every
+    table of the query used, else None and each table's own) are routing's own."""
 
     engine: str
     routed: EngineScoreCell
     pattern_score: float | None = None
     redesigned_pattern_score: float | None = None
     parity_anchor: str | None = None
+    dimensions_recorded: bool = False
+    # The pattern dimension routing combined (the better of the two class scores).
+    routed_pattern_score: float | None = None
+    base_score: float | None = None
+    cost_score: float | None = None
+    weights: dict[str, float] | None = None
     intrinsic_penalty: float = 0
     intrinsic_findings: list[str] = Field(default_factory=list)
     fixable_findings: list[str] = Field(default_factory=list)
@@ -163,6 +177,8 @@ class RoutingDetail(BaseModel):
     has_access_record: bool = False
     has_analysis: bool = False
     has_carried_writes: bool = False
+    # The access-pattern record holds score dimensions (schema version 4, #1471).
+    has_score_dimensions: bool = False
     analysed_engines: list[str] = Field(default_factory=list)
     engine_scope: list[str] = Field(default_factory=list)
     poor_fit_floor: float | None = None

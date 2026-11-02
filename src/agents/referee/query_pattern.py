@@ -17,8 +17,19 @@ classes.
 :func:`access_patterns_record` records, per query, the class routing used, why, the facts
 its score read, its score on each engine, per engine whose score is a parity anchor
 (#936) the anchor note, and each column the redesign considered as a key, accepted or
-refused and why (#1361): the assignment writes it next to each version
-(``assignment/v<N>/access_patterns.json``); routing reads none of it.
+refused and why (#1361), and the score dimensions routing combined (#1471, below): the
+assignment writes it next to each version (``assignment/v<N>/access_patterns.json``);
+routing reads none of it.
+
+The score dimensions are each query's per-engine pattern, cost, base, applied anti-pattern
+penalty and score, and each engine's per-table complexity, performance and weights, taken
+from the explained calls routing itself made (``AssignmentResolver.resolve``'s
+``score_dimensions``, :func:`recorded_dimensions`): ``score_query_for_engine(...,
+explain=True)``, and for a homogeneous source's own Aurora engine the guarantee's
+``compute_query_confidence(..., trace=...)``; never a second scoring. A writer that
+records no new candidate ladder of its own from a resolver run (the customer gate, a
+post-schema reroute or its rollback, which call the scorer for their own Moves) carries
+the dimensions of the version its assignment came from.
 
 A ``utility`` or ``unparsed`` statement has no class score
 (:meth:`QueryPatternModel.has_class_score`); the scorer keeps the pre-switch rule for
@@ -28,9 +39,11 @@ Amendment 5 states.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from src.agents.referee.access_pattern import (
     SCORED_CLASSES,
@@ -47,6 +60,15 @@ from src.agents.referee.redesign_findings import (
 from src.shared.catalog.access_classes import class_engine_scores, class_parity_anchors
 from src.tools.analysis.score_weights import table_weights
 from src.tools.sql.query_facts import remember_collected_facts, source_engine_of
+
+if TYPE_CHECKING:
+    from src.agents.referee.query_scoring import EngineScore
+
+#: The access-pattern record's schema version: 4 (#1471) adds each query's
+#: ``score_dimensions`` and the record's ``table_dimensions``.
+SCORE_DIMENSIONS_SCHEMA_VERSION = 4
+
+logger = logging.getLogger(__name__)
 
 
 def weights_from_analysis(
@@ -180,6 +202,116 @@ def read_analysis_outputs(store, database_name: str, job_id: str) -> dict[str, d
     return without_placeholder_engines(outputs)
 
 
+def recorded_dimensions(explained: Mapping[str, Mapping[str, EngineScore]]) -> dict[str, dict]:
+    """The score dimensions of routing's explained scorer calls (``{query_id: {engine:
+    EngineScore}}``, ``AssignmentResolver.resolve``'s ``score_dimensions``), as the record
+    holds them. Each figure is copied from the call, never computed here.
+
+    ``queries``: per query and scored engine, the ``pattern`` and ``cost`` dimensions
+    (absent for a statement with no access-pattern class, which reads neither), the
+    ``base`` confidence, the ``penalty`` routing took off (absent when 0) and the ``fit``
+    it compared (absent when it is the base: no penalty), plus ``method`` when the base did
+    not follow the per-table weighted mean (``query_scoring.METHODS``).
+
+    ``tables``: per engine, the ``weights`` most of its tables were combined with, and per
+    table its ``complexity`` and ``performance``, with its own ``weights`` only when they
+    are not the engine's. The defaults left out keep the record small (#1471).
+    """
+    from src.agents.referee.query_scoring import METHOD_PER_TABLE_WEIGHTED_MEAN
+
+    queries: dict[str, dict[str, dict]] = {}
+    rated: dict[str, dict[str, dict]] = {}
+    for qid, by_engine in explained.items():
+        for engine, result in by_engine.items():
+            breakdown = result.breakdown or {}
+            if result.score is None or breakdown.get("gate"):
+                continue
+            entry: dict[str, Any] = {}
+            if breakdown.get("method") != METHOD_PER_TABLE_WEIGHTED_MEAN:
+                entry["method"] = breakdown.get("method")
+            for name in ("pattern", "cost"):
+                dimension = breakdown.get(name)
+                if isinstance(dimension, Mapping) and dimension.get("score") is not None:
+                    entry[name] = dimension["score"]
+            entry["base"] = breakdown.get("base")
+            if result.penalty:
+                entry["penalty"] = result.penalty
+            if result.score != entry["base"]:
+                entry["fit"] = result.score
+            queries.setdefault(str(qid), {})[engine] = entry
+            for row in breakdown.get("tables") or []:
+                if row.get("complexity") is None or not row.get("weights"):
+                    continue
+                rated.setdefault(engine, {}).setdefault(
+                    str(row["table_id"]),
+                    {
+                        "complexity": row["complexity"],
+                        "performance": row["performance"],
+                        "weights": dict(row["weights"]),
+                    },
+                )
+    tables: dict[str, dict] = {}
+    for engine, by_table in sorted(rated.items()):
+        sets: Counter[tuple[tuple[str, float], ...]] = Counter(
+            tuple(sorted(t["weights"].items())) for t in by_table.values()
+        )
+        # The set most tables used; a tie goes to the first in order, so the record is stable.
+        common = dict(min(sets.items(), key=lambda kv: (-kv[1], kv[0]))[0])
+        tables[engine] = {
+            "weights": common,
+            "tables": {
+                t: (
+                    {k: v for k, v in dims.items() if k != "weights"}
+                    if dims["weights"] == common
+                    else dims
+                )
+                for t, dims in sorted(by_table.items())
+            },
+        }
+    return {
+        "queries": {q: dict(sorted(e.items())) for q, e in sorted(queries.items())},
+        "tables": tables,
+    }
+
+
+def dimensions_of_record(record: Mapping | None) -> dict[str, dict]:
+    """The score dimensions an access-pattern record holds, in :func:`recorded_dimensions`'
+    shape; a record written before them (schema version 3 or older), or none, holds none."""
+    return {
+        "queries": {
+            str(r["query_id"]): dict(r["score_dimensions"])
+            for r in (record or {}).get("queries") or []
+            if isinstance(r, Mapping) and r.get("query_id") and r.get("score_dimensions")
+        },
+        "tables": dict((record or {}).get("table_dimensions") or {}),
+    }
+
+
+def _carried_dimensions(store, prefix: str, version: int) -> dict[str, dict]:
+    """The score dimensions of the record of the version ``version``'s assignment came from
+    (its ``previous_version``), for a writer that records no new candidate ladder from a
+    resolver run; none when there is no such version or record. A record that cannot be
+    read carries none, with a warning: the report then states the dimensions are not
+    recorded for this version."""
+    own = f"{prefix}/assignment/v{version}/assignment.json"
+    if not store.exists(own):
+        return dimensions_of_record(None)
+    try:
+        assignment = store.read_json(own)
+        previous = (assignment or {}).get("previous_version")
+        if not isinstance(previous, int) or isinstance(previous, bool) or previous <= 0:
+            return dimensions_of_record(None)
+        key = f"{prefix}/assignment/v{previous}/{ACCESS_PATTERNS_FILE}"
+        return dimensions_of_record(store.read_json(key) if store.exists(key) else None)
+    except Exception as exc:  # noqa: BLE001 - any store's read error; the record is optional
+        logger.warning(
+            "access-pattern record v%s: score dimensions not carried (%s)",
+            version,
+            type(exc).__name__,
+        )
+        return dimensions_of_record(None)
+
+
 def write_access_patterns(
     store,
     database_name: str,
@@ -187,11 +319,15 @@ def write_access_patterns(
     version: int,
     collector_output: Mapping | None = None,
     analysis_outputs: Mapping[str, Mapping] | None = None,
+    score_dimensions: Mapping[str, Mapping[str, EngineScore]] | None = None,
 ) -> str:
     """Write ``assignment/v<version>/access_patterns.json`` next to every assignment
     version a writer creates (#728, #936, #1231); returns its key. ``collector_output``
     and ``analysis_outputs`` are the job's when the writer holds them, else they are read
-    from the store."""
+    from the store. ``score_dimensions`` are the writer's own explained scorer calls
+    (#1471, ``AssignmentResolver.resolve``'s); a writer that records no new candidate
+    ladder from a resolver run passes none, and the record carries those of the version
+    the assignment came from."""
     prefix = f"{database_name}/{job_id}"
     collector = (
         collector_output
@@ -203,13 +339,20 @@ def write_access_patterns(
         if analysis_outputs is not None
         else read_analysis_outputs(store, database_name, job_id)
     )
+    dimensions = (
+        recorded_dimensions(score_dimensions)
+        if score_dimensions is not None
+        else _carried_dimensions(store, prefix, version)
+    )
     key = f"{prefix}/assignment/v{version}/{ACCESS_PATTERNS_FILE}"
-    store.write_json(key, access_patterns_record(collector, analyses))
+    store.write_json(key, access_patterns_record(collector, analyses, dimensions))
     return key
 
 
 def access_patterns_record(
-    collector_output: Mapping, analysis_outputs: Mapping[str, Mapping] | None = None
+    collector_output: Mapping,
+    analysis_outputs: Mapping[str, Mapping] | None = None,
+    dimensions: Mapping[str, Mapping] | None = None,
 ) -> dict:
     """Each query's access-pattern class, as routing scored it (see the module docstring).
 
@@ -222,7 +365,9 @@ def access_patterns_record(
     ``intrinsic`` with its evidence, as the scorer labelled it
     (``query_scoring.anti_pattern_findings``, ADR-031 Decision 2 Amendment 13, #1231):
     only an intrinsic finding costs its engine points, and the designer of the engine
-    that serves the query is given its fixable ones.
+    that serves the query is given its fixable ones. ``score_dimensions`` and the record's
+    ``table_dimensions`` are ``dimensions``' (:func:`recorded_dimensions`, #1471), empty
+    when none is given.
     """
     from src.agents.referee.query_scoring import anti_pattern_findings
 
@@ -231,6 +376,7 @@ def access_patterns_record(
     findings: dict[str, list[dict]] = {}
     for finding in anti_pattern_findings(analysis_outputs or {}, collector_output):
         findings.setdefault(finding.query_id, []).append(finding.as_record())
+    scored = (dimensions or {}).get("queries") or {}
     rows = []
     by_class: Counter[str] = Counter()
     by_kind: Counter[str] = Counter()
@@ -238,7 +384,7 @@ def access_patterns_record(
     for query in (collector_output.get("queries") or {}).get("query_patterns") or []:
         result = model.classification(query)
         by_class[result.name] += 1
-        scored = model.has_class_score(query)
+        classed = model.has_class_score(query)
         own = findings.get(str(query.get("query_id") or ""), [])
         by_kind.update(f["kind"] for f in own)
         redesigned += model.redesign(query) is not None
@@ -250,26 +396,34 @@ def access_patterns_record(
                 "facts": sorted(result.facts),
                 "tables": list(query.get("tables_accessed") or []),
                 "class_scores": (
-                    dict(class_engine_scores(result.facts)[result.name]) if scored else {}
+                    dict(class_engine_scores(result.facts)[result.name]) if classed else {}
                 ),
                 "parity_anchors": (
-                    dict(class_parity_anchors(result.name, result.facts)) if scored else {}
+                    dict(class_parity_anchors(result.name, result.facts)) if classed else {}
                 ),
                 "anti_pattern_findings": [
                     {k: v for k, v in f.items() if k != "query_id"} for f in own
                 ],
                 "redesign": _redesign_record(model.redesign(query)),
                 "candidate_keys": (
-                    [c.as_record() for c in model.redesigns.candidate_keys(query)] if scored else []
+                    [c.as_record() for c in model.redesigns.candidate_keys(query)]
+                    if classed
+                    else []
                 ),
             }
+        )
+        rows[-1]["score_dimensions"] = _without_class_pattern(
+            rows[-1], scored.get(str(query.get("query_id") or "")) or {}
         )
     return {
         # Version 2 (#1231) adds each query's ``anti_pattern_findings``; a version 1
         # record has none, and every reader treats a missing list as no finding.
         # Version 3 (#1361) adds each query's ``candidate_keys``; an older record has
         # none, and ``query_trace.candidate_keys_by_query`` reads a missing list as none.
-        "schema_version": 3,
+        # Version 4 (#1471) adds each query's ``score_dimensions`` and the record's
+        # ``table_dimensions``; an older record has neither, and the detailed report
+        # states that they are not recorded.
+        "schema_version": SCORE_DIMENSIONS_SCHEMA_VERSION,
         "about": (
             "Each query's access-pattern class and class scores, as routing scored its "
             "pattern dimension as written (ADR-031 Decision 14, Amendments 5 and 7, #728); "
@@ -277,12 +431,18 @@ def access_patterns_record(
             "class and class scores routing scored instead; its anti-pattern findings, "
             "each fixable by redesign or intrinsic (ADR-031 Decision 2 Amendment 13, "
             "#1231); and ``candidate_keys``: each column the redesign considered as a key, "
-            "accepted or refused with every guard that refused it (#1361). Routing does not "
-            "read this file."
+            "accepted or refused with every guard that refused it (#1361); and "
+            "``score_dimensions``: per scored engine the pattern, cost, base, penalty and "
+            "score the routing scorer call computed, with each engine's per-table "
+            "complexity, performance and weights in ``table_dimensions`` (#1471). Routing "
+            "does not read this file."
         ),
         "by_class": dict(sorted(by_class.items())),
         "findings_by_kind": dict(sorted(by_kind.items())),
         "redesigned_queries": redesigned,
+        "table_dimensions": {
+            str(e): dict(t) for e, t in ((dimensions or {}).get("tables") or {}).items()
+        },
         "queries": rows,
     }
 
@@ -299,6 +459,21 @@ def _redesign_record(found: QueryRedesign | None) -> dict | None:
         "facts": sorted(result.facts),
         "class_scores": dict(class_engine_scores(result.facts)[result.name]),
     }
+
+
+def _without_class_pattern(row: Mapping, dimensions: Mapping[str, Mapping]) -> dict:
+    """``dimensions`` (a row's, by engine) with each ``pattern`` left out where it is the
+    class score the row already holds (``report_facts.class_pattern_score``, which the
+    reader falls back to): the record stays smaller and says the same (#1471)."""
+    from src.shared.report_facts import class_pattern_score
+
+    out = {}
+    for engine, entry in dimensions.items():
+        entry = dict(entry)
+        if "pattern" in entry and entry["pattern"] == class_pattern_score(row, engine):
+            del entry["pattern"]
+        out[engine] = entry
+    return out
 
 
 def _relies(row: Mapping, engine: str) -> bool:

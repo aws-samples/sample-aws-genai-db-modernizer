@@ -89,8 +89,8 @@ def test_without_a_reality_check_version_the_stage_reads_v1(tmp_path):
 def _bias_toward(engine: str, bonus: int = 60):
     real = assignment_resolver.score_query_for_engine
 
-    def biased(query, candidate, ctx):
-        result = real(query, candidate, ctx)
+    def biased(query, candidate, ctx, **kwargs):
+        result = real(query, candidate, ctx, **kwargs)
         if candidate == engine and result.score is not None:
             result = dataclasses.replace(result, score=min(100, result.score + bonus))
         return result

@@ -196,7 +196,7 @@ def _resolve(
     """The real resolver over ``queries``, the shared scorer patched to ``scores``
     (a missing pair scores 10; ``None`` is a gate)."""
 
-    def fake(query, engine, ctx):
+    def fake(query, engine, ctx, **_):
         score = scores.get((query["query_id"], engine), 10.0)
         if score is None:
             return EngineScore(None, "gated in this test", "capability")

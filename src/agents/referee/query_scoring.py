@@ -849,6 +849,10 @@ class EngineScore:
     # ``explain=True`` only (#1603): how the score was reached, from the same arithmetic
     # (:func:`score_query_for_engine`). Never compared: two equal scores are equal.
     breakdown: dict | None = field(default=None, compare=False)
+    # ``explain=True`` only (#1471): the anti-pattern penalty the score lost
+    # (``ScoringContext.anti_pattern_map``'s for the pair), as the assignment's
+    # access-pattern record keeps it. Never compared.
+    penalty: int | None = field(default=None, compare=False)
 
 
 def score_query_for_engine(
@@ -935,7 +939,7 @@ def score_query_for_engine(
         penalties=_penalty_rows(ctx.findings_by_pair.get((query_id, engine), ())),
         fit=fit,
     )
-    return EngineScore(score=float(fit), breakdown=explained_breakdown(trace))
+    return EngineScore(score=float(fit), breakdown=explained_breakdown(trace), penalty=penalty)
 
 
 #: The fields of a fit breakdown (``EngineScore.breakdown``, #1603), in order.
