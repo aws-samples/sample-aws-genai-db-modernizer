@@ -151,6 +151,7 @@ def _resolve(
         has_default=has_default,
         numeric_precision=col.numeric_precision,
         numeric_scale=col.numeric_scale,
+        datetime_precision=col.datetime_precision,
     )
     if resolution is not None:
         return resolution

@@ -83,6 +83,7 @@ columns_data AS (
       c.character_maximum_length AS max_length,
       c.numeric_precision AS numeric_precision,
       c.numeric_scale AS numeric_scale,
+      c.datetime_precision AS datetime_precision,
       c.is_nullable,
       c.column_default,
       '' AS column_key,

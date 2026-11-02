@@ -174,6 +174,11 @@ _PG_RENDER = {
 }
 _PG_LENGTH_TYPES = {"varchar", "char", "bit", "varbit"}
 _PG_PRECISION_TYPES = {"numeric", "timestamp", "timestamptz", "time", "timetz", "interval"}
+# information_schema.columns.datetime_precision (#292) is 6 for a bare timestamp, so
+# 6 is the default and adds no "(6)"; 0 to 5 can only have been written explicitly.
+# PostgreSQL allows 0 to 6, so a larger value is a misparse and stays bare.
+_PG_FRACTIONAL_TYPES = {"timestamp", "timestamptz", "time", "timetz", "interval"}
+_PG_DEFAULT_FRACTIONAL_DIGITS = 6
 _PG_ARRAY_HINTS = {"array"}  # information_schema says ARRAY without the element type
 
 
@@ -491,6 +496,7 @@ def resolve_source_type(
     has_default: bool = False,
     numeric_precision: int | None = None,
     numeric_scale: int | None = None,
+    datetime_precision: int | None = None,
 ) -> TypeResolution | None:
     """Aurora type for a PostgreSQL/MySQL source ``data_type``, or ``None`` if unmapped.
 
@@ -508,6 +514,12 @@ def resolve_source_type(
     ``DECIMAL`` is lossy ``(10,0)``); unconstrained PostgreSQL ``NUMERIC`` is
     arbitrary-precision and exact, so staying on PostgreSQL is a confident,
     lossless carry-over either way (I2, #156).
+
+    ``datetime_precision`` (#292) fills in ``timestamp``/``timestamptz``/``time``/
+    ``timetz``/``interval`` for the same reason: ``udt_name`` is the bare name. A value of 6
+    is PostgreSQL's default and is left bare, as an unconstrained ``numeric`` is;
+    Aurora MySQL already renders 6 for a bare type, and an interval stays a residual there.
+    A value above 6 counts as unknown.
     """
     if not data_type or source_family not in ("postgresql", "mysql"):
         return None
@@ -520,6 +532,13 @@ def resolve_source_type(
             resolved = normalize_precision_scale(numeric_precision, numeric_scale)
             if resolved is not None:
                 parsed = replace(parsed, params=resolved)
+        if (
+            parsed.base in _PG_FRACTIONAL_TYPES
+            and not parsed.params
+            and datetime_precision is not None
+            and 0 <= datetime_precision < _PG_DEFAULT_FRACTIONAL_DIGITS
+        ):
+            parsed = replace(parsed, params=(datetime_precision,))
         if target == "aurora_postgresql":
             result = _render_pg(parsed)
         else:

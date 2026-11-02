@@ -5144,6 +5144,23 @@
                                 "type": "string"
                               }
                             },
+                            "datetime_precision": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
                             "default_value": {
                               "required": false,
                               "schema": {
@@ -8740,8 +8757,8 @@
         }
       }
     },
-    "schema_hash": "fff7c7fa3e5cb2ba2d48b42aa9bf9f59435e86ae40f3e7eb19e1580605f555b6",
-    "version": "5.1"
+    "schema_hash": "fe0c7125bcafe8e7a51dc8aa2b4b9476cc68eedab784bb711d89f34b4f2a31ff",
+    "version": "5.2"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -20429,7 +20446,7 @@
       }
     },
     "schema_hash": "fb03486c2d38bd24e3424182dd12dd66624d2426aac8371f2937c94a8c50e8fd",
-    "version": "1.5"
+    "version": "1.6"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {

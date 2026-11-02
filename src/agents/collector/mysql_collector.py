@@ -908,6 +908,8 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             max_length=c.get("max_length"),
             numeric_precision=_numeric_meta(c, "numeric_precision", "data_precision"),
             numeric_scale=_numeric_meta(c, "numeric_scale", "data_scale"),
+            # PostgreSQL only (#292); other engines' rows carry no such key.
+            datetime_precision=c.get("datetime_precision"),
             # Cross-engine boolean coercion:
             # MySQL/PostgreSQL emit 'YES'/'NO'; Oracle emits 'Y'/'N'.
             # Previously only matched 'YES' exactly, so Oracle 'Y' columns

@@ -150,3 +150,26 @@ def test_precision_is_independent_of_max_length() -> None:
 
     assert col.max_length == 22
     assert col.numeric_precision == 10
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (3, 3),
+        ("3", 3),
+        (6, 6),  # PostgreSQL's default is a real value, kept as reported
+        (0, 0),
+        ("", None),
+        (None, None),
+        (-1, None),  # a misparse is "unknown", never clamped
+    ],
+)
+def test_datetime_precision_is_coerced_from_cli_shapes(raw: object, expected: int | None) -> None:
+    assert _column(datetime_precision=raw).datetime_precision == expected
+
+
+def test_a_legacy_column_without_datetime_precision_loads() -> None:
+    """A collection written before #292 has no such key; it reads as not reported."""
+    col = Column.model_validate({"column_name": "at", "data_type": "timestamp", "nullable": True})
+
+    assert col.datetime_precision is None

@@ -52,3 +52,42 @@ def test_live_index_methods_reach_the_contract_or_fall_back_to_other():
     [table] = _build_tables(raw)
 
     assert [i.index_type for i in table.indexes] == [IndexType.brin, IndexType.other]
+
+
+def test_datetime_precision_flows_from_the_query_row_to_the_column():
+    """#292: ``datetime_precision`` is read like ``numeric_precision``; an older
+    collection without the key loads as not reported."""
+    raw = {
+        "tables": [
+            {
+                "table_name": "t",
+                "columns": [
+                    {"column_name": "a", "data_type": "timestamp", "datetime_precision": 3},
+                    {"column_name": "b", "data_type": "timestamp", "datetime_precision": None},
+                    {"column_name": "c", "data_type": "timestamp"},
+                ],
+            }
+        ]
+    }
+
+    cols = _build_tables(raw)[0].columns
+
+    assert [c.datetime_precision for c in cols] == [3, None, None]
+
+
+def test_both_postgres_collector_queries_select_datetime_precision():
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+
+    script = Path(__file__).resolve().parents[3] / "scripts" / "collect-postgresql.sql"
+    assert "datetime_precision" in script.read_text()
+
+    c = PostgreSQLRemoteCollector(
+        ssm=MagicMock(), host="h", port=1, database="d", secret_arn="s"
+    )  # pragma: allowlist secret
+    seen: list[str] = []
+    c._query = lambda q: seen.append(q) or []  # type: ignore[method-assign]
+    c.collect_columns("t")
+    assert "datetime_precision" in seen[0]
