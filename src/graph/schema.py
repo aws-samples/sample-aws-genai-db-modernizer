@@ -26,7 +26,10 @@ from src.graph.store import GraphStore
 #   (Aurora included) at the effective assignment version, not the newest of
 #   v1-v10; a graph built before can miss Aurora's access patterns or show an
 #   older or abandoned design on unchanged inputs, so it is rebuilt.
-GRAPH_SCHEMA_REVISION = 5
+# - 6 (#306): Risk.status (active or resolved), rule, wave, engine, resolved_on
+#   and reason; the report's resolved risks become Risk nodes, and EVIDENCED_BY
+#   edges link each risk to its queries.
+GRAPH_SCHEMA_REVISION = 6
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -84,9 +87,14 @@ NODE_TABLES = [
         description STRING, recommendation STRING,
         PRIMARY KEY (id)
     )""",
+    # status is 'active' (risk_assessment.risks) or 'resolved' (resolved_risks,
+    # #306). rule and wave come from a migration-risk rule's risk; engine,
+    # resolved_on and reason explain a resolved risk (the engine whose analysis
+    # raised it, the engine it is resolved on, and why). Absent values are null.
     """CREATE NODE TABLE IF NOT EXISTS Risk (
-        id STRING, risk_type STRING, severity STRING,
-        description STRING, mitigation STRING,
+        id STRING, status STRING, risk_type STRING, severity STRING,
+        description STRING, mitigation STRING, rule STRING, wave INT64,
+        engine STRING, resolved_on STRING, reason STRING,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS AccessPattern (

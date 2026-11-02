@@ -69,7 +69,7 @@ purpose-shaped JSON, so you don't hand-write Cypher. Prefer these; use raw
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/trace` | Why a query ended on its engine and not another: its first assignment with each engine's score or gate, each later move with its reason, and the runner-up |
 | `GET /api/v1/assessments/{job_id}/query-journeys` and `.../query-journeys/{query_id}` | The query journeys: one page of queries, or one query's journey, read from the graph |
 | `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | Destinations and source tables migrating to an engine |
-| `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying risk and anti-patterns, weighted by traffic |
+| `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying open risk and anti-patterns, weighted by traffic |
 | `GET /api/v1/assessments/{job_id}/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
 
 Unknown ids and not-yet-run stages return `200` with empty collections, not
@@ -112,6 +112,8 @@ Relationships:
 
 `MOVED` is the move ledger in the graph: one edge per Move for every assignment version in the lineage, so a query's whole routing history stays.
 
+A `Risk` is one of the synthesis report's risks. `status` is `active` for an open risk (`risk_assessment.risks`, with its `rule` and `wave` when a migration-risk rule raised it) or `resolved` for one the assignment resolved (`risk_assessment.resolved_risks`, ids `RESOLVED-001` on, positional within one report: the same id in another report or version can be another risk): `engine` is the engine whose analysis raised it, `resolved_on` the engine it is resolved on and `reason` why. Both kinds have `IMPACTS` edges to their tables and `EVIDENCED_BY` edges to their queries; a query id with no `Query` node gets no edge.
+
 ## Summary queries (reproduce UI views)
 
 ### 1. Node census
@@ -129,7 +131,7 @@ Relationships:
 ### 3. Table → engine mapping
 
 ```json
-{"cypher":"MATCH (q:Query)-[:READS_FROM]->(st:SourceTable), (q)-[:MIGRATES_TO]->(d:Destination) RETURN st.id AS table, collect(DISTINCT d.engine) AS engines, count(DISTINCT q) AS queries ORDER BY queries DESC"}
+{"cypher":"MATCH (q:Query)-[:READS_FROM]->(st:SourceTable), (q)-[:MIGRATES_TO]->(d:Destination) RETURN st.id AS table_id, collect(DISTINCT d.engine) AS engines, count(DISTINCT q) AS queries ORDER BY queries DESC"}
 ```
 
 ### 4. Access patterns per engine
@@ -147,7 +149,13 @@ Relationships:
 ### 6. Risk register
 
 ```json
-{"cypher":"MATCH (r:Risk)-[:IMPACTS]->(st:SourceTable) RETURN r.severity AS severity, r.risk_type AS type, r.description AS description, collect(st.id) AS affected_tables ORDER BY severity"}
+{"cypher":"MATCH (r:Risk {status: 'active'})-[:IMPACTS]->(st:SourceTable) RETURN r.severity AS severity, r.risk_type AS type, r.description AS description, collect(st.id) AS affected_tables ORDER BY severity"}
+```
+
+The resolved risks, with why and where each was resolved, and the queries each names:
+
+```json
+{"cypher":"MATCH (r:Risk {status: 'resolved'}) OPTIONAL MATCH (r)-[:EVIDENCED_BY]->(q:Query) RETURN r.id AS id, r.severity AS severity, r.engine AS raised_by, r.resolved_on AS resolved_on, r.reason AS reason, collect(q.id) AS queries ORDER BY id"}
 ```
 
 ### 7. Signals from triage
@@ -208,13 +216,13 @@ Replace `<query_id>` with an id from query 10.
 ### D. Migration risk hotspots — high traffic and risk and anti-patterns
 
 ```json
-{"cypher":"MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) OPTIONAL MATCH (r:Risk)-[:IMPACTS]->(st) OPTIONAL MATCH (a:AntiPattern)-[:OBSERVED_IN_TABLE]->(st) WITH st, sum(q.calls_per_second) AS total_cps, count(DISTINCT r) AS risks, count(DISTINCT a) AS anti_patterns WHERE risks > 0 OR anti_patterns > 0 RETURN st.id AS table, total_cps, risks, anti_patterns ORDER BY total_cps DESC"}
+{"cypher":"MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) OPTIONAL MATCH (r:Risk {status: 'active'})-[:IMPACTS]->(st) OPTIONAL MATCH (a:AntiPattern)-[:OBSERVED_IN_TABLE]->(st) WITH st, sum(q.calls_per_second) AS total_cps, count(DISTINCT r) AS risks, count(DISTINCT a) AS anti_patterns WHERE risks > 0 OR anti_patterns > 0 RETURN st.id AS table_id, total_cps, risks, anti_patterns ORDER BY total_cps DESC"}
 ```
 
 ### E. Cross-engine tables — a table split across more than one engine
 
 ```json
-{"cypher":"MATCH (q:Query)-[:READS_FROM]->(st:SourceTable), (q)-[:MIGRATES_TO]->(d:Destination) WITH st, count(DISTINCT d.engine) AS engine_count, collect(DISTINCT d.engine) AS engines WHERE engine_count > 1 RETURN st.id AS table, engine_count, engines ORDER BY engine_count DESC"}
+{"cypher":"MATCH (q:Query)-[:READS_FROM]->(st:SourceTable), (q)-[:MIGRATES_TO]->(d:Destination) WITH st, count(DISTINCT d.engine) AS engine_count, collect(DISTINCT d.engine) AS engines WHERE engine_count > 1 RETURN st.id AS table_id, engine_count, engines ORDER BY engine_count DESC"}
 ```
 
 ### F. Load-test regressions — queries that got worse after migration
@@ -235,7 +243,7 @@ wrong. The graph only contains what the artifacts contain.
 |---------------|--------------------------|
 | `LoadTestRun` (queries 9, F) | Load test stage (per engine). Absent if load testing did not run or failed. |
 | `AccessPattern` (queries 4, 9, A, B) | Schema design stage (DynamoDB / DocumentDB / OpenSearch / ElastiCache). |
-| `Risk` (queries 6, D) | Referee-synthesis stage. |
+| `Risk` (query 6, its resolved-risks query, D) | Referee-synthesis stage. The resolved-risks query is also empty when the assignment resolved no risk. |
 | `AntiPattern` (queries 5, A, D) | Analysis stage (per engine). |
 
 To confirm what exists, run the node census (query 1). To force a fresh build
