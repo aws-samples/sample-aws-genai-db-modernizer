@@ -169,6 +169,15 @@ def _throttle_backoff(throttle_failures: int) -> float:
     return float(capped + jitter)
 
 
+#: Added to the correction turn only for a DynamoDB source-column finding (#1531): the
+#: other designers' contracts have no constant calculation.
+_CONSTANT_HINT = (
+    "For a DynamoDB attribute whose value is the same on every item of its entity (an "
+    'entity-type label, a flag every item carries), declare calculation {"type": '
+    '"constant", "value": ...} with no source_column, rather than borrowing an unrelated '
+    "column; a marker only some rows carry is a case calculation with no else_value. "
+)
+
 #: Correction turns a designer gets when its numbers disagree with design_metrics.
 NUMBERS_CORRECTION_ROUNDS = 2
 
@@ -186,8 +195,9 @@ def numbers_correction_prompt(errors: list[str]) -> str:
         + "Correct exactly these items. Copy numbers from design_metrics instead of "
         "recomputing them. For a source column that is not in the collected schema, fix the "
         "attribute's source_table and source_column mapping to a real column; keep the "
-        "DynamoDB attribute and key names as they are. Keep everything else unchanged, and "
-        "return the complete output."
+        "DynamoDB attribute and key names as they are. "
+        + (_CONSTANT_HINT if any(e.startswith(ATTRIBUTE_COLUMNS_PREFIX) for e in errors) else "")
+        + "Keep everything else unchanged, and return the complete output."
     )
 
 

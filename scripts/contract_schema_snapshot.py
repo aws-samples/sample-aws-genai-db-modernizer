@@ -454,12 +454,14 @@ def _diff_union(
 ) -> list[Change]:
     """Union (``anyOf``/``oneOf``) members matched by their own ``kind`` --
     the common case here is ``Optional[X]``, a 2-member union of X's kind
-    and ``null``. A member kind that disappears narrows what's accepted
+    and ``null`` -- and, in a union of several objects, by each object's
+    discriminator tag (:func:`_member_key`). A member kind that disappears narrows what's accepted
     (MAJOR); one that appears widens it (MINOR); a kind present in both is
     diffed recursively at the same path.
     """
-    before_by_kind = {m["kind"]: m for m in before_members}
-    after_by_kind = {m["kind"]: m for m in after_members}
+    tagged = _object_count(before_members) > 1 or _object_count(after_members) > 1
+    before_by_kind = {_member_key(m, tagged): m for m in before_members}
+    after_by_kind = {_member_key(m, tagged): m for m in after_members}
     changes: list[Change] = []
     for kind in sorted(set(before_by_kind) | set(after_by_kind)):
         before_member, after_member = before_by_kind.get(kind), after_by_kind.get(kind)
@@ -470,6 +472,30 @@ def _diff_union(
         else:
             changes.extend(diff_schema(before_member, after_member, path))
     return changes
+
+
+def _object_count(members: list[dict[str, Any]]) -> int:
+    return sum(1 for m in members if m.get("kind") == "object")
+
+
+def _member_key(member: dict[str, Any], tagged: bool) -> str:
+    """A union member's ``kind``, plus its tag in a union of several objects.
+
+    A discriminated union (``Field(discriminator="type")``) has one object member per
+    model, all of kind ``object``; each is told apart by its required ``const``
+    properties (``type='aggregate'``), so a member added to it is a member gained (MINOR)
+    rather than a change to whichever object member it collided with (#1531). An
+    ``Optional[X]`` has one object member and keeps the plain kind.
+    """
+    kind = str(member.get("kind"))
+    if not tagged or kind != "object":
+        return kind
+    tags = [
+        f"{name}={prop['schema']['value']!r}"
+        for name, prop in sorted((member.get("properties") or {}).items())
+        if prop.get("required") and prop.get("schema", {}).get("kind") == "const"
+    ]
+    return f"{kind} ({', '.join(tags)})" if tags else kind
 
 
 # The one contract_version declaration (ADR-008 Decision 1, #1006).

@@ -81,13 +81,44 @@ def test_derived_attributes_are_allowed() -> None:
     assert check_attribute_columns(d, COLLECTOR) == []
 
 
-def test_attribute_with_no_source_is_a_warning_not_a_failure() -> None:
+@pytest.mark.parametrize("column", ["", None, []])
+def test_attribute_with_no_source_and_no_constant_is_a_failure(column: Any) -> None:
+    """Now that a design can declare a constant (#1531), an attribute with no source
+    column, no join, no calculation and no transformation has nothing to be built from."""
     from src.tools.schema.dynamodb_attribute_columns import check_columns
 
-    check = check_columns(design([attr("orphan", "shop.users", "")]), COLLECTOR)
+    check = check_columns(design([attr("orphan", "shop.users", column)]), COLLECTOR)
+    assert check.warnings == []
+    [failure] = check.failures
+    assert "Users.orphan" in failure and "names no source column" in failure
+    assert "constant" in failure
+
+
+@pytest.mark.passes_on_main  # main already skipped any attribute with a calculation
+def test_a_constant_attribute_passes_with_no_source() -> None:
+    """``entity_name = "wp_comments"``: a label, not a copy of an unrelated column (#1531)."""
+    from src.tools.schema.dynamodb_attribute_columns import check_columns
+
+    label = {
+        "name": "entity_name",
+        "type": "S",
+        "calculation": {"type": "constant", "value": "wp_comments"},
+    }
+    flag = {"name": "is_open", "type": "BOOL", "calculation": {"type": "constant", "value": True}}
+    check = check_columns(design([attr("pk", "shop.users", "ID"), label, flag]), COLLECTOR)
+    assert check.failures == [] and check.warnings == []
+
+
+def test_attribute_with_only_a_transformation_stays_a_warning() -> None:
+    """A transformation may build the value from its own format, so the check cannot be
+    sure the attribute is unbuildable: it keeps the warning."""
+    from src.tools.schema.dynamodb_attribute_columns import check_columns
+
+    shaped = attr("label", "shop.users", "", transformation={"type": "string-format"})
+    check = check_columns(design([shaped]), COLLECTOR)
     assert check.failures == []
     [warning] = check.warnings
-    assert "names no source column" in warning and "constant" in warning
+    assert "Users.label" in warning and "transformation" in warning
 
 
 def test_multi_column_source_checks_each_column() -> None:

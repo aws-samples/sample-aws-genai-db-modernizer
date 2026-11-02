@@ -15,6 +15,11 @@ Version History:
 - 1.2 (2026-10-25, #1509): AccessPattern.returned_attributes (optional): the attributes
   a read returns, so the cost check charges a GSI fetch only when the projection does
   not cover them (#1509)
+- 1.3 (2026-11-02, #1531): CalculationDefinition gains ConstantCalculation (``type:
+  "constant"``, ``value``): an attribute that holds the same literal on every item of
+  its entity (an entity-type label, a flag every item carries) names no source column;
+  AttributeDefinition.source_column becomes optional for a constant and stays required
+  for every other attribute
 """
 
 from typing import Annotated, Literal
@@ -278,8 +283,33 @@ class CaseCalculation(BaseModel):
     )
 
 
+class ConstantCalculation(BaseModel):
+    """The same literal value on every item of the entity: an entity-type label, or a
+    flag every item carries.
+
+    A constant is on every item, so it never makes a sparse GSI sparse within its entity:
+    a marker only some rows carry is a ``case`` calculation with no ``else_value``. It
+    reads no source column, so a constant attribute names none (#1531). The value is
+    data the designer wrote: it is never SQL, and its JSON type matches the attribute's
+    DynamoDB type (``S`` a string, ``N`` a number, ``BOOL`` a boolean).
+    """
+
+    type: Literal["constant"]
+    value: str | int | float | bool = Field(
+        ..., description="The literal written to every item, e.g. 'wp_comments' or true"
+    )
+
+
+#: The JSON type of a constant's value for each DynamoDB type a constant can have.
+_CONSTANT_VALUE_TYPES: dict[str, tuple[str, tuple[type, ...]]] = {
+    "S": ("string", (str,)),
+    "N": ("number", (int, float)),
+    "BOOL": ("boolean", (bool,)),
+}
+
+
 CalculationDefinition = Annotated[
-    AggregateCalculation | CaseCalculation,
+    AggregateCalculation | CaseCalculation | ConstantCalculation,
     Field(discriminator="type"),
 ]
 
@@ -309,14 +339,26 @@ class AttributeDefinition(BaseModel):
     Describes one DynamoDB attribute and exactly how to populate it from the
     source MySQL schema. Exactly one of: direct column copy, join, or calculation.
     A transformation may be applied on top of any of those.
+
+    A ``constant`` calculation is the one attribute with no source column: it names no
+    ``source_column``, and its ``source_table`` is the table whose rows become the items
+    that carry it. Every other attribute names its source column, as before (#1531).
+
+    The contract refuses only a missing (``None``) ``source_column``. An empty one (``""``
+    or ``[]``) still loads, because designs written before constants existed used it for a
+    literal; the source-column check (``src/tools/schema/dynamodb_attribute_columns.py``)
+    fails it where a design is finalized, so a new design declares a constant instead.
     """
 
     name: str = Field(..., description="DynamoDB attribute name")
     type: DYNAMODB_ATTRIBUTE_TYPES = Field(..., description="DynamoDB attribute type")
     source_table: str = Field(..., description="MySQL source table this attribute originates from")
-    source_column: str | list[str] = Field(
-        ...,
-        description="Source column(s). List only for multi-column joins. Otherwise a single column name.",
+    source_column: str | list[str] | None = Field(
+        None,
+        description=(
+            "Source column(s). List only for multi-column joins. Otherwise a single column "
+            "name. Required unless the calculation is a constant, which names none."
+        ),
     )
     join: JoinDefinition | None = Field(
         None, description="Join spec to resolve the attribute value from another table"
@@ -340,6 +382,31 @@ class AttributeDefinition(BaseModel):
     def validate_denormalization_justification(self) -> "AttributeDefinition":
         if self.denormalized and not self.justification:
             raise ValueError("justification is required when denormalized=True")
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_or_constant(self) -> "AttributeDefinition":
+        """A constant names no source column and no join; every other attribute names its
+        source column (#1531)."""
+        calc = self.calculation
+        if not isinstance(calc, ConstantCalculation):
+            if self.source_column is None:
+                raise ValueError("source_column is required unless the calculation is a constant")
+            return self
+        if self.source_column:
+            raise ValueError(
+                "a constant names no source_column: its value is the literal, not a column"
+            )
+        if self.join is not None:
+            raise ValueError("a constant takes no join: its value is the literal")
+        expected = _CONSTANT_VALUE_TYPES.get(self.type)
+        if expected is None:
+            raise ValueError(f"a constant of type {self.type} is not supported: use S, N or BOOL")
+        kind, allowed = expected
+        value = calc.value
+        # bool is an int subclass: a boolean is never a number constant.
+        if not isinstance(value, allowed) or (isinstance(value, bool) and bool not in allowed):
+            raise ValueError(f"a constant of type {self.type} needs a {kind} value")
         return self
 
 
@@ -601,7 +668,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.2",
+        default="1.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

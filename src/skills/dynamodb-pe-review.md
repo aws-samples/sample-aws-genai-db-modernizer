@@ -115,6 +115,8 @@ You don't need to review every attribute. Focus on:
 
 - Flag `aggregate` calculations that could be maintained as materialized counters via `UpdateItem` instead of computed at read time.
 - Flag `case` calculations where the mapping could be done at the application layer instead of ETL.
+- Flag a direct copy whose value is the same for every item of its entity (an entity-type label, or a flag every item carries, mapped to an unrelated column): it should be a `constant` calculation with no `source_column`.
+- Flag a `constant` used as a sparse GSI's marker where only some rows should be indexed: a constant is on every item of the entity, so that index is not sparse; the marker is a `case` with no `else_value`.
 
 ## Output Rules
 

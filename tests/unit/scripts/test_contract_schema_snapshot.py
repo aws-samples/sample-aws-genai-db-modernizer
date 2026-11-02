@@ -15,6 +15,8 @@ real contracts, so both exercise the identical comparison.
 
 from __future__ import annotations
 
+from typing import Annotated, Union
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -69,6 +71,122 @@ def test_nested_optional_field_added_is_minor() -> None:
     bump, changes = _bump_for(Before, After)
     assert bump == "minor"
     assert any(path == "inner.b" and b == "minor" for path, b, _ in changes)
+
+
+def _members() -> tuple[type[BaseModel], type[BaseModel], type[BaseModel]]:
+    """Three tagged models, like the DynamoDB calculations (built here: the file's other
+    tests import ``Literal`` locally)."""
+    from typing import Literal
+
+    class Agg(BaseModel):
+        type: Literal["aggregate"]
+        column: str
+
+    class Case(BaseModel):
+        type: Literal["case"]
+        cases: list[str]
+
+    class Const(BaseModel):
+        type: Literal["constant"]
+        value: str
+
+    return Agg, Case, Const
+
+
+def _tagged(*members: type[BaseModel]) -> type[BaseModel]:
+    union = Annotated[Union[members], Field(discriminator="type")]  # noqa: UP007
+
+    class Holder(BaseModel):
+        calc: union | None = None  # type: ignore[valid-type]
+
+    return Holder
+
+
+def test_a_member_added_to_a_discriminated_union_is_minor() -> None:
+    """#1531: a third tagged object is a member gained, not a change to another member."""
+    agg, case, const = _members()
+    bump, changes = _bump_for(_tagged(agg, case), _tagged(agg, case, const))
+    assert bump == "minor", changes
+    assert [c[2] for c in changes] == ["union gained member kind \"object (type='constant')\""]
+
+
+def test_a_member_removed_from_a_discriminated_union_is_major() -> None:
+    agg, case, const = _members()
+    bump, changes = _bump_for(_tagged(agg, case, const), _tagged(agg, case))
+    assert bump == "major"
+    assert [c[2] for c in changes] == ["union lost member kind \"object (type='constant')\""]
+
+
+def test_a_field_removed_from_a_tagged_member_is_major_at_its_path() -> None:
+    """Main kept one object per kind, so a change to any member but the last it kept
+    (here ``case``) went unseen."""
+    from typing import Literal
+
+    agg, case, _ = _members()
+
+    class CaseAfter(BaseModel):
+        type: Literal["case"]
+
+    bump, changes = _bump_for(_tagged(agg, case), _tagged(agg, CaseAfter))
+    assert bump == "major"
+    assert [(c[0], c[1]) for c in changes] == [("calc.cases", "major")]
+
+
+def test_a_renamed_tag_is_major() -> None:
+    """A tag value renamed is the old member lost (MAJOR) and a new one gained."""
+    from typing import Literal
+
+    agg, case, const = _members()
+
+    class Renamed(BaseModel):
+        type: Literal["literal"]
+        value: str
+
+    bump, changes = _bump_for(_tagged(agg, case, const), _tagged(agg, case, Renamed))
+    assert bump == "major"
+    assert sorted((c[1], c[2]) for c in changes) == [
+        ("major", "union lost member kind \"object (type='constant')\""),
+        ("minor", "union gained member kind \"object (type='literal')\""),
+    ]
+
+
+@pytest.mark.passes_on_main  # main's kind match reaches the last member; tags must too
+def test_a_retyped_field_inside_a_three_member_union_is_major_at_its_path() -> None:
+    from typing import Literal
+
+    agg, case, const = _members()
+
+    class ConstAfter(BaseModel):
+        type: Literal["constant"]
+        value: int
+
+    bump, changes = _bump_for(_tagged(agg, case, const), _tagged(agg, case, ConstAfter))
+    assert bump == "major"
+    assert [(c[0], c[1]) for c in changes] == [("calc.value", "major")]
+
+
+@pytest.mark.passes_on_main  # guards main's behaviour for Optional[X]
+def test_an_optional_model_keeps_its_plain_kind() -> None:
+    """One object member (``Optional[X]``) is matched by kind, as before: a literal field
+    added to it is an added field, not a member lost and gained."""
+    from typing import Literal
+
+    class Inner(BaseModel):
+        a: str
+
+    class InnerAfter(BaseModel):
+        a: str
+        kind: Literal["x"] = "x"
+
+    class Before(BaseModel):
+        inner: Inner | None = None
+
+    class After(BaseModel):
+        inner: InnerAfter | None = None
+
+    bump, changes = _bump_for(Before, After)
+    assert bump == "minor", changes
+    assert [(c[0], c[1]) for c in changes] == [("inner.kind", "minor")]
 
 
 def test_enum_value_added_is_minor() -> None:
