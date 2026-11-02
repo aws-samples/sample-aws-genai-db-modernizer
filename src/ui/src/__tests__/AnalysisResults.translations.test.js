@@ -34,6 +34,13 @@ const PAGES = [
     canaryKey: 'assignment-gate.summary.fallback-notice',
     canaryValue: 'The AI summary was replaced with one built from the final assignment.',
   },
+  {
+    // #308: the experimental graph explorer (behind a server flag).
+    name: 'GraphExplorer.js',
+    file: '../pages/GraphExplorer.js',
+    canaryKey: 'graph-explorer.notice.header',
+    canaryValue: 'Experimental, data incomplete',
+  },
 ];
 
 describe.each(PAGES)('$name literal translations', ({ file, canaryKey, canaryValue }) => {

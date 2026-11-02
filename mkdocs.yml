@@ -34,6 +34,7 @@ exclude_docs: |
   !/use-claude-code.md
   !/other-ways-to-run-it.md
   !/understand-the-results.md
+  !/explore-the-graph.md
   !/sample.md
   !/faq.md
   !/contribute.md
@@ -46,6 +47,7 @@ nav:
   - Use Claude Code: use-claude-code.md
   - Other ways to run it: other-ways-to-run-it.md
   - Understand the results: understand-the-results.md
+  - Explore the graph (experimental): explore-the-graph.md
   - Sample report: sample.md
   - FAQ: faq.md
   - Contribute: contribute.md

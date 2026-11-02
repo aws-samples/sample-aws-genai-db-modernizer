@@ -122,6 +122,8 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     To work on the UI with hot reload, run `make local` instead: it starts the API on `127.0.0.1:8000` and the UI's development server (`npm start` in `src/ui`) on `localhost:3000`, which proxies API calls to the API. Leave `API_HOST` unset: it defaults to `127.0.0.1`, and `API_HOST=0.0.0.0` opens the API to your network. Press Ctrl+C in that terminal to stop both servers (`--stop` above only stops what `start_local_ui.py` started).
 
+    To try the experimental graph explorer on a job, start them with `uv run python scripts/start_local_ui.py --experimental-graph-explorer --page explore --job-id <job_id>` (or `make explore JOB=<job_id>`); see [Explore the graph](explore-the-graph.md). It is off unless you pass that option.
+
     The local API only answers requests addressed to `localhost`, `127.0.0.1`, or `::1`; set `MODERNIZER_ALLOWED_HOSTS` to reach it under another host name.
 
 ## Where the deliverables land

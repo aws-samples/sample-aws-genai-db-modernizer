@@ -9,6 +9,8 @@
     "@cloudscape-design/components": "^3.0.1311",
     "@cloudscape-design/global-styles": "^1.0.60",
     "aws-amplify": "^6.18.0",
+    "cytoscape": "^3.34.4",
+    "cytoscape-cola": "^2.5.1",
     "d3-sankey": "^0.12.3",
     "i18next": "^26.3.1",
     "oidc-client-ts": "^3.5.0",

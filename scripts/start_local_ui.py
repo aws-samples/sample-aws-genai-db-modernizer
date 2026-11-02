@@ -16,10 +16,19 @@ work in-process and reports a single JSON result.
 Usage:
     uv run python scripts/start_local_ui.py [--artifact-root ./artifacts] [--rebuild] [--timeout 180]
     uv run python scripts/start_local_ui.py --stop
-    uv run python scripts/start_local_ui.py --page summary|results|assignments --job-id <job_id>
+    uv run python scripts/start_local_ui.py --page summary|results|assignments|explore --job-id <job_id>
+    uv run python scripts/start_local_ui.py --experimental-graph-explorer [--page explore --job-id <job_id>]
 
 `--page` starts nothing: it prints the URL of that page of the job, so the
 commands quote it instead of composing it by hand (#1233).
+
+`--experimental-graph-explorer` (opt-in, off by default; #308) starts the API
+with `MODERNIZER_EXPERIMENTAL_GRAPH_UI=1`, so the experimental graph explorer
+page (`--page explore`) is on. The ready line then carries
+`"experimental_graph_explorer": true`, and with `--page explore --job-id <id>`
+also that page's `ui_url`. Servers already running with the other setting are
+restarted. Without the option nothing changes: the ready line, the API and the
+UI are what they were. `/modernize` and headless runs never pass it.
 
 Outputs JSON to stdout (the only output the caller parses):
     {"status": "ready", "api": "http://localhost:8000", "ui": "http://localhost:3000",
@@ -73,7 +82,12 @@ JOB_PAGES = {
     "summary": "/analysis/monitor/summary/{job_id}",
     "results": "/analysis/results/{job_id}",
     "assignments": "/analysis/assignments/{job_id}",
+    # The experimental graph explorer (#308): on only when the API runs with
+    # --experimental-graph-explorer; otherwise the route redirects home.
+    "explore": "/analysis/explore/{job_id}",
 }
+# The API flag --experimental-graph-explorer sets (src/api/routes/graph_explorer.py).
+GRAPH_EXPLORER_ENV = "MODERNIZER_EXPERIMENTAL_GRAPH_UI"
 UI_DIR = REPO_ROOT / "src" / "ui"
 STATE_DIR = REPO_ROOT / ".local-ui"
 POLL_INTERVAL_SECONDS = 1.0
@@ -105,6 +119,24 @@ def pids_path() -> Path:
 
 def write_pids(pids: dict[str, int]) -> None:
     pids_path().write_text(json.dumps(pids))
+
+
+def options_path() -> Path:
+    return local_ui_dir() / "options.json"
+
+
+def write_options(graph_explorer: bool) -> None:
+    """How the recorded servers were started (only the opt-in explorer flag)."""
+    options_path().write_text(json.dumps({"experimental_graph_explorer": graph_explorer}))
+
+
+def recorded_graph_explorer() -> bool:
+    """Whether the recorded API runs with the explorer flag (false when unknown)."""
+    try:
+        data = json.loads(options_path().read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("experimental_graph_explorer") is True
 
 
 def read_pids() -> dict[str, int]:
@@ -221,9 +253,15 @@ def build_ui(serve_bin: Path) -> None:
     stamp_path.write_text(json.dumps(fingerprint))
 
 
-def start_api(artifact_root: Path, log_dir: Path) -> subprocess.Popen:
+def start_api(artifact_root: Path, log_dir: Path, graph_explorer: bool = False) -> subprocess.Popen:
     env = os.environ.copy()
     env["ARTIFACT_DIR"] = str(artifact_root)
+    # The option alone decides: an exported flag is dropped without it, so
+    # the recorded options file always says what the API runs with.
+    if graph_explorer:
+        env[GRAPH_EXPLORER_ENV] = "1"
+    else:
+        env.pop(GRAPH_EXPLORER_ENV, None)
     log_path = log_dir / "api.log"
     with open(log_path, "ab") as log_file:
         return subprocess.Popen(  # nosec B603 -- this interpreter running uvicorn on 127.0.0.1, fixed argv # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
@@ -344,21 +382,33 @@ def _recorded_servers_match_markers() -> dict[str, int] | None:
     return pids
 
 
-def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[str, Any], int]:
+def _ready(pids: dict[str, int], ui_build: str, graph_explorer: bool) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "ready",
+        "api": API_URL,
+        "ui": UI_URL,
+        "pids": pids,
+        "ui_build": ui_build,
+    }
+    # Only an opt-in run says so: without the option the line is unchanged.
+    if graph_explorer:
+        result["experimental_graph_explorer"] = True
+    return result
+
+
+def run_start(
+    artifact_root: Path, rebuild: bool, timeout: float, graph_explorer: bool = False
+) -> tuple[dict[str, Any], int]:
     log_dir = local_ui_dir()
 
     needs_build = rebuild or not ui_build_is_current()
     recorded = _recorded_servers_match_markers()
     if recorded is not None:
-        if not needs_build and wait_for_ready(timeout):
-            return {
-                "status": "ready",
-                "api": API_URL,
-                "ui": UI_URL,
-                "pids": recorded,
-                "ui_build": "reused",
-            }, 0
-        if needs_build:
+        # Servers started with the other explorer setting are restarted.
+        flag_differs = recorded_graph_explorer() != graph_explorer
+        if not needs_build and not flag_differs and wait_for_ready(timeout):
+            return _ready(recorded, "reused", graph_explorer), 0
+        if needs_build or flag_differs:
             kill_pids(recorded)
             clear_pids()
             # SIGTERM is asynchronous; give our recorded servers time to release
@@ -394,7 +444,11 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
 
     pids: dict[str, int] = {}
     try:
-        api_proc = start_api(artifact_root, log_dir)
+        api_proc = (
+            start_api(artifact_root, log_dir, graph_explorer=True)
+            if graph_explorer
+            else start_api(artifact_root, log_dir)
+        )
         pids["api"] = api_proc.pid
         serve_proc = start_serve(serve_bin, log_dir)
         pids["serve"] = serve_proc.pid
@@ -403,15 +457,10 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
         return {"status": "error", "reason": f"failed to start local servers: {exc}"}, 1
 
     write_pids(pids)
+    write_options(graph_explorer)
 
     if wait_for_ready(timeout):
-        return {
-            "status": "ready",
-            "api": API_URL,
-            "ui": UI_URL,
-            "pids": pids,
-            "ui_build": "rebuilt" if needs_build else "reused",
-        }, 0
+        return _ready(pids, "rebuilt" if needs_build else "reused", graph_explorer), 0
 
     kill_pids(pids)
     clear_pids()
@@ -482,6 +531,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Print the UI URL of this page of --job-id and exit (starts nothing)",
     )
     parser.add_argument("--job-id", help="The job whose page --page prints")
+    parser.add_argument(
+        "--experimental-graph-explorer",
+        action="store_true",
+        help=(
+            "Opt in: start the API with the experimental graph explorer on "
+            f"({GRAPH_EXPLORER_ENV}=1). With --page explore --job-id <id>, start the "
+            "servers and print the explorer's URL too."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -491,14 +549,26 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     violation = sandbox_violation(args)
     if violation:
         return {"status": "error", "reason": violation}, 1
-    if args.page:
-        if args.stop:
-            return {"status": "error", "reason": "--page and --stop cannot be combined"}, 1
+    if args.page and args.stop:
+        return {"status": "error", "reason": "--page and --stop cannot be combined"}, 1
+    if args.page and not args.experimental_graph_explorer:
         return run_page(args.job_id, args.page)
     artifact_root = Path(args.artifact_root).resolve()
     if args.stop:
         return run_stop()
-    return run_start(artifact_root, rebuild=args.rebuild, timeout=args.timeout)
+    if not args.experimental_graph_explorer:
+        return run_start(artifact_root, rebuild=args.rebuild, timeout=args.timeout)
+    # The opt-in explorer: start (or restart) with the flag; with --page, the URL too.
+    if args.page:
+        page, code = run_page(args.job_id, args.page)
+        if code:
+            return page, code
+    result, code = run_start(
+        artifact_root, rebuild=args.rebuild, timeout=args.timeout, graph_explorer=True
+    )
+    if code == 0 and args.page:
+        result["ui_url"] = page["ui_url"]
+    return result, code
 
 
 def main(argv: list[str] | None = None) -> None:

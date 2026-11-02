@@ -118,3 +118,9 @@ code {
   width: 100%;
   max-width: 460px;
 }
+
+/* Graph explorer (#308): a visible focus ring on the panel's resize edge. */
+.graph-explorer-resize:focus-visible {
+  outline: 2px solid #ff9900;
+  outline-offset: -2px;
+}

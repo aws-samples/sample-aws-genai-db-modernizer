@@ -30,6 +30,7 @@ jest.mock('../pages/JobMonitoringSummary', () => mockPage('JobMonitoringSummary'
 jest.mock('../pages/PatternAnalysis', () => mockPage('PatternAnalysis'));
 jest.mock('../pages/AssignmentGate', () => mockPage('AssignmentGate'));
 jest.mock('../pages/AnalysisResults', () => mockPage('AnalysisResults'));
+jest.mock('../pages/GraphExplorer', () => mockPage('GraphExplorer'));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -183,4 +184,36 @@ test.each(SideNavigationConfigurations.items.filter(item => item.type === 'link'
 
 test('unknown paths fall through * to / and then the dashboard', () => {
   expect(renderAt('/no/such/route')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+});
+
+// #308: the experimental explorer has its own job route; the page itself
+// decides (from the server flag) whether to render or send the user home.
+// The page is loaded on demand (React.lazy), so the route renders it once the
+// import resolves.
+async function renderLazyAt(path) {
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={[path]}>
+        <AppRoutes />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+  });
+  await act(async () => {});
+  const page = container.querySelector('[data-page]');
+  return {
+    page: page && page.getAttribute('data-page'),
+    jobId: page && page.getAttribute('data-job-id'),
+    pathname: location.pathname,
+  };
+}
+
+test('/analysis/explore/:jobId renders the experimental explorer page', async () => {
+  expect(await renderLazyAt('/analysis/explore/job-42')).toEqual({
+    page: 'GraphExplorer', jobId: 'job-42', pathname: '/analysis/explore/job-42',
+  });
+});
+
+test('the side nav has no explorer entry (#308)', () => {
+  expect(SideNavigationConfigurations.items.map(item => item.href).join(' ')).not.toMatch(/explore/);
 });
