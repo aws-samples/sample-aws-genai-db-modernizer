@@ -194,3 +194,115 @@ def test_wordpress_carry_over_has_no_residuals():
     assert result.residuals == []
     assert "`ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL" in result.full_ddl
     assert "`post_content` LONGTEXT NOT NULL" in result.full_ddl
+
+
+def _pg_time_table(**extra) -> AgentTable:
+    return _table(
+        [
+            _col("a", "timestamp", datetime_precision=3, **extra),
+            _col("b", "timestamptz", datetime_precision=0),
+            _col("c", "time", datetime_precision=2),
+            _col("d", "timestamp", datetime_precision=6),
+            _col("e", "timestamp", datetime_precision=None),
+            _col("f", "timestamp"),
+            _col("g", "date", datetime_precision=0),
+        ]
+    )
+
+
+def test_pg_datetime_precision_reaches_aurora_postgresql():
+    """#292: ``timestamp(3)`` keeps its precision; PostgreSQL's default 6 stays bare."""
+    result = generate_pg_ddl([_pg_time_table()], source_engine="postgresql")
+
+    types = {c.name: c.aurora_type for c in result.tables[0].columns}
+    assert types == {
+        "a": "TIMESTAMP(3)",
+        "b": "TIMESTAMPTZ(0)",
+        "c": "TIME(2)",
+        "d": "TIMESTAMP",
+        "e": "TIMESTAMP",
+        "f": "TIMESTAMP",
+        "g": "DATE",
+    }
+    assert result.residuals == []
+
+
+def test_pg_datetime_precision_reaches_aurora_mysql():
+    result = generate_mysql_ddl([_pg_time_table()], source_engine="postgresql")
+
+    types = {c.name: c.aurora_type for c in result.tables[0].columns}
+    assert types["a"] == "DATETIME(3)"
+    assert types["b"] == "DATETIME(0)"
+    assert types["c"] == "TIME(2)"
+    assert types["d"] == types["e"] == types["f"] == "DATETIME(6)"
+    assert types["g"] == "DATE"
+
+
+@pytest.mark.passes_on_main  # guards the existing explicit-parameter behavior
+def test_explicit_type_parameter_wins_over_datetime_precision():
+    table = _table([_col("a", "timestamp(4) without time zone", datetime_precision=3)])
+
+    types = {
+        c.name: c.aurora_type
+        for c in generate_pg_ddl([table], source_engine="postgresql").tables[0].columns
+    }
+
+    assert types["a"] == "TIMESTAMP(4)"
+
+
+@pytest.mark.passes_on_main  # main never read the field, so it stays bare there too
+@pytest.mark.parametrize("precision", [7, 9])
+def test_a_precision_above_postgresql_s_range_counts_as_unknown(precision):
+    """#292: PostgreSQL allows 0 to 6; a larger value stays bare, never ``TIMESTAMP(9)``."""
+    table = _table(
+        [
+            _col("a", "timestamp", datetime_precision=precision),
+            _col("b", "timestamptz", datetime_precision=precision),
+        ]
+    )
+
+    pg = _types_of(generate_pg_ddl([table], source_engine="postgresql"))
+    my = _types_of(generate_mysql_ddl([table], source_engine="postgresql"))
+
+    assert pg == {"a": "TIMESTAMP", "b": "TIMESTAMPTZ"}
+    assert my == {"a": "DATETIME(6)", "b": "DATETIME(6)"}
+
+
+def test_a_negative_datetime_precision_is_rejected_on_the_agent_column():
+    with pytest.raises(ValueError):
+        _table([_col("a", "timestamp", datetime_precision=-1)])
+
+
+def test_pg_interval_precision_carries_to_aurora_postgresql_only():
+    table = _table(
+        [
+            _col("a", "interval", datetime_precision=3),
+            _col("b", "interval", datetime_precision=6),
+            _col("c", "interval day to second", datetime_precision=2),
+        ]
+    )
+
+    pg = generate_pg_ddl([table], source_engine="postgresql")
+    my = generate_mysql_ddl([table], source_engine="postgresql")
+
+    assert _types_of(pg) == {"a": "INTERVAL(3)", "b": "INTERVAL", "c": "INTERVAL(2)"}
+    assert pg.residuals == []
+    # Unchanged on Aurora MySQL: the same mapping and note as without a precision.
+    bare = generate_mysql_ddl(
+        [
+            _table(
+                [
+                    _col("a", "interval"),
+                    _col("b", "interval"),
+                    _col("c", "interval day to second"),
+                ]
+            )
+        ],
+        source_engine="postgresql",
+    )
+    assert _types_of(my) == _types_of(bare)
+    assert my.residuals == bare.residuals
+
+
+def _types_of(result) -> dict[str, str]:
+    return {c.name: c.aurora_type for c in result.tables[0].columns}

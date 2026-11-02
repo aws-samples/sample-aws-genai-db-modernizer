@@ -126,6 +126,15 @@ class AgentColumn(BaseModel):
     numeric_scale: int | None = Field(
         None, description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)"
     )
+    datetime_precision: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Fractional-seconds digits for time-of-day types, e.g. 3 in timestamp(3). "
+            "Carried so a relational target keeps TIMESTAMP(3) / DATETIME(3) instead of "
+            "its default precision."
+        ),
+    )
     nullable: bool
     default_value: str | int | float | bool | None = None
     is_auto_increment: bool | None = False
@@ -537,10 +546,12 @@ class SchemaDesignGroupsManifest(BaseModel):
       none, and still loads.
     - 1.5 (2026-10-28, #1623): Added optional AgentIndex.prefix_lengths, projected from
       the collector's index prefix lengths.
+    - 1.6 (2026-11-02, #292): Added optional ``AgentColumn.datetime_precision``, carried
+      from the collector column (#292). Backward compatible: defaults to None.
     """
 
     contract_version: str = Field(
-        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.6", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str
@@ -638,6 +649,7 @@ def project_schema_design_input(
                         max_length=c.max_length,
                         numeric_precision=c.numeric_precision,
                         numeric_scale=c.numeric_scale,
+                        datetime_precision=c.datetime_precision,
                         nullable=c.nullable,
                         default_value=c.default_value,
                         is_auto_increment=c.is_auto_increment,  # nosemgrep: is-function-without-parentheses -- field, not a method

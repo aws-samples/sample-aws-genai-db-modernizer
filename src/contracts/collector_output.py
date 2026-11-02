@@ -58,6 +58,9 @@ Version History:
   standard_conforming_strings) and Procedure.sql_mode / Trigger.sql_mode: the source's
   string settings the SQL facts read (redaction masks both readings). Backward
   compatible: all default to None (each engine's defaults).
+- 5.2 (2026-11-02, #292): Added optional ``Column.datetime_precision``:
+  fractional-seconds digits of a PostgreSQL time type (#292). Backward compatible:
+  defaults to None (not reported).
 """
 
 import re
@@ -414,6 +417,22 @@ class Column(BaseModel):
         documented floor, not merely for being negative. See ``_coerce_optional_int``.
         """
         return _coerce_optional_int(v, min_value=-84)
+
+    datetime_precision: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Fractional-seconds digits for time-of-day types, e.g. 3 in timestamp(3). "
+            "PostgreSQL reports 6 (its default) for a bare timestamp, so 6 is not "
+            "evidence of an explicit precision. None when the source did not say."
+        ),
+    )
+
+    @field_validator("datetime_precision", mode="before")
+    @classmethod
+    def _coerce_datetime_precision(cls, v: object) -> int | None:
+        """A digit count is never negative; see ``_coerce_optional_int``."""
+        return _coerce_optional_int(v, min_value=0)
 
     nullable: bool = Field(..., description="Whether column allows NULL values")
     default_value: str | int | float | bool | None = Field(None, description="Default value")
@@ -955,7 +974,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.1",
+        default="5.2",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
