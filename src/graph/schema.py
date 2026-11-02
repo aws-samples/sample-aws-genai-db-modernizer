@@ -11,8 +11,9 @@ from src.graph.store import GraphStore
 # saved graph (``{db}/{job}/graph/context.lbug``) whose GraphMeta revision is
 # not this one is stale and is rebuilt from the artifacts before it is read;
 # a graph saved before GraphMeta existed reads as revision 0. Bump it whenever
-# a table or column is added, renamed or dropped, or a populator writes a new
-# kind of edge.
+# a table or column is added, renamed or dropped, a populator writes a new
+# kind of edge, or the same inputs now build a different graph (a populator
+# reads other artifacts or computes other values, as in 3 and 5).
 # - 1 (#339): GraphMeta, and MOVED edges (the move ledger of every lineage
 #   version). Every graph saved before reads as revision 0.
 # - 2 (#1361): ``Query.key_candidates_json``, the columns the redesign considered
@@ -21,7 +22,11 @@ from src.graph.store import GraphStore
 #   query's engine; a graph built before keeps stale figures, so it is rebuilt.
 # - 4 (#847): ``GraphMeta.inputs_digest``, a digest of the artifacts the graph
 #   was built from, so a re-run on the same assignment version rebuilds it.
-GRAPH_SCHEMA_REVISION = 4
+# - 5 (#306): schema design and load test are read for every catalog engine
+#   (Aurora included) at the effective assignment version, not the newest of
+#   v1-v10; a graph built before can miss Aurora's access patterns or show an
+#   older or abandoned design on unchanged inputs, so it is rebuilt.
+GRAPH_SCHEMA_REVISION = 5
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
