@@ -144,10 +144,13 @@ def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
 
 
 def risk_hotspots(store: GraphStore) -> RiskHotspotsResponse:
-    """Tables carrying risk and/or anti-patterns, weighted by query traffic."""
+    """Tables carrying open risk and/or anti-patterns, weighted by query traffic.
+
+    A resolved risk (#306) stays in the graph for the audit trail but is no hotspot.
+    """
     rows = store.query(
         "MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) "
-        "OPTIONAL MATCH (r:Risk)-[:IMPACTS]->(st) "
+        "OPTIONAL MATCH (r:Risk {status: 'active'})-[:IMPACTS]->(st) "
         "OPTIONAL MATCH (a:AntiPattern)-[:OBSERVED_IN_TABLE]->(st) "
         "WITH st, SUM(q.calls_per_second) AS total_cps, "
         "  COUNT(DISTINCT r) AS risks, COUNT(DISTINCT a) AS anti_patterns "

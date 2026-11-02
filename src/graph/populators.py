@@ -620,33 +620,72 @@ def populate_from_load_test(
         )
 
 
+def _resolved_risk_ids(resolved: list, taken: set[str]) -> list[str]:
+    """Ids for the resolved risks, which the report gives none: ``RESOLVED-001`` on,
+    in report order, skipping any id an active risk already has."""
+    ids: list[str] = []
+    n = 0
+    for _ in resolved:
+        n += 1
+        while f"RESOLVED-{n:03d}" in taken:
+            n += 1
+        ids.append(f"RESOLVED-{n:03d}")
+    return ids
+
+
 def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
-    """Create Risk nodes and IMPACTS/EVIDENCED_BY edges from synthesis output."""
-    risk_assessment = synthesis_output.get("risk_assessment", {})
-    risks = risk_assessment.get("risks", [])
+    """Create Risk nodes and IMPACTS/EVIDENCED_BY edges from synthesis output.
+
+    Both the open risks (``risk_assessment.risks``, ``status = 'active'``) and the
+    risks the assignment resolved (``risk_assessment.resolved_risks``, ``status =
+    'resolved'``, #306): a resolved risk records the engine whose analysis raised
+    it, the engine it is resolved on and why. EVIDENCED_BY links a risk to each
+    query in its ``query_ids`` that has a Query node; the others are counted and
+    logged, not created.
+    """
+    risk_assessment = synthesis_output.get("risk_assessment") or {}
+    risks = [r for r in (risk_assessment.get("risks") or []) if isinstance(r, dict)]
+    resolved = [r for r in (risk_assessment.get("resolved_risks") or []) if isinstance(r, dict)]
+
+    active_ids = [risk.get("risk_id") or f"risk-{i}" for i, risk in enumerate(risks)]
+    resolved_ids = _resolved_risk_ids(resolved, set(active_ids))
 
     node_rows: list[dict] = []
     impact_rows: list[dict] = []
-    for i, risk in enumerate(risks):
-        risk_id = risk.get("risk_id", f"risk-{i}")
+    evidence: dict[tuple[str, str], None] = {}
+    for risk_id, risk, status in [
+        *((rid, r, "active") for rid, r in zip(active_ids, risks, strict=True)),
+        *((rid, r, "resolved") for rid, r in zip(resolved_ids, resolved, strict=True)),
+    ]:
+        wave = risk.get("wave")
         node_rows.append(
             {
                 "id": risk_id,
-                "type": risk.get("risk_type", ""),
-                "sev": risk.get("severity", ""),
-                "description": risk.get("description", ""),
-                "mitigation": risk.get("mitigation", ""),
+                "status": status,
+                "type": risk.get("risk_type") or "",
+                "sev": risk.get("severity") or "",
+                "description": risk.get("description") or "",
+                "mitigation": risk.get("mitigation") or "",
+                "rule": risk.get("rule"),
+                "wave": wave if isinstance(wave, int) and not isinstance(wave, bool) else None,
+                "engine": risk.get("engine"),
+                "resolved_on": risk.get("resolved_on"),
+                "reason": risk.get("reason"),
             }
         )
         impact_rows.extend(
             {"rid": risk_id, "tid": tid} for tid in (risk.get("affected_tables") or [])
         )
+        for qid in risk.get("query_ids") or []:
+            evidence[(risk_id, str(qid))] = None
 
     if node_rows:
         store.execute(
             "UNWIND $rows AS r MERGE (rk:Risk {id: r.id}) "
-            "SET rk.risk_type = r.type, rk.severity = r.sev, "
-            "rk.description = r.description, rk.mitigation = r.mitigation",
+            "SET rk.status = r.status, rk.risk_type = r.type, rk.severity = r.sev, "
+            "rk.description = r.description, rk.mitigation = r.mitigation, "
+            "rk.rule = r.rule, rk.wave = CAST(r.wave AS INT64), rk.engine = r.engine, "
+            "rk.resolved_on = r.resolved_on, rk.reason = r.reason",
             {"rows": node_rows},
         )
         _stamp_agent(
@@ -663,6 +702,18 @@ def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
             "MERGE (rk)-[:IMPACTS]->(st)",
             {"rows": impact_rows},
         )
+    if evidence:
+        known = {r["id"] for r in store.query("MATCH (q:Query) RETURN q.id AS id")}
+        evidence_rows = [{"rid": rid, "qid": qid} for rid, qid in evidence if qid in known]
+        skipped = len(evidence) - len(evidence_rows)
+        if skipped:
+            logger.info("graph: skipped %d risk query id(s) with no Query node", skipped)
+        if evidence_rows:
+            store.execute(
+                "UNWIND $rows AS r MATCH (rk:Risk {id: r.rid}), (q:Query {id: r.qid}) "
+                "MERGE (rk)-[:EVIDENCED_BY]->(q)",
+                {"rows": evidence_rows},
+            )
 
 
 def rebuild_graph(
