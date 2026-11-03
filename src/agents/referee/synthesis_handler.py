@@ -80,7 +80,10 @@ from src.agents.referee.synthesis_report import (
 from src.agents.referee.table_assignments import retained_engine_for
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
 from src.agents.referee.write_groups import table_sources, unservable_write_groups
-from src.agents.schema_design.dynamodb_merge import unresolved_merge_conflicts
+from src.agents.schema_design.dynamodb_merge import (
+    merge_review_decisions,
+    unresolved_merge_conflicts,
+)
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -1780,6 +1783,8 @@ def _build_standard_schema_summary(schema):
             if (conflicts := unresolved_merge_conflicts(schema))
             else {}
         ),
+        # #1780: the authoritative home and derived copies the merge chose per overlap.
+        **({"merge_reviews": reviews} if (reviews := merge_review_decisions(schema)) else {}),
     }
 
 

@@ -99,6 +99,7 @@ from .formatting import (
     price_list_text,
 )
 from .merge_conflicts import MERGE_CONFLICTS_TITLE, merge_conflicts_pdf
+from .merge_reviews import MERGE_REVIEWS_TITLE, merge_reviews_pdf
 from .query_patterns import query_pattern_count_text
 from .relational_gaps import heterogeneous_wave, wave_gap_groups
 from .risks import (
@@ -1388,6 +1389,23 @@ def _decisions(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any
                     *(_para(line, st["small"]) for line in merge_lines[1:]),
                 ],
                 ORANGE,
+            )
+        )
+    # #1780: the authoritative homes the DynamoDB merge chose, to review, as totals.
+    review_lines = merge_reviews_pdf(report)
+    if review_lines:
+        (_, summary), *rest = review_lines
+        cards.append(
+            _Panel(
+                [
+                    _para(MERGE_REVIEWS_TITLE, st["card_title"]),
+                    _para(summary, st["body"]),
+                    *(
+                        _labelled(label, text, st["small"]) if label else _para(text, st["small"])
+                        for label, text in rest
+                    ),
+                ],
+                YELLOW,
             )
         )
     if not cards:

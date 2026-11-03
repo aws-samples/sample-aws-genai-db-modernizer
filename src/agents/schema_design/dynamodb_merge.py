@@ -930,14 +930,32 @@ def _authoritative(names: list[str], sources: set[str], access_patterns: list[di
     return min(range(len(names)), key=rank)
 
 
+def recorded_home(trade_off: dict) -> tuple[str, list[str]] | None:
+    """The authoritative home and derived copies the merge recorded on an overlap
+    trade-off (#1780), or None for a review merged before it recorded them (or a record
+    that does not split ``target_tables`` into one home and its copies)."""
+    names = [t for t in trade_off.get("target_tables") or [] if isinstance(t, str)]
+    kept, copies = trade_off.get("authoritative_home"), trade_off.get("derived_copies")
+    if not (isinstance(kept, str) and isinstance(copies, list)):
+        return None
+    if kept not in names or sorted([kept, *copies]) != sorted(names):
+        return None
+    return kept, [c for c in copies if isinstance(c, str)]
+
+
 def overlap_home(trade_off: dict, access_patterns: list[dict]) -> tuple[str, list[str]] | None:
     """The authoritative home and the derived copies of an overlap trade-off
-    (:func:`merge_overlaps`), chosen as :func:`independent_homes` chose them
-    (:func:`_authoritative`) from the merged design's ``access_patterns``; None when
-    the trade-off names fewer than two target tables (#1528)."""
+    (:func:`merge_overlaps`): the ones the merge recorded (:func:`recorded_home`,
+    #1780), or for a review merged before it recorded them, ranked again as
+    :func:`independent_homes` ranks them (:func:`_authoritative`) from the design's
+    ``access_patterns``; None when the trade-off names fewer than two target tables
+    (#1528)."""
     names = [t for t in trade_off.get("target_tables") or [] if isinstance(t, str)]
     if len(names) < 2:
         return None
+    recorded = recorded_home(trade_off)
+    if recorded is not None:
+        return recorded
     sources = {
         normalize_table_name(s) for s in trade_off.get("source_tables") or [] if isinstance(s, str)
     }
@@ -1032,6 +1050,10 @@ def independent_homes(homes: list[_Home], access_patterns: list[dict]) -> list[d
                 "target_tables": names,
                 "query_ids": [],
                 "engine": "dynamodb",
+                # #1780: the choice itself, so every reader states this home, even after
+                # a later step (``complete_pattern_members``) changes the patterns.
+                "authoritative_home": kept,
+                "derived_copies": copies,
             }
         )
     return notes
@@ -1124,6 +1146,33 @@ def merge_overlaps(schema_output: Any) -> list[dict]:
         seen.add(key)
         overlaps.append(t)
     return overlaps
+
+
+def merge_review_decisions(schema_output: Any) -> list[dict]:
+    """The decision behind each overlap trade-off (:func:`merge_overlaps`, #1780): its
+    ``source_tables``, the ``authoritative_home`` the merge chose and the
+    ``derived_copies`` kept in sync from it (:func:`overlap_home`), and ``reconstructed``:
+    True for a review merged before the merge recorded its choice, whose home is ranked
+    again from the design's access patterns as they are now. An overlap that names fewer
+    than two tables is left out: it records no choice."""
+    if not isinstance(schema_output, dict):
+        return []
+    patterns = _dicts(schema_output.get("access_patterns"))
+    out: list[dict] = []
+    for overlap in merge_overlaps(schema_output):
+        chosen = overlap_home(overlap, patterns)
+        if chosen is None:
+            continue
+        kept, copies = chosen
+        out.append(
+            {
+                "source_tables": _strings(overlap.get("source_tables")),
+                "authoritative_home": kept,
+                "derived_copies": copies,
+                "reconstructed": recorded_home(overlap) is None,
+            }
+        )
+    return out
 
 
 def merge_warnings(schema_output: Any) -> list[str]:

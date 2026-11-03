@@ -237,6 +237,24 @@ def designed_partial_run(e2e_root: Path) -> PipelineResult:
     return result
 
 
+@pytest.fixture(scope="session")
+def designed_merge_review_run(e2e_root: Path) -> PipelineResult:
+    """The designed wordpress job whose DynamoDB design is a group merge that leaves an
+    overlap for review, with statements added after the merge
+    (``designed_run.run_merge_review_wordpress``, #1780), cached once per session."""
+    if _external_env() is not None:
+        pytest.skip("external-job mode: no deterministic designed run")
+    cached = _PIPELINE_CACHE.get("wordpress-designed-merge-review")
+    if cached is not None:
+        return cached
+    from tests.e2e.designed_run import run_merge_review_wordpress
+
+    result = run_merge_review_wordpress(e2e_root / "artifacts", "e2e-merg")
+    _RESULTS.append(result)
+    _PIPELINE_CACHE["wordpress-designed-merge-review"] = result
+    return result
+
+
 def _ensure_port_free(port: int) -> None:
     """Fail fast, with a clear message, instead of silently talking to whatever
     (possibly stale) process is already listening on ``port``."""

@@ -180,6 +180,15 @@ export function dynamodbMergeConflictsOf(synthesis) {
   return f;
 }
 
+// #1780: the DynamoDB merge-review decisions (facts.dynamodb_merge_reviews): each source
+// table's authoritative home and derived copies, with the sentences every deliverable
+// states, or null when the merge chose none and for a report written before the fact.
+export function dynamodbMergeReviewsOf(synthesis) {
+  const f = factsOf(synthesis) && factsOf(synthesis).dynamodb_merge_reviews;
+  if (!f || !Array.isArray(f.decisions) || f.decisions.length === 0) return null;
+  return f;
+}
+
 // #992: each written table's source of truth and the replicas serving its reads
 // (facts.table_sources), or null when no query writes a table or the report
 // predates them. Every figure is the facts layer's.

@@ -61,9 +61,8 @@ from src.agents.schema_design.scope import normalize_table_name
 from src.shared import catalog
 from src.shared.catalog.prices import SECONDS_PER_MONTH
 from src.shared.engine_names import display_engine
+from src.shared.overlap_risk import overlap_risk_ids
 from src.tools.analysis.dynamodb_analysis_tools import STANDARD, write_request_units
-
-DATA_CONSISTENCY = "DATA_CONSISTENCY"
 
 
 def _number(value: Any) -> float:
@@ -119,20 +118,6 @@ def _lines(sync: Mapping[str, Any]) -> dict[str, str]:
     return {"path_line": path, "cost_line": cost, "summary_line": summary}
 
 
-def _linked_risk(overlap: Mapping, risks: Iterable[Mapping]) -> str | None:
-    """The id of the open DynamoDB design-conflict risk of ``overlap``'s source tables."""
-    sources = {normalize_table_name(s) for s in overlap.get("source_tables") or [] if s}
-    for risk in risks:
-        if risk.get("risk_type") != DATA_CONSISTENCY:
-            continue
-        if not str(risk.get("description") or "").startswith(f"[{overlap.get('engine')}]"):
-            continue
-        affected = {normalize_table_name(str(t)) for t in risk.get("affected_tables") or []}
-        if affected == sources and risk.get("risk_id"):
-            return str(risk["risk_id"])
-    return None
-
-
 def derived_copy_sync_facts(
     schema: Mapping[str, Any] | None,
     risks: Iterable[Mapping[str, Any]],
@@ -173,8 +158,11 @@ def derived_copy_sync_facts(
 
     queries = collected_queries(collector, query_ids)
     syncs: list[dict[str, Any]] = []
-    for overlap in overlaps:
-        risk_id = _linked_risk(overlap, risks)
+    # One rule links an overlap to its risk, each risk to one overlap at most (#1780).
+    linked = overlap_risk_ids(
+        [(o.get("engine"), o.get("source_tables") or []) for o in overlaps], risks
+    )
+    for overlap, risk_id in zip(overlaps, linked, strict=True):
         if risk_id is None:
             continue
         homes = [t for t in overlap.get("target_tables") or [] if isinstance(t, str)]

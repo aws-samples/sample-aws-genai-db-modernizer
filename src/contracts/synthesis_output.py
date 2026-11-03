@@ -567,6 +567,11 @@ Version History:
   (DynamoDBMergeConflictFacts, #802): the DynamoDB group merge's unresolved conflicts,
   each with the access patterns and queries the merged design does not serve, and their
   distinct totals. Backward compatible: None in an older report.
+- 1.73 (2026-11-03, #1780): Added optional ``facts.dynamodb_merge_reviews``
+  (DynamoDBMergeReviewFacts, #1780): the DynamoDB merge-review decisions, each source
+  table's authoritative home and derived copies with its design-conflict risk, their
+  totals and the sentences every deliverable states. Backward compatible: None in an
+  older report.
 """
 
 from datetime import datetime
@@ -1869,6 +1874,55 @@ class DynamoDBMergeConflictFacts(BaseModel):
     )
 
 
+class DynamoDBMergeReviewRow(BaseModel):
+    """One DynamoDB merge-review decision: the home the merge chose for a source table
+    two or more design groups each gave its own (#1780)."""
+
+    source_tables: list[str] = Field(
+        default_factory=list, description="The source tables the design groups each modelled"
+    )
+    authoritative_home: str = Field(..., description="The table that takes every write to them")
+    derived_copies: list[str] = Field(
+        default_factory=list,
+        description="The tables kept in sync from the home's DynamoDB Streams",
+    )
+    risk_id: str | None = Field(
+        None, description="The open design-conflict risk of the overlap, if the register has it"
+    )
+    reconstructed: bool = Field(
+        False,
+        description=(
+            "True when the design was merged before the merge recorded its choice: the home "
+            "was ranked again from the design's access patterns as they are now"
+        ),
+    )
+    line: str = Field("", description="The decision as the engineering report lists it")
+
+
+class DynamoDBMergeReviewFacts(BaseModel):
+    """The DynamoDB merge-review decisions and their totals (#1780)."""
+
+    decisions: list[DynamoDBMergeReviewRow] = Field(default_factory=list)
+    decision_count: int = Field(0, ge=0)
+    source_table_count: int = Field(
+        0, ge=0, description="Distinct source tables the decisions give one home"
+    )
+    derived_copy_count: int = Field(0, ge=0, description="Derived copies across the decisions")
+    reconstructed_count: int = Field(
+        0, ge=0, description="Decisions reconstructed for a design merged before they were recorded"
+    )
+    risk_ids: list[str] = Field(
+        default_factory=list, description="The decisions' design-conflict risks, in order"
+    )
+    summary_line: str = Field(
+        "", description="The decisions in totals, naming no table, as every deliverable states it"
+    )
+    review_line: str = Field(
+        "",
+        description="Why each home was chosen and what to review, as every deliverable states it",
+    )
+
+
 class DerivedCopySyncRow(BaseModel):
     """One source table's stream sync: the authoritative home to its derived copies (#1527)."""
 
@@ -2545,6 +2599,14 @@ class ReportFacts(BaseModel):
             "merge left none (and in a report written before it)"
         ),
     )
+    dynamodb_merge_reviews: DynamoDBMergeReviewFacts | None = Field(
+        None,
+        description=(
+            "The DynamoDB merge-review decisions (#1780): per overlap, the authoritative "
+            "home the merge chose and its derived copies; None when the merge chose none "
+            "(and in a report written before it)"
+        ),
+    )
     derived_copy_sync: DerivedCopySyncFacts | None = Field(
         None,
         description=(
@@ -2685,7 +2747,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.72",
+        default="1.73",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

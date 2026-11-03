@@ -53,6 +53,7 @@ from src.shared.engine_names import (
     display_engine,
 )
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
+from src.shared.overlap_risk import overlap_risk_ids
 from src.shared.risk_severity import (
     SEVERITY_ORDER,
     count_by_severity,
@@ -62,6 +63,7 @@ from src.shared.risk_severity import (
 )
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.source_cache import cost_basis_sentence
+from src.shared.table_keys import normalize_table_name
 from src.shared.target_databases import engine_scope_display_order
 
 # ---------------------------------------------------------------------------
@@ -2176,6 +2178,124 @@ def dynamodb_merge_conflict_facts(report: Mapping[str, Any]) -> dict[str, Any] |
     }
 
 
+# #1780: why the merge chose each home and what is left to review, as every deliverable
+# states it (the overlap trade-off's own reasons and impact, ``dynamodb_merge``).
+MERGE_REVIEW_LINE = (
+    "The merge chose each home by the statements its access patterns serve, then their "
+    "design RPS. Review each choice before migration: reads on a derived copy are "
+    "eventually consistent and can return rows older than the latest write."
+)
+
+
+RECONSTRUCTED_NOTE = (
+    "Reconstructed from the design's access patterns as they are now: the design was "
+    "merged before the merge recorded its choice; merge it again to record it."
+)
+
+
+def _merge_review_line(
+    sources: list[str], home: str, copies: list[str], risk_id: str | None, reconstructed: bool
+) -> str:
+    """One decision as the engineering report and the results page list it (#1780)."""
+    one = len(copies) == 1
+    risk = f" ({risk_id})" if risk_id else ""
+    line = (
+        f"{', '.join(sources)}: the merge chose {home} as the authoritative home, which "
+        f"takes every write to {'it' if len(sources) == 1 else 'them'}; {', '.join(copies)} "
+        f"{'is a derived copy' if one else 'are derived copies'} updated from the DynamoDB "
+        f"Streams of {home}{risk}."
+    )
+    return f"{line} {RECONSTRUCTED_NOTE}" if reconstructed else line
+
+
+def _merge_review_summary(sources: int, homes: int, copies: int, reconstructed: int) -> str:
+    """The decisions in totals, naming no table: the executive report's sentence (#1780)."""
+    one_source, one_home = sources == 1, homes == 1
+    text = (
+        f"The DynamoDB group merge found {_plural(sources, 'source table', 'source tables')} "
+        "modelled independently by more than one design group. It chose "
+        f"{_plural(homes, 'authoritative home', 'authoritative homes')}, which "
+        f"{'takes' if one_home else 'take'} every write to "
+        f"{'that source table' if one_source else 'those source tables'}, and kept "
+        f"{_plural(copies, 'table as a derived copy', 'tables as derived copies')} updated "
+        "from DynamoDB Streams."
+    )
+    if reconstructed:
+        text += (
+            f" {_plural(reconstructed, 'choice was', 'choices were')} reconstructed from the "
+            "design's access patterns: the design was merged before the merge recorded "
+            f"{'it' if reconstructed == 1 else 'them'}."
+        )
+    return text
+
+
+def dynamodb_merge_review_facts(report: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The DynamoDB merge-review decisions (#1780): for each source table two or more
+    design groups each gave its own home, the authoritative home the merge chose and the
+    derived copies kept in sync from its DynamoDB Streams (#333), read from the
+    ``merge_reviews`` synthesis copies into each design summary; each with the id of its
+    open design-conflict risk (``overlap_risk.overlap_risk_id``, the rule the stream
+    sync uses too), whether it was reconstructed (a design merged before the merge
+    recorded its choice), the line the engineering report and the results page list,
+    the totals, and the sentences the executive report states without naming a table.
+    None when the merge chose none (and in a report synthesized before the field)."""
+    designs = report.get("schema_designs")
+    risk_block = report.get("risk_assessment")
+    risks = [
+        r
+        for r in (risk_block.get("risks") or [] if isinstance(risk_block, Mapping) else [])
+        if isinstance(r, Mapping)
+    ]
+    found: list[tuple[str, Mapping[str, Any]]] = []
+    for engine, design in designs.items() if isinstance(designs, Mapping) else []:
+        if not isinstance(design, Mapping):
+            continue
+        for d in design.get("merge_reviews") or []:
+            if not isinstance(d, Mapping):
+                continue
+            home, copies = d.get("authoritative_home"), _strings(d.get("derived_copies"))
+            if isinstance(home, str) and home and copies:
+                found.append((str(engine), d))
+    # One rule links an overlap to its risk, each risk to one overlap at most.
+    linked = overlap_risk_ids(
+        [(engine, _strings(d.get("source_tables"))) for engine, d in found], risks
+    )
+    decisions: list[dict[str, Any]] = []
+    for (_, d), risk_id in zip(found, linked, strict=True):
+        home, copies = str(d["authoritative_home"]), _strings(d.get("derived_copies"))
+        sources = _strings(d.get("source_tables"))
+        reconstructed = d.get("reconstructed") is True
+        decisions.append(
+            {
+                "source_tables": sources,
+                "authoritative_home": home,
+                "derived_copies": copies,
+                "risk_id": risk_id,
+                "reconstructed": reconstructed,
+                "line": _merge_review_line(sources, home, copies, risk_id, reconstructed),
+            }
+        )
+    if not decisions:
+        return None
+    # ``wordpress.wp_posts`` and ``wp_posts`` are one source table.
+    source_count = len({normalize_table_name(s) for d in decisions for s in d["source_tables"]})
+    copy_count = sum(len(d["derived_copies"]) for d in decisions)
+    reconstructed_count = sum(1 for d in decisions if d["reconstructed"])
+    return {
+        "decisions": decisions,
+        "decision_count": len(decisions),
+        "source_table_count": source_count,
+        "derived_copy_count": copy_count,
+        "reconstructed_count": reconstructed_count,
+        # Distinct: overlap_risk_ids gives each risk to one decision at most.
+        "risk_ids": [d["risk_id"] for d in decisions if d["risk_id"]],
+        "summary_line": _merge_review_summary(
+            source_count, len(decisions), copy_count, reconstructed_count
+        ),
+        "review_line": MERGE_REVIEW_LINE,
+    }
+
+
 def display_group_name(name: Any) -> str:
     """A query group's name as a deliverable shows it (#1536): the label a saved report
     carries for a group with no source table is shown as the current one."""
@@ -3443,6 +3563,8 @@ def compute_report_facts(
         "unservable": unservable_query_facts(report),
         # #802: the access patterns an unresolved DynamoDB merge leaves unserved.
         "dynamodb_merge_conflicts": dynamodb_merge_conflict_facts(report),
+        # #1780: the authoritative home and derived copies the merge chose, to review.
+        "dynamodb_merge_reviews": dynamodb_merge_review_facts(report),
         # #792: the access-pattern totals the results page shows.
         "access_pattern_totals": access_pattern_facts(report),
         # #1410: the query groups the engineering report lists, and the rest.
