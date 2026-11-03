@@ -19,7 +19,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from src.agents.referee.routed_confidence import PSEUDO_TABLES
 from src.api.models.graph_explorer_responses import (
     ExplorerBelowTraffic,
     ExplorerBundle,
@@ -46,6 +45,7 @@ from src.graph.explorer_overlays import (
     bundle_cached_in,
     bundle_wave,
     query_path,
+    replicas_pending,
     wave_query_ids,
 )
 from src.graph.store import GraphStore
@@ -118,7 +118,34 @@ def bundle_key(table: str, engine: str) -> str:
     return f"bundle:{table}|{engine}"
 
 
-def _table_node(table: str, overlays: Overlays) -> ExplorerNode:
+def placeholder_tables(store: GraphStore, tables: list[str] | None = None) -> set[str]:
+    """The tables the graph flags as a collector placeholder (``SourceTable.placeholder``,
+    #306): of ``tables``, or of the whole graph when None."""
+    if tables is None:
+        rows = store.query("MATCH (st:SourceTable) WHERE st.placeholder RETURN st.id AS id")
+    elif tables:
+        rows = store.query(
+            "MATCH (st:SourceTable) WHERE st.id IN $ids AND st.placeholder RETURN st.id AS id",
+            {"ids": list(tables)},
+        )
+    else:
+        return set()
+    return {r["id"] for r in rows}
+
+
+def _writes(store: GraphStore, query_ids: list[str]) -> set[tuple[str, str]]:
+    """``(query, table)`` for each WRITES edge of ``query_ids`` (#306)."""
+    if not query_ids:
+        return set()
+    rows = store.query(
+        "MATCH (q:Query)-[:WRITES]->(st:SourceTable) WHERE q.id IN $ids "
+        "RETURN q.id AS q, st.id AS t",
+        {"ids": list(query_ids)},
+    )
+    return {(r["q"], r["t"]) for r in rows}
+
+
+def _table_node(table: str, overlays: Overlays, placeholder: bool) -> ExplorerNode:
     ts = overlays.table_sources.get(table) or {}
     return ExplorerNode(
         key=f"table:{table}",
@@ -127,7 +154,7 @@ def _table_node(table: str, overlays: Overlays) -> ExplorerNode:
         label=table,
         source_of_truth=ts.get("source_of_truth"),
         replica_engines=ts.get("replica_engines") or [],
-        placeholder=table in PSEUDO_TABLES,
+        placeholder=placeholder,
     )
 
 
@@ -172,8 +199,20 @@ def explorer_options(store: GraphStore, limit: int = DEFAULT_OPTION_LIMIT) -> Ex
     )
 
 
+def _pending(store: GraphStore, overlays: Overlays) -> bool:
+    """The report's replica reads may be stale (``explorer_overlays.replicas_pending``)."""
+    if not overlays.table_sources or overlays.report_version is None:
+        return False
+    return replicas_pending(overlays, store.graph_meta().get("effective_version"))
+
+
 def _queries(
-    store: GraphStore, query_ids: list[str], overlays: Overlays, table: str | None = None
+    store: GraphStore,
+    query_ids: list[str],
+    overlays: Overlays,
+    table: str | None = None,
+    writes: set[tuple[str, str]] | None = None,
+    pending: bool = False,
 ) -> list[ExplorerQuery]:
     """The queries named (a bounded list), busiest first."""
     if not query_ids:
@@ -188,6 +227,8 @@ def _queries(
         {"ids": list(query_ids)},
     )
     rows.sort(key=lambda r: (-(r.get("cps") or 0.0), r["id"]))
+    if writes is None:
+        writes = _writes(store, [r["id"] for r in rows]) if table else set()
     out = []
     for r in rows:
         qid = r["id"]
@@ -215,7 +256,11 @@ def _queries(
                 ],
                 unit=unit[0] if unit else None,
                 unit_size=unit[1] if unit else None,
-                access=access_of(overlays, qid, table) if table else None,
+                access=(
+                    access_of(overlays, qid, table, (qid, table) in writes, pending)
+                    if table
+                    else None
+                ),
             )
         )
     return out
@@ -231,13 +276,20 @@ _PAIR_STATS = (
 
 
 def _bundles(store: GraphStore, rows: list[dict], overlays: Overlays) -> list[ExplorerBundle]:
-    """Bundles from pair rows (t, e, n, cps, ids), each with its busiest queries."""
+    """Bundles from pair rows (t, e, n, cps, ids), each with its busiest queries.
+    One WRITES lookup serves every bundle."""
     bundles = []
+    writes = _writes(
+        store, sorted({str(q) for r in rows if r.get("e") for q in (r.get("ids") or [])})
+    )
+    pending = _pending(store, overlays)
     for r in rows:
         ids = [str(q) for q in (r.get("ids") or [])]
         if not r.get("e"):
             continue
-        queries = _queries(store, _busiest(store, ids), overlays, table=r["t"])
+        queries = _queries(
+            store, _busiest(store, ids), overlays, table=r["t"], writes=writes, pending=pending
+        )
         wave = bundle_wave(overlays, ids)
         cached = bundle_cached_in(overlays, ids)
         cut = overlays.cutover
@@ -254,7 +306,9 @@ def _bundles(store: GraphStore, rows: list[dict], overlays: Overlays) -> list[Ex
                 cutover_wave=(
                     cut["wave"] if cut and wave is not None and wave > cut["wave"] else None
                 ),
-                access=bundle_access(overlays, r["t"], ids),
+                access=bundle_access(
+                    overlays, r["t"], ids, {q for q, t in writes if t == r["t"]}, pending
+                ),
                 queries=queries,
                 queries_truncated=len(ids) > len(queries),
             )
@@ -349,12 +403,15 @@ def links(
     bundles = _bundles(store, ranked, overlays)
 
     nodes: dict[str, ExplorerNode] = {}
+    flagged = placeholder_tables(
+        store, sorted({b.table for b in bundles} | ({anchor} if kind == "table" else set()))
+    )
     if kind == "table":
-        nodes[f"table:{anchor}"] = _table_node(anchor, overlays)
+        nodes[f"table:{anchor}"] = _table_node(anchor, overlays, anchor in flagged)
     if kind == "engine":
         nodes[f"engine:{anchor}"] = _engine_node(anchor, overlays)
     for b in bundles:
-        nodes.setdefault(f"table:{b.table}", _table_node(b.table, overlays))
+        nodes.setdefault(f"table:{b.table}", _table_node(b.table, overlays, b.table in flagged))
         nodes.setdefault(f"engine:{b.engine}", _engine_node(b.engine, overlays))
     return ExplorerLinks(
         anchor_kind=kind,  # type: ignore[arg-type]
@@ -546,9 +603,10 @@ def search(store: GraphStore, overlays: Overlays, text: str) -> ExplorerSearch:
     )
     results = _queries(store, [r["id"] for r in rows], overlays)
     nodes: dict[str, ExplorerNode] = {}
+    flagged = placeholder_tables(store, sorted({t for q in results for t in q.tables}))
     for q in results:
         for t in q.tables:
-            nodes.setdefault(f"table:{t}", _table_node(t, overlays))
+            nodes.setdefault(f"table:{t}", _table_node(t, overlays, t in flagged))
         if q.engine:
             nodes.setdefault(f"engine:{q.engine}", _engine_node(q.engine, overlays))
     return ExplorerSearch(text=needle, results=results, nodes=list(nodes.values()), truncated=cut)
@@ -569,6 +627,8 @@ def query_detail(
         {"id": query_id},
     )
     cls = overlays.query_classes.get(query_id)
+    written = _writes(store, [query_id])
+    pending = _pending(store, overlays)
     return ExplorerQueryDetail(
         **q.model_dump(),
         access_pattern_class=cls[0] if cls else None,
@@ -576,7 +636,11 @@ def query_detail(
         assignment_reason=head[0].get("reason") if head else None,
         confidence=head[0].get("confidence") if head else None,
         accesses=[
-            ExplorerTableAccess(table=t, access=access_of(overlays, query_id, t)) for t in q.tables
+            ExplorerTableAccess(
+                table=t,
+                access=access_of(overlays, query_id, t, (query_id, t) in written, pending),
+            )
+            for t in q.tables
         ],
     )
 

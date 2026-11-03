@@ -253,9 +253,12 @@ def test_a_wave_links_to_whole_bundles_of_what_moves_in_it(populated_store):
     assert explorer.links(populated_store, EMPTY, "wave", "3") is None
 
 
-def test_without_a_report_nothing_claims_who_writes(populated_store):
+def test_without_a_report_who_writes_comes_from_the_graph(populated_store):
+    """The read/write split is in the graph (WRITES, #306): with no report, q3's
+    INSERT still writes orders and q1 still reads it; no wave is claimed."""
     ddb = explorer.links(populated_store, EMPTY, "table", "orders").bundles[0]
-    assert ddb.access is None and ddb.queries[0].access is None and ddb.wave is None
+    assert ddb.access == "write" and ddb.wave is None
+    assert {q.query_id: q.access for q in ddb.queries} == {"q1": "read", "q3": "write"}
 
 
 def test_table_names_and_sql_come_back_as_data(tmp_path):
@@ -532,9 +535,110 @@ def test_real_tables_are_not_placeholders(populated_store):
 
 
 def test_overlays_name_the_placeholder_tables(client, monkeypatch):
+    """The names come from the graph's flags (#306): this job has none."""
     monkeypatch.setenv(FLAG, "1")
     body = client.get("/api/v1/assessments/job-1/graph/explore/overlays").json()
-    assert body["placeholder_tables"] == ["unknown"]
+    assert body["placeholder_tables"] == []
+
+
+def _store_of(tmp_path, *patterns, engine="mysql"):
+    store = GraphStore(str(tmp_path / "w.lbug"))
+    initialize_schema(store)
+    populate_from_collector(
+        {
+            "metadata": {"source_database": {"engine": engine}},
+            "queries": {"query_patterns": list(patterns)},
+        },
+        store,
+    )
+    return store
+
+
+def _pattern(qid, text, tables, kind):
+    return {
+        "query_id": qid,
+        "query_text": text,
+        "query_type": kind,
+        "tables_accessed": tables,
+        "calls_per_second": 1.0,
+    }
+
+
+def test_the_graph_flags_the_no_table_nodes(tmp_path):
+    """'No table' is the graph's placeholder flag: 'unknown' and a dummy table
+    (DUAL) both, never a real table."""
+    store = _store_of(
+        tmp_path,
+        _pattern("q1", "SET SESSION sql_mode = ''", ["unknown"], "OTHER"),
+        _pattern("q2", "SELECT 1 FROM DUAL", ["DUAL"], "SELECT"),
+        _pattern("q3", "SELECT * FROM orders", ["orders"], "SELECT"),
+    )
+    try:
+        assert explorer.placeholder_tables(store) == {"unknown", "DUAL"}
+        for table, flagged in (("unknown", True), ("DUAL", True), ("orders", False)):
+            (node,) = [
+                n for n in explorer.links(store, EMPTY, "table", table).nodes if n.kind == "table"
+            ]
+            assert node.placeholder is flagged, table
+    finally:
+        store.close()
+
+
+def test_link_kinds_read_writes_and_locks(tmp_path):
+    """A link is 'write' when the query writes or locks the table (WRITES), else
+    'read': a locking read writes every table it reads, a multi-table UPDATE only
+    its target."""
+    store = _store_of(
+        tmp_path,
+        _pattern("sel", "SELECT * FROM orders WHERE id = 1", ["orders"], "SELECT"),
+        _pattern(
+            "lock",
+            "SELECT * FROM orders o JOIN customers c ON o.cid = c.id FOR UPDATE",
+            ["orders", "customers"],
+            "SELECT",
+        ),
+        _pattern(
+            "upd",
+            "UPDATE orders o JOIN customers c ON o.cid = c.id SET o.total = 0 WHERE c.vip = 1",
+            ["orders", "customers"],
+            "UPDATE",
+        ),
+    )
+    try:
+        populate_from_assignment(
+            {
+                "query_assignments": [
+                    {
+                        "query_id": q,
+                        "assigned_engine": "dynamodb",
+                        "confidence": 80,
+                        "source_tables": [],
+                        "assignment_reason": "r",
+                    }
+                    for q in ("sel", "lock", "upd")
+                ],
+                "table_assignments": [],
+            },
+            store,
+        )
+        kinds = {}
+        for table in ("orders", "customers"):
+            (bundle,) = explorer.links(store, EMPTY, "table", table).bundles
+            kinds.update({(q.query_id, table): q.access for q in bundle.queries})
+        assert kinds == {
+            ("sel", "orders"): "read",
+            ("lock", "orders"): "write",
+            ("lock", "customers"): "write",
+            ("upd", "orders"): "write",
+            ("upd", "customers"): "read",
+        }
+        detail = explorer.query_detail(store, EMPTY, "upd")
+        assert [(a.table, a.access) for a in detail.accesses] == [
+            ("customers", "read"),
+            ("orders", "write"),
+        ]
+    finally:
+        store.close()
 
 
 # --- round 5: one move wave per query, the cache wave apart, the wave path ---
@@ -705,3 +809,49 @@ def test_walkthroughs_route(client, leased, monkeypatch):
     monkeypatch.setenv(FLAG, "1")
     body = client.get(path).json()
     assert [w["id"] for w in body["walkthroughs"]] == ["waves", "busiest", "engines"]
+
+
+@pytest.mark.parametrize(("report_version", "graph_version"), [(2, 3), (3, 3)])
+def test_a_report_of_another_version_marks_reads_pending(
+    populated_store, report_version, graph_version
+):
+    """After a reroute the report (built from v2) may name replica reads the graph's
+    v3 no longer has: a read is then 'read_or_replica' (report pending), never a plain
+    'read' or a stale 'replica_read'. Writes still come from the graph."""
+    from src.graph.schema import stamp_graph_meta
+
+    stamp_graph_meta(populated_store, graph_version, "digest")
+    overlays = build_overlays(
+        ASSIGNMENT,
+        {**REPORT, "assignment_summary": {"version": report_version}},
+        ACCESS_PATTERNS,
+    )
+    ddb, docdb = explorer.links(populated_store, overlays, "table", "orders").bundles
+    detail = explorer.query_detail(populated_store, overlays, "q2")
+    if report_version != graph_version:
+        assert (ddb.access, docdb.access) == ("write", "read_or_replica")
+        assert {q.query_id: q.access for q in ddb.queries} == {
+            "q1": "read_or_replica",
+            "q3": "write",
+        }
+        assert {a.table: a.access for a in detail.accesses} == {
+            "customers": "read_or_replica",
+            "orders": "read_or_replica",
+        }
+    else:
+        assert (ddb.access, docdb.access) == ("write", "replica_read")
+        assert {a.table: a.access for a in detail.accesses} == {
+            "customers": "read",
+            "orders": "replica_read",
+        }
+
+
+def test_one_writes_lookup_serves_every_bundle(populated_store, monkeypatch):
+    calls = []
+    real = explorer._writes
+    monkeypatch.setattr(
+        explorer, "_writes", lambda store, ids: calls.append(ids) or real(store, ids)
+    )
+    links = explorer.links(populated_store, OVERLAYS, "table", "orders")
+    assert len(links.bundles) == 2
+    assert len(calls) == 1

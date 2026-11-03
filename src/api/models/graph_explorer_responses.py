@@ -19,7 +19,9 @@ from pydantic import BaseModel
 NodeKind = Literal["table", "engine"]
 # "group" is a table group of the wave plan ("<wave>:<index>"); "query" one query.
 StartKind = Literal["table", "engine", "wave", "group", "query"]
-Access = Literal["write", "replica_read", "read"]
+# "read_or_replica": a read the report, built from another assignment version than
+# the graph's, cannot yet place (report pending, #306).
+Access = Literal["write", "replica_read", "read", "read_or_replica"]
 
 
 class ExplorerOption(BaseModel):

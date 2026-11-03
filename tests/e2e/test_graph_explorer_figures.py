@@ -91,3 +91,20 @@ def test_the_walkthroughs_state_the_reports_own_figures(job) -> None:
         group = groups[step.start_id]
         assert step.query_count == group.get("query_count"), step.start_id
         assert step.table_count == len(group["tables"]), step.start_id
+
+
+def test_who_writes_each_table_equals_the_reports_writers(job) -> None:
+    """The graph's writers of each table (WRITES, #306) are the report's
+    ``table_sources[].write_query_ids``: both come from routing's one-writer rule.
+    Held on every sample whose report states the table sources."""
+    store, _, report = job
+    sources = report.get("table_sources")
+    if not sources:
+        return  # the report states no table sources: nothing to hold equal
+    graph: dict[str, set[str]] = {}
+    for r in store.query(
+        "MATCH (q:Query)-[:WRITES]->(st:SourceTable) RETURN st.id AS t, q.id AS q"
+    ):
+        graph.setdefault(r["t"], set()).add(r["q"])
+    stated = {ts["table"]: set(ts.get("write_query_ids") or []) for ts in sources}
+    assert graph == stated

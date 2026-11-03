@@ -98,6 +98,8 @@ function stylesheet(dark) {
     { selector: 'edge.access-write', style: { opacity: 0.95, 'line-color': text } },
     { selector: 'edge.access-replica_read', style: { opacity: 0.85, 'line-style': 'dashed', 'line-dash-pattern': [6, 4] } },
     { selector: 'edge.access-read', style: { opacity: 0.3 } },
+    // A read the report cannot yet place (built from another assignment version).
+    { selector: 'edge.access-read_or_replica', style: { opacity: 0.4, 'line-style': 'dotted' } },
     // Wave filter, one opacity scale: in the wave 1 (base), its cache layer 0.75,
     // what only cuts over in it 0.45, everything else greyed out at 0.25.
     { selector: 'edge.cache-layer', style: { opacity: 0.75 } },
