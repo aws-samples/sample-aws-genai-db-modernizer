@@ -14,6 +14,11 @@ versions of the file:
 * the ``assess()`` JSON Schemas (``docs/contracts/schemas/``)
 * the rendered rule catalog (``docs/architecture/rule-catalog.md`` and the UI's
   ``engineCatalog.generated.js``)
+* the graph query catalog's generated section of
+  ``docs/guides/context-graph-query-cookbook.md`` (#307). That page is only partly
+  generated: on a rebase, the text outside its BEGIN/END block is merged by hand like
+  any doc, and the block itself is always regenerated, never merged. The generator
+  refuses a file that still has conflict markers.
 
 Not covered: ``tests/contract/assess_released_since_1_3.json`` and
 ``tests/contract/catalog_format_snapshot.json`` are recorded at a release
@@ -187,6 +192,13 @@ BASELINES: tuple[Baseline, ...] = (
         "uv run python scripts/render_catalog.py",
         lambda _reason: _python("scripts/render_catalog.py"),
         lambda: _check_script_is_stale("render_catalog.py"),
+    ),
+    Baseline(
+        "graph-catalog",
+        ("docs/guides/context-graph-query-cookbook.md",),
+        "uv run python scripts/render_graph_catalog.py",
+        lambda _reason: _python("scripts/render_graph_catalog.py"),
+        lambda: _check_script_is_stale("render_graph_catalog.py"),
     ),
     Baseline(
         "assess-schemas",

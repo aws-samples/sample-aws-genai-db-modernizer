@@ -25,7 +25,9 @@ Lint and type-check: ruff, black, isort, mypy, the license headers
 SPDX header, #1722; `--fix` adds it, the quarantined third-party snapshot is skipped and a
 generated file gets it from its generator; the same check as the `license-headers` pre-commit hook), and the Claude Code command
 validator (`scripts/validate_skills.py`), the rule catalog's generated files
-(`scripts/render_catalog.py --check`), the `assess()` JSON Schemas
+(`scripts/render_catalog.py --check`), the graph query catalog's section of the cookbook
+(`scripts/render_graph_catalog.py --check`: the generated block of
+`docs/guides/context-graph-query-cookbook.md` matches `src/graph/catalog.py`, #307), the `assess()` JSON Schemas
 (`scripts/render_contract_schemas.py --check`: `docs/contracts/schemas/` matches the public
 models, #1183), the AWS Transform image's pinned requirements
 (`scripts/render_atx_requirements.py --check`: `src/atx_orchestrator/requirements.txt` matches
