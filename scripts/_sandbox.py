@@ -91,3 +91,35 @@ def sandbox_violation(
                 f"refused under {SANDBOX_ENV}=1"
             )
     return None
+
+
+def pipeline_artifact_root_violation(
+    value: str | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    repo_root: Path = REPO_ROOT,
+) -> str | None:
+    """Why ``value`` is not the pipeline's own artifact root, or ``None`` (or the sandbox
+    is off). For a script that writes under its artifact root on behalf of a headless
+    question (``scripts/graph_query.py`` builds and removes its graph copy there): under
+    the sandbox the root must be ``<repo>/artifacts``, or ``$ARTIFACT_DIR`` when that is
+    set, never another folder in the repo such as the tracked ``tests/fixtures/``. The
+    environment is not the model's to set: an allow rule matches only a command that
+    starts with the script's name. ``sandbox_violation`` still keeps ``$ARTIFACT_DIR``
+    itself inside the repo."""
+    env = os.environ if environ is None else environ
+    if env.get(SANDBOX_ENV) != "1" or value is None:
+        return None
+    allowed = [repo_root / "artifacts"]
+    if env.get("ARTIFACT_DIR"):
+        allowed.append(Path(env["ARTIFACT_DIR"]))
+    try:
+        resolved = Path(value).resolve()
+        if any(resolved == a.resolve() for a in allowed):
+            return None
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return (
+        f"--artifact-root {value!r} is not the pipeline's artifacts folder "
+        f"({repo_root / 'artifacts'} or $ARTIFACT_DIR); refused under {SANDBOX_ENV}=1"
+    )

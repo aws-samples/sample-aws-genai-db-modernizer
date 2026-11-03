@@ -27,6 +27,14 @@ writes the file the API serves (``src/graph/job_graph.py``). The copy is
 removed when a later run finds the API's graph current again. On Windows the
 script always uses its own copy (reading the API's file while the API replaces
 it needs POSIX rename semantics).
+
+``run`` checks each value against its parameter's choices on the job's graph,
+as the API does (a one-row lookup, so also past the listed choices' bound): an
+unknown value is the error "<name> is not a known table" (or query, engine, ...),
+never an empty result. Under ``MODERNIZER_CI_SANDBOX=1`` the artifact root must
+be the pipeline's own (``<repo>/artifacts``, or ``$ARTIFACT_DIR`` when set), so
+the copy it builds and ``--clean`` removes never land in another folder of the
+repo, such as the tracked ``tests/fixtures/``.
 """
 
 from __future__ import annotations
@@ -42,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts._sandbox import sandbox_violation  # noqa: E402
+from scripts._sandbox import pipeline_artifact_root_violation, sandbox_violation  # noqa: E402
 from src.graph import catalog, job_graph  # noqa: E402
 from src.report.escaping import md_cell  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
@@ -106,6 +114,32 @@ def _params(pairs: list[str]) -> dict[str, str]:
             raise UsageError("--param must be NAME=VALUE")
         out[name] = value
     return out
+
+
+_KIND_NAMES = {
+    catalog.ParamKind.TABLE: "table",
+    catalog.ParamKind.ENGINE: "engine",
+    catalog.ParamKind.QUERY: "query",
+    catalog.ParamKind.ACCESS_PATTERN: "access pattern",
+    catalog.ParamKind.VERSION: "assignment version",
+}
+
+
+def _check_values(graph: object, entry: catalog.CatalogEntry, params: dict[str, str]) -> None:
+    """Refuse a value that is not one of its parameter's choices on this job's graph,
+    with the API's check (``catalog.unlisted_params``: a one-row lookup, so a value past
+    the listed choices' bound is still checked). The message never repeats the value."""
+    unlisted = set(catalog.unlisted_params(graph, entry, params))  # type: ignore[arg-type]
+    if unlisted:
+        named = ", ".join(
+            f"{p.name} is not a known {_KIND_NAMES.get(p.kind, p.kind.value)}"
+            for p in entry.params
+            if p.name in unlisted
+        )
+        raise UsageError(
+            f"{named} on this job's graph; run 'graph_query.py params {entry.id} "
+            "--job-id <job>' for its choices"
+        )
 
 
 def _resolve_db(root: str, db: str | None, job_id: str) -> str:
@@ -176,6 +210,7 @@ def cmd_run(args: argparse.Namespace) -> dict:
     db = _resolve_db(args.artifact_root, args.db, job_id)
     store = LocalArtifactStore(base_dir=args.artifact_root)
     with job_graph.open_job_graph(store, args.artifact_root, db, job_id) as (graph, info):
+        _check_values(graph, entry, params)
         result = catalog.run_entry(graph, entry, params)
         unmet = catalog.unmet_needs(graph, entry) if not result.rows else []
     out: dict = {
@@ -253,7 +288,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "error", "message": str(exc)}, separators=(",", ":")))
         return 1
     fmt = getattr(args, "format", "json")
-    violation = sandbox_violation(args)
+    violation = sandbox_violation(args) or pipeline_artifact_root_violation(
+        getattr(args, "artifact_root", None)
+    )
     if violation:
         out: dict = {"status": "error", "message": violation}
     else:

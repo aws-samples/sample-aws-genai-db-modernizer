@@ -24,7 +24,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `src/assessment/` | The public library entry point `assess(request) -> result`: typed request and result, the stable surface (`summary`, `statements[]`, `groups[]`) over the internal contracts ([docs/contracts/assess.md](docs/contracts/assess.md)) |
 | `src/atx_orchestrator/` | AWS Transform integration |
 | `scripts/` | CLI entry points (`run_*.py`) the commands call, plus validators and helpers |
-| `.claude/commands/` | Claude Code slash commands (`/modernize`, `/analyze-<engine>`, `/design-schema-<engine>`, `/reality-check`, `/synthesize`, ...) |
+| `.claude/commands/` | Claude Code slash commands (`/modernize`, `/analyze-<engine>`, `/design-schema-<engine>`, `/reality-check`, `/synthesize`, `/explore` for questions about an assessed job, ...) |
 | `.claude/settings.ci.json` | Permission allowlist for headless runs |
 | `ci/` | CI-agnostic entry points (`lint.sh`, `test.sh`, `e2e.sh`, `e2e-llm.sh`) and the quality judge (`ci/llm/`) |
 | `tests/` | `unit/`, `contract/`, `property/`, `graph/` (gated), `e2e/` (deterministic end-to-end), `integration/` (live stack, not gated) |

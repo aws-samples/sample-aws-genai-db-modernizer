@@ -339,6 +339,8 @@ job via `E2E_ARTIFACT_ROOT`/`E2E_DB`/`E2E_JOB` -- see "external-job mode"
 under `e2e.sh`'s own test suite) and the judge run exactly as they do for a
 deterministic job.
 
+**The `/explore` step** (#307): after the browser tests (so it never takes their time, #1593), the script asks `/explore` one fixed question about the job, `Which source table sends the most queries to DynamoDB, and how many?`, in its own `claude -p "/explore --job-id <job> ..."` session. The question is not the catalog's wording and needs a parameter: it is answered by the entry `engine_destinations` with `engine=dynamodb`. The session runs with the same CLI, settings, permissions and sandbox as the `/modernize` run, under the job budget (`run_before_deadline`), with a wall-clock timeout of its own (`E2E_LLM_EXPLORE_TIMEOUT`, default 600 seconds) and its own caps in place of the run's: `--max-turns` `E2E_LLM_EXPLORE_MAX_TURNS` (default 15) and `--max-budget-usd` `E2E_LLM_EXPLORE_MAX_BUDGET_USD` (default 2), each only when the CLI lists the flag. The script first runs the same entry itself (`scripts/graph_query.py run engine_destinations --param engine=dynamodb`, no model) into `explore-expected.json`. `ci/llm/run.py check-explore` then passes when the session ended without an error, no `graph_query.py` call was denied (a denial means the allowlist is broken), the session ran `graph_query.py run engine_destinations` on the job with `engine=dynamodb` (in any argument order the CLI's own parser accepts), and its final answer ties the top destination's count to it: one line (a table row), sentence or clause names that destination or its source table (whole names only, the schema optional), names no other row, and holds the count as a number on its own. The entry's ref is never read as a figure, and an engine in an `all`-rows check counts by its id or its AWS service name (`display_engine`). The verdict, with the answer, goes to `explore.json`, and `results.json` records it as `checks.explore` (required once the step ran) and an `explore` section; `total_cost_usd` is the run's `cost_usd` plus the session's. A dry run skips the step unless `E2E_LLM_EXPLORE_TRANSCRIPT` names a saved `/explore` session, and so does a run whose engine scope (`E2E_LLM_TARGET_DATABASES`) leaves out DynamoDB; `checks.explore` is then `null` and not required.
+
 **Merge rule after a failed transcript check** (#1408; a process rule, no automated check enforces it): a pull request head that failed an `e2e-llm` transcript check (`transcript_error` in `results.json`) is not covered by a later batch run that passes on the same head, nor by any run on another head that includes it: that pass can be the model taking a different path that time. It stays unmerged until a fix is pushed and an `e2e-llm` run on the fixed head passes the same check. A head that failed the same check twice and then passed once merged in #1358 and had to be reopened as #1401.
 
 **Outputs**, all under `$E2E_OUTPUT/llm-<mode>-<fixture>/` (default
@@ -351,6 +353,9 @@ deterministic job.
 - `transcript.jsonl` -- the full stream-json transcript.
 - `claude-exit.txt`, `summary.json` -- the claude process's exit code/duration,
   and `ci/llm/run.py check-transcript`'s parsed summary (or `{"error": ...}`).
+- `explore-transcript.jsonl`, `explore-expected.json`, `explore.json` -- the `/explore`
+  session's stream-json transcript, `graph_query.py run`'s own result for the entry,
+  and `check-explore`'s verdict (see "The `/explore` step" above).
 - `model.json` -- `ci/llm/run.py check-model`'s `{"model", "expected", "match"}` (not in a dry run).
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
@@ -365,7 +370,8 @@ deterministic job.
   the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
   never builds inside a Bash tool call), `claude`, `check-model` (not in a dry run), `check-transcript`,
   `token-usage`, `render`, `judge`, `install-browsers`, `report-tests`, `ui-tests`,
-  `results`); a step failing never stops the script early. The judge runs before
+  `explore-expected`, `explore`, `check-explore` (the three skipped in a dry run without
+  `E2E_LLM_EXPLORE_TRANSCRIPT` and in a scope without DynamoDB), `results`); a step failing never stops the script early. The judge runs before
   the browser tests (#1593), on the deliverables `render` re-renders the way the
   tests' external-job fixture does, so a slow test step can no longer leave it no
   time. `report-tests` and `ui-tests` run under `run_before_deadline` (`ci/lib.sh`):
@@ -384,11 +390,15 @@ deterministic job.
 - `results.json` -- the one merged row (`schema_version`, `timestamp`,
   `git_sha`, `mode`, `fixture`, `model`, `job_id`, `db`, `cost_usd`,
   `num_turns`, `tokens_in`/`tokens_out`, `duration_s`, `checks: {transcript,
-  contracts, engineering, pdf, ui, judge}` (`ui` is `null` for `chat`; schema
+  contracts, engineering, pdf, ui, judge, explore}` (`ui` is `null` for `chat`,
+  `explore` when the step did not run; schema
   version 2 renamed the `html` check to `engineering` when the HTML reports
   were retired, #987),
   `transcript_error` (`null` unless check-transcript failed; cost, turns and
-  tokens are reported either way), `judge: {mean, scores}`, `pass`). Plan 3b uploads this to the results store, so it's
+  tokens are reported either way), `judge: {mean, scores}`, `explore: {entry,
+  ran_entry, missing_figures, cost_usd, num_turns, error}` (`null` when the step did
+  not run; its cost is not in the run's `cost_usd`), `total_cost_usd` (the run's
+  `cost_usd` plus the explore session's), `pass`). Plan 3b uploads this to the results store, so it's
   kept flat and JSON-shaped on purpose.
 
 **Env vars**: `CLAUDE_BIN` (default `claude`), `CLAUDE_CODE_VERSION` (npm
@@ -400,6 +410,9 @@ deliberately), `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or*
 (default 50: a discourse run costs about $18-20, plus $3-5 when the DynamoDB merge needs a fix round; scoped to `dynamodb,aurora_postgresql` about $56), each only passed if the CLI's own `--help` mentions the flag, `E2E_LLM_TARGET_DATABASES` (a scoped run, see above),
 `E2E_LLM_JOB_BUDGET` (seconds, default 4800, see `steps.json` above),
 `E2E_LLM_ARTIFACT_ROOT` (dry-run only, default `$REPO_ROOT/artifacts`, see below),
+`E2E_LLM_EXPLORE_TIMEOUT` (seconds, default 600), `E2E_LLM_EXPLORE_MAX_TURNS` (default 15),
+`E2E_LLM_EXPLORE_MAX_BUDGET_USD` (default 2) and `E2E_LLM_EXPLORE_TRANSCRIPT`
+(dry-run only, a saved `/explore` session; unset, the explore step is skipped),
 `E2E_OUTPUT` (as in `e2e.sh`).
 
 **`E2E_LLM_ARTIFACT_ROOT`** is honoured only with `E2E_LLM_DRY_RUN=1`. A
@@ -439,7 +452,8 @@ skips the claude call entirely and copies the given transcript `.jsonl` in
 its place, so the rest of the script -- `check-transcript`, the deliverable
 checks, the judge (still a real subprocess call, typically pointed at a stub
 via `CLAUDE_BIN`), and `results.json` -- can be exercised locally with no
-model access. The transcript's `MODERNIZE_RESULT` line must name a job/db
+model access. With `E2E_LLM_EXPLORE_TRANSCRIPT=<path>` the `/explore` step checks
+that saved session the same way; without it the step is skipped. The transcript's `MODERNIZE_RESULT` line must name a job/db
 that actually exists under `E2E_LLM_ARTIFACT_ROOT` and must match the
 `<mode> <fixture>` arguments given on the command line.
 
@@ -534,6 +548,21 @@ obvious entries lives here instead:
   tool-use rule in the commands points at this read-only search script. It
   refuses paths that resolve outside the repo, never opens `.env`/key/
   credential-like files, and caps its output (see its module docstring).
+- `Bash(uv run python scripts/graph_query.py *)` (#307): the only command `/explore`
+  runs (`list`, `params <id>`, `run <id> --param k=v --job-id <id>`). It takes catalog
+  entry ids and parameter values, never Cypher: each entry is a fixed, read-only,
+  bounded statement, the values are bound as parameters, and `run` refuses a value
+  that is not one of its parameter's choices on the job's graph. It opens the job's
+  graph read-only with the read timeout and the entry's row bound. The only files it
+  writes are its own copy of a stale graph and that copy's lock file, under
+  `<artifact root>/<db>/<job>/graph/cli/`, and `--clean` removes that folder. Under
+  `MODERNIZER_CI_SANDBOX=1` the artifact root must be the pipeline's own,
+  `<repo>/artifacts` (or `$ARTIFACT_DIR` when set; the model cannot set it, since an
+  allow rule matches only a command that starts with the script's name): any other
+  folder, inside the repo (the tracked `tests/fixtures/`, say) or not, is refused before
+  the graph is opened, with or without `--clean`, as is a `--db`/`--job-id` that is not
+  a plain name (`scripts/_sandbox.py` `pipeline_artifact_root_violation`, tested in
+  `tests/graph/test_graph_query_cli.py`). It prints one JSON line.
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
   in the pipeline needs any of these. They're explicit denies, not just
   absent from `allow`, as defense in depth against a prompt-injected or

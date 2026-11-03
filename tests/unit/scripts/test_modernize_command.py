@@ -79,6 +79,7 @@ COMMANDS_WITH_TOOL_USE_RULE = [
     "analyze-opensearch.md",
     "design-schema.md",
     "review-schema.md",
+    "explore.md",
 ]
 
 

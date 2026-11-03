@@ -71,8 +71,24 @@ The one-step option means adopting the whole target architecture in one cutover 
 | `/reality-check` | Consolidates under-committed engines and validates with a model |
 | `/design-schema` | Designs target schemas per engine (needs a model) |
 | `/synthesize` | Produces the final report and renders the deliverables into `artifacts/<db>/<job>/deliverables/` (see [Understand the results](understand-the-results.md#the-deliverables)) |
+| `/explore` | Answers a question about an assessed job from its context graph (see [Ask about an assessment](#ask-about-an-assessment-explore)) |
 
 Each command is defined in `.claude/commands/` and reads the job state from `.modernizer-state.json`, so you can run them out of order to re-do a single phase after changing an earlier decision.
+
+## Ask about an assessment (`/explore`)
+
+After an assessment, ask about it in plain words:
+
+```text
+/explore what breaks if I change wp_posts?
+/explore --job-id <job_id> which tables are served by more than one engine?
+```
+
+`/explore` picks the question in the graph query catalog that answers yours, fills in its parameters from the job (the table, engine, query or access pattern you named), runs it with `scripts/graph_query.py` and answers with the figures it returned, naming the catalog entry so you can run it again. It asks about the job in `.modernizer-state.json` (the last run) unless you pass `--job-id`.
+
+- It never writes a graph query itself and never states a figure the result does not hold. When no catalog question fits, it says so and lists the closest ones.
+- An empty answer names the pipeline stages the job has not run (for example, no load test yet), so "no rows" is not read as "nothing there".
+- The questions, and the same commands without Claude Code, are in the [query cookbook](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/context-graph-query-cookbook.md).
 
 ## Analyzing your own database
 
