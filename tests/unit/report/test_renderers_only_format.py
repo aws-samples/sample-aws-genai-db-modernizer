@@ -626,6 +626,10 @@ JUDGE_RECOUNTS: dict[tuple[str, str], str] = {
         "the judge's own model spend across its samples (a false match on the word cost), "
         "not a report figure"
     ),
+    ("ci/llm/run.py", "sum(costs)"): (
+        "the e2e-llm run's own model spend, the /modernize run plus the /explore session "
+        "(#307; a false match on the word cost), not a report figure"
+    ),
     **{
         ("ci/llm/judge_facts.py", expr): _CLOSE_CALLS_FALLBACK
         for expr in (

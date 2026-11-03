@@ -51,6 +51,12 @@
 #   E2E_LLM_DRY_RUN        - "1" skips the claude call entirely (see below).
 #   E2E_LLM_TRANSCRIPT     - required when E2E_LLM_DRY_RUN=1: path to a transcript
 #                            .jsonl file to use in place of a real claude run.
+#   E2E_LLM_EXPLORE_TRANSCRIPT - dry-run only, optional: a saved /explore session
+#                            transcript for the explore step; unset, a dry run skips it.
+#   E2E_LLM_EXPLORE_TIMEOUT - wall-clock timeout (seconds) for the /explore call. Default: 600.
+#   E2E_LLM_EXPLORE_MAX_TURNS, E2E_LLM_EXPLORE_MAX_BUDGET_USD - the /explore session's own
+#                            --max-turns and --max-budget-usd (each only when the CLI lists
+#                            the flag). Defaults: 15 and 2.
 #
 # CLI flag feature-detection: the locally installed CLI build at the time this
 # script was written (v2.1.288, an internal build) does not list --max-turns
@@ -116,7 +122,7 @@ mkdir -p "$OUT"
 # writes no junit, and results.json would otherwise read the old file (#1593).
 # Only these files: a dry run's $E2E_LLM_TRANSCRIPT may live in this folder.
 rm -f "$OUT/job.tar.gz" "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
-  "$OUT/reports-junit.xml" "$OUT/ui-junit.xml"
+  "$OUT/reports-junit.xml" "$OUT/ui-junit.xml" "$OUT/explore.json" "$OUT/explore-expected.json"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 
 # PHASE names the preflight step in progress, for the EXIT trap's fallback
@@ -385,6 +391,7 @@ fi
 # --- per-phase token usage (#676) --------------------------------------------
 
 TOKEN_USAGE_ARGS=()
+EXPLORE_ARGS=()
 if [ -n "$DB" ] && [ -n "$JOB" ]; then
   run_token_usage() {
     uv run python ci/llm/token_usage.py "$OUT/transcript.jsonl" \
@@ -454,6 +461,66 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
     }
     step ui-tests run_before_deadline run_ui_tests
   fi
+
+  # /explore (#307), after the browser tests so it never takes their time (#1593): one
+  # fixed question about the job, in plain words rather than the catalog's, that needs a
+  # parameter (the engine). It runs in its own headless session with the same CLI,
+  # permissions and sandbox as /modernize and a small budget and turn cap of its own.
+  # The check compares the answer with the catalog entry's own result, which this
+  # script runs itself (no model): the session must have run that entry on the job with
+  # engine=dynamodb, and the answer must tie the top table's count to that table. A dry
+  # run skips it unless given a saved session (E2E_LLM_EXPLORE_TRANSCRIPT), and so does
+  # an engine scope without DynamoDB.
+  EXPLORE_ENTRY="engine_destinations"
+  EXPLORE_PARAM="engine=dynamodb"
+  EXPLORE_QUESTION="Which source table sends the most queries to DynamoDB, and how many?"
+  if [ -n "$TARGET_DATABASES" ] && ! [[ ",$TARGET_DATABASES," == *,dynamodb,* ]]; then
+    log "the engine scope leaves out DynamoDB: skipping the /explore step"
+  elif [ "$DRY_RUN" = "1" ]; then
+    if [ -n "${E2E_LLM_EXPLORE_TRANSCRIPT:-}" ]; then
+      run_explore() {
+        [ "$E2E_LLM_EXPLORE_TRANSCRIPT" -ef "$OUT/explore-transcript.jsonl" ] ||
+          cp "$E2E_LLM_EXPLORE_TRANSCRIPT" "$OUT/explore-transcript.jsonl"
+      }
+    else
+      log "dry run: no E2E_LLM_EXPLORE_TRANSCRIPT, skipping the /explore step"
+    fi
+  else
+    # The /modernize flags, with the explore session's own caps in place of its turn
+    # and budget caps (each only there when the CLI lists the flag).
+    EXPLORE_FLAGS=()
+    prev=""
+    for flag in "${CLAUDE_FLAGS[@]}"; do
+      case "$prev" in
+        --max-turns) flag="${E2E_LLM_EXPLORE_MAX_TURNS:-15}" ;;
+        --max-budget-usd) flag="${E2E_LLM_EXPLORE_MAX_BUDGET_USD:-2}" ;;
+      esac
+      EXPLORE_FLAGS+=("$flag")
+      prev="$flag"
+    done
+    EXPLORE_CMD=(env MODERNIZER_CI_SANDBOX=1)
+    [ -n "$TIMEOUT_BIN" ] && EXPLORE_CMD+=("$TIMEOUT_BIN" "${E2E_LLM_EXPLORE_TIMEOUT:-600}")
+    EXPLORE_CMD+=("$CLAUDE_BIN" -p "/explore --job-id $JOB $EXPLORE_QUESTION" "${EXPLORE_FLAGS[@]}")
+    run_explore() {
+      "${EXPLORE_CMD[@]}" >"$OUT/explore-transcript.jsonl" </dev/null
+    }
+  fi
+  if declare -F run_explore >/dev/null; then
+    run_explore_expected() {
+      uv run python scripts/graph_query.py run "$EXPLORE_ENTRY" --job-id "$JOB" --db "$DB" \
+        --param "$EXPLORE_PARAM" --artifact-root "$ARTIFACT_ROOT" >"$OUT/explore-expected.json"
+    }
+    step explore-expected run_explore_expected
+    step explore run_before_deadline run_explore
+    run_check_explore() {
+      uv run python ci/llm/run.py check-explore "$OUT/explore-transcript.jsonl" \
+        --expected "$OUT/explore-expected.json" --entry "$EXPLORE_ENTRY" --job-id "$JOB" \
+        --param "$EXPLORE_PARAM" --names destination,source_tables --count queries --rows top \
+        >"$OUT/explore.json"
+    }
+    step check-explore run_check_explore
+    EXPLORE_ARGS=(--explore "$OUT/explore.json")
+  fi
 else
   log "no job_id/db parsed from the transcript (check-transcript failed) -- skipping deliverable checks and judge"
 fi
@@ -471,7 +538,8 @@ run_results() {
     --judge "$OUT/judge.json" \
     --mode "$MODE" --fixture "$FIXTURE" \
     --claude-exit "$OUT/claude-exit.txt" \
-    "${TOKEN_USAGE_ARGS[@]+"${TOKEN_USAGE_ARGS[@]}"}"
+    "${TOKEN_USAGE_ARGS[@]+"${TOKEN_USAGE_ARGS[@]}"}" \
+    "${EXPLORE_ARGS[@]+"${EXPLORE_ARGS[@]}"}"
 }
 step results run_results
 

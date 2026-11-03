@@ -120,6 +120,14 @@ def test_search_artifacts_is_referenced_and_has_an_exact_allow_rule() -> None:
     assert not any(rule in allow for rule in ("Bash(uv run python *)", "Bash(uv run *)"))
 
 
+def test_graph_query_is_referenced_and_has_an_exact_allow_rule() -> None:
+    # #307: /explore answers from the graph query catalog through this script only;
+    # same exact-prefix form as the other pipeline scripts.
+    assert "scripts/graph_query.py" in _referenced_scripts()
+    allow = _load_settings()["permissions"]["allow"]
+    assert "Bash(uv run python scripts/graph_query.py *)" in allow
+
+
 def test_every_python_bash_allow_is_an_exact_script_prefix() -> None:
     allow = _load_settings()["permissions"]["allow"]
     for rule in allow:

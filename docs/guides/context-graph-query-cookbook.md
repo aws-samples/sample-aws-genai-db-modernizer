@@ -70,13 +70,18 @@ uv run python scripts/graph_query.py run engine_distribution --job-id <job> --fo
 - Each command prints one compact JSON line (`--format md` prints Markdown). Any error, a usage error included, prints `{"status": "error", "message": ...}` and exits 1.
 - `run` returns `columns`, `rows`, `row_count`, `truncated` (more rows matched than the entry's bound) and `graph`: its `source` (`api` or `cli`), `path` and whether the copy was `rebuilt`. An empty result also lists `unmet_needs` and an `explanation` that names the stages the job has not run.
 - `params` lists each parameter's choices from the job's graph when `--job-id` is given.
+- `run` checks each value against its parameter's choices on the job's graph, as the API does: a one-row lookup, so a value past the listed choices' bound is still checked. An unknown value is the error `<name> is not a known table on this job's graph` (or query, engine, access pattern, assignment version), never an empty result.
 - `--db` is found from the job id when only one database folder under `--artifact-root` (default `$ARTIFACT_DIR` or `./artifacts`) holds that job.
 - The graph is opened read-only, with the read timeout and the entry's row bound.
   - When the API's graph (`<db>/<job>/graph/context.lbug`) is current, it is read as it is.
   - Otherwise the script builds its own copy (`graph/cli/context.lbug`) under a file lock and reads that, so it never writes the file the API serves while the API rebuilds it. Two runs at once build the copy once, and reads of a current copy run side by side.
   - The copy is removed by the next run that finds the API's graph current again. `--clean` removes `graph/cli/` (copy and lock file) once the command has answered.
   - Reading the API's file while the API replaces it relies on POSIX rename semantics: an open handle keeps the file it opened. On Windows the script always reads its own copy.
-- Under `MODERNIZER_CI_SANDBOX=1`, an artifact root outside the repository or a database or job name that is not a plain name is refused.
+- Under `MODERNIZER_CI_SANDBOX=1` the artifact root must be the pipeline's own (`<repo>/artifacts`, or `$ARTIFACT_DIR` when set); any other folder, inside the repository or not, is refused, and so is a database or job name that is not a plain name. `--clean` follows the same rule.
+
+## From Claude Code: `/explore`
+
+`/explore <question>` (or `/explore --job-id <job> <question>`) asks the same catalog in plain words. It picks the entry whose question answers yours, binds its parameters from `graph_query.py params` (a value among the choices, or one the user named exactly when the list is truncated), runs it with `graph_query.py run` and answers with the figures in the rows, naming the entry. It never writes Cypher; when no entry fits it says so and lists the closest entries. `graph_query.py` is on the headless allowlist (`.claude/settings.ci.json`), and the e2e-llm run asks `/explore` one fixed question and checks the answer against the entry's own result (see `ci/README.md`).
 
 ## From the API: the catalog routes
 

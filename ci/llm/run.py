@@ -14,6 +14,9 @@ Usage:
     uv run python ci/llm/run.py collect-job --artifact-root artifacts --out DIR \
         [--db DB --job JOB]
     uv run python ci/llm/run.py check-model TRANSCRIPT --expected MODEL_ID
+    uv run python ci/llm/run.py check-explore TRANSCRIPT --expected EXPECTED.json \
+        --entry ENTRY_ID --job-id JOB [--param NAME=VALUE] --names COL[,COL] \
+        --count COL [--rows all|top]
 
 Transcript shapes
 ------------------
@@ -155,6 +158,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrusted input
 import sys
 import tarfile
@@ -1462,6 +1466,243 @@ def check_transcript(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# check-explore: the /explore step (#307)
+# ---------------------------------------------------------------------------
+
+# At most this many expected rows are looked for in the answer.
+EXPLORE_MAX_ROWS_CHECKED = 10
+_ANSWER_KEPT_CHARS = 2000
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;])\s+")
+_CLAUSE_SPLIT = re.compile(r",\s+|;\s*|\s+(?:and|while|whereas|but|followed by|then)\s+", re.I)
+
+
+def _name_variants(value: str) -> list[str]:
+    """The ways an answer may name one id: as it is, an engine by its AWS service name
+    (``display_engine``), a schema-qualified table without its schema."""
+    from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
+
+    variants = [value]
+    if value in ENGINE_DISPLAY_NAMES:
+        variants.append(display_engine(value))
+    if "." in value:
+        variants.append(value.rsplit(".", 1)[1])
+    return [v for v in variants if v]
+
+
+def _name_pattern(variant: str) -> re.Pattern[str]:
+    # Whole names only: ``aurora_mysql`` is not in ``aurora_mysql_x``, ``Aurora MySQL`` not in
+    # ``Aurora MySQLx``, and ``wp_posts`` not in ``wordpress.wp_posts`` (that one is its own
+    # variant) or ``wp_posts-dynamodb``.
+    return re.compile(rf"(?<![\w.-]){re.escape(variant)}(?![\w-])", re.I)
+
+
+def _count_pattern(count: int) -> re.Pattern[str]:
+    # A number on its own: 68 is not inside 168, 6.8 or 68.5; 1234 may be written 1,234.
+    forms = "|".join(re.escape(f) for f in dict.fromkeys((f"{count:,}", str(count))))
+    return re.compile(rf"(?<![\w.,])(?:{forms})(?![\w]|[.,]\d)")
+
+
+def _without_entry_ref(answer: str, ref: str | None) -> str:
+    """The answer without the places it names the catalog entry's ref (``entry 2``,
+    ``ref 2``, ``(2)``, a ``2.`` heading), so a ref is never read as a figure."""
+    if not ref:
+        return answer
+    r = re.escape(ref)
+    answer = re.sub(
+        rf"(?i)\b(?:catalog\s+)?(?:entry|ref|reference|question)\s*[#:]?\s*[`'\"(\[]*{r}(?![\w])",
+        " ",
+        answer,
+    )
+    answer = re.sub(rf"\(\s*{r}\s*\)", " ", answer)
+    return re.sub(rf"(?m)^[\s#*>-]*{r}\.\s", " ", answer)
+
+
+def _units(answer: str) -> list[str]:
+    """Where a figure must sit with its name: a line (a table row), a sentence, a clause."""
+    units: list[str] = []
+    for line in answer.splitlines():
+        if not line.strip():
+            continue
+        units.append(line)
+        for sentence in _SENTENCE_SPLIT.split(line):
+            units.append(sentence)
+            units.extend(_CLAUSE_SPLIT.split(sentence))
+    return units
+
+
+def _row_figures(
+    row: dict[str, Any], name_columns: list[str], count_column: str
+) -> tuple[list[str], int] | None:
+    names: list[str] = []
+    for column in name_columns:
+        value = row.get(column)
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, str) and item.strip():
+                names.extend(_name_variants(item))
+    count = row.get(count_column)
+    if not names or isinstance(count, bool) or not isinstance(count, int):
+        return None
+    return list(dict.fromkeys(names)), count
+
+
+def _row_answered(units: list[str], own: list[str], others: list[str], count: int) -> bool:
+    """Some unit names this row (and no other row) together with its count."""
+    own_patterns = [_name_pattern(v) for v in own]
+    other_patterns = [
+        _name_pattern(v) for v in others if v.casefold() not in {o.casefold() for o in own}
+    ]
+    counted = _count_pattern(count)
+    for unit in units:
+        if not any(p.search(unit) for p in own_patterns):
+            continue
+        if any(p.search(unit) for p in other_patterns):
+            continue
+        bare = unit
+        for p in own_patterns:
+            bare = p.sub(" ", bare)
+        if counted.search(bare):
+            return True
+    return False
+
+
+def _final_answer(records: list[dict[str, Any]], result_recs: list[dict[str, Any]]) -> str:
+    """The session's answer: the last ``result`` line's text, else the last assistant text."""
+    for rec in reversed(result_recs):
+        if isinstance(rec.get("result"), str) and rec["result"].strip():
+            return str(rec["result"])
+    for rec in reversed(records):
+        message = rec.get("message")
+        if rec.get("type") != "assistant" or not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            texts = [
+                b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            text = "\n".join(t for t in texts if isinstance(t, str))
+            if text.strip():
+                return text
+    return ""
+
+
+def _ran_entry(
+    records: list[dict[str, Any]], entry: str, job_id: str, params: dict[str, str]
+) -> bool:
+    """Whether a Bash call ran ``scripts/graph_query.py run <entry>`` on ``job_id`` with
+    ``params``, in any argument order the CLI's own parser accepts."""
+    from scripts.graph_query import UsageError, _parser
+
+    prefix = ["uv", "run", "python", "scripts/graph_query.py"]
+    for kind, tool, command in iter_tool_events(records):
+        if kind != "tool_use" or tool != "Bash":
+            continue
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            continue
+        if argv[: len(prefix)] != prefix:
+            continue
+        try:
+            args = _parser().parse_args(argv[len(prefix) :])
+        except (UsageError, SystemExit):
+            continue
+        if args.command != "run" or args.entry != entry or args.job_id != job_id:
+            continue
+        bound = dict(p.partition("=")[::2] for p in args.param)
+        if all(bound.get(k) == v for k, v in params.items()):
+            return True
+    return False
+
+
+def check_explore(
+    records: list[dict[str, Any]],
+    expected: dict[str, Any],
+    *,
+    entry: str,
+    job_id: str,
+    params: dict[str, str] | None = None,
+    name_columns: list[str],
+    count_column: str,
+    rows: str = "all",
+    ref: str | None = None,
+) -> dict[str, Any]:
+    """The e2e-llm ``/explore`` step's verdict (#307).
+
+    ``expected`` is ``scripts/graph_query.py run <entry>``'s own output on the job. The
+    session passes when it ended without an error, none of its ``graph_query.py`` calls
+    was denied, it ran ``graph_query.py run <entry>`` on the job with ``params`` (so the
+    figures came from the catalog, not from the model), and its final answer names the
+    expected rows' figures, each count tied to its row: one line (a table row), sentence
+    or clause names the row (an id, an engine's AWS service name, a table without its
+    schema; whole names only), no other row, and the count as a number on its own. The
+    entry's ``ref`` is never read as a figure. ``rows`` is ``all`` (every one of the first
+    rows) or ``top`` (one of the rows with the highest count).
+    """
+    params = params or {}
+    result_recs = [r for r in records if r.get("type") == "result"]
+    fields = _aggregate_result_fields(result_recs)
+    denied = [
+        _denial_command(d)
+        for r in result_recs
+        for d in (r.get("permission_denials") or [])
+        if isinstance(d, dict)
+    ]
+    answer = _final_answer(records, result_recs)
+    units = _units(_without_entry_ref(answer, ref))
+    ran = _ran_entry(records, entry, job_id, params)
+
+    raw_rows = expected.get("rows") if isinstance(expected.get("rows"), list) else []
+    figures = [
+        f
+        for f in (
+            _row_figures(r, name_columns, count_column) for r in raw_rows if isinstance(r, dict)
+        )
+        if f is not None
+    ]
+    if rows == "top" and figures:
+        top = max(count for _, count in figures)
+        wanted = [f for f in figures if f[1] == top]
+    else:
+        wanted = figures[:EXPLORE_MAX_ROWS_CHECKED]
+    answered: list[bool] = []
+    for names, count in wanted:
+        others = [v for other, _ in figures if other is not names for v in other]
+        answered.append(_row_answered(units, names, others, count))
+    missing = [f"{names[0]}: {count}" for (names, count), ok in zip(wanted, answered) if not ok]
+    if rows == "top" and any(answered):
+        missing = []
+
+    error: str | None = None
+    if expected.get("status") != "ok":
+        error = f"the expected result is an error: {expected.get('message')}"
+    elif not figures:
+        error = "the expected result has no rows, so the answer cannot be checked"
+    elif not result_recs:
+        error = "no result line: the /explore session did not finish"
+    elif any(r.get("is_error") for r in result_recs):
+        error = "the /explore session ended with is_error"
+    elif any("scripts/graph_query.py" in c for c in denied):
+        error = "a graph_query.py call was denied: the allowlist is broken"
+    elif not ran:
+        error = f"the session never ran graph_query.py run {entry} on job {job_id} with {params}"
+    elif missing:
+        error = f"the answer does not tie each count to its row: {'; '.join(missing)}"
+    return {
+        "pass": error is None,
+        "entry": entry,
+        "job_id": job_id,
+        "params": params,
+        "ran_entry": ran,
+        "missing_figures": missing,
+        "denials": len(denied),
+        "cost_usd": fields["cost_usd"],
+        "num_turns": fields["num_turns"],
+        "answer": answer[:_ANSWER_KEPT_CHARS],
+        "error": error,
+    }
+
+
 def parse_junit_counts(path: Path) -> dict[str, dict[str, int]]:
     """Bucket a junit XML's testcases into contracts/engineering/pdf/ui, counting
     total and failed (failure or error child element) per bucket."""
@@ -1523,6 +1764,11 @@ def _load_token_usage(path: Path | None) -> dict[str, Any] | None:
     return {"total": payload["total"], "phases": phases if isinstance(phases, dict) else {}}
 
 
+def _total_cost(cost_usd: Any, explore: dict[str, Any] | None) -> float | None:
+    costs = [c for c in (cost_usd, (explore or {}).get("cost_usd")) if _is_number(c)]
+    return round(sum(costs), 6) if costs else None
+
+
 def build_results_row(
     *,
     mode: str,
@@ -1533,6 +1779,7 @@ def build_results_row(
     git_sha: str | None = None,
     claude_exit_path: Path | None = None,
     token_usage_path: Path | None = None,
+    explore_path: Path | None = None,
 ) -> dict[str, Any]:
     checks: dict[str, bool | None] = {
         "transcript": None,
@@ -1541,6 +1788,7 @@ def build_results_row(
         "pdf": None,
         "ui": None,
         "judge": None,
+        "explore": None,
     }
     missing_required = False
 
@@ -1626,9 +1874,35 @@ def build_results_row(
         checks["judge"] = bool(judge_payload.get("pass"))
         judge_section = {"mean": judge_payload.get("mean"), "scores": judge_payload.get("scores")}
 
+    # The /explore step (#307): required once it ran (its path is given); a dry run
+    # without an explore transcript skips it and passes no path.
+    explore_section: dict[str, Any] | None = None
+    if explore_path is not None:
+        explore_payload = _load_json(explore_path)
+        if explore_payload is None:
+            missing_required = True
+        elif "pass" not in explore_payload:
+            checks["explore"] = False
+        else:
+            checks["explore"] = explore_payload.get("pass") is True
+            explore_section = {
+                k: explore_payload.get(k)
+                for k in (
+                    "entry",
+                    "params",
+                    "ran_entry",
+                    "missing_figures",
+                    "cost_usd",
+                    "num_turns",
+                    "error",
+                )
+            }
+
     required = ["transcript", "contracts", "engineering", "pdf", "judge"]
     if mode != "chat":
         required.append("ui")
+    if explore_path is not None:
+        required.append("explore")
     overall_pass = (not missing_required) and all(checks.get(k) is True for k in required)
 
     return {
@@ -1643,6 +1917,8 @@ def build_results_row(
         "job_id": job_id,
         "db": db,
         "cost_usd": cost_usd,
+        # The /modernize run's cost plus the /explore session's (#307).
+        "total_cost_usd": _total_cost(cost_usd, explore_section),
         "num_turns": num_turns,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
@@ -1657,6 +1933,7 @@ def build_results_row(
         "hook_errors": hook_errors,
         "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
+        "explore": explore_section,
         "pass": overall_pass,
     }
 
@@ -1683,6 +1960,34 @@ def cmd_check_transcript(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def cmd_check_explore(args: argparse.Namespace) -> None:
+    expected = _load_json(Path(args.expected)) or {"error": f"{args.expected} is missing"}
+    if "error" in expected and "status" not in expected:
+        expected = {"status": "error", "message": expected["error"]}
+    from src.graph.catalog import get_entry
+
+    try:
+        ref: str | None = get_entry(args.entry).ref
+    except KeyError:
+        ref = None
+    params = dict(p.partition("=")[::2] for p in args.param)
+    verdict = check_explore(
+        iter_jsonl(Path(args.transcript)),
+        expected,
+        entry=args.entry,
+        job_id=args.job_id,
+        params=params,
+        name_columns=[c for c in args.names.split(",") if c],
+        count_column=args.count,
+        rows=args.rows,
+        ref=ref,
+    )
+    print(json.dumps(verdict))
+    if not verdict["pass"]:
+        print(f"error: /explore check failed: {verdict['error']}", file=sys.stderr)
+    sys.exit(0 if verdict["pass"] else 1)
+
+
 def cmd_check_model(args: argparse.Namespace) -> None:
     ok, used = check_model(iter_jsonl(Path(args.transcript)), args.expected)
     print(json.dumps({"model": used, "expected": args.expected, "match": ok}))
@@ -1707,6 +2012,7 @@ def cmd_results(args: argparse.Namespace) -> None:
         git_sha=args.git_sha,
         claude_exit_path=Path(args.claude_exit) if args.claude_exit else None,
         token_usage_path=Path(args.token_usage) if args.token_usage else None,
+        explore_path=Path(args.explore) if args.explore else None,
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1942,7 +2248,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to the token_usage.json from ci/llm/token_usage.py (optional)",
     )
+    p2.add_argument(
+        "--explore",
+        default=None,
+        help="Path to check-explore's explore.json; the explore check is required when given",
+    )
     p2.set_defaults(func=cmd_results)
+
+    p5 = sub.add_parser(
+        "check-explore",
+        help="Check the /explore session's answer against the catalog entry's own result.",
+    )
+    p5.add_argument("transcript")
+    p5.add_argument("--expected", required=True, help="graph_query.py run <entry> output")
+    p5.add_argument("--entry", required=True)
+    p5.add_argument("--job-id", required=True)
+    p5.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
+    p5.add_argument("--names", required=True, help="comma-separated columns naming a row")
+    p5.add_argument("--count", required=True, help="the column holding a row's count")
+    p5.add_argument("--rows", choices=["all", "top"], default="all")
+    p5.set_defaults(func=cmd_check_explore)
 
     p4 = sub.add_parser(
         "check-model",

@@ -275,3 +275,69 @@ def test_cli_reads_while_the_api_rebuilds_the_same_file(root):
     assert "api" in sources, sources
     assert {o["graph"]["path"] for o in outs if o["graph"]["source"] == "api"} == {path}
     assert job_graph.is_current_graph_file(path)
+
+
+# ---------------------------------------------------------------------------
+# Values are checked against the choices; the sandbox keeps the root to artifacts/
+# ---------------------------------------------------------------------------
+
+
+def test_run_refuses_a_value_that_is_not_one_of_the_choices(capsys, root):
+    code, out = _main(
+        capsys, "run", "table_blast_radius", *_job_args(root),
+        "--param", "table_id=wordpress.wp_nonexistent",
+    )  # fmt: skip
+    assert code == 1 and out["status"] == "error"
+    assert out["message"].startswith("table_id is not a known table on this job's graph")
+    assert "wp_nonexistent" not in out["message"]
+    code, out = _main(capsys, "run", "query_provenance", *_job_args(root), "--param", "query_id=x")
+    assert code == 1 and "query_id is not a known query" in out["message"]
+
+
+@pytest.mark.passes_on_main
+def test_run_checks_a_value_past_the_listed_choices(capsys, root, monkeypatch):
+    """Guards the value check against refusing a real value the listed choices cut off
+    (main ran every value unchecked, so this passes there)."""
+    # Only one choice listed (truncated), yet a real table beyond it still runs.
+    monkeypatch.setattr(catalog, "MAX_CHOICES", 1)
+    code, out = _main(capsys, "params", "table_blast_radius", *_job_args(root))
+    assert out["params"][0]["truncated"] is True
+    assert "wordpress.wp_posts" not in out["params"][0]["choices"]
+    code, out = _main(
+        capsys, "run", "table_blast_radius", *_job_args(root),
+        "--param", "table_id=wordpress.wp_posts",
+    )  # fmt: skip
+    assert code == 0 and out["rows"], out
+
+
+def _fixture_files() -> set[Path]:
+    return {p for p in (REPO / "tests" / "fixtures").rglob("*") if "__pycache__" not in p.parts}
+
+
+@pytest.mark.parametrize("clean", [False, True])
+def test_the_sandbox_refuses_a_repo_folder_that_is_not_artifacts(clean):
+    """A tracked fixture folder is inside the repo but not the pipeline's artifact root:
+    refused before the graph is opened, so nothing is built (or removed) under it."""
+    before = _fixture_files()
+    argv = ["run", "engine_distribution", "--job-id", "job", "--db", "wordpress-both"]
+    argv += ["--artifact-root", "tests/fixtures/real_runs"] + (["--clean"] if clean else [])
+    proc = _cli(*argv, env={"MODERNIZER_CI_SANDBOX": "1", "ARTIFACT_DIR": ""})
+    assert proc.returncode == 1
+    out = json.loads(proc.stdout.strip())
+    assert "not the pipeline's artifacts folder" in out["message"]
+    assert _fixture_files() == before
+
+
+def test_the_pipeline_root_rule(tmp_path):
+    from scripts._sandbox import pipeline_artifact_root_violation as check
+
+    on = {"MODERNIZER_CI_SANDBOX": "1"}
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "other").mkdir()
+    assert check(str(tmp_path / "artifacts"), environ=on, repo_root=tmp_path) is None
+    assert check(str(tmp_path / "other"), environ=on, repo_root=tmp_path) is not None
+    assert check(str(tmp_path / "artifacts" / "db"), environ=on, repo_root=tmp_path) is not None
+    assert check(str(tmp_path), environ=on, repo_root=tmp_path) is not None
+    env = {**on, "ARTIFACT_DIR": str(tmp_path / "other")}
+    assert check(str(tmp_path / "other"), environ=env, repo_root=tmp_path) is None
+    assert check(str(tmp_path / "other"), environ={}, repo_root=tmp_path) is None  # sandbox off
