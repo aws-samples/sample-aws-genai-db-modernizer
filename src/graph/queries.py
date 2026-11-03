@@ -150,11 +150,14 @@ def risk_hotspots(store: GraphStore) -> RiskHotspotsResponse:
     A resolved risk (#306) stays in the graph for the audit trail but is no hotspot.
     """
     rows = store.query(
+        # Traffic is summed before the optional matches, so each query counts once,
+        # not once per risk and anti-pattern on its table (#1782; catalog entry D).
         "MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) "
+        "WITH st, SUM(q.calls_per_second) AS total_cps "
         "OPTIONAL MATCH (r:Risk {status: 'active'})-[:IMPACTS]->(st) "
+        "WITH st, total_cps, COUNT(DISTINCT r) AS risks "
         "OPTIONAL MATCH (a:AntiPattern)-[:OBSERVED_IN_TABLE]->(st) "
-        "WITH st, SUM(q.calls_per_second) AS total_cps, "
-        "  COUNT(DISTINCT r) AS risks, COUNT(DISTINCT a) AS anti_patterns "
+        "WITH st, total_cps, risks, COUNT(DISTINCT a) AS anti_patterns "
         "WHERE risks > 0 OR anti_patterns > 0 "
         "RETURN st.id AS table_id, total_cps, risks, anti_patterns "
         "ORDER BY total_cps DESC, table_id",

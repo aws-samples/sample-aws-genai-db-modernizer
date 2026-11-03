@@ -165,6 +165,63 @@ def test_risk_hotspots_count_only_active_risks(graph_store, sample_collector_out
     assert hotspots == {"orders": 1}
 
 
+def test_risk_hotspot_traffic_counts_each_query_once_per_table(
+    graph_store, sample_collector_output
+):
+    """Three risks on one table must not triple its traffic (#1782): orders is read by
+    q1, q2 and q3 (423 + 89 + 15 calls/s)."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_synthesis(
+        _report([_active(f"RISK-00{n}", tables=("orders",)) for n in (1, 2, 3)]),
+        graph_store,
+    )
+    (hotspot,) = risk_hotspots(graph_store).hotspots
+    assert hotspot.table_id == "orders"
+    assert hotspot.risk_count == 3
+    assert hotspot.total_calls_per_second == pytest.approx(527.0)
+
+
+def test_risk_hotspot_traffic_ignores_the_risks_of_other_tables(
+    graph_store, sample_collector_output
+):
+    """A table with one risk keeps its own traffic: customers is read by q2 only."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_synthesis(
+        _report(
+            [
+                _active("RISK-001", tables=("orders", "customers")),
+                _active("RISK-002", tables=("orders",)),
+            ]
+        ),
+        graph_store,
+    )
+    by_table = {h.table_id: h for h in risk_hotspots(graph_store).hotspots}
+    assert by_table["orders"].total_calls_per_second == pytest.approx(527.0)
+    assert by_table["customers"].total_calls_per_second == pytest.approx(89.0)
+    assert (by_table["orders"].risk_count, by_table["customers"].risk_count) == (2, 1)
+
+
+def test_risk_hotspots_on_wordpress_report_each_tables_real_traffic(tmp_path):
+    """On the WordPress run wp_options carries 2 risks and 3 anti-patterns and is read
+    at 93.13 calls/s; it was reported as 558.77 (6x). Every hotspot equals the
+    table's summed query traffic."""
+    store = _rebuild(tmp_path, DETERMINISTIC_WORDPRESS)
+    traffic = {
+        r["t"]: r["cps"]
+        for r in store.query(
+            "MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) "
+            "RETURN st.id AS t, sum(q.calls_per_second) AS cps"
+        )
+    }
+    hotspots = {h.table_id: h for h in risk_hotspots(store).hotspots}
+    options = hotspots["wordpress.wp_options"]
+    assert options.total_calls_per_second == pytest.approx(93.13, abs=0.005)
+    assert (options.risk_count, options.anti_pattern_count) == (2, 3)
+    for table_id, hotspot in hotspots.items():
+        assert hotspot.total_calls_per_second == pytest.approx(traffic[table_id]), table_id
+    store.close()
+
+
 def _rebuild(tmp_path, job: Path, report: Path | None = None) -> GraphStore:
     base = tmp_path / "artifacts"
     shutil.copytree(job, base / "wordpress" / "job")
