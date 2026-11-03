@@ -165,16 +165,15 @@ def test_placeholder_tables_are_kept_and_flagged(graph_store):
     assert not [w for w in _writes(graph_store) if w[1] in ("unknown", "DUAL")]
 
 
-@pytest.mark.parametrize("name", ["UNKNOWN", "DUAL", "None", "null", "SYSIBM.SYSDUMMY1"])
-def test_a_placeholder_is_written_when_routing_writes_it(graph_store, name):
-    """Routing's ``written_tables`` skips only the lowercase ``unknown``: a write
-    whose only collected table is another placeholder writes it, and the graph copies
-    routing (the routing side is its own issue)."""
+@pytest.mark.parametrize("name", ["UNKNOWN", "DUAL", "dual", "None", "null", "SYSIBM.SYSDUMMY1"])
+def test_a_placeholder_is_never_written(graph_store, name):
+    """Routing's ``written_tables`` never writes a placeholder (#1817), and the graph
+    copies routing: the placeholder is kept and flagged, with no WRITES edge."""
     collector = _collector("mysql", _q("w", "INSERT INTO x VALUES (1)", [name], "INSERT"))
     engine, scope = source_engine_of(collector), SourceScope.from_collector(collector)
-    assert written_tables(collector["queries"]["query_patterns"][0], engine, scope) == [name]
+    assert written_tables(collector["queries"]["query_patterns"][0], engine, scope) == []
     populate_from_collector(collector, graph_store)
-    assert _writes(graph_store) == [("w", name, False)]
+    assert _writes(graph_store) == []
     assert _placeholders(graph_store)[name] == (True, PLACEHOLDER_REASON)
 
 
@@ -184,11 +183,22 @@ def test_the_lowercase_unknown_is_never_written(graph_store):
     assert _writes(graph_store) == []
 
 
-@pytest.mark.parametrize("name", ["Unknown", "dual", "NULL", "sysibm.sysdummy1", "", " "])
-def test_placeholder_names_match_in_any_case_and_an_empty_name(graph_store, name):
+@pytest.mark.passes_on_main  # the graph already flagged an empty name; pinned with #1817
+@pytest.mark.parametrize("name", ["", " "])
+def test_an_empty_name_is_a_placeholder(graph_store, name):
     collector = _collector("mysql", _q("r", "SELECT 1", [name], "SELECT"))
     populate_from_collector(collector, graph_store)
     assert _placeholders(graph_store) == {name: (True, PLACEHOLDER_REASON)}
+
+
+@pytest.mark.parametrize("name", ["Unknown", "NULL", "none", "sysibm.sysdummy1"])
+def test_a_real_table_that_only_looks_like_a_placeholder_is_a_table(graph_store, name):
+    """Placeholders match exactly, the same check routing uses (#1817): a real table
+    named ``Unknown`` or ``NULL`` is a table, written like any other."""
+    collector = _collector("mysql", _q("w", "INSERT INTO x VALUES (1)", [name], "INSERT"))
+    populate_from_collector(collector, graph_store)
+    assert _placeholders(graph_store) == {name: (False, None)}
+    assert _writes(graph_store) == [("w", name, False)]
 
 
 def test_a_locking_read_marks_only_the_tables_it_locks(graph_store):

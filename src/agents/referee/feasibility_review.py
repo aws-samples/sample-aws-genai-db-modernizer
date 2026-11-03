@@ -41,7 +41,7 @@ from __future__ import annotations
 from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
-from src.agents.referee.write_groups import written_tables
+from src.agents.referee.write_groups import saved_write_groups, written_tables
 from src.contracts.assignment_models import Assignment
 from src.contracts.feasibility_models import FeasibilityFinding, FindingKind, FindingSeverity
 from src.shared import catalog
@@ -310,7 +310,8 @@ def _detect_stranded_counts(
     from src.agents.referee.waived_counts import stranded_counts
 
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
-    if not queries or not assignment.write_groups:
+    write_groups = saved_write_groups(assignment)
+    if not queries or not write_groups:
         return []
     ctx = ScoringContext.from_pipeline({}, None, collector_output)
     findings = []
@@ -318,7 +319,7 @@ def _detect_stranded_counts(
         assignment.query_assignments,
         {q.get("query_id"): q for q in queries},
         ctx,
-        assignment.write_groups,
+        write_groups,
     ):
         where = f"on {display_engine(source)}" if source else "split across engines"
         findings.append(

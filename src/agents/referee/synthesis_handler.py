@@ -78,8 +78,12 @@ from src.agents.referee.synthesis_report import (
     table_normaliser,
 )
 from src.agents.referee.table_assignments import retained_engine_for
-from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
-from src.agents.referee.write_groups import table_sources, unservable_write_groups
+from src.agents.referee.table_resolution import SourceScope, TableNameResolver
+from src.agents.referee.write_groups import (
+    saved_write_groups,
+    table_sources,
+    unservable_write_groups,
+)
 from src.agents.schema_design.dynamodb_merge import (
     merge_review_decisions,
     unresolved_merge_conflicts,
@@ -97,6 +101,7 @@ from src.shared.design_text import said_once_trade_offs
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.executive_brief import check_summary_brief, executive_brief_text
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
@@ -574,7 +579,7 @@ def run_synthesis_deterministic(
                 str(t["table_id"])
                 for t in raw_table_assignments
                 if t.get("table_id")
-                and str(t["table_id"]) not in PSEUDO_TABLES
+                and not is_placeholder_table(t["table_id"])
                 and (legacy_resolver is None or legacy_resolver.resolve(str(t["table_id"])) is None)
             }
         )
@@ -628,7 +633,7 @@ def run_synthesis_deterministic(
         reality_check_summary = recompute_reality_check_patterns(
             reality_check_summary,
             (data.assignment or {}).get("query_assignments", []),
-            (data.assignment or {}).get("write_groups"),
+            saved_write_groups(data.assignment),
         )
         for rec in reality_check_summary["recommendations"]:
             rec_desc = rec if isinstance(rec, str) else str(rec)

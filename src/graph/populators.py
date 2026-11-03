@@ -55,7 +55,8 @@ def _stamp_agent(
 
 
 # Why a SourceTable is a placeholder (#306): one of the collector's names for "no
-# table" (``report_facts.PLACEHOLDER_TABLE_NAMES``, in any case, or an empty name).
+# table" (``placeholder_tables.is_placeholder_table``: exactly one of
+# ``PLACEHOLDER_TABLE_NAMES``, or an empty name, the same check routing uses, #1817).
 PLACEHOLDER_REASON = (
     "a collector placeholder, not a table of the source database: no table resolved "
     "for the statement, or a dummy table such as DUAL"
@@ -63,12 +64,9 @@ PLACEHOLDER_REASON = (
 
 
 def _placeholder_reason(table: str) -> str | None:
-    from src.shared.report_facts import PLACEHOLDER_TABLE_NAMES
+    from src.shared.placeholder_tables import is_placeholder_table
 
-    folded = {name.casefold() for name in PLACEHOLDER_TABLE_NAMES}
-    if table.strip() and table.strip().casefold() not in folded:
-        return None
-    return PLACEHOLDER_REASON
+    return PLACEHOLDER_REASON if is_placeholder_table(table) else None
 
 
 def populate_from_collector(collector_output: dict, store: GraphStore) -> None:

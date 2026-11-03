@@ -260,11 +260,11 @@ def carried_writes(
     and query. A table with one write statement carries nothing; an assignment written
     before write groups, or no collector, gives none."""
     from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
-    from src.agents.referee.write_groups import assignment_sources_of_truth
+    from src.agents.referee.write_groups import assignment_sources_of_truth, saved_write_groups
 
     assignment = assignment or {}
     collector = collector or {}
-    groups = assignment.get("write_groups") or {}
+    groups = saved_write_groups(assignment)
     if not groups or not collector:
         return []
     floor = carried_write_floor() if floor is None else floor

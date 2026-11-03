@@ -81,6 +81,9 @@ E2E_LLM: tuple[str, ...] = (
     "src/catalog/carried_writes.toml",
     "src/shared/catalog/write_intents.py",
     "src/agents/referee/table_resolution.py",
+    # The one list of placeholder tables (#1817): which tables a design group and the
+    # analysis name, and the saved write groups the designer is told about.
+    "src/shared/placeholder_tables.py",
     # Filters the analysis prose every design path reads to the customer's engine scope
     # (scope_filtered_analysis, #1574).
     "src/agents/referee/engine_scope.py",

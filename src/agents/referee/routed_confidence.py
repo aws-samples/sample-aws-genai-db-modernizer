@@ -60,6 +60,7 @@ from src.agents.referee.query_scoring import ScoringContext, score_query_for_eng
 from src.agents.referee.reality_check import _build_query_signals
 from src.agents.referee.write_groups import assignment_sources_of_truth
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.signal_labels import WORKLOAD_CHARACTERISTIC_SIGNALS
 
 BASIS_OWNED = "owned_queries"
@@ -73,8 +74,6 @@ EVIDENCE_PATTERN = "pattern"
 EVIDENCE_PARTIAL = "partial"
 EVIDENCE_SIGNAL_ONLY = "signal_only"
 
-# The collector's placeholder when it cannot parse a query's tables.
-PSEUDO_TABLES = frozenset({"", "unknown"})
 
 # A signal "leads" a routed workload only as a strict plurality covering at least
 # this share of the routed queries; otherwise the rationale names no lead.
@@ -179,7 +178,11 @@ def routed_fits(
 
     def real_tables(qid: str) -> set[str]:
         # The fit reads tables_accessed; so do the counts, minus the pseudo-tables
-        names = set(query_map.get(qid, {}).get("tables_accessed") or []) - PSEUDO_TABLES
+        names = {
+            t
+            for t in query_map.get(qid, {}).get("tables_accessed") or []
+            if not is_placeholder_table(t)
+        }
         return names & known if known is not None else names
 
     result: dict[str, RoutedFit] = {}

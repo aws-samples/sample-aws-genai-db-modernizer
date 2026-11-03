@@ -25,7 +25,11 @@ from collections.abc import Callable
 
 from src.agents.referee.engine_scope import check_in_scope, scope_from_store
 from src.agents.referee.query_pattern import write_access_patterns
-from src.agents.referee.write_groups import assignment_placement_groups, assignment_unit_weights
+from src.agents.referee.write_groups import (
+    assignment_placement_groups,
+    assignment_unit_weights,
+    saved_write_groups,
+)
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
@@ -312,7 +316,7 @@ class PostSchemaRouting:
             # a reroute moves a table's writes together.
             co_dependency_groups=assignment_placement_groups(assignment),
             # A pinned write holds its table's other writes in place (#992).
-            write_groups=assignment.get("write_groups") or {},
+            write_groups=saved_write_groups(assignment),
             # A write unit is judged on its call-rate-weighted mean (#992).
             unit_weights=assignment_unit_weights(assignment, scoring.get("query_map") or {}),
             # A pinned key-scoped count holds its table's writes too (#1151).
@@ -599,7 +603,7 @@ class PostSchemaRouting:
         from src.agents.referee.write_groups import assignment_sources_of_truth
         from src.contracts.move_ledger import MovePass
 
-        write_groups = assignment.get("write_groups") or {}
+        write_groups = saved_write_groups(assignment)
         if not write_groups:
             return []
         triage_key = f"{prefix}/referee-triage/triage.json"

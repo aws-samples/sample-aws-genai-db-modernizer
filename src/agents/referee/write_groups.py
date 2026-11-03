@@ -21,7 +21,10 @@ together, or one of them would split, so every routing pass places
 :func:`placement_groups`: the two kinds merged where they overlap.
 Administration statements (``TRUNCATE``, DDL, ...) never enter routing (the
 utility pin keeps them on the source-compatible engine), so they join no write
-group.
+group. Neither does a placeholder or dummy table (``unknown``, ``None``, ``DUAL``,
+``SYSIBM.SYSDUMMY1``: ``placeholder_tables.is_placeholder_table``, #1817): it
+is no table, so it has no writer, and keying a group on it would tie unrelated
+writes together.
 """
 
 from __future__ import annotations
@@ -33,6 +36,11 @@ from src.agents.referee.cache_overlay import is_locking_read, is_write_query
 from src.agents.referee.table_resolution import SourceScope, is_engine_system_object
 from src.agents.referee.utility_statements import is_utility_statement
 from src.shared.engine_names import SOURCE_DATABASE
+from src.shared.placeholder_tables import (
+    is_placeholder_table,
+    real_write_groups,
+    saved_write_groups,
+)
 from src.tools.sql.query_facts import query_facts, source_engine_of
 
 __all__ = [
@@ -44,6 +52,8 @@ __all__ = [
     "collector_write_groups",
     "inserted_tables",
     "placement_groups",
+    "real_write_groups",
+    "saved_write_groups",
     "sources_of_truth",
     "table_sources",
     "unit_call_weights",
@@ -83,11 +93,15 @@ def written_tables(
     their rows. A write whose target is none of its collected tables (no text, or
     text the facts cannot read) counts as writing all of them: keeping too many
     writes together never splits a table's writes. An administration statement
-    writes no table here.
+    writes no table here, and neither does any statement on a placeholder or dummy
+    table (:func:`~src.shared.placeholder_tables.is_placeholder_table`, #1817).
     """
     text = str(query.get("query_text") or "")
-    tables = [str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"]
-    if is_utility_statement(text, tables, source):
+    # The utility test reads the collected names as it always has (it treats a dummy
+    # table as no table itself); a placeholder is never a written table (#1817).
+    collected = [str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"]
+    tables = [t for t in collected if not is_placeholder_table(t)]
+    if is_utility_statement(text, collected, source):
         # An administration statement writes no table, but a DML statement that only
         # reads a catalog (``INSERT INTO stats SELECT ... FROM information_schema.tables``)
         # still writes its own target (#1287).
@@ -227,7 +241,8 @@ def assignment_placement_groups(assignment: Mapping | None) -> list[list[str]]:
     write groups existed gives its co-dependency groups alone."""
     assignment = assignment or {}
     return placement_groups(
-        assignment.get("co_dependency_groups") or [], assignment.get("write_groups") or {}
+        assignment.get("co_dependency_groups") or [],
+        saved_write_groups(assignment),
     )
 
 
@@ -265,7 +280,7 @@ def assignment_sources_of_truth(assignment: Mapping | None) -> dict[str, str]:
         for qa in assignment.get("query_assignments") or []
         if qa.get("in_scope", True)
     }
-    return sources_of_truth(assignment.get("write_groups") or {}, engine_of)
+    return sources_of_truth(saved_write_groups(assignment), engine_of)
 
 
 def unservable_write_groups(
@@ -311,10 +326,10 @@ def table_sources(
     qas = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
     engine_of = {str(qa.get("query_id")): str(qa.get("assigned_engine") or "") for qa in qas}
     readers: dict[str, dict[str, list[str]]] = {}
-    groups = dict(assignment.get("write_groups") or {})
+    groups = saved_write_groups(assignment)
     kept_by_source = {
         str(t): sorted(str(q) for q in m)
-        for t, m in (unservable_writes or {}).items()
+        for t, m in real_write_groups(unservable_writes).items()
         if t not in groups
     }
     groups.update(kept_by_source)
@@ -405,5 +420,5 @@ def assignment_unit_weights(
     """:func:`unit_call_weights` of an assignment artifact's placement units."""
     assignment = assignment or {}
     return unit_call_weights(
-        assignment_placement_groups(assignment), assignment.get("write_groups") or {}, query_by_id
+        assignment_placement_groups(assignment), saved_write_groups(assignment), query_by_id
     )
