@@ -243,11 +243,8 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
             tmp.name
         )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
     try:
+        # Any size (#384); the counts are checked when it is ingested (#142).
         artifacts.download_artifact(artifact_id, tmp_path)
-        # Check the downloaded file's size before parsing it (#142).
-        from src.tools.validation.ingestion_limits import check_file_size
-
-        check_file_size(os.path.getsize(tmp_path), source=f"artifact {artifact_id}")
         with open(tmp_path, encoding="utf-8") as fh:
             collection = json.load(fh)
         # The staged copy holds no literal value (#1625): a collector output's text,
@@ -318,6 +315,9 @@ def _resolve_collector_input(store, job_id: str, database_name: str, input_key: 
 def ingest_offline_collection(store, job_id: str, database_name: str, raw_input: dict) -> dict:
     """Build a collector output contract from a raw offline collection dict.
 
+    Keeps every statement (no cap, #384) and records the capture in
+    ``metadata.query_capture``, as the scripts do by default.
+
     Mirrors scripts/run_assessment.py::phase_collect exactly, but reads the raw
     input from a dict (sourced via ArtifactStore) instead of a local file, and
     writes the result back through the ArtifactStore. Builds the output with the
@@ -377,6 +377,11 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
         collector_data = build_offline_collector_output(
             parsed, job_id=job_id, database_name=database_name, s3_key="in-memory"
         )
+
+    # #384: no cap, so nothing is cut; the capture is recorded.
+    from src.shared.query_capture import cap_collection
+
+    cap_collection(collector_data)
 
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     # An uploaded collector output may be at an older MINOR: written at today's (#1018).

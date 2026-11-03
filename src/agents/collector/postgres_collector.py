@@ -53,6 +53,11 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.query_capture import (
+    live_query_capture,
+    query_stage_rows,
+    statement_query_failed,
+)
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.s3_storage import init_storage
@@ -177,6 +182,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
     )
+    queries_raw, query_error = query_stage_rows(queries_raw)
 
     # Stage 4: AWS metrics
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
@@ -230,6 +236,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 rds_instance_metadata=rds_meta,
                 settings=source_settings(meta_raw.get("settings")),
             ),
+            query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
         ),
         database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),
         queries=queries,
@@ -352,14 +359,15 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
     }
 
 
-def _collect_queries_raw(db: PostgreSQLRemoteCollector, opts) -> list[dict]:
+def _collect_queries_raw(db: PostgreSQLRemoteCollector, opts) -> list[dict] | dict[str, str]:
     if not opts.collect_query_patterns:
         return []
     try:
-        return db.collect_query_patterns()
-    except Exception:
+        return db.collect_query_patterns(min_executions=opts.min_executions, limit=opts.query_limit)
+    except Exception as exc:
         logger.warning("Failed to collect query patterns")
-        return []
+        # #384: a failed query is not a complete capture of nothing.
+        return statement_query_failed(exc)
 
 
 # ---------------------------------------------------------------------------

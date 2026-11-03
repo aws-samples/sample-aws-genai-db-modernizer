@@ -19,7 +19,8 @@ that turns such a path into a readable ``.json`` file:
 Only the one expected member is read, by exact name, and written to a path this
 module computes; the archive's own member paths are never used as output paths,
 so a zip-slip member (``../x.json``, an absolute path) can never be written.
-The member is size-checked against the ingestion limit while it streams out.
+The member streams out whatever its size (#384): a collection has no size limit,
+only the table and query counts checked when it is parsed (#142).
 """
 
 from __future__ import annotations
@@ -28,12 +29,6 @@ import os
 import tempfile
 import zipfile
 from pathlib import Path
-
-from src.tools.validation.ingestion_limits import (
-    IngestionLimitError,
-    IngestionLimits,
-    check_file_size,
-)
 
 _SUFFIX = "-collection"
 _CHUNK = 1024 * 1024
@@ -67,7 +62,6 @@ def _extract_member(zip_path: Path, member: str, dest: Path) -> None:
     """Copy exactly ``member`` out of ``zip_path`` into ``dest`` (atomically)."""
     if member != Path(member).name or member in ("", ".", ".."):
         raise CollectionPathError(f"{member!r} is not a plain file name; {_hint()}")
-    limits = IngestionLimits.from_env()
     try:
         with zipfile.ZipFile(zip_path) as zf:
             # Look the member up by exact name among the archive's entries; a
@@ -79,15 +73,11 @@ def _extract_member(zip_path: Path, member: str, dest: Path) -> None:
                     f"file inside. {_hint()}"
                 )
             info = infos[0]
-            check_file_size(info.file_size, source=f"{zip_path}:{member}", limits=limits)
             dest.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f".{member}.", suffix=".tmp")
             try:
-                written = 0
                 with os.fdopen(fd, "wb") as out, zf.open(info) as src:
                     while chunk := src.read(_CHUNK):
-                        written += len(chunk)
-                        check_file_size(written, source=f"{zip_path}:{member}", limits=limits)
                         out.write(chunk)
                 os.chmod(tmp_name, 0o666 & ~_current_umask())
                 os.replace(tmp_name, dest)
@@ -96,8 +86,6 @@ def _extract_member(zip_path: Path, member: str, dest: Path) -> None:
                     os.unlink(tmp_name)
     except zipfile.BadZipFile as exc:
         raise CollectionPathError(f"{zip_path} is not a readable zip archive: {exc}") from exc
-    except IngestionLimitError as exc:
-        raise CollectionPathError(f"{zip_path}: {exc}") from exc
     except RuntimeError as exc:  # encrypted member ("password required")
         raise CollectionPathError(
             f"{zip_path}: cannot read {member} ({exc}); encrypted zip archives are not "

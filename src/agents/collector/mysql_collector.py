@@ -43,6 +43,7 @@ from src.contracts.collector_output import (
     Procedure,
     ProcedureType,
     Queries,
+    QueryCapture,
     QueryLogSource,
     QueryPattern,
     QueryType,
@@ -59,6 +60,11 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.query_capture import (
+    live_query_capture,
+    query_stage_rows,
+    statement_query_failed,
+)
 from src.shared.row_counts import (
     engine_major_version,
     read_data_size_mb,
@@ -403,6 +409,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
     )
+    queries_raw, query_error = query_stage_rows(queries_raw)
 
     # Stage 4: AWS metrics (RDS, CloudWatch, PI, DI)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
@@ -456,6 +463,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         procedures=schema_procs,
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
+        query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
     )
 
 
@@ -615,14 +623,15 @@ def _collect_schema_raw(db: MySQLRemoteCollector) -> dict:
     }
 
 
-def _collect_queries_raw(db: MySQLRemoteCollector, opts) -> list[dict]:
+def _collect_queries_raw(db: MySQLRemoteCollector, opts) -> list[dict] | dict[str, str]:
     if not opts.collect_query_patterns:
         return []
     try:
-        return db.collect_query_patterns()
-    except Exception:
+        return db.collect_query_patterns(min_executions=opts.min_executions, limit=opts.query_limit)
+    except Exception as exc:
         logger.warning("Failed to collect query patterns")
-        return []
+        # #384: a failed query is not a complete capture of nothing.
+        return statement_query_failed(exc)
 
 
 def _parse_ddl_raw(inp, region) -> list[dict]:
@@ -1487,13 +1496,15 @@ def _build_output(
     engines_in_use=None,
     database_name: str | None = None,
     settings: object = None,
+    query_capture: QueryCapture | None = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
     ``database_name``: the collected database's name, the table ids' qualifier
     (#1572); ``inp.database_name`` when not given. ``settings``: the source settings the
     collection read (``sql_mode``, ``standard_conforming_strings``, #1482), kept as
-    :func:`source_settings` reads them."""
+    :func:`source_settings` reads them. ``query_capture``: the statement cap, minimum
+    execution count and count a live collection captured (#384)."""
     elapsed = time.monotonic() - start
     return CollectorOutputContract(
         job_id=inp.job_id,
@@ -1516,6 +1527,7 @@ def _build_output(
                 if isinstance(engines_in_use, list)
                 else []
             ),
+            query_capture=query_capture,
         ),
         database_schema=Schema(
             tables=tables, views=views, procedures=procedures, triggers=triggers

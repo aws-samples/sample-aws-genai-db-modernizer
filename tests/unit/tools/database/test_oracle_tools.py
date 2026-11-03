@@ -489,9 +489,9 @@ class TestQueryPatternsGroupLiteralVariants:
     """#412: V$SQL keeps one row per literal text (one SQL_ID each); the collection
     groups by FORCE_MATCHING_SIGNATURE, falling back to SQL_ID when it is 0."""
 
-    def _sent_sql(self, collector, mock_ssm) -> str:
+    def _sent_sql(self, collector, mock_ssm, **kwargs) -> str:
         mock_ssm.run_sql_json.side_effect = [[{"s": "APPUSER"}], []]
-        collector.collect_query_patterns()
+        collector.collect_query_patterns(**kwargs)
         return str(mock_ssm.run_sql_json.call_args.kwargs["sql"])
 
     def test_groups_by_force_matching_signature_with_sql_id_fallback(self, collector, mock_ssm):
@@ -504,9 +504,11 @@ class TestQueryPatternsGroupLiteralVariants:
         assert "FORCE_MATCHING_SIGNATURE, 0) <> 0" in sql
 
     def test_floor_and_cap_apply_after_grouping(self, collector, mock_ssm):
-        sql = self._sent_sql(collector, mock_ssm)
+        # A cap applies only when one is set (#384); the floor always does.
+        sql = self._sent_sql(collector, mock_ssm, limit=1000)
         assert sql.index("GROUP BY v.query_key") < sql.index("WHERE g.executions >= 10")
         assert sql.index("WHERE g.executions >= 10") < sql.index("ROWNUM <= 1000")
+        assert "ROWNUM" not in self._sent_sql(collector, mock_ssm)
 
     def test_costliest_variant_is_the_sample_text(self, collector, mock_ssm):
         sql = self._sent_sql(collector, mock_ssm)

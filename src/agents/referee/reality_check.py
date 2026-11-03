@@ -74,6 +74,7 @@ from src.agents.referee.reality_check_rules import (
     SPECIALIST_ABSORB_SIGNALS,
     TARGET_ENGINE_COUNT,
     UNIQUE_DELTA_THRESHOLD,
+    GroupedTrace,
     _build_query_signals,
     _current_for_eligibility,
     _group_eligible_engines,
@@ -303,7 +304,8 @@ def run_reality_check(
         sources_of_truth=sources,
         score_dimensions=score_dimensions,
     )
-    trace_by_query = _trace.by_query
+    # Its group members indexed once for every pass below (#384: no n^2 member scan).
+    trace_by_query = GroupedTrace(_trace.by_query)
     # The one shared scoring context (#490/#549): the mandatory-engine
     # floor's absorber (``_find_best_absorber_for_query``) scores each
     # candidate engine directly with this (``score_query_for_engine``)

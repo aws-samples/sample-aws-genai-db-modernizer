@@ -104,12 +104,12 @@ def test_zip_without_expected_member_is_a_clear_error(tmp_path):
         resolve_collection_path(tmp_path / "demo-collection.json")
 
 
-def test_oversized_member_is_refused_and_leaves_nothing(tmp_path, monkeypatch):
+def test_a_member_of_any_size_is_extracted(tmp_path, monkeypatch):
+    # No file size limit (#384): the old variable no longer refuses a member.
     monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
     _make_zip(tmp_path / "demo.zip", {"demo-collection.json": "x" * 100})
-    with pytest.raises(CollectionPathError, match="ingestion limit"):
-        resolve_collection_path(tmp_path / "demo-collection.json")
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["demo.zip"]
+    out = resolve_collection_path(tmp_path / "demo-collection.json")
+    assert Path(out).read_text() == "x" * 100
 
 
 def test_corrupt_zip_is_a_clear_error(tmp_path):

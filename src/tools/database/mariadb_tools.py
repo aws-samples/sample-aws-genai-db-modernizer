@@ -9,6 +9,7 @@ MariaDB uses the same mysql CLI, performance_schema, and INFORMATION_SCHEMA
 but has different version numbering and feature availability.
 """
 
+from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.mysql_tools import MySQLRemoteCollector, _version_gte
 from src.tools.sql.query_type import statement_query_type
@@ -31,7 +32,10 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         has no ``EXPRESSION`` column (#295)."""
         return False
 
-    def collect_query_patterns(self, min_executions: int = 10, limit: int = 1000) -> list[dict]:
+    def collect_query_patterns(
+        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+    ) -> list[dict]:
+        limit, min_executions = capture_settings(limit, min_executions)
         version = self.get_version()
 
         # MariaDB never has MySQL 8.0.25+ QUANTILE columns
@@ -58,7 +62,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         has_errors: bool,
         has_first_last_seen: bool,
         min_executions: int,
-        limit: int,
+        limit: int | None,
     ) -> list[dict]:
         """Build and execute query patterns SQL with explicit feature flags."""
         from src.tools.database.mysql_tools import (
@@ -77,6 +81,8 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         if has_first_last_seen:
             extra_cols += "FIRST_SEEN, LAST_SEEN, "
 
+        # No cap (the default, #384): every statement that ran often enough.
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
         raw = self._query(f"""
             SELECT
                 DIGEST AS digest, DIGEST_TEXT AS query_text, SCHEMA_NAME AS schema_name,
@@ -99,8 +105,8 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
             WHERE SCHEMA_NAME = DATABASE()
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
-            LIMIT {limit}
-        """)  # nosec B608 -- extra_cols fixed; min_executions and limit are int defaults
+            {limit_clause}
+        """)  # nosec B608 -- extra_cols fixed; both settings are checked ints (#384)
 
         patterns = []
         reader = LiveQueryReader("mariadb", "mariadb_tools")

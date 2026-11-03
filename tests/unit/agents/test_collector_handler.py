@@ -349,3 +349,99 @@ def test_an_explicit_port_is_kept():
     _, input_contract, _ = _run_dispatched(env)
 
     assert input_contract.port == 6543
+
+
+# ---------------------------------------------------------------------------
+# #384: QUERY_LIMIT and MIN_EXECUTIONS reach the collection options
+# ---------------------------------------------------------------------------
+
+
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_the_capture_settings_default_to_no_cap_and_ten(mock_dispatch):
+    mock_result = MagicMock()
+    mock_result.model_dump_json.return_value = json.dumps({"metadata": {}})
+    mock_dispatch.return_value = mock_result
+    with patch.dict("os.environ", ENV_VARS):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-001", "mydb", _mock_store())
+    options = mock_dispatch.call_args[0][1].collection_options
+    assert (options.query_limit, options.min_executions) == (None, 10)
+
+
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_the_capture_settings_are_read_from_the_environment(mock_dispatch):
+    mock_result = MagicMock()
+    mock_result.model_dump_json.return_value = json.dumps({"metadata": {}})
+    mock_dispatch.return_value = mock_result
+    env = {**ENV_VARS, "QUERY_LIMIT": "20000", "MIN_EXECUTIONS": "5"}
+    with patch.dict("os.environ", env):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-001", "mydb", _mock_store())
+    options = mock_dispatch.call_args[0][1].collection_options
+    assert (options.query_limit, options.min_executions) == (20_000, 5)
+
+
+@pytest.mark.parametrize(
+    "env", [{"QUERY_LIMIT": "0"}, {"QUERY_LIMIT": "many"}, {"MIN_EXECUTIONS": "-1"}]
+)
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_an_invalid_capture_setting_exits_before_collection_starts(mock_dispatch, env, capsys):
+    store = _mock_store()
+    with patch.dict("os.environ", {**ENV_VARS, **env}):
+        from src.agents.collector.handler import run_collector
+
+        with pytest.raises(SystemExit) as exc:
+            run_collector("job-001", "mydb", store)
+    assert exc.value.code == 1
+    assert next(iter(env)) in capsys.readouterr().err
+    mock_dispatch.assert_not_called()
+    store.write_json.assert_not_called()
+
+
+def test_an_offline_collection_is_kept_whole_without_query_limit():
+    from src.agents.collector.mysql_collector import NoopCheckpointStore
+
+    store = MagicMock(spec=ArtifactStore)
+    raw = _trailgear_raw(engine="sqlserver")
+    with (
+        patch.dict("os.environ", _OFFLINE_ENV, clear=True),
+        patch("src.tools.database.offline_parser.fetch_offline_json", return_value=raw),
+        patch(
+            "src.agents.collector.mysql_collector._init_checkpoint_store",
+            return_value=NoopCheckpointStore(),
+        ),
+    ):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-1", "trailgear", store)
+
+    output = store.write_json.call_args[0][1]
+    capture = output["metadata"]["query_capture"]
+    assert capture["query_limit"] is None
+    assert capture["captured"] == len(output["queries"]["query_patterns"]) > 3
+
+
+def test_an_offline_collection_keeps_at_most_query_limit_statements():
+    from src.agents.collector.mysql_collector import NoopCheckpointStore
+
+    store = MagicMock(spec=ArtifactStore)
+    raw = _trailgear_raw(engine="sqlserver")
+    with (
+        patch.dict("os.environ", {**_OFFLINE_ENV, "QUERY_LIMIT": "3"}, clear=True),
+        patch("src.tools.database.offline_parser.fetch_offline_json", return_value=raw),
+        patch(
+            "src.agents.collector.mysql_collector._init_checkpoint_store",
+            return_value=NoopCheckpointStore(),
+        ),
+    ):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-1", "trailgear", store)
+
+    output = store.write_json.call_args[0][1]
+    assert len(output["queries"]["query_patterns"]) == 3
+    capture = output["metadata"]["query_capture"]
+    assert (capture["query_limit"], capture["captured"], capture["truncated"]) == (3, 3, True)
+    assert capture["available"] > 3

@@ -13,6 +13,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -282,7 +283,12 @@ class PostgreSQLRemoteCollector:
     # Query patterns (pg_stat_statements)
     # -------------------------------------------------------------------
 
-    def collect_query_patterns(self, min_calls: int = 1, limit: int = 1000) -> list[dict]:
+    def collect_query_patterns(
+        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+    ) -> list[dict]:
+        limit, min_executions = capture_settings(limit, min_executions)
+        # No cap (the default, #384): every statement that ran often enough.
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
         raw = self._query(f"""
             SELECT
                 queryid, query, calls,
@@ -297,11 +303,11 @@ class PostgreSQLRemoteCollector:
                 blk_write_time AS io_write_time_ms,
                 temp_blks_read, temp_blks_written
             FROM pg_stat_statements
-            WHERE calls >= {min_calls}
+            WHERE calls >= {min_executions}
               AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
             ORDER BY total_exec_time DESC
-            LIMIT {limit}
-        """)  # nosec B608 — min_calls and limit are internal constants, not user input
+            {limit_clause}
+        """)  # nosec B608 — both settings are checked ints (#384)
 
         patterns = []
         reader = LiveQueryReader("postgresql", "postgres_tools")

@@ -14,7 +14,11 @@ Two collection modes:
 import re
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+
+# The minimum execution count every collector uses when none is given (#384). There is
+# no default statement cap: every statement that ran this often is captured.
+DEFAULT_MIN_EXECUTIONS = 10
 
 
 class DatabaseEngine(str, Enum):
@@ -78,6 +82,19 @@ class CollectionOptions(BaseModel):
         default=True, description="Collect query patterns (LIVE: performance_schema, DDL: PI only)"
     )
     query_log_days: int = Field(default=7, ge=1, le=30, description="Days of query logs to analyze")
+    query_limit: StrictInt | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Most statements to capture, the costliest by total time; None (the default) "
+            "captures every statement (#384). Recorded in metadata.query_capture"
+        ),
+    )
+    min_executions: StrictInt = Field(
+        default=DEFAULT_MIN_EXECUTIONS,
+        ge=1,
+        description="Minimum execution count of a captured statement (#384)",
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -142,10 +159,16 @@ class CollectorInput(BaseModel):
     - 4.0 (2026-10-25, #387): Removed CollectionOptions.anonymize_pii,
       collect_sample_data and sample_row_count: no collector reads table rows. Requests
       that still set them are accepted and the options ignored (extra=ignore).
+    - 4.1 (2026-11-03, #384): Added optional ``CollectionOptions.query_limit`` (default
+      None: no cap) and ``CollectionOptions.min_executions`` (default 10), both strict
+      positive integers: the statement cap and minimum execution count every live
+      collector sends to its statement query and records in ``metadata.query_capture``
+      (#384). Backward compatible: a request without them captures every statement run
+      at least 10 times.
     """
 
     contract_version: str = Field(
-        default="4.0", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="4.1", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(description="Unique job identifier")
 

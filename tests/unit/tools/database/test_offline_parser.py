@@ -107,9 +107,8 @@ class TestSentinelRegex:
 
 
 class TestFetchOfflineJsonSizeLimit:
-    """fetch_offline_json rejects an oversized object before reading its body
-    into memory (#142): it checks S3's reported ContentLength via head_object
-    first, so a huge object is never downloaded just to be rejected."""
+    """fetch_offline_json reads an object of any size (#384, no file size limit): the
+    table and query counts are what parse_offline_collection checks (#142)."""
 
     @staticmethod
     def _run_fetch(body_text: str, content_length: int, *, env=None):
@@ -124,25 +123,19 @@ class TestFetchOfflineJsonSizeLimit:
             with patch.dict("os.environ", env or {}, clear=False):
                 return fetch_offline_json("bucket", "key"), mock_s3
 
-    def test_passes_under_limit(self):
-        result, mock_s3 = self._run_fetch(
-            '{"tables":[]}', 10, env={"MODERNIZER_MAX_UPLOAD_BYTES": "1000"}
-        )
+    @pytest.mark.passes_on_main
+    def test_reads_a_small_object(self):
+        result, mock_s3 = self._run_fetch('{"tables":[]}', 10)
         assert result == {"tables": []}
         mock_s3.get_object.assert_called_once()
 
-    def test_rejects_oversized_object_without_downloading_body(self):
-        from src.tools.validation.ingestion_limits import IngestionLimitError
-
-        mock_s3 = MagicMock()
-        mock_s3.head_object.return_value = {"ContentLength": 1_000_000}
-        with patch("src.tools.database.offline_parser.boto3.client", return_value=mock_s3):
-            with patch.dict("os.environ", {"MODERNIZER_MAX_UPLOAD_BYTES": "100"}, clear=False):
-                from src.tools.database.offline_parser import fetch_offline_json
-
-                with pytest.raises(IngestionLimitError, match="1,000,000"):
-                    fetch_offline_json("bucket", "key")
-        mock_s3.get_object.assert_not_called()
+    def test_an_object_over_the_old_size_limit_is_read(self):
+        # The byte limit and its variable are gone: a 200 MB object is downloaded.
+        result, mock_s3 = self._run_fetch(
+            '{"tables":[]}', 200 * 1024 * 1024, env={"MODERNIZER_MAX_UPLOAD_BYTES": "100"}
+        )
+        assert result == {"tables": []}
+        mock_s3.get_object.assert_called_once()
 
 
 class TestParseOfflineCollectionCounts:

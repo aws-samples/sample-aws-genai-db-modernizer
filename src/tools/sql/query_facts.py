@@ -65,9 +65,10 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from functools import cached_property, lru_cache
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Self, TypeVar, overload
 
 from src.shared.sql_comments import strip_leading_comments
@@ -1614,13 +1615,50 @@ def _has_computed_join_key(text: str) -> bool:
     return any(_COMPUTED_EXPR_IN_CONDITION_RE.search(cond) for cond in _join_conditions(text))
 
 
-# Covers the 20,000-query ingestion default (``ingestion_limits``) twice
-# over: triage also reads facts of each query's lower-cased text. A collection
-# raised past that by ``MODERNIZER_MAX_UPLOAD_QUERIES`` only recomputes what
-# its readers ask for, since each fact is lazy.
-@lru_cache(maxsize=65536)
-def _query_facts(text: str, source_engine: str, settings: SpanSettings) -> QueryFacts:
-    return QueryFacts(text, source_engine, settings)
+# The smallest bound of the two facts caches below; triage also reads each query's
+# lower-cased text. A loaded collection raises both to fit it (:func:`reserve_fact_caches`,
+# #384), up to the ingestion limit's 250,000 queries (``ingestion_limits``):
+# with a fixed bound a 100,000-statement collection evicted every fact before its next
+# reader and parsed each text again, many times over.
+_FACT_CACHE_FLOOR = 65536
+# Entries per collected statement: its text, its lower-cased text and a margin.
+_FACT_CACHE_PER_STATEMENT = 4
+
+
+class _QueryFactsCache:
+    """A least-recently-used cache of :class:`QueryFacts` by text, source engine and
+    settings, like ``functools.lru_cache`` but with a bound a collection can raise."""
+
+    def __init__(self, maxsize: int) -> None:
+        self.maxsize = maxsize
+        self._items: OrderedDict[tuple[str, str, SpanSettings], QueryFacts] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def __call__(self, text: str, source_engine: str, settings: SpanSettings) -> QueryFacts:
+        key = (text, source_engine, settings)
+        with self._lock:
+            found = self._items.get(key)
+            if found is not None:
+                self._items.move_to_end(key)
+                return found
+        made = QueryFacts(text, source_engine, settings)
+        with self._lock:
+            # Another thread may have made it meanwhile: every reader gets that one.
+            found = self._items.setdefault(key, made)
+            self._items.move_to_end(key)
+            while len(self._items) > self.maxsize:
+                self._items.popitem(last=False)
+        return found
+
+    def cache_clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+_query_facts = _QueryFactsCache(_FACT_CACHE_FLOOR)
 
 
 def query_facts(
@@ -1648,8 +1686,22 @@ def query_facts(
 # Keyed on the source settings too (#1482): two collections of one process (API jobs)
 # with the same text but other settings read it apart.
 _STORED_READINGS: dict[tuple[str, str, SpanSettings], Mapping] = {}
-_STORED_READINGS_MAX = 65536
+_STORED_READINGS_MAX = _FACT_CACHE_FLOOR
 _STORED_READINGS_LOCK = threading.Lock()
+
+
+def reserve_fact_caches(statements: int) -> None:
+    """Raise both facts caches' bounds to fit a collection of ``statements`` (#384).
+
+    A bound only rises: a process that reads several collections (the API) keeps room
+    for its largest, which the ingestion limits bound in turn.
+    """
+    global _STORED_READINGS_MAX
+    wanted = max(_FACT_CACHE_FLOOR, _FACT_CACHE_PER_STATEMENT * max(0, int(statements)))
+    with _query_facts._lock:
+        _query_facts.maxsize = max(_query_facts.maxsize, wanted)
+    with _STORED_READINGS_LOCK:
+        _STORED_READINGS_MAX = max(_STORED_READINGS_MAX, wanted)
 
 
 def remember_stored_facts(
@@ -1689,6 +1741,8 @@ def remember_collected_facts(collector_output: Mapping | None) -> None:
     engine = source_engine_of(collector_output)
     queries = (collector_output or {}).get("queries") or {}
     patterns = queries.get("query_patterns") if isinstance(queries, Mapping) else queries
+    if isinstance(patterns, list):
+        reserve_fact_caches(len(patterns))
     for pattern in patterns or ():
         if isinstance(pattern, Mapping):
             remember_stored_facts(
