@@ -502,6 +502,7 @@ NOT_CORPUS_MODULES: dict[str, str] = {
         "and description, not SQL"
     ),
     "src/graph/cypher_guard.py": "reads Cypher, not SQL",
+    "src/graph/catalog.py": "the graph query catalog's own Cypher, not SQL",
     "src/graph/schema.py": "the graph store's own DDL, not a workload query",
     "src/tools/schema/aurora_common/delta_merge.py": "reads the generated Aurora DDL",
 }

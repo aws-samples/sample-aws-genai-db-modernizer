@@ -78,11 +78,30 @@ uv run python scripts/graph_query.py run engine_distribution --job-id <job> --fo
   - Reading the API's file while the API replaces it relies on POSIX rename semantics: an open handle keeps the file it opened. On Windows the script always reads its own copy.
 - Under `MODERNIZER_CI_SANDBOX=1`, an artifact root outside the repository or a database or job name that is not a plain name is refused.
 
+## From the API: the catalog routes
+
+The same catalog questions are two API routes, with no Cypher in or out:
+
+```
+GET  /api/v1/assessments/{job_id}/graph/catalog
+POST /api/v1/assessments/{job_id}/graph/catalog/{entry_id}
+Content-Type: application/json
+
+{"params": {"table_id": "wordpress.wp_posts"}}
+```
+
+- `GET .../graph/catalog` lists every entry: `id`, `ref`, `section`, `title`, `question`, `note`, `max_rows`, `needs`, and `params`, each with its `kind`, `description`, `example` and `choices`, the values it takes on this job's graph (at most 1,000; `choices_truncated` is true when the graph holds more).
+- `POST .../graph/catalog/{entry_id}` runs one entry. The response has `columns`, `rows`, `row_count`, `truncated` (more rows matched than `max_rows`), `max_rows`, a `projection` of the rows as `nodes` and `edges`, and, when no rows came back, `unmet_needs` and an `explanation` naming the stages the job has not run. An entry without parameters takes `{}` or an empty body.
+- Both are always on, like the curated endpoints below, and use the same read-only handle, freshness check and limits: a 10-second timeout on each statement (`504`) and the shared read slots (`503` with `Retry-After: 1`). A request runs its statements one after another. A list runs one choice query per distinct parameter (6 today), and a run at most 3 (a one-row lookup per parameter, the entry, and on an empty result one probe per need), plus the freshness check every graph read does. So a list spends at most 6 × 10 s running statements and a run 3 × 10 s; any wait for a read slot (at most 30 s per statement) comes on top.
+- At most half the read slots' worth of catalog requests run at once (2 with the default of 4 `MODERNIZER_GRAPH_MAX_CONCURRENT_READS`; more get `429`). Each holds one read slot at a time, so the curated views always keep the other half.
+- A run needs `Content-Type: application/json` (`415`) and a body of at most 64 KiB (`413`). An unknown entry is `404`. A missing, unknown, non-string or over-1,024-character parameter is `422`, and so is a body that is not a JSON object (nesting too deep included) or a value that is not among the parameter's choices on the job's graph. The value is checked with a one-row lookup, so a value past the 1,000 listed choices is still checked. All of this, except the value lookup, is answered before a catalog slot is taken or the graph is opened. Errors never repeat the names or values sent.
+- Row values come back as stored. Customer text (descriptions, table and query ids) is data: escape it when you render it.
+
 ## Curated endpoints (preferred)
 
 For the highest-value questions there are typed `GET` endpoints that return
-purpose-shaped JSON, so you don't hand-write Cypher. Prefer these; use raw
-`POST /graph/query` for anything not covered.
+purpose-shaped JSON, so you don't hand-write Cypher. Prefer these or the
+catalog routes above; use raw `POST /graph/query` for anything not covered.
 
 | Endpoint | Returns |
 |----------|---------|

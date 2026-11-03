@@ -1,14 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Graph query routes — curated read views, raw Cypher execution and rebuild trigger.
+"""Graph query routes — curated read views, the query catalog, raw Cypher and rebuild.
 
 Handlers are plain ``def`` so FastAPI runs the synchronous graph calls in its
 threadpool instead of on the event loop.
 """
 
+import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -19,10 +21,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.api.dependencies import job_id_param
 from src.api.models.graph_responses import (
+    CatalogListResponse,
+    CatalogRunResponse,
     EngineDetailResponse,
     LoadTestResultsResponse,
     QueryProvenanceResponse,
@@ -31,7 +35,7 @@ from src.api.models.graph_responses import (
     TableImpactResponse,
 )
 from src.api.services.local_execution import LocalExecutionService
-from src.graph import GraphStoreCache, job_graph
+from src.graph import GraphStoreCache, catalog, job_graph
 from src.graph import queries as graph_queries
 from src.graph.cypher_guard import DisallowedStatementError, bound_result_rows
 from src.graph.inputs_digest import graph_inputs_digest
@@ -39,7 +43,13 @@ from src.graph.persistence import GraphPersistence
 from src.graph.populators import rebuild_graph
 from src.graph.raw_query_worker import RawQueryError, run_raw_query
 from src.graph.schema import GRAPH_SCHEMA_REVISION, initialize_schema
-from src.graph.store import MAX_RESULT_ROWS, READ_QUERY_TIMEOUT_MS, GraphBusyError, GraphStore
+from src.graph.store import (
+    MAX_RESULT_ROWS,
+    READ_QUERY_TIMEOUT_MS,
+    GraphBusyError,
+    GraphStore,
+    ReadLimits,
+)
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import resolve_effective_assignment_version
 
@@ -61,6 +71,25 @@ MAX_QUERY_REQUEST_BYTES = 64 * 1024
 # Raw queries running at once (each in its own capped child process).
 MAX_CONCURRENT_RAW_QUERIES = 2
 _raw_query_slots = threading.BoundedSemaphore(MAX_CONCURRENT_RAW_QUERIES)
+
+
+def catalog_request_cap(max_concurrent_reads: int) -> int:
+    """Catalog requests (list or run) allowed at once: half the handle's read slots.
+
+    A catalog request runs its statements one after another, so it holds at
+    most one read slot at a time; capping them at half the slots (at least
+    one) leaves the other half to the UI's curated views.
+    """
+    return max(1, max_concurrent_reads // 2)
+
+
+MAX_CONCURRENT_CATALOG_REQUESTS = catalog_request_cap(ReadLimits.from_env().max_concurrent_reads)
+_catalog_slots = threading.BoundedSemaphore(MAX_CONCURRENT_CATALOG_REQUESTS)
+# A catalog entry id is a lower-case snake_case name.
+_CATALOG_ENTRY_ID = re.compile(r"[a-z][a-z0-9_]{0,63}")
+# The longest parameter value a catalog run accepts (ids are far shorter).
+MAX_CATALOG_PARAM_CHARS = 1024
+UNKNOWN_ENTRY_DETAIL = "Unknown catalog entry; GET .../graph/catalog lists the entry ids."
 TIMEOUT_DETAIL = "The graph query did not finish within the time limit."
 MEMORY_DETAIL = "The graph query needed more memory than is available; retry shortly."
 BUSY_DETAIL = "Too many graph reads are running; retry shortly."
@@ -96,6 +125,14 @@ _refresh_locks_guard = threading.Lock()
 class CypherRequest(BaseModel):
     cypher: str
     params: dict | None = None
+
+
+class CatalogRunRequest(BaseModel):
+    """The body of ``POST /graph/catalog/{entry_id}``: string values by parameter name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 def _get_database_name(job_id: str) -> str:
@@ -471,8 +508,8 @@ def raw_query_slot() -> Iterator[None]:
         _raw_query_slots.release()
 
 
-async def read_cypher_request(request: Request) -> CypherRequest:
-    """Dependency: read the JSON body with a size cap, then validate it."""
+async def _read_capped_body(request: Request) -> bytes:
+    """The request body, or 413 once it passes ``MAX_QUERY_REQUEST_BYTES``."""
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_QUERY_REQUEST_BYTES:
         raise HTTPException(status_code=413, detail="Request body is too large.")
@@ -481,10 +518,86 @@ async def read_cypher_request(request: Request) -> CypherRequest:
         body += chunk
         if len(body) > MAX_QUERY_REQUEST_BYTES:
             raise HTTPException(status_code=413, detail="Request body is too large.")
+    return bytes(body)
+
+
+async def read_cypher_request(request: Request) -> CypherRequest:
+    """Dependency: read the JSON body with a size cap, then validate it."""
+    body = await _read_capped_body(request)
     try:
-        return CypherRequest.model_validate_json(bytes(body))
+        return CypherRequest.model_validate_json(body)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors(include_url=False, include_input=False)) from exc
+
+
+def catalog_slot() -> Iterator[None]:
+    """Dependency: hold one of the catalog request slots for the request, or 429."""
+    slots = _catalog_slots
+    if not slots.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many graph catalog requests are running; retry shortly.",
+            headers={"Retry-After": RETRY_AFTER_S},
+        )
+    try:
+        yield
+    finally:
+        slots.release()
+
+
+def catalog_entry_param(entry_id: str) -> catalog.CatalogEntry:
+    """Dependency: the catalog entry named in the path, or 404 (the id is never echoed)."""
+    entry = None
+    if _CATALOG_ENTRY_ID.fullmatch(entry_id):
+        try:
+            entry = catalog.get_entry(entry_id)
+        except KeyError:
+            entry = None
+    if entry is None:
+        raise HTTPException(status_code=404, detail=UNKNOWN_ENTRY_DETAIL)
+    return entry
+
+
+def _invalid_params(detail: str) -> HTTPException:
+    return HTTPException(status_code=422, detail=detail)
+
+
+async def read_catalog_run(
+    request: Request, entry: catalog.CatalogEntry = Depends(catalog_entry_param)
+) -> tuple[catalog.CatalogEntry, dict[str, str]]:
+    """Dependency: the entry and its parameters, read with the body cap and checked.
+
+    Runs before the job's graph is leased. Error details name only the
+    entry's own parameters: a caller's names and values are never echoed.
+    An empty body is an entry run with no parameters.
+    """
+    body = await _read_capped_body(request)
+    try:
+        data = json.loads(body) if body.strip() else {}
+    except (ValueError, RecursionError) as exc:  # UnicodeDecodeError is a ValueError
+        raise _invalid_params("The request body is not valid JSON.") from exc
+    if not isinstance(data, dict) or set(data) - {"params"}:
+        raise _invalid_params('The request body is {"params": {"<name>": "<value>"}}.')
+    params = data.get("params", {})
+    if not isinstance(params, dict):
+        raise _invalid_params('"params" must be an object of parameter names to string values.')
+    takes = [p.name for p in entry.params]
+    takes_text = ", ".join(takes) if takes else "no parameters"
+    if set(params) - set(takes):
+        raise _invalid_params(f"Unknown parameter; this entry takes: {takes_text}.")
+    missing = [name for name in takes if name not in params]
+    if missing:
+        raise _invalid_params(f"Missing parameter(s): {', '.join(missing)}.")
+    untyped = [name for name in takes if not isinstance(params[name], str)]
+    if untyped:
+        raise _invalid_params(f"Parameter(s) must be a string id: {', '.join(untyped)}.")
+    too_long = [name for name in takes if len(params[name]) > MAX_CATALOG_PARAM_CHARS]
+    if too_long:
+        raise _invalid_params(
+            f"Parameter(s) longer than {MAX_CATALOG_PARAM_CHARS} characters: "
+            f"{', '.join(too_long)}."
+        )
+    return entry, {name: params[name] for name in takes}
 
 
 @router.post(
@@ -542,6 +655,111 @@ def query_graph(
         "rows": results,
         "row_count": len(results),
         "truncated": truncated,
+    }
+
+
+def _entry_info(entry: catalog.CatalogEntry, choices: dict) -> dict:
+    return {
+        "id": entry.id,
+        "ref": entry.ref,
+        "section": entry.section,
+        "title": entry.title,
+        "question": entry.question,
+        "note": entry.note,
+        "max_rows": entry.max_rows,
+        "params": [
+            {
+                "name": p.name,
+                "kind": p.kind.value,
+                "description": p.description,
+                "example": p.example,
+                "choices": list(choices[p]),
+                "choices_truncated": choices[p].truncated,
+            }
+            for p in entry.params
+        ],
+        "needs": [catalog.need_summary(n) for n in entry.needs],
+    }
+
+
+@router.get(
+    "/{job_id}/graph/catalog",
+    response_model=CatalogListResponse,
+)
+def graph_catalog(
+    job_id: str = Depends(job_id_param),
+    _slot: None = Depends(catalog_slot),
+    graph: Any = Depends(get_graph_for_job),
+):
+    """The graph query catalog: every entry, with its parameters and their choices.
+
+    Each parameter's choices are the values it can take on this job's graph
+    (at most ``catalog.MAX_CHOICES``; ``choices_truncated`` says when the
+    graph holds more). Entries are fixed, read-only statements; their Cypher
+    is not part of the response and no route takes Cypher from the caller.
+    """
+    store, _ = graph
+    choices: dict = {}
+    with _curated_errors():
+        for entry in catalog.entries():
+            for param in entry.params:
+                if param not in choices:
+                    choices[param] = catalog.param_choices(store, param)
+    return {"job_id": job_id, "entries": [_entry_info(e, choices) for e in catalog.entries()]}
+
+
+@router.post(
+    "/{job_id}/graph/catalog/{entry_id}",
+    response_model=CatalogRunResponse,
+    # Dependencies resolve in order: the content type (415), then the job id,
+    # entry and body (404, 413, 422), and only then a catalog slot (429) and
+    # the graph lease, so a slow or bad request body never holds a slot.
+    dependencies=[Depends(require_json_content_type)],
+    openapi_extra={
+        "requestBody": {
+            "required": False,
+            "content": {"application/json": {"schema": CatalogRunRequest.model_json_schema()}},
+        }
+    },
+)
+def run_graph_catalog_entry(
+    job_id: str = Depends(job_id_param),
+    run: tuple[catalog.CatalogEntry, dict[str, str]] = Depends(read_catalog_run),
+    _slot: None = Depends(catalog_slot),
+    graph: Any = Depends(get_graph_for_job),
+):
+    """Run one catalog entry on the job's graph with its parameters bound.
+
+    The body is ``{"params": {"<name>": "<string value>"}}`` (at most 64 KiB;
+    ``{}`` or empty for an entry without parameters). A value must be one of
+    the parameter's choices on this graph, checked with a one-row lookup
+    (``catalog.value_exists``), so also past the listed choices' bound. At most the entry's ``max_rows`` rows come back;
+    ``truncated`` is true when more matched. An empty result lists the
+    entry's stages that left nothing in the graph (``unmet_needs``).
+    """
+    entry, params = run
+    store, _ = graph
+    with _curated_errors():
+        unlisted = catalog.unlisted_params(store, entry, params)
+        if unlisted:
+            raise _invalid_params(
+                "Not one of the parameter's choices on this job's graph: "
+                f"{', '.join(unlisted)} (GET .../graph/catalog lists them)."
+            )
+        result = catalog.run_entry(store, entry, params)
+        unmet = catalog.unmet_needs(store, entry) if not result.rows else []
+    return {
+        "job_id": job_id,
+        "entry": entry.id,
+        "params": params,
+        "columns": list(result.rows[0]) if result.rows else [],
+        "rows": result.rows,
+        "row_count": len(result.rows),
+        "truncated": result.truncated,
+        "max_rows": entry.max_rows,
+        "projection": catalog.project(entry, result.rows),
+        "unmet_needs": [catalog.need_summary(n) for n in unmet],
+        "explanation": catalog.explain_empty(unmet) if not result.rows else None,
     }
 
 

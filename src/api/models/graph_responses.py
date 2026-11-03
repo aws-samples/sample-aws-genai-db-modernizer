@@ -3,6 +3,8 @@
 
 """Pydantic response models for curated graph query endpoints."""
 
+from typing import Any
+
 from pydantic import BaseModel
 
 # The query decision trace (#339) lives with the contracts, because synthesis
@@ -19,6 +21,12 @@ from src.contracts.query_trace import (
 
 __all__ = [
     "AffectedQuery",
+    "CatalogEntryInfo",
+    "CatalogListResponse",
+    "CatalogNeed",
+    "CatalogParam",
+    "CatalogProjection",
+    "CatalogRunResponse",
     "EngineDestination",
     "EngineDetailResponse",
     "LatencyPercentilesModel",
@@ -125,3 +133,69 @@ class LoadTestPattern(BaseModel):
 class LoadTestResultsResponse(BaseModel):
     job_id: str
     results: list[LoadTestPattern]
+
+
+# ---------------------------------------------------------------------------
+# The graph query catalog (#307): GET /graph/catalog, POST /graph/catalog/{entry_id}
+# ---------------------------------------------------------------------------
+
+
+class CatalogNeed(BaseModel):
+    """A pipeline stage an entry reads from."""
+
+    id: str
+    stage: str
+    produces: str
+
+
+class CatalogParam(BaseModel):
+    """One parameter of an entry, with the values it can take on this job's graph."""
+
+    name: str
+    kind: str
+    description: str
+    example: str
+    choices: list[str]
+    #: True when the graph holds more values than ``choices`` lists.
+    choices_truncated: bool
+
+
+class CatalogEntryInfo(BaseModel):
+    id: str
+    ref: str
+    section: str
+    title: str
+    question: str
+    note: str
+    max_rows: int
+    params: list[CatalogParam]
+    needs: list[CatalogNeed]
+
+
+class CatalogListResponse(BaseModel):
+    job_id: str
+    entries: list[CatalogEntryInfo]
+
+
+class CatalogProjection(BaseModel):
+    """The rows as a graph: ``nodes`` are ``{id, label}``, ``edges`` ``{source, target, label}``."""
+
+    nodes: list[dict[str, str]]
+    edges: list[dict[str, str]]
+
+
+class CatalogRunResponse(BaseModel):
+    job_id: str
+    entry: str
+    params: dict[str, str]
+    columns: list[str]
+    #: Values are returned as stored: customer text is data, never markup.
+    rows: list[dict[str, Any]]
+    row_count: int
+    #: True when more rows matched than the entry's ``max_rows``.
+    truncated: bool
+    max_rows: int
+    projection: CatalogProjection
+    #: When there are no rows: the entry's stages that left nothing in this graph.
+    unmet_needs: list[CatalogNeed]
+    explanation: str | None = None
