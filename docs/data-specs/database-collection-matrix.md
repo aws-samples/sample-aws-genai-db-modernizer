@@ -6,8 +6,8 @@ What each collection script emits. The scripts (`scripts/collect-*.sql`) are the
 
 | Source | Minimum version | Needs |
 |---|---|---|
-| MySQL, MariaDB | MySQL 8.0 | `SELECT` on `performance_schema` and `information_schema` |
-| PostgreSQL | 12 | `pg_stat_statements` installed and loaded; `SELECT` on `pg_catalog` and `information_schema` |
+| MySQL, MariaDB | MySQL 8.0, MariaDB 10.5 (`JSON_ARRAYAGG`) | `SELECT` on `performance_schema` and `information_schema` |
+| PostgreSQL | 12 (a psql 10 or later client) | `pg_stat_statements` installed and loaded; `SELECT` on `pg_catalog` and `information_schema` |
 | SQL Server | 2016 | `SELECT` on the `sys` catalog views and DMVs; `VIEW SERVER STATE` for the query section (without it the query section is empty and the rest still works) |
 | Oracle | 12.2 | `SELECT` on `V$SQL`, `V$SESSION`, `V$SYSSTAT`, `V$SYSTEM_EVENT`, `V$OSSTAT`, the `ALL_*` views and `DBA_SEGMENTS` (`SELECT_CATALOG_ROLE` for full visibility) |
 
@@ -71,7 +71,7 @@ Oracle skips tables that have no entry in `ALL_TAB_COLUMNS` (internal metadata t
 
 ## Query patterns
 
-Field names follow the MySQL convention; each script translates its engine's counters to them. Rows keep a query shape each: the SQL Server and Oracle scripts group literal variants of the same statement, and every script drops shapes executed fewer than ten times. The cap on the list is 1000 shapes for SQL Server and Oracle and 5000 for MySQL and PostgreSQL.
+Field names follow the MySQL convention; each script translates its engine's counters to them. Rows keep a query shape each: the SQL Server and Oracle scripts group literal variants of the same statement, and every script drops shapes executed fewer than its minimum execution count (10 by default). There is no cap on the list by default; an optional cap keeps the costliest shapes by total time, and both settings are recorded in `metadata.query_capture` (see "Analyzing your own database" in `docs/use-claude-code.md`, #384).
 
 | Field | MySQL | PostgreSQL | SQL Server | Oracle |
 |---|---|---|---|---|

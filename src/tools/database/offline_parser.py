@@ -327,6 +327,8 @@ def _parse_offline_collection(
         **other_db_note,
         **sample_rows_note,
         "metadata": metadata,
+        # #384: the statement rows the collection script wrote, which its cap counts.
+        "script_query_rows": len(data.get("queries") or []),
         "collected_database_name": collected,
         "tables": tables,
         # #1625: string literals in stored definitions are redacted too.

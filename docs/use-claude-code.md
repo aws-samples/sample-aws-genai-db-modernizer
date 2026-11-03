@@ -99,7 +99,8 @@ Run the read-only collection script for your database engine instead of the samp
 psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql > <database>-collection.json
 
 # MySQL or MariaDB (needs performance_schema)
-mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > <database>-collection.json
+# --max-allowed-packet=1G lets the client receive a large collection
+mysql -N --max-allowed-packet=1G -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > <database>-collection.json
 
 # SQL Server 2016 or later (needs VIEW SERVER STATE for the query section);
 # sqlcmd reads the password from SQLCMDPASSWORD, so it stays off the command line
@@ -110,6 +111,19 @@ sqlcmd -S <host>,<port> -U <user> -d <database> -C -y 0 -i scripts/collect-sqlse
 # Oracle 12.2 or later (needs SELECT_CATALOG_ROLE)
 sqlplus -S <user>/<password>@<host>:<port>/<service> @scripts/collect-oracle.sql > <database>-collection.json
 ```
+
+Each script keeps every statement that ran at least 10 times: there is no cap by default, so a large production workload is collected whole. To keep only the costliest statements by total time, or to change the minimum execution count, set them the way each client sets variables:
+
+| Engine | Cap the statements (example: 20,000) | Minimum executions (example: 5) |
+|---|---|---|
+| PostgreSQL | `psql -v query_limit=20000 ...` | `psql -v min_executions=5 ...` |
+| MySQL or MariaDB | `mysql --init-command="SET @query_limit=20000" ...` | `mysql --init-command="SET @min_executions=5" ...` (both: `"SET @query_limit=20000, @min_executions=5"`) |
+| SQL Server | change `DECLARE @query_limit INT = NULL;` to `= 20000;` near the top of the script | change `DECLARE @min_executions INT = 10;` |
+| Oracle | `@scripts/collect-oracle.sql 20000` | `@scripts/collect-oracle.sql none 5` (both: `20000 5`) |
+
+For Oracle, write `none` for no cap rather than `""`: the shell drops an empty argument, and `5` would become the cap. SQL Server takes the settings as script lines because sqlcmd cannot default an unset `-v` variable (a `:setvar` in the script overrides `-v`). A setting that is not a positive whole number stops the PostgreSQL, SQL Server and Oracle scripts with an error; the MySQL client cannot stop a script on a condition, so there such a value falls back to the default (no cap, or 10) and the collection records the value used. The PostgreSQL defaults need a psql 10 or later client.
+
+Every script writes the settings into the collection's `metadata.query_capture`. When a cap was reached, the ingest records `truncated: true`: a cap was reached, so the source may hold more statements. With no cap it records `truncated: false`; a collection made with an older script records no settings, and `truncated` stays unknown. MySQL builds the statement list on the server, where `max_allowed_packet` (64 MB by default) bounds it; when the list comes back short, the ingest records an `error` in `metadata.query_capture` instead of an empty capture.
 
 Db2 has no collection script yet. The scripts only run `SELECT` on catalog and statistics views (`information_schema`, `pg_stat_statements`, `performance_schema`, the SQL Server `sys` views, the Oracle `V$` and `ALL_*` views). They never change your database and never read table rows: the collection holds the schema, query shapes and counters. Query text and view, procedure and trigger definitions can still carry literal values. Then run `/modernize <database>-collection.json` (or `/collect`) instead of the sample.
 

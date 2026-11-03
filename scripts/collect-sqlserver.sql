@@ -24,10 +24,35 @@
 --   sqlcmd has mutual-exclusion conflicts: -h cannot be used with -y 0,
 --   and -W cannot be used with -y 0. So we use -y 0 alone and let the
 --   collector's offline_parser strip the leading non-JSON line.
+--
+-- Optional settings (#384): edit the two DECLARE lines below the header.
+--   @query_limit     keep only the costliest statements by total time
+--                    (default: NULL, no cap, every statement is kept)
+--   @min_executions  keep statements that ran at least this often (default: 10)
+--   A sqlcmd -v variable cannot have a default here: a :setvar in the script
+--   overrides -v, and an unset $(VAR) stops the script. A setting that is not a
+--   positive whole number stops the script with an error.
+-- Both are recorded in the collection's metadata.query_capture.
 -- ==========================================================================
 
 SET NOCOUNT ON;
 SET ANSI_WARNINGS OFF;  -- suppress warnings about NULL in aggregates
+
+-- The capture settings (#384): change NULL to a number to cap the statements.
+DECLARE @query_limit INT = NULL;
+DECLARE @min_executions INT = 10;
+-- A setting that is not a positive whole number stops the script here: it must never
+-- run with a NULL floor and read as a complete capture of nothing.
+IF @min_executions IS NULL OR @min_executions < 1
+BEGIN
+    RAISERROR('min_executions must be a positive whole number', 16, 1);
+    RETURN;
+END
+IF @query_limit IS NOT NULL AND @query_limit < 1
+BEGIN
+    RAISERROR('query_limit must be a positive whole number or NULL', 16, 1);
+    RETURN;
+END
 
 DECLARE @metadata NVARCHAR(MAX);
 DECLARE @tables NVARCHAR(MAX);
@@ -62,10 +87,11 @@ DECLARE @ExcludeSystemSchemas NVARCHAR(200) =
 -- and MySQL), SUM the counters across variants, take MIN(creation_time) /
 -- MAX(last_execution_time) across variants, and keep the query text from the
 -- variant with the highest total_elapsed_time as the representative sample.
--- TOP and the execution_count >= 10 floor apply AFTER grouping, so the cap
--- limits query shapes rather than literal-variant rows.
+-- The @min_executions floor (HAVING) and the @query_limit cap (a rank over the
+-- grouped rows; window functions run after HAVING) apply AFTER grouping, so the cap
+-- limits query shapes rather than literal-variant rows. No cap: every shape (#384).
 SET @queries = (
-    SELECT TOP 1000
+    SELECT
         CONVERT(VARCHAR(40), g.query_hash, 1) AS digest,
         -- Database the statement belongs to (NULL, so omitted, when it could
         -- not be resolved). The offline parser drops other databases' rows.
@@ -111,7 +137,10 @@ SET @queries = (
             MAX(v.max_elapsed_time) AS max_elapsed_time,
             MIN(v.creation_time) AS creation_time,
             MAX(v.last_execution_time) AS last_execution_time,
-            MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+            MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text,
+            ROW_NUMBER() OVER (
+                ORDER BY SUM(v.total_elapsed_time) DESC, v.query_hash, v.statement_dbid
+            ) AS time_rank
         FROM (
             -- One row per cached statement (literal variant). variant_rank
             -- picks the costliest variant per query_hash as the sample text.
@@ -177,9 +206,10 @@ SET @queries = (
               AND st.text NOT LIKE '%sys.dm_%'
         ) v
         GROUP BY v.query_hash, v.statement_dbid
+        HAVING SUM(v.execution_count) >= @min_executions
     ) g
-    WHERE g.execution_count >= 10
-    ORDER BY g.total_elapsed_time DESC
+    WHERE @query_limit IS NULL OR g.time_rank <= @query_limit
+    ORDER BY g.time_rank
     FOR JSON PATH
 );
 
@@ -197,7 +227,12 @@ SET @metadata = (
             FROM sys.master_files
             WHERE database_id = DB_ID()
         )) AS database_size_gb,
-        CONVERT(NVARCHAR(30), GETDATE(), 121) AS collected_at
+        CONVERT(NVARCHAR(30), GETDATE(), 121) AS collected_at,
+        -- The capture settings (#384): query_limit null when there is no cap.
+        JSON_QUERY((
+            SELECT @query_limit AS query_limit, @min_executions AS min_executions
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+        )) AS query_capture
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 );
 
