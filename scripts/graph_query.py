@@ -138,17 +138,6 @@ def _entry_summary(entry: catalog.CatalogEntry) -> dict:
     }
 
 
-def _need(need: catalog.Need) -> dict:
-    return {"id": need.id, "stage": need.stage, "produces": need.produces}
-
-
-def _explain(unmet: list[catalog.Need]) -> str:
-    if not unmet:
-        return "No rows: the graph holds the data this question needs, and none matched."
-    stages = "; ".join(f"{n.stage} ({n.produces})" for n in unmet)
-    return f"No rows: this job's graph has no data from: {stages}."
-
-
 def cmd_list(args: argparse.Namespace) -> dict:
     return {"status": "ok", "entries": [_entry_summary(e) for e in catalog.entries()]}
 
@@ -203,8 +192,8 @@ def cmd_run(args: argparse.Namespace) -> dict:
         "graph": info,
     }
     if not result.rows:
-        out["unmet_needs"] = [_need(n) for n in unmet]
-        out["explanation"] = _explain(unmet)
+        out["unmet_needs"] = [catalog.need_summary(n) for n in unmet]
+        out["explanation"] = catalog.explain_empty(unmet)
     return out
 
 

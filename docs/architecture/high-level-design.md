@@ -452,7 +452,7 @@ schema.
 
 - `GET /api/v1/assessments/{job_id}/query-journeys` - Paginated query journey list (default 50, max 200)
 - `GET /api/v1/assessments/{job_id}/query-journeys/{query_id}` - Single query journey detail
-- `GET /api/v1/assessments/{job_id}/graph/...` - Curated graph views (table impact, query provenance and trace, engine detail, risks), plus `POST .../graph/query` for read-only Cypher; see the [graph cookbook](../guides/context-graph-query-cookbook.md)
+- `GET /api/v1/assessments/{job_id}/graph/...` - Curated graph views (table impact, query provenance and trace, engine detail, risks), the query catalog (`GET .../graph/catalog`, `POST .../graph/catalog/{entry_id}`), plus `POST .../graph/query` for read-only Cypher; see the [graph cookbook](../guides/context-graph-query-cookbook.md)
 - `GET /api/v1/assessments/{job_id}/agents/{agent}/questions` and `PUT .../answers` - Agent interaction
 
 **REST API — Observability & Results:**

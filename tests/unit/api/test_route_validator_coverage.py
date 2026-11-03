@@ -82,6 +82,13 @@ def test_every_job_id_route_was_found() -> None:
     )
 
 
+def test_the_graph_catalog_routes_are_covered() -> None:
+    """The catalog routes (#307) are among the walked routes, so the checks below apply."""
+    covered = {(method, route.path) for route in _JOB_ID_ROUTES for method in route.methods}
+    assert ("GET", "/api/v1/assessments/{job_id}/graph/catalog") in covered
+    assert ("POST", "/api/v1/assessments/{job_id}/graph/catalog/{entry_id}") in covered
+
+
 def test_every_job_id_route_depends_on_job_id_param() -> None:
     missing = [
         f"{route.methods} {route.path}"

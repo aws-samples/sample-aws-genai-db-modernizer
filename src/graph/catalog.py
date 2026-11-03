@@ -63,6 +63,9 @@ class Param:
     choices_cypher: str
     #: A value from the wordpress sample, for the docs.
     example: str
+    #: Read-only Cypher taking ``$value``: a row when the value is one of the
+    #: choices. Checks a value without listing every choice (``value_exists``).
+    exists_cypher: str
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,7 @@ TABLE_PARAM = Param(
     "A source table id, schema-qualified as the collector wrote it.",
     "MATCH (st:SourceTable) RETURN st.id AS value ORDER BY value",
     "wordpress.wp_posts",
+    "MATCH (st:SourceTable {id: $value}) RETURN st.id AS value",
 )
 DESTINATION_ENGINE_PARAM = Param(
     "engine",
@@ -230,6 +234,7 @@ DESTINATION_ENGINE_PARAM = Param(
     "An engine id the assignment migrates queries to.",
     "MATCH (d:Destination) RETURN DISTINCT d.engine AS value ORDER BY value",
     "dynamodb",
+    "MATCH (d:Destination {engine: $value}) RETURN d.engine AS value",
 )
 QUERY_PARAM = Param(
     "query_id",
@@ -237,6 +242,7 @@ QUERY_PARAM = Param(
     "A query id, busiest first.",
     "MATCH (q:Query) RETURN q.id AS value ORDER BY q.calls_per_second DESC, value",
     "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+    "MATCH (q:Query {id: $value}) RETURN q.id AS value",
 )
 DECIDED_QUERY_PARAM = Param(
     "query_id",
@@ -244,6 +250,7 @@ DECIDED_QUERY_PARAM = Param(
     "A query id that a design decision names.",
     "MATCH (:Decision)-[:INFORMED_BY]->(q:Query) RETURN DISTINCT q.id AS value ORDER BY value",
     "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+    "MATCH (:Decision)-[:INFORMED_BY]->(q:Query {id: $value}) RETURN q.id AS value",
 )
 ACCESS_PATTERN_PARAM = Param(
     "access_pattern_id",
@@ -251,6 +258,7 @@ ACCESS_PATTERN_PARAM = Param(
     "An access pattern id from a schema design.",
     "MATCH (ap:AccessPattern) RETURN ap.id AS value ORDER BY value",
     "DDB-AP-1",
+    "MATCH (ap:AccessPattern {id: $value}) RETURN ap.id AS value",
 )
 VERSION_PARAM = Param(
     "version_id",
@@ -258,6 +266,7 @@ VERSION_PARAM = Param(
     "An assignment version id (`assignment-v<N>`), newest first.",
     "MATCH (v:AssignmentVersion) RETURN v.id AS value ORDER BY v.version DESC, value",
     "assignment-v2",
+    "MATCH (v:AssignmentVersion {id: $value}) RETURN v.id AS value",
 )
 
 # ---------------------------------------------------------------------------
@@ -861,6 +870,40 @@ def unmet_needs(store: GraphStore, entry: CatalogEntry) -> list[Need]:
         if not rows or not rows[0].get("n"):
             unmet.append(need)
     return unmet
+
+
+def value_exists(store: GraphStore, param: Param, value: str) -> bool:
+    """True when ``value`` is one of ``param``'s choices on this graph.
+
+    One bounded, one-row lookup, so a value is checked however many choices
+    the graph holds (``param_choices`` lists at most ``MAX_CHOICES``).
+    """
+    rows, _ = store.query_bounded(
+        bound_result_rows(param.exists_cypher, 1), {"value": value}, max_rows=1
+    )
+    return bool(rows)
+
+
+def unlisted_params(store: GraphStore, entry: CatalogEntry, params: Mapping[str, str]) -> list[str]:
+    """The names of the parameters whose value is not among their choices on this graph."""
+    return [
+        param.name
+        for param in entry.params
+        if not value_exists(store, param, str(params.get(param.name, "")))
+    ]
+
+
+def need_summary(need: Need) -> dict[str, str]:
+    """A need as plain data: its id, stage and what the stage writes."""
+    return {"id": need.id, "stage": need.stage, "produces": need.produces}
+
+
+def explain_empty(unmet: list[Need]) -> str:
+    """Why an entry returned no rows, naming the stages the job has not run."""
+    if not unmet:
+        return "No rows: the graph holds the data this question needs, and none matched."
+    stages = "; ".join(f"{n.stage} ({n.produces})" for n in unmet)
+    return f"No rows: this job's graph has no data from: {stages}."
 
 
 def _ids(value: object) -> Iterable[str]:

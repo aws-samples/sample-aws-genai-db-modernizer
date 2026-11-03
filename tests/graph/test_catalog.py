@@ -169,6 +169,8 @@ def test_every_entry_is_a_read_only_statement(entry):
     validate_read_only_cypher(catalog.bounded_cypher(entry))
     for param in entry.params:
         validate_read_only_cypher(param.choices_cypher)
+        validate_read_only_cypher(param.exists_cypher)
+        assert "$value" in param.exists_cypher
 
 
 @pytest.mark.parametrize("need", catalog.NEEDS, ids=[n.id for n in catalog.NEEDS])
@@ -307,6 +309,37 @@ def test_choices_say_when_they_are_cut(graphs, monkeypatch):
     monkeypatch.setattr(catalog, "MAX_CHOICES", 5)
     cut = catalog.param_choices(graphs["old_jobs"], param)
     assert list(cut) == list(full[:5]) and cut.truncated is True
+
+
+def _distinct_params() -> list:
+    seen: dict = {}
+    for entry in ENTRIES:
+        for param in entry.params:
+            seen.setdefault(param, None)
+    return list(seen)
+
+
+@pytest.mark.parametrize("fixture", FIXTURE_NAMES)
+def test_the_existence_probe_agrees_with_the_choices(graphs, fixture):
+    """A value exists exactly when it is a choice: every choice is found, nothing else is."""
+    store = graphs[fixture]
+    for param in _distinct_params():
+        choices = catalog.param_choices(store, param)
+        assert not choices.truncated
+        for value in choices:
+            assert catalog.value_exists(store, param, value), f"{param.name}: {value!r}"
+        assert not catalog.value_exists(store, param, "not-a-real-value")
+        assert not catalog.value_exists(store, param, "")
+
+
+def test_the_decided_query_probe_needs_a_decision(graphs):
+    """A query no decision names is a query, but not a decided-query choice."""
+    store = graphs["old_jobs"]
+    decided = set(catalog.param_choices(store, catalog.DECIDED_QUERY_PARAM))
+    undecided = [q for q in catalog.param_choices(store, catalog.QUERY_PARAM) if q not in decided]
+    assert undecided
+    assert catalog.value_exists(store, catalog.QUERY_PARAM, undecided[0])
+    assert not catalog.value_exists(store, catalog.DECIDED_QUERY_PARAM, undecided[0])
 
 
 def test_needs_name_the_missing_stage(graphs):

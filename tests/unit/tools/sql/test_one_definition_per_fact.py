@@ -112,6 +112,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
     "src/tools/schema/aurora_common/sql_safety.py": "the safety check on generated DDL",
     "src/agents/schema_design/dynamodb_key_reconcile.py": "key templates and column types",
     "src/graph/cypher_guard.py": "Cypher, not SQL",
+    "src/graph/catalog.py": (
+        "Cypher, not SQL: each parameter's choice and existence queries read as a pair of "
+        "MATCH ( fragments (#307)"
+    ),
     "src/graph/schema.py": "the graph store's own DDL, not a workload query",
     "src/tools/schema/aurora_common/delta_merge.py": "the generated Aurora DDL",
     "src/report/executive_report.py": (

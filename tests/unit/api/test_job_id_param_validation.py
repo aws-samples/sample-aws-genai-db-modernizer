@@ -155,6 +155,9 @@ _ROUTES: list[tuple[str, str, dict, dict | None]] = [
     ("GET", "/api/v1/assessments/{job_id}/graph/queries/q1/provenance", {}, None),
     ("GET", "/api/v1/assessments/{job_id}/graph/engines/dynamodb", {}, None),
     ("GET", "/api/v1/assessments/{job_id}/graph/risks", {}, None),
+    # graph.py catalog routes (#307): curated, always on like the views above
+    ("GET", "/api/v1/assessments/{job_id}/graph/catalog", {}, None),
+    ("POST", "/api/v1/assessments/{job_id}/graph/catalog/node_census", {}, {}),
     # phases.py
     ("GET", "/api/v1/assessments/{job_id}/phases", {}, None),
     ("POST", "/api/v1/assessments/{job_id}/resume", {}, {"phase": "collect_triage"}),
