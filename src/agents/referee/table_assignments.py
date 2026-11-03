@@ -16,7 +16,7 @@ from src.agents.referee.aurora_choice import (
     source_database_engine,
 )
 from src.agents.referee.engine_scope import SCOPE_BASIS
-from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.tie_break import settled_counts as settled_workload_counts
 from src.agents.referee.triage import BASELINE, SOURCE_ENGINE_TO_AURORA
@@ -28,6 +28,7 @@ from src.contracts.assignment_models import (
 )
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
+from src.shared.placeholder_tables import is_placeholder_table
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,10 @@ def derive_table_assignments(
     CTE alias, a system catalog, a sequence, a keyword or a column the SQL
     parser mistook for a table (#316) -- and is dropped before building
     ``table_assignments`` rather than counted as one; the second return value
-    records what was dropped (minus ``PSEUDO_TABLES``, a parser or dialect
-    artifact, never a real table, so never worth reporting as unresolved).
+    records what was dropped (minus a placeholder or dummy table,
+    ``placeholder_tables.is_placeholder_table``, #1817: a collector or dialect artifact,
+    never a real table, so never a table row and never worth reporting as
+    unresolved).
     ``known_tables=None`` (no collector schema available) keeps every name,
     the behavior before #316.
 
@@ -203,7 +206,7 @@ def derive_table_assignments(
 
     for qa in query_assignments:
         for table_id in qa.source_tables:
-            if table_id in PSEUDO_TABLES:
+            if is_placeholder_table(table_id):
                 continue
             resolved = table_id if known_tables is None else known_tables.resolve(table_id)
             if resolved is None:

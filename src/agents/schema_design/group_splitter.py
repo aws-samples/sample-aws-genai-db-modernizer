@@ -45,7 +45,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 
 from src.agents.prompt_framing import with_untrusted_notice
-from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design.group_input import (
     READ_PAGE_CHARS,
     build_group_input,
@@ -64,6 +64,7 @@ from src.contracts.schema_design_input import (
     SchemaDesignGroupEntry,
     SchemaDesignGroupsManifest,
 )
+from src.shared.placeholder_tables import is_placeholder_table
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.query_pattern_groups import group_by_query_pattern
@@ -106,7 +107,8 @@ def has_no_source_table(query: dict) -> bool:
 
     A catalog or utility statement (``SELECT obj_description(...)``,
     ``SELECT pg_get_serial_sequence(...)``, ...) has ``tables_accessed``
-    that is empty or only ``PSEUDO_TABLES`` (``unknown``, ``DUAL``) -- it
+    that is empty or only placeholder tables (``unknown``, ``DUAL``,
+    ``placeholder_tables.is_placeholder_table``, #1817) -- it
     names no real source table at all, so there is nothing to design
     against, ever, regardless of what the collector's schema contains.
 
@@ -118,7 +120,7 @@ def has_no_source_table(query: dict) -> bool:
     (367's review, finding 369-2).
     """
     tables = query.get("tables_accessed") or []
-    return all(t in PSEUDO_TABLES for t in tables)
+    return all(is_placeholder_table(t) for t in tables)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +149,7 @@ def _canon(table: str, db_name: str, resolver: TableNameResolver | None) -> str:
     Pseudo tables (``unknown``, ``DUAL``) are returned unchanged: they name
     nothing to qualify or resolve.
     """
-    if table in PSEUDO_TABLES:
+    if is_placeholder_table(table):
         return table
     if resolver is not None:
         resolved = resolver.resolve(table)

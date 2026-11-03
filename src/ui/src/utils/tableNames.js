@@ -8,9 +8,9 @@
 // `UNRESOLVED_TABLE_GROUP_LABEL` in src/shared/report_facts.py.
 export const NO_SOURCE_TABLE = 'No source table';
 
-// The same six names as PLACEHOLDER_TABLE_NAMES in src/shared/report_facts.py (the
+// The same seven names as PLACEHOLDER_TABLE_NAMES in src/shared/placeholder_tables.py (the
 // collector's placeholder and the dummy tables of a SELECT with no FROM).
-const PLACEHOLDER_TABLES = new Set(['unknown', 'UNKNOWN', 'None', 'null', 'DUAL', 'SYSIBM.SYSDUMMY1']);
+const PLACEHOLDER_TABLES = new Set(['unknown', 'UNKNOWN', 'None', 'null', 'DUAL', 'dual', 'SYSIBM.SYSDUMMY1']);
 
 // The group label a report saved before #1536 carries for the same statements.
 const LEGACY_NO_SOURCE_GROUP_LABELS = new Set(['Table not identified by the collector']);

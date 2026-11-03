@@ -21,6 +21,12 @@ describe('displayTables', () => {
   test('the dummy tables of a SELECT with no FROM are placeholders too', () => {
     expect(displayTables(['DUAL'])).toEqual(['No source table']);
     expect(displayTables(['SYSIBM.SYSDUMMY1'])).toEqual(['No source table']);
+    // #1817: the offline parser keeps the statement's own case.
+    expect(displayTables(['dual'])).toEqual(['No source table']);
+  });
+
+  test('a real table that only looks like a placeholder is kept (#1817)', () => {
+    expect(displayTables(['Null', 'Unknown', 'none'])).toEqual(['Null', 'Unknown', 'none']);
   });
 
   test('no tables at all stays empty', () => {

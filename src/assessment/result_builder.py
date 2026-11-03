@@ -102,6 +102,7 @@ from src.contracts.move_ledger import Move
 from src.shared.engine_names import display_engine
 from src.shared.model_usage import USAGE_KEY
 from src.shared.package_version import get_package_version
+from src.shared.placeholder_tables import saved_write_groups
 from src.shared.row_counts import known_row_count
 
 # --------------------------------------------------------------------------- inputs
@@ -1134,10 +1135,7 @@ def _group_sources(state: RunState) -> tuple[list[list[str]], dict[str, list[str
     if assignment is not None:
         return (
             [[str(q) for q in g] for g in assignment.get("co_dependency_groups") or []],
-            {
-                str(t): [str(q) for q in m]
-                for t, m in (assignment.get("write_groups") or {}).items()
-            },
+            {str(t): [str(q) for q in m] for t, m in saved_write_groups(assignment).items()},
         )
     from src.agents.referee.co_dependency import build_co_dependency_groups
     from src.agents.referee.table_resolution import SourceScope

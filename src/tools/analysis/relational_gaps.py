@@ -51,6 +51,7 @@ from src.shared.catalog.gaps import (
     gap_rules,
     parse_version_line,
 )
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.sql_spans import span_dialect, span_settings, with_span_settings
 from src.tools.sql.facade import SqlTokens, sql_tokens
 from src.tools.sql.normalize import quoted_mask
@@ -283,13 +284,13 @@ def _collected_tables(names: Iterable[Any], resolver: TableNameResolver | None) 
     too, while a schema-qualified one resolves), so such a query adds no table. It
     still counts as a query. A trigger's
     table goes through the same reading (the collector writes its bare name). With no
-    collected schema there is nothing to resolve against: every name stays except the
-    ``unknown`` placeholder.
+    collected schema there is nothing to resolve against: every name stays except a
+    placeholder table (``placeholder_tables.is_placeholder_table``, #1817).
     """
     out: set[str] = set()
     for name in names:
         if resolver is None:
-            if str(name) != "unknown":
+            if not is_placeholder_table(name):
                 out.add(str(name))
         elif (table_id := resolver.resolve(str(name))) is not None:
             out.add(table_id)

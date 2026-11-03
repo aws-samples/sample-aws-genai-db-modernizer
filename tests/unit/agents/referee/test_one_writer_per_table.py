@@ -674,8 +674,9 @@ def test_every_later_routing_pass_places_the_write_groups_too(module: str) -> No
     text = (Path(__file__).resolve().parents[4] / module).read_text(encoding="utf-8")
     assert "co_dependency_groups=assignment_placement_groups(" in text
     if module.endswith("post_schema_routing_handler.py"):
-        # A pinned write holds its table's other writes in the reroute.
-        assert 'write_groups=assignment.get("write_groups")' in text
+        # A pinned write holds its table's other writes in the reroute; a saved
+        # group keyed on a placeholder table is dropped first (#1817).
+        assert "write_groups=saved_write_groups(assignment)" in text
     for line in text.splitlines():
         if line.strip().startswith("co_dependency_groups="):
             assert "assignment_placement_groups(" in line, (module, line)

@@ -158,7 +158,6 @@ from src.agents.referee.migration_wave_tables import (
     gate_parts_text,
 )
 from src.agents.referee.table_resolution import (
-    PSEUDO_TABLES,
     SourceScope,
     TableNameResolver,
     is_engine_system_object,
@@ -172,6 +171,7 @@ from src.shared.migration_wave_engines import (
     RELATIONAL_ENGINES,
     SEARCH_ENGINES,
 )
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.report_facts import wave_one_moved_by_later_waves, wave_one_staying_split
 
 # ``_durable_owner`` is imported from here by callers; it lives in migration_wave_tables.
@@ -259,7 +259,7 @@ def _canonical_table_assignments(
     resolver = None if known is None else TableNameResolver.from_known_ids(known)
 
     def _canonical_in_scope(table_id: Any) -> Any | None:
-        if not table_id or table_id in PSEUDO_TABLES:
+        if is_placeholder_table(table_id):
             return None
         if resolver is None:
             return table_id

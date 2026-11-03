@@ -54,6 +54,12 @@ from src.shared.engine_names import (
 )
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 from src.shared.overlap_risk import overlap_risk_ids
+
+# Table names that stand for no table (#1817): defined once in ``placeholder_tables`` and
+# re-exported here, where the report readers have always found them.
+from src.shared.placeholder_tables import PLACEHOLDER_TABLE_NAMES as PLACEHOLDER_TABLE_NAMES
+from src.shared.placeholder_tables import is_placeholder_table as is_placeholder_table
+from src.shared.placeholder_tables import saved_write_groups
 from src.shared.risk_severity import (
     SEVERITY_ORDER,
     count_by_severity,
@@ -2904,7 +2910,7 @@ def assignment_table_usage(assignment: Mapping[str, Any] | None) -> dict[str, di
                 u["queries"][engine] = u["queries"].get(engine, 0) + 1
             if cache and cache not in u["cached_by"]:
                 u["cached_by"].append(cache)
-    for table, members in sorted((assignment.get("write_groups") or {}).items()):
+    for table, members in sorted(saved_write_groups(assignment).items()):
         for qid in members or []:
             writer = engine_of.get(str(qid))
             if writer:
@@ -3711,14 +3717,6 @@ def triage_signal_facts(triage: Mapping[str, Any] | None) -> dict[str, Any]:
 # The places a routing detail score is shown to, like every score of the trace.
 _DETAIL_PLACES = 1
 
-# Table names that stand for no table: the collector's placeholder and the dummy tables
-# a SELECT with no FROM names (``table_resolution.PSEUDO_TABLES`` and
-# ``synthesis_report._PLACEHOLDER_TABLES``, which the facts layer cannot import; a unit
-# test keeps this set covering both).
-PLACEHOLDER_TABLE_NAMES = frozenset(
-    {"unknown", "UNKNOWN", "None", "null", "DUAL", "SYSIBM.SYSDUMMY1"}
-)
-
 
 def detail_round(x: Any) -> float | None:
     """A score as the detailed report shows and compares it: rounded to
@@ -4209,7 +4207,7 @@ def routing_detail_facts(
             if isinstance(c, Mapping) and c.get("table_id") and c.get("query_id"):
                 carried_by_table.setdefault(str(c["table_id"]), {})[str(c["query_id"])] = c
                 carried_by_query[str(c["query_id"])] = c
-    write_groups = effective.get("write_groups") or {}
+    write_groups = saved_write_groups(effective)
     multi = {
         str(t): [str(q) for q in dict.fromkeys(m or [])]
         for t, m in write_groups.items()

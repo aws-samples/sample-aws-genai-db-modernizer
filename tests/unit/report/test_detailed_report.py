@@ -426,11 +426,14 @@ def test_a_co_dependency_member_fits_poorly_only_as_a_carried_write(detail, tmp_
 
 
 def test_the_placeholder_tables_cover_the_pipelines_own():
-    from src.agents.referee.synthesis_report import _PLACEHOLDER_TABLES
+    from src.agents.referee import synthesis_report
     from src.agents.referee.table_resolution import PSEUDO_TABLES
     from src.shared.report_facts import PLACEHOLDER_TABLE_NAMES
 
-    assert PSEUDO_TABLES | _PLACEHOLDER_TABLES <= PLACEHOLDER_TABLE_NAMES
+    assert PSEUDO_TABLES <= PLACEHOLDER_TABLE_NAMES
+    # The synthesis report keeps no local copy any more (#1817).
+    assert not hasattr(synthesis_report, "_PLACEHOLDER_TABLES")
+    assert not hasattr(synthesis_report, "_PSEUDO_TABLES")
 
 
 def test_a_write_group_has_its_group_score_margin_and_poor_fits(detail):

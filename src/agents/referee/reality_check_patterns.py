@@ -14,6 +14,7 @@ from src.agents.referee.reality_check_records import _queries
 from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use as running_engines
+from src.shared.placeholder_tables import saved_write_groups
 
 # ---------------------------------------------------------------------------
 # Architectural patterns
@@ -231,7 +232,7 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
     Mutates ``result``.
     """
     patterns = patterns_for_assignment(
-        result["revised_assignments"], (result.get("assignment") or {}).get("write_groups")
+        result["revised_assignments"], saved_write_groups(result.get("assignment"))
     )
     result["architectural_patterns"] = patterns
     result["recommendations"] = _build_recommendations(

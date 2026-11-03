@@ -65,6 +65,7 @@ from src.agents.referee.write_groups import (
     assignment_placement_groups,
     assignment_sources_of_truth,
     assignment_unit_weights,
+    saved_write_groups,
 )
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.model_flag import ResponseContractError, validation_error_note
@@ -741,7 +742,7 @@ def _scoring_inputs(det: dict) -> tuple[dict, ScoringContext]:
     # check has placed it so far.
     sources = assignment_sources_of_truth(
         {
-            "write_groups": (det.get("assignment") or {}).get("write_groups") or {},
+            "write_groups": saved_write_groups(det.get("assignment")),
             "query_assignments": det.get("revised_assignments") or [],
         }
     )

@@ -53,7 +53,7 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
-from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
+from src.agents.referee.table_resolution import SourceScope, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps, overlap_home
@@ -81,6 +81,7 @@ from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fi
 from src.shared.report_facts import (
     BLAME_GROUP_LABELS,
     analysis_overview_facts,
+    is_placeholder_table,
     mean_table_fit,
     table_fit_score,
 )
@@ -122,7 +123,7 @@ AURORA_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
 # statement (``utility_statements.is_utility_statement``, already routed to
 # the relational engine by the assignment -- SHOW/SET/EXPLAIN, catalog
 # introspection) gets its own readable group, and a query that is not one of
-# those but still names only pseudo tables (``table_resolution.PSEUDO_TABLES``
+# those but still names only placeholder tables (``placeholder_tables.is_placeholder_table``
 # -- "unknown", MySQL's dummy ``DUAL``) gets a group that says the statement has
 # no source table. Neither is a real access pattern a reader should see
 # ranked as a "busiest" group -- every consumer that picks top/leading groups
@@ -718,7 +719,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
         schema = artifacts.schema_design or {}
         for ap in field_list(schema, "access_patterns"):
             source_tables = sorted(set(ap.get("source_tables") or []))
-            clean_tables = [t for t in source_tables if t not in _PLACEHOLDER_TABLES]
+            clean_tables = [t for t in source_tables if not is_placeholder_table(t)]
             if ap.get("pattern_group"):
                 group_name = ap["pattern_group"]
             elif source_tables and not clean_tables:
@@ -856,7 +857,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             qid = str(qa["query_id"])
             src_query = source_queries.get(qid)
             raw_tables = row_tables or (src_query.get("tables_accessed") if src_query else []) or []
-            clean_tables = sorted({t for t in raw_tables if t and t not in PSEUDO_TABLES})
+            clean_tables = sorted({t for t in raw_tables if not is_placeholder_table(t)})
             if clean_tables:
                 group_name = ", ".join(clean_tables)
             elif is_utility_statement(
@@ -1409,7 +1410,7 @@ def build_risk_assessment(
                 continue  # a redesign removes every flagged query's finding
             severity = "HIGH" if ap.get("severity_weight", 0) >= 0.7 else "MEDIUM"
             description = ap.get("description", ap.get("anti_pattern_type", "Unknown"))
-            ap_tables = [t for t in ap.get("table_ids", []) if t and t not in _PLACEHOLDER_TABLES]
+            ap_tables = [t for t in ap.get("table_ids", []) if not is_placeholder_table(t)]
 
             # Split the flagged queries by the engine the assignment routed them to
             # (#221). Fail-open: when none of them is in the assignment, keep the
@@ -1922,12 +1923,9 @@ def _without_repeated_mitigation(risk: dict) -> dict:
     return risk
 
 
-# Table ids analysis emits when it cannot attribute a query to a table
-# (e.g. ``SELECT FOUND_ROWS()``).
-_PLACEHOLDER_TABLES = frozenset({"unknown", "UNKNOWN", "None", "null"})
-# Names that are never a source table in a risk's ``affected_tables``.
-_PSEUDO_TABLES = _PLACEHOLDER_TABLES | {"", "DUAL", "dual"}
-_PSEUDO_TABLES_LOWER = frozenset(t.lower() for t in _PSEUDO_TABLES)
+# Table ids that stand for no table (analysis's ``unknown`` for ``SELECT FOUND_ROWS()``,
+# a dummy ``DUAL``) are dropped through the shared ``placeholder_tables.is_placeholder_table``
+# (#1817), never a local list.
 
 
 def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]]:
@@ -1958,7 +1956,7 @@ def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]
         out: set[str] = set()
         for raw in names:
             name = str(raw or "").strip()
-            if name.lower() in _PSEUDO_TABLES_LOWER:
+            if is_placeholder_table(name):
                 continue
             out.add(resolve(name))
         return out
@@ -2241,7 +2239,9 @@ def _start_with(ids: list[str], query_tables: dict[str, set[str]]) -> str:
         return ""
     counts: dict[str, int] = {}
     for q in ids:
-        for t in query_tables.get(q, set()) - _PLACEHOLDER_TABLES:
+        for t in query_tables.get(q, set()):
+            if is_placeholder_table(t):
+                continue
             counts[t] = counts.get(t, 0) + 1
     top = sorted(counts, key=lambda t: (-counts[t], t))[:_START_WITH_TABLES]
     if not top:
@@ -2272,7 +2272,9 @@ def _coverage_gap_risk(
         t = " ".join(query_text.get(q, "").split()) or q[:12]
         texts.append(t if len(t) <= 80 else t[:77] + "...")
     listed = "; ".join(texts) + (f"; and {n - 3} more" if n > 3 else "")
-    tables = sorted({t for q in ids for t in query_tables.get(q, set())} - _PLACEHOLDER_TABLES)
+    tables = sorted(
+        {t for q in ids for t in query_tables.get(q, set()) if not is_placeholder_table(t)}
+    )
     name = display_name(engine)
     if not design_ran:
         return {

@@ -60,6 +60,7 @@ from src.contracts.analysis_output import (
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
+from src.shared.placeholder_tables import saved_write_groups
 from src.shared.progress import in_context, say
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
@@ -168,7 +169,7 @@ def _carried_writes(
         return []
     assignment = store.read_json(assignment_key)
     collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
-    if not (assignment.get("write_groups") or {}) or not collector:
+    if not saved_write_groups(assignment) or not collector:
         return []
     triage_key = f"{prefix}/referee-triage/triage.json"
     return carried_write_records(
