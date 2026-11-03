@@ -8,11 +8,14 @@
  */
 
 export const LAYOUT_KEY = 'dbm-graph-explorer-layout';
-export const PANEL_TABS = ['queries', 'walkthrough', 'details'];
+export const PANEL_TABS = ['queries', 'walkthrough', 'details', 'questions'];
 export const PANEL_MIN = 300;
 export const PANEL_MAX = 720;
+// The narrowest panel the four tab labels fit without scroll arrows (#308;
+// their bar needs 443 px, the panel adds its collapse button and padding).
+export const TABS_MIN_WIDTH = 480;
 export const DEFAULT_LAYOUT = Object.freeze({
-  panelWidth: 420,
+  panelWidth: TABS_MIN_WIDTH,
   collapsed: false,
   tab: 'queries',
   noticeDismissed: false,
@@ -34,7 +37,8 @@ export function loadLayout(storage = browserStorage()) {
     const raw = storage && storage.getItem(LAYOUT_KEY);
     const saved = raw ? JSON.parse(raw) : {};
     return {
-      panelWidth: clampWidth(saved.panelWidth ?? DEFAULT_LAYOUT.panelWidth),
+      // A width saved before the fourth tab is raised so every tab label fits.
+      panelWidth: Math.max(TABS_MIN_WIDTH, clampWidth(saved.panelWidth ?? DEFAULT_LAYOUT.panelWidth)),
       collapsed: saved.collapsed === true,
       tab: PANEL_TABS.includes(saved.tab) ? saved.tab : DEFAULT_LAYOUT.tab,
       noticeDismissed: saved.noticeDismissed === true,

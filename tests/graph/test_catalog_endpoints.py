@@ -128,10 +128,17 @@ def test_list_reads_each_shared_parameter_once(populated_store, monkeypatch):
 
 def test_list_says_when_choices_are_cut(client, monkeypatch):
     monkeypatch.setattr(catalog, "MAX_CHOICES", 1)
-    entries = {e["id"]: e for e in client.get(BASE).json()["entries"]}
+    body = client.get(BASE).json()
+    entries = {e["id"]: e for e in body["entries"]}
     (table,) = entries["table_blast_radius"]["params"]
     assert table["choices"] == ["customers"]
     assert table["choices_truncated"] is True
+    # The bound the choices were cut at, so a client states it rather than counts it (#308).
+    assert body["max_choices"] == 1
+
+
+def test_list_states_the_choices_bound(client):
+    assert client.get(BASE).json()["max_choices"] == catalog.MAX_CHOICES
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,8 @@ from src.api.models.graph_explorer_responses import (
     ExplorerOptions,
     ExplorerPathStep,
     ExplorerQuery,
+    ExplorerQueryBundle,
+    ExplorerQueryBundles,
     ExplorerQueryDetail,
     ExplorerScale,
     ExplorerSearch,
@@ -694,6 +696,31 @@ def cost_scale(engine_costs: dict[str, float]) -> ExplorerScale | None:
         return None
     return ExplorerScale(
         min=scale.min, max=scale.max, samples=sorted({c for c in engine_costs.values() if c > 0})
+    )
+
+
+def query_bundles(store: GraphStore, query_ids: list[str]) -> ExplorerQueryBundles:
+    """Every table-to-engine bundle each of ``query_ids`` (at most
+    MAX_VIEW_QUERIES) is in, by query, table and engine: the full membership,
+    where a links read lists only each bundle's busiest queries."""
+    ids = sorted({str(q) for q in query_ids})
+    if len(ids) > MAX_VIEW_QUERIES:
+        raise ValueError(f"at most {MAX_VIEW_QUERIES} queries per request")
+    if not ids:
+        return ExplorerQueryBundles(bundles=[])
+    rows = store.query(
+        "MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query)-[:MIGRATES_TO]->(d:Destination) "
+        "WHERE q.id IN $ids "
+        "RETURN DISTINCT q.id AS q, st.id AS t, d.engine AS e ORDER BY q, t, e "
+        f"LIMIT {MAX_VIEW_QUERIES * MAX_QUERY_TABLES}",
+        {"ids": ids},
+    )
+    return ExplorerQueryBundles(
+        bundles=[
+            ExplorerQueryBundle(query_id=r["q"], table=r["t"], engine=r["e"])
+            for r in rows
+            if r.get("e")
+        ]
     )
 
 

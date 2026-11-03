@@ -32,6 +32,7 @@ import Spinner from '@cloudscape-design/components/spinner';
 import AppHeader from '../components/AppHeader';
 import GraphExplorerCanvas from '../components/GraphExplorerCanvas';
 import GraphExplorerLegendCard from '../components/GraphExplorerLegendCard';
+import GraphExplorerQuestions from '../components/GraphExplorerQuestions';
 import GraphExplorerQueryList from '../components/GraphExplorerQueryList';
 import GraphExplorerQueryPanel from '../components/GraphExplorerQueryPanel';
 import GraphExplorerSidePanel from '../components/GraphExplorerSidePanel';
@@ -71,6 +72,11 @@ import {
   toElements,
   toggleBundle,
   trafficSubjects,
+  hasStarts,
+  membershipQueries,
+  queryBundlesPath,
+  queryStarts,
+  resultPlan,
   truncatedPickerLimit,
   walkthroughsPath,
 } from '../utils/graphExplorer';
@@ -150,6 +156,11 @@ export default function GraphExplorer() {
   const [walk, setWalk] = useState(null);
   const [walkLoading, setWalkLoading] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  // A question's result drawn on the graph (the Questions tab): its own tables and engines.
+  const [resultKeys, setResultKeys] = useState(() => new Set());
+  const [resultQueries, setResultQueries] = useState(() => new Set());
+  // Bumped by every start; a Show on graph read answered after a later start is dropped.
+  const startSeq = useRef(0);
 
   // The workspace layout, remembered per browser: panel width, collapsed or
   // open, active tab, and whether the experimental notice was dismissed.
@@ -264,16 +275,24 @@ export default function GraphExplorer() {
   // every bundle; expanding a node in the graph keeps what is fanned out.
   const explore = useCallback(
     async (kind, id, { start = false } = {}) => {
+      // A later Explore wins over an earlier Show on graph still reading.
+      startSeq.current += 1;
+      const mine = startSeq.current;
       setLoading(true);
       setProblem('');
       const result = await get('links', linksPath(jobId, kind, id, LINK_LIMIT));
-      setLoading(false);
+      // The loading state is the latest read's: a newer one clears it when done.
+      if (mine === startSeq.current) setLoading(false);
       if (!result || !result.success) {
         setProblem(errorText(result) || 'expand');
         return;
       }
       setView((current) => (start ? startFrom(current, result, MAX_VIEW_ELEMENTS) : mergeLinks(current, result, MAX_VIEW_ELEMENTS)));
-      if (start) setStayed(0);
+      if (start) {
+        setStayed(0);
+        setResultKeys(new Set());
+        setResultQueries(new Set());
+      }
       setLastLinks(result);
       setListBundle(null);
       const key = kind === 'wave' ? null : `${kind}:${id}`;
@@ -291,6 +310,9 @@ export default function GraphExplorer() {
     const w = walkthroughs.find((x) => x.id === walkthroughId);
     const step = w && w.steps[index];
     if (!step) return;
+    // A tour step supersedes any read still out (Show on graph, Explore).
+    startSeq.current += 1;
+    setLoading(false);
     setWalk({ id: walkthroughId, index });
     setWalkLoading(true);
     setProblem('');
@@ -303,6 +325,7 @@ export default function GraphExplorer() {
     // Every step starts collapsed; a step about one query draws that query's
     // edges only (never its whole bundles).
     let next = startFrom(emptyView(), result, MAX_VIEW_ELEMENTS);
+    clearResult();
     if (step.kind === 'query' && step.query) {
       const out = pinQueries(next, { nodes: result.nodes }, [step.query], MAX_VIEW_ELEMENTS);
       if (out.ok) next = out.view;
@@ -405,8 +428,74 @@ export default function GraphExplorer() {
     setSelectedKey(null);
   };
 
+  // "Show on graph" (the Questions tab): a new start from the result, collapsed
+  // like every start, with the result's own nodes and query links highlighted.
+  // Its tables are read first; then the result's queries their bundles do not
+  // carry (utils resultPlan / queryStarts). Each read is the bounded links read
+  // Explore uses. A later start (Explore, a walkthrough step, Clear graph)
+  // wins: an answer for an older one is dropped. When every read fails, the
+  // graph stays as it was.
+  const readLinks = async (starts, prefix) => {
+    if (starts.length === 0) return [];
+    const results = await new ApiManager().execute(
+      starts.map((st, i) => ({ id: `${prefix}-${i}`, path: linksPath(jobId, st.kind, st.id, LINK_LIMIT), method: 'GET', params: {} })),
+    );
+    return starts.map((st, i) => results[`${prefix}-${i}`]);
+  };
+  const showResult = async (result) => {
+    const plan = resultPlan(result && result.projection);
+    if (!hasStarts(plan)) return { drawn: false };
+    startSeq.current += 1;
+    const mine = startSeq.current;
+    setLoading(true);
+    setProblem('');
+    // The table reads, and with them the full bundle membership of the result's
+    // queries (a links read lists only each bundle's busiest), in one batch.
+    const ids = membershipQueries(plan);
+    const calls = plan.first.map((st, i) => ({ id: `result-${i}`, path: linksPath(jobId, st.kind, st.id, LINK_LIMIT), method: 'GET', params: {} }));
+    if (ids.length) calls.push({ id: 'result-members', path: queryBundlesPath(jobId, ids), method: 'GET', params: {} });
+    const answers = calls.length ? await new ApiManager().execute(calls) : {};
+    // A later start superseded this one; it owns the loading state now.
+    if (mine !== startSeq.current) return { stale: true };
+    const first = plan.first.map((st, i) => answers[`result-${i}`]);
+    const members = answers['result-members'];
+    const rest = queryStarts(plan, first, members && members.success ? members.bundles : null);
+    const second = await readLinks(rest.starts, 'result-query');
+    if (mine !== startSeq.current) return { stale: true };
+    setLoading(false);
+    const read = [...first, ...second];
+    const ok = read.filter((links) => links && links.success);
+    if (ok.length === 0) return { failed: true };
+    let next = emptyView();
+    let capped = false;
+    ok.forEach((links) => {
+      next = mergeLinks(next, links, MAX_VIEW_ELEMENTS);
+      capped = capped || next.capped;
+    });
+    setView(next);
+    setResultKeys(plan.keys);
+    setResultQueries(plan.queryIds);
+    setStayed(0);
+    setLastLinks(null);
+    setListBundle(null);
+    setAnchorKey(null);
+    setSelectedKey(null);
+    setWalk(null);
+    setDetail({ data: null, loading: false, error: false });
+    // The canvas zooms to fit once the layout settles, as after any start.
+    return { drawn: true, capped, max: MAX_VIEW_ELEMENTS, partial: ok.length < read.length, more: rest.more };
+  };
+  const clearResult = () => {
+    startSeq.current += 1;
+    setResultKeys(new Set());
+    setResultQueries(new Set());
+  };
+
   const onReset = () => {
     setView(emptyView());
+    // Clear graph supersedes any read still out, and its loading state.
+    clearResult();
+    setLoading(false);
     setSelectedKey(null);
     setLastLinks(null);
     setAnchorKey(null);
@@ -462,10 +551,12 @@ export default function GraphExplorer() {
         placeholderLabel: t('graph-explorer.node.no-table'),
         showOtherWaves,
         waveBadge: (w) => t('graph-explorer.wave.badge', { wave: w }),
+        resultKeys,
+        resultQueries,
       }),
     // t is stable in the app; leaving it out keeps a test double from re-rendering forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, mode, traffic, overlays, wave, hiddenQueries, hiddenBundles, engineFilter, showOtherWaves],
+    [view, mode, traffic, overlays, wave, hiddenQueries, hiddenBundles, engineFilter, showOtherWaves, resultKeys, resultQueries],
   );
 
   if (!flag.checked) {
@@ -687,6 +778,14 @@ export default function GraphExplorer() {
       />
     ),
     details: <div data-testid="graph-explorer-details">{details}</div>,
+    questions: (
+      <GraphExplorerQuestions
+        t={t}
+        jobId={jobId}
+        active={layout.tab === 'questions' && !layout.collapsed}
+        onShowOnGraph={showResult}
+      />
+    ),
   };
 
   return (
@@ -726,6 +825,8 @@ export default function GraphExplorer() {
               <p>{t('graph-explorer.help.waves')}</p>
               <h3>{t('graph-explorer.help.walkthroughs-title')}</h3>
               <p>{t('graph-explorer.help.walkthroughs')}</p>
+              <h3>{t('graph-explorer.help.questions-title')}</h3>
+              <p>{t('graph-explorer.help.questions')}</p>
               <h3>{t('graph-explorer.help.limits-title')}</h3>
               <p>{t('graph-explorer.help.limits')}</p>
             </div>
@@ -873,6 +974,7 @@ export default function GraphExplorer() {
                   engines={Object.values(view.nodes).filter((n) => n.kind === 'engine').map((n) => n.id).sort()}
                   placeholder={Object.values(view.nodes).some((n) => n.placeholder)}
                   wave={wave}
+                  result={resultKeys.size > 0}
                 />
                 <StepBar
                   t={t}

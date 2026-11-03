@@ -8,11 +8,11 @@ import { PANEL_TABS, clampWidth } from '../utils/explorerLayout';
 
 const RAIL_WIDTH = 44;
 const KEY_STEP = 24;
-const TAB_ICONS = { queries: 'list-view', walkthrough: 'map', details: 'status-info' };
+const TAB_ICONS = { queries: 'list-view', walkthrough: 'map', details: 'status-info', questions: 'search' };
 
 /**
- * The workspace's docked left panel: tabs for Queries, Walkthrough and
- * Details. Resizable by dragging (or with the arrow keys on) its edge, and
+ * The workspace's docked left panel: tabs for Queries, Walkthrough, Details
+ * and Questions. Resizable by dragging (or with the arrow keys on) its edge, and
  * collapsible to a narrow rail. Every tab stays mounted (hidden when not on
  * show); the query list keeps its own scroll position across tab switches.
  */

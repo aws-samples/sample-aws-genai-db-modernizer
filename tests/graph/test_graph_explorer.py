@@ -373,6 +373,21 @@ def test_scales(populated_store):
     assert explorer.scale_of([1.0, 100.0]).samples == [1.0, 10.0, 100.0]
 
 
+def test_query_bundles_name_every_bundle_a_query_is_in(populated_store):
+    # #308 Questions tab: the full membership of a result's queries, so Show on
+    # graph knows which ones a table start already drew (not only the 40 busiest).
+    out = explorer.query_bundles(populated_store, ["q2", "q1", "nope"])
+    assert [(b.query_id, b.table, b.engine) for b in out.bundles] == [
+        ("q1", "orders", "dynamodb"),
+        ("q2", "customers", "documentdb"),
+        ("q2", "orders", "documentdb"),
+    ]
+    assert explorer.query_bundles(populated_store, []).bundles == []
+    too_many = [f"q{i}" for i in range(explorer.MAX_VIEW_QUERIES + 1)]
+    with pytest.raises(ValueError):
+        explorer.query_bundles(populated_store, too_many)
+
+
 def test_below_traffic_queries_and_bundles(populated_store):
     out = explorer.below_traffic(
         populated_store, ["q1", "q2", "q3"], [("orders", "dynamodb"), ("orders", "documentdb")], 100
@@ -399,6 +414,7 @@ PROBE = "/api/v1/experimental/graph-explorer"
 ROUTES = (
     "/api/v1/assessments/job-1/graph/explore/options",
     "/api/v1/assessments/job-1/graph/explore/links?kind=table&id=orders",
+    "/api/v1/assessments/job-1/graph/explore/query-bundles?query_id=q1",
     "/api/v1/assessments/job-1/graph/explore/search?text=orders",
     "/api/v1/assessments/job-1/graph/explore/query?id=q1",
     "/api/v1/assessments/job-1/graph/explore/overlays",
@@ -467,6 +483,19 @@ def test_overlays_route(client, monkeypatch):
     assert body["waves"][2]["engine_labels"] == [display_engine("dynamodb")]
     assert body["traffic"]["max"] == 423.0 and body["bundle_traffic"]["max"] == 438.0
     assert body["cost"]["samples"] == [76.75, 192.12]
+
+
+def test_query_bundles_route(client, monkeypatch):
+    monkeypatch.setenv(FLAG, "1")
+    base = "/api/v1/assessments/job-1/graph/explore/query-bundles"
+    body = client.get(base, params=[("query_id", "q2")]).json()
+    assert body["bundles"] == [
+        {"query_id": "q2", "table": "customers", "engine": "documentdb"},
+        {"query_id": "q2", "table": "orders", "engine": "documentdb"},
+    ]
+    many = [("query_id", f"q{i}") for i in range(explorer.MAX_VIEW_QUERIES + 1)]
+    assert client.get(base, params=many).status_code == 422
+    assert client.get(base, params=[("query_id", "x" * 1025)]).status_code == 422
 
 
 def test_below_traffic_route_is_bounded(client, monkeypatch):

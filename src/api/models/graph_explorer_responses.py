@@ -185,6 +185,20 @@ class ExplorerBundleRef(BaseModel):
     engine: str
 
 
+class ExplorerQueryBundle(BaseModel):
+    """One table-to-engine bundle a query is in."""
+
+    query_id: str
+    table: str
+    engine: str
+
+
+class ExplorerQueryBundles(BaseModel):
+    """Every bundle each named query is in (the Questions tab's Show on graph)."""
+
+    bundles: list[ExplorerQueryBundle]
+
+
 class ExplorerBelowTraffic(BaseModel):
     """Of the edges asked about, those under ``min_calls_per_second``."""
 

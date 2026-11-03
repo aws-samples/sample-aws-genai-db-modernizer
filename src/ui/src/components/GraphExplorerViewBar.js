@@ -44,7 +44,10 @@ export function IconLegend({ t, engines = [], placeholder = false }) {
  * How a link reads: a bundle is one straight link (click it to fan it out), a
  * fanned-out query is its own curved link. The round 4 legend line, restored.
  */
-export function LinkLegend({ t, wave = null }) {
+// A question's result on the graph (the Questions tab): the canvas's `node.result` colour.
+export const RESULT_COLOUR = '#00a1c9';
+
+export function LinkLegend({ t, wave = null, result = false }) {
   const stroke = '#8d99a8';
   return (
     <div data-testid="graph-explorer-link-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
@@ -67,6 +70,14 @@ export function LinkLegend({ t, wave = null }) {
         </svg>
         <Box variant="small">{t('graph-explorer.legend.pinned')}</Box>
       </span>
+      {result && (
+        <span data-testid="graph-explorer-result-legend" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <svg width="16" height="16" aria-hidden="true" focusable="false">
+            <rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke={RESULT_COLOUR} strokeWidth="3" />
+          </svg>
+          <Box variant="small">{t('graph-explorer.legend.result')}</Box>
+        </span>
+      )}
       {wave != null && (
         <span data-testid="graph-explorer-cross-wave-legend" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <svg width="28" height="12" aria-hidden="true" focusable="false">

@@ -33,6 +33,7 @@ from src.api.models.graph_explorer_responses import (
     ExplorerLinks,
     ExplorerOptions,
     ExplorerOverlays,
+    ExplorerQueryBundles,
     ExplorerQueryDetail,
     ExplorerSearch,
     ExplorerStatus,
@@ -242,6 +243,25 @@ def graph_explore_below_traffic(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     with graph_route._curated_errors():
         return explorer.below_traffic(store, query_id, pairs, min_calls_per_second)
+
+
+@router.get(
+    "/assessments/{job_id}/graph/explore/query-bundles", response_model=ExplorerQueryBundles
+)
+def graph_explore_query_bundles(
+    query_id: list[str] = Query(default=[], max_length=explorer.MAX_VIEW_QUERIES),
+    job_id: str = Depends(job_id_param),
+    graph: Any = Depends(graph_route.get_graph_for_job),
+):
+    """Every table-to-engine bundle each named query is in (at most 150 ids)."""
+    store, _ = graph
+    if any(len(v) > 1024 for v in query_id):
+        raise HTTPException(status_code=422, detail="id too long")
+    try:
+        with graph_route._curated_errors():
+            return explorer.query_bundles(store, query_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/assessments/{job_id}/graph/explore/walkthroughs", response_model=ExplorerWalkthroughs)

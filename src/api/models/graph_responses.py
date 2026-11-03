@@ -175,6 +175,9 @@ class CatalogEntryInfo(BaseModel):
 class CatalogListResponse(BaseModel):
     job_id: str
     entries: list[CatalogEntryInfo]
+    #: The most choices a parameter lists (``catalog.MAX_CHOICES``); a parameter
+    #: with ``choices_truncated`` lists exactly this many.
+    max_choices: int
 
 
 class CatalogProjection(BaseModel):

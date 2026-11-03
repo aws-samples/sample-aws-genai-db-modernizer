@@ -23,11 +23,11 @@ With the explorer on, a job's results page carries an **Explore (experimental)**
 
 ## The workspace
 
-- **The panel** on the left has three tabs: **Queries** (the queries drawn in the graph, busiest first, with a filter box), **Walkthrough** and **Details** (whatever you select). Drag its edge to resize it, or press `[` to collapse it and give the graph the full width.
+- **The panel** on the left has four tabs: **Queries** (the queries drawn in the graph, busiest first, with a filter box), **Tours** (the walkthroughs), **Details** (whatever you select) and **Questions** (see below). Drag its edge to resize it, or press `[` to collapse it and give the graph the full width.
 - **The toolbar** over the graph picks a start point (**Wave**, **Source table** or **Destination engine**, then one of them and **Explore**), the view, and a query to find by id or SQL text. Its buttons zoom to fit, fan out or collapse every bundle, remove the selected node and clear the graph.
 - **Filters** holds the engine filter, the minimum traffic slider (links under it are hidden, and the panel says how many) and the wave filter. The button shows how many filters are on.
 - **The legend** in the corner explains the node icons, the link styles and the traffic scale, and counts what is drawn.
-- **Info** opens the help drawer, which explains the graph, the views, the walkthroughs, the waves and the limits on the page itself.
+- **Info** opens the help drawer, which explains the graph, the views, the tours, the waves, the questions and the limits on the page itself.
 - **Reset layout** puts the panel back as it started; the panel's width and state are kept in the browser between visits.
 
 The query list and the graph follow each other: select a query in the list and its link is highlighted, select a link or a node in the graph and the list and the details follow.
@@ -55,17 +55,29 @@ Picking a wave, as a start point, a walkthrough step or in Filters, draws what m
 
 A query has one move wave, its engine's wave in the plan; if the plan lists that engine in two waves, the query claims no wave rather than two. A query whose reads are cached later also shows the wave its cache starts in, in the query list and the details.
 
-## Walkthroughs
+## Tours (walkthroughs)
 
-![The migration, wave by wave: step 1 of 4 in the panel and the floating step bar](assets/graph-explorer/walkthrough.png)
+![The migration, wave by wave: step 1 of 4 in the Tours tab and the floating step bar](assets/graph-explorer/walkthrough.png)
 
-The **Walkthrough** tab offers three guided tours, built from the assessment's own data:
+The **Tours** tab offers three guided walkthroughs, built from the assessment's own data:
 
 - **The migration, wave by wave**: each wave of the plan, with its gate, then the table groups that move in it and why they move together.
 - **The busiest queries**: the queries with the most traffic, and why each landed on its engine.
 - **Why each engine**: each kept engine, its share of the workload, its monthly cost and its busiest tables.
 
 Each step sets the graph; from there it is yours to expand, fan out and filter before you take the next step, with the step bar under the graph or the step list in the panel. Closing a walkthrough keeps the graph as it is.
+
+## Questions
+
+![The Questions tab: a question's parameter, its result as a table, and the result drawn on the graph](assets/graph-explorer/questions.png)
+
+The **Questions** tab asks the job's context graph the fixed questions of the graph query catalog, the same ones `/explore` and `scripts/graph_query.py` ask: the busiest queries, which engines a table's queries go to, what a change to a table would touch, where a query came from, and so on. Each question is listed in plain words, by section, with a box to find one.
+
+Pick a question and its parameters appear as lists of the values this job's graph holds (a table, a query, an engine). When the graph holds more values than the list shows, the tab says so and you can type one; the server checks that it exists. **Run** asks the server, and the rows come back as a table, with how many there are and, when more matched than the question returns, that only the first ones are shown. An empty result says which pipeline stages left nothing for the question to read.
+
+**Show on graph** draws the result as a new start, each bundle collapsed as with any start. It starts from the result's tables, whose bundles carry their queries, and then from any of the result's queries those bundles do not carry; a result with only engines starts from its engines. At most 12 start points are read, and the tab says when the result had more. The result's own tables and engines are outlined in blue, and the links that carry its queries are drawn in blue; tables that come along only because a query joins them are not outlined. Kinds of node this view has no place for (risks, access patterns, decisions) are named under the button rather than drawn. If the graph reads fail, the tab says so and the graph stays as it was.
+
+The questions are fixed, read-only statements on the server: the tab never sends a query of its own, and there is no free-form query box. The catalog's API and its limits are described in [`src/api/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/api/README.md).
 
 ## Pinning and dragging
 
