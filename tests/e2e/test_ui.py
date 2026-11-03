@@ -1450,3 +1450,41 @@ def test_sankey_cache_label_clears_its_node_and_sub_label(
     # wordpress sample does, so the deterministic job is never vacuous).
     assert expected > 0 or all(not r.db.startswith("wordpress") for r in all_runs)
     assert len(checked) == expected, checked
+
+
+def test_results_page_lists_the_dynamodb_merge_review_decisions(
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
+) -> None:
+    """#1780: the results page shows ``facts.dynamodb_merge_reviews`` as both reports
+    print it: the title, the two sentences and each decision's line, and nothing when the
+    fact is absent. The deterministic suite builds a job whose DynamoDB design comes from
+    the group merge with an overlap left for review
+    (``designed_run.run_merge_review_wordpress``) into the UI's artifact root; an external
+    job is checked as it is, whichever case it is (e2e-llm runs this file without
+    deselecting deterministic tests, so it never skips, #1794)."""
+    if any(r.external for r in all_runs):
+        jobs = list(all_runs)
+    else:
+        from tests.e2e.designed_run import MERGE_REVIEW_COPY, run_merge_review_wordpress
+
+        jobs = [run_merge_review_wordpress(all_runs[0].artifact_root, "ui-merg")]
+        first = json.loads(jobs[0].report_json().read_text())["facts"]["dynamodb_merge_reviews"]
+        assert first["decisions"][0]["authoritative_home"] == "Posts", first
+        assert f"{MERGE_REVIEW_COPY} is a derived copy" in first["decisions"][0]["line"]
+    for r in jobs:
+        fact = json.loads(r.report_json().read_text())["facts"].get("dynamodb_merge_reviews")
+        page, ev = loaded_results(r)
+        callout = page.locator("#dynamodb-merge-reviews")
+        if not fact:
+            assert callout.count() == 0, r.job_id
+            continue
+        expect(callout).to_be_visible(timeout=READY_MS)
+
+        def figures(name: str, callout: Locator = callout) -> list[str]:
+            return [t.strip() for t in callout.locator(f'[data-figure="{name}"]').all_inner_texts()]
+
+        assert "DynamoDB merge-review decisions" in callout.inner_text(), r.job_id
+        assert figures("merge-review-summary") == [fact["summary_line"]], r.job_id
+        assert figures("merge-review-review") == [fact["review_line"]], r.job_id
+        assert figures("merge-review-decision") == [d["line"] for d in fact["decisions"]]
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)

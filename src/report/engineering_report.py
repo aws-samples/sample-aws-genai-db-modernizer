@@ -71,6 +71,7 @@ from .formatting import (
     price_list_text,
 )
 from .merge_conflicts import merge_conflicts_md
+from .merge_reviews import merge_reviews_md
 from .query_patterns import query_patterns_md
 from .query_traces import query_traces_md
 from .relational_gaps import heterogeneous_wave
@@ -1285,6 +1286,7 @@ def render_engineering_report_md(
     out += auto_decided_md(report)
     out += unservable_md(report)
     out += merge_conflicts_md(report)
+    out += merge_reviews_md(report)
     out += close_calls_md(report)
     out += _reroutes_md(report)
     out += _cache_layer_md(report)

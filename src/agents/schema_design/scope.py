@@ -54,6 +54,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, NamedTuple
 
+# The one table-key rule lives in src/shared (#1780); re-exported for this package.
+from src.shared.table_keys import normalize_table_name as normalize_table_name
 from src.storage.assignment_versioning import engine_scope
 
 SCOPE_PREFIX = "Out of scope for "
@@ -137,17 +139,6 @@ class ScopeReport(NamedTuple):
 
 
 EMPTY_REPORT = ScopeReport([], [])
-
-
-def normalize_table_name(name: str) -> str:
-    """Canonical table key: unquoted, lower-case, without any ``<db>.``/schema prefix.
-
-    ``wordpress.wp_posts``, ```WordPress`.`wp_posts```` and ``wp_posts`` all
-    normalise to ``wp_posts``, so designs and assignments match whether or not
-    either side spells the prefix.
-    """
-    cleaned = "".join(c for c in name if c not in '`"[]').strip().lower()
-    return cleaned.rsplit(".", 1)[-1].strip()
 
 
 def _values(item: dict, field: str) -> list[str]:

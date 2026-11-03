@@ -1,0 +1,95 @@
+{
+  "_comment": "#1780: a DynamoDB design summary (schema_designs.dynamodb) whose merge kept an authoritative home for two overlaps, the risk register's design-conflict risks, the facts.dynamodb_merge_reviews the facts layer computes from them, and the lines the engineering report and the results page print. tests/unit/report/test_merge_review_decisions.py checks the facts and the engineering report against it; DynamoDBMergeReviewsCallout.test.js checks the results page.",
+  "schema_design": {
+    "status": "completed",
+    "validation_passed": true,
+    "merge_reviews": [
+      {
+        "source_tables": [
+          "wp_posts"
+        ],
+        "authoritative_home": "WpPosts",
+        "derived_copies": [
+          "wp_posts"
+        ],
+        "reconstructed": false
+      },
+      {
+        "source_tables": [
+          "wp_comments",
+          "wp_commentmeta"
+        ],
+        "authoritative_home": "Comments",
+        "derived_copies": [
+          "CommentsByPost",
+          "comment_meta"
+        ],
+        "reconstructed": false
+      }
+    ]
+  },
+  "risks": [
+    {
+      "risk_id": "RISK-004",
+      "risk_type": "DATA_CONSISTENCY",
+      "severity": "MEDIUM",
+      "description": "[dynamodb] wp_posts modelled independently by design groups in WpPosts (group 1; PK=POST#{ID}), wp_posts (group 2; PK=post_name); the merge keeps WpPosts as the authoritative home (chosen by the statements its access patterns serve, then their design RPS) and wp_posts as a derived copy; review before migration.",
+      "affected_tables": [
+        "wp_posts"
+      ],
+      "mitigation": "Build the DynamoDB Streams consumer that keeps wp_posts in sync from WpPosts, the authoritative home, or move the access patterns on wp_posts onto a global secondary index of WpPosts."
+    },
+    {
+      "risk_id": "RISK-005",
+      "risk_type": "DATA_CONSISTENCY",
+      "severity": "MEDIUM",
+      "description": "[dynamodb] wp_comments, wp_commentmeta modelled independently by design groups in Comments (group 1; PK=COMMENT#{comment_ID}), CommentsByPost (group 3; PK=POST#{comment_post_ID}), comment_meta (group 4; PK=meta_id); the merge keeps Comments as the authoritative home (chosen by the statements its access patterns serve, then their design RPS) and CommentsByPost, comment_meta as derived copies; review before migration.",
+      "affected_tables": [
+        "wp_commentmeta",
+        "wp_comments"
+      ],
+      "mitigation": "Build the DynamoDB Streams consumer that keeps CommentsByPost and comment_meta in sync from Comments, the authoritative home, or move the access patterns on CommentsByPost and comment_meta onto a global secondary index of Comments."
+    }
+  ],
+  "title": "DynamoDB merge-review decisions",
+  "facts": {
+    "decisions": [
+      {
+        "source_tables": [
+          "wp_posts"
+        ],
+        "authoritative_home": "WpPosts",
+        "derived_copies": [
+          "wp_posts"
+        ],
+        "risk_id": "RISK-004",
+        "reconstructed": false,
+        "line": "wp_posts: the merge chose WpPosts as the authoritative home, which takes every write to it; wp_posts is a derived copy updated from the DynamoDB Streams of WpPosts (RISK-004)."
+      },
+      {
+        "source_tables": [
+          "wp_comments",
+          "wp_commentmeta"
+        ],
+        "authoritative_home": "Comments",
+        "derived_copies": [
+          "CommentsByPost",
+          "comment_meta"
+        ],
+        "risk_id": "RISK-005",
+        "reconstructed": false,
+        "line": "wp_comments, wp_commentmeta: the merge chose Comments as the authoritative home, which takes every write to them; CommentsByPost, comment_meta are derived copies updated from the DynamoDB Streams of Comments (RISK-005)."
+      }
+    ],
+    "decision_count": 2,
+    "source_table_count": 3,
+    "derived_copy_count": 3,
+    "reconstructed_count": 0,
+    "risk_ids": [
+      "RISK-004",
+      "RISK-005"
+    ],
+    "summary_line": "The DynamoDB group merge found 3 source tables modelled independently by more than one design group. It chose 2 authoritative homes, which take every write to those source tables, and kept 3 tables as derived copies updated from DynamoDB Streams.",
+    "review_line": "The merge chose each home by the statements its access patterns serve, then their design RPS. Review each choice before migration: reads on a derived copy are eventually consistent and can return rows older than the latest write."
+  }
+}

@@ -513,6 +513,7 @@
   "analysis-results.merge-conflicts.patterns-on-queries": "{{label}}: {{patterns}} on {{table}}; queries {{queries}}.",
   "analysis-results.merge-conflicts.none-named": "The merge names no access pattern this failure leaves unserved.",
   "analysis-results.merge-conflicts.not-recorded": "Unserved access patterns were not recorded for this design (it was merged before they were); merge it again to list them.",
+  "analysis-results.merge-reviews.header": "DynamoDB merge-review decisions",
   "analysis-results.unservable.header_one": "{{count}} query that cannot be served as designed",
   "analysis-results.unservable.header_other": "{{count}} queries that cannot be served as designed",
   "analysis-results.unservable.intro": "These queries cannot be served as designed on the engine they are on. The assessment does not bring back an engine it removed: keep each query where it is, or redesign it, then re-run.",

@@ -24,6 +24,10 @@ Version History:
   (UnresolvedMergeConflict): each group-merge failure with its access patterns and
   queries and a required ``status`` (unserved, at_risk, none_named, not_recorded); empty
   for a clean merge and in a design written before it, which still validates.
+- 1.5 (2026-11-03, #1780): Trade-offs are DynamoDBTradeOff: the group merge's overlap
+  review records optional ``authoritative_home`` and ``derived_copies`` (#1780), the
+  choice it made, so readers never rank the tables again. Backward compatible: None on a
+  review merged before.
 """
 
 from typing import Annotated, Literal
@@ -694,6 +698,28 @@ class UnresolvedMergeConflict(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class DynamoDBTradeOff(TradeOff):
+    """A DynamoDB design trade-off. The group merge's overlap review (``DynamoDB merge
+    review: ``, #333) also records the choice it made (#1780), so every reader states
+    the home the merge chose and never ranks the tables again."""
+
+    authoritative_home: str | None = Field(
+        None,
+        description=(
+            "Set by the group merge on its overlap review only: the target table that "
+            "takes every write to source_tables. None on any other trade-off, and on a "
+            "review merged before the field"
+        ),
+    )
+    derived_copies: list[str] | None = Field(
+        None,
+        description=(
+            "Set by the group merge on its overlap review only: the other target tables, "
+            "kept in sync from the authoritative home's DynamoDB Streams"
+        ),
+    )
+
+
 class DynamoDBModelOutputContract(BaseModel):
     """
     Output contract for the DynamoDB data modeling agent.
@@ -705,7 +731,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.4",
+        default="1.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -744,7 +770,9 @@ class DynamoDBModelOutputContract(BaseModel):
         ..., description="Capacity analysis per table/GSI at design RPS."
     )
 
-    trade_offs: list[TradeOff] = Field(..., min_length=1, description="Design trade-off decisions")
+    trade_offs: list[DynamoDBTradeOff] = Field(
+        ..., min_length=1, description="Design trade-off decisions"
+    )
     validation_passed: bool = Field(..., description="Whether all validation checks passed")
     validation_failures: list[str] = Field(
         default_factory=list, description="Validation check failures when validation_passed=false"

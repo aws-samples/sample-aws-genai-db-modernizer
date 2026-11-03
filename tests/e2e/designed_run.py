@@ -26,7 +26,10 @@ from collections.abc import Collection
 from pathlib import Path
 
 from src.agents.schema_design.design_trace import write_design_trace
+from src.agents.schema_design.dynamodb_merge import merge_overlaps, overlap_home
+from src.agents.schema_design.group_merger import merge_group_drafts
 from src.agents.schema_design.output_contract import cite_queries
+from src.agents.schema_design.pattern_input import complete_pattern_members
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
@@ -56,6 +59,90 @@ def run_partial_designed_wordpress(artifact_root: Path, job_id: str) -> Pipeline
     return run_designed_wordpress(
         artifact_root, job_id, dynamodb_leave_out=PARTIAL_LEAVE_OUT, dynamodb_extra=PARTIAL_EXTRA
     )
+
+
+def run_merge_review_wordpress(artifact_root: Path, job_id: str) -> PipelineResult:
+    """The designed job whose DynamoDB design comes from the group merge with an
+    overlap it leaves for review (#1780, ``write_merge_review_design``)."""
+    return run_designed_wordpress(artifact_root, job_id, merge_review=True)
+
+
+# #1780: the second group's home for wp_posts, keyed on a column the first group's
+# Posts table does not key on, so the merge cannot combine them.
+MERGE_REVIEW_COPY = "PostsByName"
+
+
+def write_merge_review_design(
+    store: LocalArtifactStore, db: str, job_id: str, version: int
+) -> dict[str, list[str]]:
+    """Replace the DynamoDB design with the group merge of two drafts that each give
+    ``wordpress.wp_posts`` its own home, then complete its query patterns (#1602); returns the home the merge
+    chose and the one ranking the completed patterns again would choose.
+
+    Group 1 is the designed job's design, with the Posts patterns of all but three of
+    its wp_posts queries left out; group 2 is ``MERGE_REVIEW_COPY``, serving the first
+    of them. The merge keeps Posts (two statements against one). Completing the query
+    pattern of group 2's statement with the left-out ones then gives the copy the most
+    statements, so a reader that ranked the homes again would name the copy (#1780's
+    review case); every deliverable must still state Posts.
+
+    It replays the merge-then-complete steps by hand (``merge_group_drafts``, then
+    ``complete_pattern_members``), not through ``run_schema_design.py --merge``'s write
+    path."""
+    base = f"{db}/{job_id}/schema-dynamodb/v{version}"
+    design = store.read_json(f"{base}/schema_output.json")
+    posts = next(t for t in design["table_definitions"] if t["source_tables"] == ["wp_posts"])
+    on_posts = [ap for ap in design["access_patterns"] if ap["table_name"] == posts["table_name"]]
+    queries = [str(ap["query_ids"][0]) for ap in on_posts]
+    assert len(queries) >= 5, queries
+    left_out = {queries[0], *queries[3:]}
+    group_1 = copy.deepcopy(design)
+    group_1["access_patterns"] = [
+        ap for ap in design["access_patterns"] if not set(ap["query_ids"]) & left_out
+    ]
+    by_name = {
+        **copy.deepcopy(posts),
+        "table_name": MERGE_REVIEW_COPY,
+        "partition_key": {"attribute_name": "post_name", "attribute_type": "S"},
+        "sort_key": None,
+        "attributes": [
+            {
+                **posts["attributes"][0],
+                "name": "post_name",
+                "type": "S",
+                "source_column": "post_name",
+            }
+        ],
+    }
+    group_2 = {
+        **copy.deepcopy(design),
+        "table_definitions": [by_name],
+        "access_patterns": [
+            {
+                **on_posts[0],
+                "pattern_id": "DDB-AP-1",
+                "table_name": MERGE_REVIEW_COPY,
+                "key_condition": "PK=post_name",
+            }
+        ],
+        "hot_partition_analysis": [],
+        "trade_offs": [
+            {"description": "Posts by name", "impact": "One read per post name."},
+        ],
+    }
+    merged = merge_group_drafts([group_1, group_2], "dynamodb")
+    completed, notes = complete_pattern_members(merged, [[queries[0], *queries[3:]]])
+    assert notes, "the completion added no statement"
+    [overlap] = merge_overlaps(completed)
+    unrecorded = {
+        k: v for k, v in overlap.items() if k not in ("authoritative_home", "derived_copies")
+    }
+    ranked = overlap_home(unrecorded, completed["access_patterns"])
+    chosen = overlap_home(overlap, completed["access_patterns"])
+    assert ranked is not None and chosen is not None and ranked[0] != chosen[0]
+    key = f"{base}/schema_output.json"
+    store.write_json(key, cite_queries(store, key, completed))
+    return {"chosen": [chosen[0], *chosen[1]], "ranked": [ranked[0], *ranked[1]]}
 
 
 def _bare(table: str) -> str:
@@ -382,10 +469,13 @@ def run_designed_wordpress(
     job_id: str,
     dynamodb_leave_out: Collection[str] = (),
     dynamodb_extra: Collection[str] = (),
+    merge_review: bool = False,
 ) -> PipelineResult:
     """The designed wordpress job; ``dynamodb_leave_out`` drops source tables from
     the DynamoDB design's table map and ``dynamodb_extra`` adds ones DynamoDB does
-    not serve (see ``write_dynamodb_design``)."""
+    not serve (see ``write_dynamodb_design``); ``merge_review`` replaces the DynamoDB
+    design with a group merge that leaves an overlap for review
+    (``write_merge_review_design``)."""
     result = run_pipeline("wordpress", artifact_root, job_id)
     store = LocalArtifactStore(base_dir=str(artifact_root))
     version = resolve_downstream_assignment_version(store, "wordpress", job_id)
@@ -393,6 +483,8 @@ def run_designed_wordpress(
         store, "wordpress", job_id, version, dynamodb_leave_out, dynamodb_extra
     )
     assert patterns > 0 or dynamodb_leave_out
+    if merge_review:
+        write_merge_review_design(store, "wordpress", job_id, version)
     write_elasticache_design(store, "wordpress", job_id, version)
     write_aurora_mysql_design(store, "wordpress", job_id, version)
     common = ["--job-id", job_id, "--db", "wordpress", "--artifact-root", str(artifact_root)]

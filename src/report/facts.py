@@ -25,6 +25,7 @@ from src.shared.report_facts import (
     compute_report_facts,
     cost_assumptions,
     dynamodb_merge_conflict_facts,
+    dynamodb_merge_review_facts,
     engine_served_split,
     engine_table_split_facts,
     map_split_facts,
@@ -97,6 +98,12 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             conflicts = dynamodb_merge_conflict_facts(report)
             if conflicts is not None:
                 missing["dynamodb_merge_conflicts"] = conflicts
+        if "dynamodb_merge_reviews" not in facts:
+            # A block written before #1780: the same function over schema_designs (such
+            # a report carries no ``merge_reviews``, so it reads back unchanged).
+            reviews = dynamodb_merge_review_facts(report)
+            if reviews is not None:
+                missing["dynamodb_merge_reviews"] = reviews
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:

@@ -16,6 +16,11 @@ both branches instead, or mark the test ``deterministic`` when it genuinely cann
 on an external job. ``find_violations(..., strict=False)`` keeps the narrower check (a
 skip reachable only when the job is external) for the tests of the guard itself.
 
+The marker only helps where the run deselects it. ``ci/e2e-llm.sh`` runs some files
+(``tests/e2e/test_ui.py``) with ``-m e2e`` alone, so every test there runs on the
+external job, marked or not: in those files (read from the script,
+:func:`undeselected_files`) the marker exempts nothing (#1794).
+
 It follows fixtures a test requests by name and calls to functions defined in the same
 module or in ``conftest.py``, transitively. It looks for a ``pytest.skip(...)`` reachable
 only when an ``if`` test mentioning ``external`` (an attribute, a name or a call such as
@@ -25,9 +30,16 @@ only when an ``if`` test mentioning ``external`` (an attribute, a name or a call
 from __future__ import annotations
 
 import ast
+import re
+import shlex
+from collections.abc import Collection
 from pathlib import Path
 
-E2E_DIR = Path(__file__).resolve().parents[3] / "tests" / "e2e"
+import pytest
+
+REPO = Path(__file__).resolve().parents[3]
+E2E_DIR = REPO / "tests" / "e2e"
+E2E_LLM = REPO / "ci" / "e2e-llm.sh"
 MARKER = "deterministic"
 
 Defs = dict[str, ast.FunctionDef | ast.AsyncFunctionDef]
@@ -142,17 +154,38 @@ def _args(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     return [x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)]
 
 
+def undeselected_files(script: str) -> set[str]:
+    """The ``tests/e2e`` files a ``uv run pytest`` line of ``script`` names explicitly and
+    runs without deselecting ``deterministic`` tests (no ``-m`` that says ``not
+    deterministic``): there, every test runs on the external job."""
+    files: set[str] = set()
+    for line in script.replace("\\\n", " ").splitlines():
+        if "uv run pytest" not in line:
+            continue
+        words = shlex.split(line.split("uv run pytest", 1)[1], comments=True)
+        named = [w for w in words if re.fullmatch(r"tests/e2e/test_\w+\.py", w)]
+        marks = [words[i + 1] for i, w in enumerate(words[:-1]) if w == "-m"]
+        if named and not any(f"not {MARKER}" in m for m in marks):
+            files.update(named)
+    return files
+
+
 def find_violations(
-    sources: dict[str, str], conftest: str | None = None, strict: bool = False
+    sources: dict[str, str],
+    conftest: str | None = None,
+    strict: bool = False,
+    unexempt: Collection[str] = (),
 ) -> list[str]:
-    """One message per unmarked test that can skip (strict: on any condition; else only
-    for an external run)."""
+    """One message per test that can skip and is not marked (strict: on any condition;
+    else only for an external run). In ``unexempt`` files the marker exempts nothing:
+    the e2e-llm run does not deselect it there."""
     skips = _all_skips if strict else _external_skips
     conf_defs: Defs = _functions(ast.parse(conftest)) if conftest else {}
     problems: list[str] = []
     for name, source in sources.items():
         tree = ast.parse(source)
-        if _module_marked(tree):
+        exempting = name not in unexempt
+        if exempting and _module_marked(tree):
             continue
         defs = _functions(tree)
         class_marked = {
@@ -164,16 +197,22 @@ def find_violations(
         for fn in defs.values():
             if not fn.name.startswith("test_") or _is_fixture(fn):
                 continue
-            if any(_is_marker(d) for d in fn.decorator_list) or class_marked.get(id(fn)):
+            marked = any(_is_marker(d) for d in fn.decorator_list) or class_marked.get(id(fn))
+            if exempting and marked:
                 continue
+            why = (
+                "is not marked deterministic"
+                if exempting
+                else "runs on the external job marked or not (ci/e2e-llm.sh does not "
+                "deselect deterministic tests in this file)"
+            )
             seen: set[str] = set()
             todo = [(fn, name)]
             while todo:
                 cur, where = todo.pop()
                 for line in skips(cur.body):
                     problems.append(
-                        f"{where}:{line}: {fn.name} can pytest.skip "
-                        f"(via {cur.name}) but is not marked deterministic"
+                        f"{where}:{line}: {fn.name} can pytest.skip " f"(via {cur.name}) but {why}"
                     )
                 for call in (n for n in ast.walk(cur) if isinstance(n, ast.Call)):
                     if not isinstance(call.func, ast.Name):
@@ -198,9 +237,12 @@ def find_violations(
 def _scan() -> list[str]:
     sources = {f"tests/e2e/{p.name}": p.read_text() for p in sorted(E2E_DIR.glob("test_*.py"))}
     conftest = (E2E_DIR / "conftest.py").read_text()
-    return find_violations(sources, conftest, strict=True)
+    return find_violations(
+        sources, conftest, strict=True, unexempt=undeselected_files(E2E_LLM.read_text())
+    )
 
 
+@pytest.mark.passes_on_main  # the guard is this file: its fix runs on main's code too
 def test_unmarked_e2e_tests_never_reach_a_skip() -> None:
     problems = _scan()
     assert not problems, (
@@ -209,7 +251,8 @@ def test_unmarked_e2e_tests_never_reach_a_skip() -> None:
         + "\n  ".join(problems)
         + "\nFix: assert both branches instead of skipping, or add "
         "@pytest.mark.deterministic (or `pytestmark = pytest.mark.deterministic`) when the "
-        "test genuinely cannot run on an external job."
+        "test genuinely cannot run on an external job. In a file the e2e-llm run does not "
+        "deselect the marker in (tests/e2e/test_ui.py), only asserting both branches works."
     )
 
 
@@ -333,3 +376,41 @@ def test_strict_guard_follows_fixtures_and_helpers_and_flags_an_unconditional_sk
     plain = "import pytest\ndef test_l():\n    pytest.skip('x')\n"
     assert len(find_violations({"m.py": helper}, strict=True)) == 1
     assert len(find_violations({"m.py": plain}, strict=True)) == 1
+
+
+@pytest.mark.passes_on_main  # the guard is this file: its fix runs on main's code too
+def test_the_ui_step_runs_test_ui_without_deselecting_deterministic_tests() -> None:
+    """#1794: the e2e-llm UI step runs tests/e2e/test_ui.py with ``-m e2e`` alone; the
+    reports step deselects the marker and names no file."""
+    assert undeselected_files(E2E_LLM.read_text()) == {"tests/e2e/test_ui.py"}
+    script = (
+        'uv run pytest tests/e2e -m "e2e and not deterministic" --fail-on-skip\n'
+        "uv run pytest tests/e2e/test_ui.py -m e2e --fail-on-skip --browser chromium\n"
+        'uv run pytest tests/e2e/test_a.py -m "e2e and not deterministic"\n'
+    )
+    assert undeselected_files(script) == {"tests/e2e/test_ui.py"}
+
+
+# The #1794 shape: a marked browser test in test_ui.py whose fixture-free body skips on
+# an external job, so the e2e-llm UI step (which does not deselect it) fails on it.
+_UI_1794 = """
+import pytest
+
+@pytest.mark.deterministic
+def test_results_page_lists_it(loaded_results, all_runs):
+    if any(r.external for r in all_runs):
+        pytest.skip("external-job mode: no deterministic designed run")
+"""
+
+
+@pytest.mark.passes_on_main  # the guard is this file: its fix runs on main's code too
+def test_a_marker_exempts_nothing_in_a_file_the_run_does_not_deselect_it_in() -> None:
+    ui = "tests/e2e/test_ui.py"
+    assert find_violations({ui: _UI_1794}, strict=True) == []
+    [problem] = find_violations({ui: _UI_1794}, strict=True, unexempt={ui})
+    assert "runs on the external job marked or not" in problem
+    module = "pytestmark = pytest.mark.deterministic\n" + _UI_1794.replace(
+        "@pytest.mark.deterministic\n", ""
+    )
+    assert len(find_violations({ui: module}, strict=True, unexempt={ui})) == 1
+    assert find_violations({"tests/e2e/test_x.py": _UI_1794}, strict=True, unexempt={ui}) == []

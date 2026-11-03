@@ -15442,6 +15442,41 @@
           "items": {
             "kind": "object",
             "properties": {
+              "authoritative_home": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "derived_copies": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "engine": {
                 "required": false,
                 "schema": {
@@ -15615,8 +15650,8 @@
         }
       }
     },
-    "schema_hash": "e5a71d850b2da41bf3b29655b776bfb20f0cb50f37e6a24434231a22ee342c56",
-    "version": "1.4"
+    "schema_hash": "13798ea8218380ad26340bfd675b4b92a462ed326d99bb9f7fa4aac3ad74d96f",
+    "version": "1.5"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {
@@ -24300,6 +24335,147 @@
                     ]
                   }
                 },
+                "dynamodb_merge_reviews": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "decision_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "decisions": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "authoritative_home": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "derived_copies": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "line": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "reconstructed": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "risk_id": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "source_tables": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "derived_copy_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "reconstructed_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "review_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "risk_ids": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "source_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "summary_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "engine_cost_total_usd": {
                   "required": false,
                   "schema": {
@@ -31661,8 +31837,8 @@
         }
       }
     },
-    "schema_hash": "3f243156811a3e26bbc4e25d0bdba3f664029283ac987d0e2c0f3fed2a799c70",
-    "version": "1.72"
+    "schema_hash": "cf81bcdd8ed34124b0a8766ba5745ba1391ebcca2ed53af64e3f231edafc684a",
+    "version": "1.73"
   },
   "transformation_contract.StepContract": {
     "fields": {

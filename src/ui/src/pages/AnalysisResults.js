@@ -50,6 +50,7 @@ import useGraphExplorerFlag from "../hooks/useGraphExplorerFlag";
 import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import DynamoDBMergeConflictsCallout from "../components/DynamoDBMergeConflictsCallout";
+import DynamoDBMergeReviewsCallout from "../components/DynamoDBMergeReviewsCallout";
 import NoOpenRisksNote from "../components/NoOpenRisksNote";
 import PinRuleNote from "../components/PinRuleNote";
 import NoOpenRisksSection from "../components/NoOpenRisksSection";
@@ -2092,6 +2093,11 @@ const AnalysisResultsPage = memo(() => {
             {/* DynamoDB merge conflicts (#802): the access patterns the merged
                 design does not serve, as both reports state them. */}
             <DynamoDBMergeConflictsCallout synthesis={resultsData?.synthesis} t={t} />
+
+            {/* DynamoDB merge-review decisions (#1780): the authoritative home the
+                merge chose for each overlap and its derived copies, as both reports
+                state them. */}
+            <DynamoDBMergeReviewsCallout synthesis={resultsData?.synthesis} t={t} />
 
             {/* Close calls (#730): queries a kept engine could serve almost
                 as well, with the way into each one's decision trace and the
