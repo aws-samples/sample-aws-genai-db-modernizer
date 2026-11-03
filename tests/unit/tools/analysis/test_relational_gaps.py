@@ -17,7 +17,15 @@ from typing import Any
 
 import pytest
 
-from src.shared.catalog.gaps import GAP_IMPACTS, SOURCE_ENGINES, GapRule, gap_rules
+from src.shared.catalog.gaps import (
+    GAP_IMPACTS,
+    SOURCE_ENGINES,
+    AuroraExtensionLines,
+    GapRule,
+    aurora_extension_lines,
+    extension_version,
+    gap_rules,
+)
 from src.tools.analysis.relational_gaps import detect_relational_gaps, normalized_data_type
 
 VERSIONS = {"mysql": "8.0.36", "mariadb": "10.6.12", "postgresql": "16.4"}
@@ -32,11 +40,15 @@ def _collector(
     procedures: list[dict[str, Any]] | None = None,
     triggers: list[dict[str, Any]] | None = None,
     views: list[dict[str, Any]] | None = None,
+    extensions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if version is None:
         version = VERSIONS.get(engine, "15.0.4322.2")
+    metadata: dict[str, Any] = {"source_database": {"engine": engine, "version": version}}
+    if extensions is not None:
+        metadata["extensions"] = extensions
     return {
-        "metadata": {"source_database": {"engine": engine, "version": version}},
+        "metadata": metadata,
         "database_schema": {
             "tables": tables or [_table("db.t")],
             "procedures": procedures or [],
@@ -191,6 +203,25 @@ CASES: dict[str, tuple[str, str, dict[str, Any], dict[str, Any] | None]] = {
         "aurora_postgresql",
         {"queries": ["SELECT create_distributed_table('events', 'tenant_id')"]},
         {"queries": ["SELECT 'create_distributed_table(x)' AS note"]},
+    ),
+    # #1078: the installed extensions against the ones Aurora PostgreSQL offers.
+    "postgresql-extension-not-offered": (
+        "postgresql",
+        "aurora_postgresql",
+        {"extensions": [{"name": "plpgsql", "version": "1.0"}, {"name": "acme_geo"}]},
+        {"extensions": [{"name": "plpgsql", "version": "1.0"}, {"name": "hstore"}]},
+    ),
+    "postgresql-extension-newer-than-offered": (
+        "postgresql",
+        "aurora_postgresql",
+        {"extensions": [{"name": "vector", "version": "99.0.0"}]},
+        {"extensions": [{"name": "vector", "version": "0.5.1"}]},
+    ),
+    "postgresql-extension-on-a-later-version": (
+        "postgresql",
+        "aurora_postgresql",
+        {"version": "14.12", "extensions": [{"name": "roaringbitmap", "version": "0.5.4"}]},
+        {"version": "18.1", "extensions": [{"name": "roaringbitmap", "version": "0.5.4"}]},
     ),
     "postgresql-server-file-access": (
         "postgresql",
@@ -901,11 +932,13 @@ def test_a_routine_or_view_definition_is_read_too() -> None:
     )
     result = detect_relational_gaps(collector, "aurora_postgresql")
     assert _gap(result, "sqlserver-date-functions")["objects"] == [
-        {"kind": "procedure", "id": "usp_Tidy"}
+        {"kind": "procedure", "id": "usp_Tidy", "note": None}
     ]
-    assert _gap(result, "sqlserver-top-clause")["objects"] == [{"kind": "view", "id": "v_recent"}]
+    assert _gap(result, "sqlserver-top-clause")["objects"] == [
+        {"kind": "view", "id": "v_recent", "note": None}
+    ]
     identity = _gap(result, "sqlserver-identity-functions")
-    assert identity["objects"] == [{"kind": "trigger", "id": "trg_S"}]
+    assert identity["objects"] == [{"kind": "trigger", "id": "trg_S", "note": None}]
     assert identity["tables"] == ["db.s"]
 
 
@@ -994,7 +1027,7 @@ def test_column_evidence_names_the_column_and_its_table() -> None:
     collector = _collector("oracle", tables=[_table("db.t", types=("int", "DATE"))])
     gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "oracle-date-type")
     assert gap["tables"] == ["db.t"]
-    assert gap["objects"] == [{"kind": "column", "id": "db.t.c1"}]
+    assert gap["objects"] == [{"kind": "column", "id": "db.t.c1", "note": None}]
 
 
 def test_the_source_dialect_decides_what_is_a_comment() -> None:
@@ -1251,7 +1284,7 @@ def test_the_extensions_installed_c_function_is_evidence() -> None:
     }
     collector = _collector("postgresql", procedures=[installed])
     gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "postgresql-timescaledb")
-    assert gap["objects"] == [{"kind": "function", "id": "create_hypertable"}]
+    assert gap["objects"] == [{"kind": "function", "id": "create_hypertable", "note": None}]
     # A user's plpgsql function of the same name is not the extension.
     user = _collector("postgresql", procedures=[_user_fn("create_hypertable", "app")])
     assert "postgresql-timescaledb" not in _ids(detect_relational_gaps(user, "aurora_postgresql"))
@@ -1347,7 +1380,7 @@ def test_a_quoted_span_in_a_routine_counts_as_its_evidence() -> None:
     gap = _gap(
         detect_relational_gaps(collector, "aurora_mysql"), "postgresql-double-quoted-identifiers"
     )
-    assert gap["objects"] == [{"kind": "function", "id": "f"}]
+    assert gap["objects"] == [{"kind": "function", "id": "f", "note": None}]
 
 
 @pytest.mark.parametrize(
@@ -1398,7 +1431,10 @@ def test_column_rules_name_the_column_and_its_table() -> None:
     result = detect_relational_gaps(_collector("mysql", tables=tables), "aurora_postgresql")
     for rule_id in ("mysql-auto-increment-columns", "mysql-mixed-case-identifiers"):
         gap = _gap(result, rule_id)
-        assert (gap["tables"], gap["objects"]) == (["db.a"], [{"kind": "column", "id": "db.a.ID"}])
+        assert (gap["tables"], gap["objects"]) == (
+            ["db.a"],
+            [{"kind": "column", "id": "db.a.ID", "note": None}],
+        )
 
 
 def test_a_table_name_with_capitals_is_evidence_with_no_column() -> None:
@@ -1447,9 +1483,9 @@ def test_objects_outside_the_public_schema_are_evidence() -> None:
     gap = _gap(detect_relational_gaps(collector, "aurora_mysql"), "postgresql-schemas-to-mysql")
     assert gap["tables"] == ["db.app.t"]
     assert gap["objects"] == [
-        {"kind": "function", "id": "fn.f"},
-        {"kind": "trigger", "id": "trg"},
-        {"kind": "view", "id": "rpt.v"},
+        {"kind": "function", "id": "fn.f", "note": None},
+        {"kind": "trigger", "id": "trg", "note": None},
+        {"kind": "view", "id": "rpt.v", "note": None},
     ]
 
 
@@ -1490,7 +1526,7 @@ def test_procedural_language_routines_count(language: str) -> None:
     gap = _gap(
         detect_relational_gaps(collector, "aurora_mysql"), "postgresql-plpgsql-routines-to-mysql"
     )
-    assert gap["objects"] == [{"kind": "function", "id": "f"}]
+    assert gap["objects"] == [{"kind": "function", "id": "f", "note": None}]
 
 
 @pytest.mark.parametrize(
@@ -1568,3 +1604,281 @@ def test_postgresql_session_settings_set_plainly(sql: str, hit: bool) -> None:
 def test_the_regex_operator_only_between_operands(sql: str, hit: bool) -> None:
     result = detect_relational_gaps(_collector("postgresql", queries=[sql]), "aurora_mysql")
     assert ("postgresql-regex-operators" in _ids(result)) is hit
+
+
+# -- installed extensions against the ones Aurora PostgreSQL offers (#1078) -------------
+
+_NOT_OFFERED = "postgresql-extension-not-offered"
+_NEWER = "postgresql-extension-newer-than-offered"
+_LATER = "postgresql-extension-on-a-later-version"
+
+
+def _extension_gaps(
+    extensions: list[dict[str, Any]] | None, version: str = "16.4", **kwargs: Any
+) -> dict[str, dict[str, Any]]:
+    collector = _collector("postgresql", version=version, extensions=extensions)
+    result = detect_relational_gaps(collector, "aurora_postgresql", **kwargs) or {}
+    return {g["rule_id"]: g for g in result.get("gaps", [])}
+
+
+def _extension_ids(gap: dict[str, Any] | None) -> list[str]:
+    return [o["id"] for o in (gap or {}).get("objects", []) if o["kind"] == "extension"]
+
+
+def test_extensions_aurora_postgresql_offers_raise_no_gap() -> None:
+    gaps = _extension_gaps(
+        [
+            {"name": "plpgsql", "version": "1.0"},
+            {"name": "hstore", "version": "1.8"},
+            {"name": "pg_trgm", "version": "1.6"},
+            {"name": "citext", "version": "1.6"},
+            {"name": "unaccent", "version": "1.1"},
+            {"name": "vector", "version": "0.8.0"},
+            {"name": "postgis", "version": "3.4.2"},
+        ]
+    )
+    assert _NOT_OFFERED not in gaps and _NEWER not in gaps
+
+
+def test_an_unknown_extension_blocks_the_move_and_is_named() -> None:
+    gaps = _extension_gaps(
+        [{"name": "hstore", "version": "1.8"}, {"name": "acme_geo", "version": "2.1"}]
+    )
+    gap = gaps[_NOT_OFFERED]
+    assert gap["impact"] == "blocks_move"
+    assert gap["objects"] == [{"kind": "extension", "id": "acme_geo", "note": None}]
+    assert gap["tables"] == [] and gap["queries"] == []
+
+
+def test_an_extension_name_compares_case_insensitively() -> None:
+    assert _NOT_OFFERED not in _extension_gaps([{"name": "HStore", "version": "1.8"}])
+
+
+@pytest.mark.parametrize(
+    ("name", "rule_id"), [("timescaledb", "postgresql-timescaledb"), ("citus", "postgresql-citus")]
+)
+def test_an_extension_with_a_rule_of_its_own_is_raised_by_that_rule_only(
+    name: str, rule_id: str
+) -> None:
+    """TimescaleDB and Citus have their own rules and reasons: the installed extension is
+    their evidence, and the generic rule does not list it a second time."""
+    gaps = _extension_gaps([{"name": name, "version": "2.14.2"}])
+    assert _extension_ids(gaps.get(rule_id)) == [name]
+    assert _NOT_OFFERED not in gaps
+
+
+@pytest.mark.parametrize("extensions", [None, []])
+def test_no_extension_list_or_an_empty_one_raises_no_extension_gap(
+    extensions: list[dict[str, Any]] | None,
+) -> None:
+    gaps = _extension_gaps(extensions)
+    assert _NOT_OFFERED not in gaps and _NEWER not in gaps
+
+
+def test_an_older_collection_with_no_extension_list_finds_what_it_found_before() -> None:
+    """The extension rules add nothing to a collection written before #1078."""
+    old = _collector("postgresql", queries=["SELECT time_bucket('5 minutes', ts) FROM m"])
+    result = detect_relational_gaps(old, "aurora_postgresql") or {}
+    assert _ids(result) == {"postgresql-timescaledb"}
+
+
+@pytest.mark.parametrize(
+    ("installed", "hit"),
+    [
+        ("99.0.0", True),
+        ("0.8.2", False),  # the newest Aurora PostgreSQL offers
+        ("0.8.2.0", False),  # trailing zeros are equal: 0.8.2.0 is 0.8.2
+        ("0.5.1", False),
+        ("0.8.2.1", True),
+        ("0.10", True),  # 0.10 is above 0.8.2, number by number
+        (None, False),  # no version: nothing to compare
+        ("dev", False),  # not a version number
+        ("", False),
+    ],
+)
+def test_an_extension_newer_than_aurora_offers(installed: str | None, hit: bool) -> None:
+    gaps = _extension_gaps([{"name": "vector", "version": installed}])
+    assert (_NEWER in gaps) is hit
+    if hit:
+        assert gaps[_NEWER]["impact"] == "behaves_differently"
+        assert _extension_ids(gaps[_NEWER]) == ["vector"]
+    assert _NOT_OFFERED not in gaps
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "order"),
+    [
+        ("1.0", "1", 0),
+        ("18.0", "18", 0),
+        ("1.2.0.0", "1.2", 0),
+        ("1.2.3", "1.10", -1),
+        ("1.10", "1.9", 1),
+        ("0", "0.0", 0),
+    ],
+)
+def test_extension_versions_compare_number_by_number_ignoring_trailing_zeros(
+    a: str, b: str, order: int
+) -> None:
+    left, right = extension_version(a), extension_version(b)
+    assert left is not None and right is not None
+    assert (left > right) - (left < right) == order
+
+
+def test_pgaudit_18_0_is_not_newer_than_the_catalogs_18() -> None:
+    """The review's case: the catalog lists pgaudit 18 on line 18."""
+    gaps = _extension_gaps([{"name": "pgaudit", "version": "18.0"}], version="18.1")
+    assert _NEWER not in gaps and _LATER not in gaps
+
+
+@pytest.mark.parametrize(
+    "name", ["seg", "pg_stat_statements", "btree_gist", "amcheck", "pg_buffercache"]
+)
+@pytest.mark.parametrize("version", ["14.12", "16.4", "18.1"])
+def test_a_module_that_ships_with_postgresql_is_never_newer_than_offered(
+    name: str, version: str
+) -> None:
+    """Its version follows the server's line, whatever the public list says (#1078)."""
+    gaps = _extension_gaps([{"name": name, "version": "99.9"}], version=version)
+    assert _NEWER not in gaps and _LATER not in gaps and _NOT_OFFERED not in gaps
+
+
+def test_a_server_module_aurora_does_not_offer_is_still_not_offered() -> None:
+    """Only the version check is skipped: the name must still be on the list."""
+    gaps = _extension_gaps([{"name": "pg_surgery", "version": "1.0"}], version="16.4")
+    assert _extension_ids(gaps.get(_NOT_OFFERED)) == ["pg_surgery"]
+
+
+def test_the_server_modules_are_the_postgresql_supplied_ones() -> None:
+    modules = aurora_extension_lines()["aurora_postgresql"].server_modules
+    assert {"seg", "pg_stat_statements", "btree_gist", "amcheck", "pg_buffercache"} <= set(modules)
+    # Extensions maintained outside PostgreSQL keep their version check.
+    assert not {"vector", "postgis", "pgaudit", "pg_cron", "roaringbitmap"} & set(modules)
+
+
+def test_the_reviewers_case_needs_a_later_line_for_roaringbitmap() -> None:
+    """A PostgreSQL 14 source with seg 1.4 and roaringbitmap: only Aurora PostgreSQL 18
+    offers roaringbitmap, so the move needs a major version upgrade to 18."""
+    gaps = _extension_gaps(
+        [{"name": "seg", "version": "1.4"}, {"name": "roaringbitmap", "version": "0.5.4"}],
+        version="14.12",
+    )
+    assert _NOT_OFFERED not in gaps and _NEWER not in gaps
+    gap = gaps[_LATER]
+    assert gap["objects"] == [
+        {"kind": "extension", "id": "roaringbitmap", "note": "offered from Aurora PostgreSQL 18"}
+    ]
+
+
+def _lines(**by_line: dict[str, str]) -> AuroraExtensionLines:
+    return AuroraExtensionLines.model_validate(
+        {
+            "source_engines": ["postgresql"],
+            "docs": "Extension versions for Amazon Aurora PostgreSQL",
+            "retrieved_on": "2026-11-03",
+            "server_modules": ["s"],
+            "server_modules_docs": "PostgreSQL documentation, Additional Supplied Modules",
+            "lines": {
+                line: {"newest_release": f"{line}.1", "extensions": exts}
+                for line, exts in by_line.items()
+            },
+        }
+    )
+
+
+# x is offered on 14 only, y on 18 only, z on every line at a version per line, and s
+# (a server module) at 1.0 on 14 and 18.
+_PER_LINE = {
+    "14": {"x": "1.0", "z": "1.0", "s": "1.0"},
+    "16": {"z": "2.0"},
+    "18": {"y": "1.0", "z": "3.0", "s": "1.0"},
+}
+
+
+@pytest.mark.parametrize(
+    ("source", "installed", "not_offered", "newer", "later"),
+    [
+        # A source on a line stays there when its line offers every extension.
+        ("14.5", [("x", "1.0"), ("z", "1.0")], [], [], []),
+        # The lowest later line that offers every one of them is a version upgrade.
+        ("16.4", [("y", "1.0")], [], [], [("y", "18")]),
+        ("16.4", [("z", "2.5")], [], [], [("z", "18")]),
+        ("14.5", [("y", "1.0"), ("z", "2.0")], [], [], [("y", "18"), ("z", "18")]),
+        # Each extension is cleared by one line for all of them, never one line each:
+        # no line offers x with y, so each is flagged against the source's own line.
+        ("14.5", [("x", "1.0"), ("y", "1.0")], ["y"], [], []),
+        ("16.4", [("x", "1.0"), ("y", "1.0")], ["x", "y"], [], []),
+        ("16.4", [("x", "1.0")], ["x"], [], []),
+        ("18.1", [("z", "3.5")], [], ["z"], []),
+        ("18.1", [("z", "3.0.0")], [], [], []),
+        # A server module's version is not compared, its name is.
+        ("14.5", [("s", "9.0")], [], [], []),
+        ("16.4", [("s", "1.0")], [], [], [("s", "18")]),
+        ("14.5", [("x", "1.0"), ("y", "1.0"), ("s", "9.0")], ["y"], [], []),
+        # A source older than every line may move to any of them.
+        ("12.18", [("x", "1.0"), ("y", "1.0")], [], [], []),
+        ("12.18", [("z", "3.0")], [], [], []),
+        ("12.18", [("w", "1.0")], ["w"], [], []),
+        # A source newer than every line moves to the newest.
+        ("19.0", [("x", "1.0")], ["x"], [], []),
+        ("19.0", [("z", "3.0")], [], [], []),
+        # An unknown version: any line counts.
+        ("", [("x", "1.0"), ("y", "1.0")], [], [], []),
+        ("", [("w", "1.0")], ["w"], [], []),
+    ],
+)
+def test_the_line_the_source_moves_to_offers_every_extension(
+    source: str,
+    installed: list[tuple[str, str]],
+    not_offered: list[str],
+    newer: list[str],
+    later: list[tuple[str, str]],
+) -> None:
+    gaps = _extension_gaps(
+        [{"name": n, "version": v} for n, v in installed],
+        version=source,
+        extension_lines={"aurora_postgresql": _lines(**_PER_LINE)},
+    )
+    assert _extension_ids(gaps.get(_NOT_OFFERED)) == not_offered
+    assert _extension_ids(gaps.get(_NEWER)) == newer
+    assert [
+        (o["id"], o["note"].rsplit(" ", 1)[-1]) for o in (gaps.get(_LATER) or {}).get("objects", [])
+    ] == later
+    if later:
+        assert gaps[_LATER]["impact"] == "behaves_differently"
+
+
+@pytest.mark.parametrize(
+    ("engine", "kwargs"),
+    [
+        # Gaps with object evidence and no note (a routine, a column) ...
+        (
+            "postgresql",
+            {
+                "procedures": [
+                    {
+                        "procedure_id": "app.f",
+                        "procedure_name": "f",
+                        "procedure_type": "FUNCTION",
+                        "language": "plpython3u",
+                    }
+                ]
+            },
+        ),
+        ("sqlserver", {"tables": [_table("db.t", types=("money", "datetime"))]}),
+        # ... and an extension gap with a note.
+        (
+            "postgresql",
+            {"version": "14.12", "extensions": [{"name": "roaringbitmap", "version": "0.5.4"}]},
+        ),
+    ],
+)
+def test_the_gap_facts_are_what_report_json_stores(engine: str, kwargs: dict[str, Any]) -> None:
+    """ADR-032: report.json stores ``facts.relational_gaps`` through the synthesis
+    contract, and the facts layer recomputes it from the detector. The detector's output
+    is therefore its own round trip through ``RelationalGapFacts``: every field the
+    contract dumps (an object's ``note`` included, None when it has none) is there."""
+    from src.contracts.synthesis_output import RelationalGapFacts
+
+    result = detect_relational_gaps(_collector(engine, **kwargs), "aurora_postgresql")
+    assert result is not None and any(g["objects"] for g in result["gaps"])
+    assert RelationalGapFacts.model_validate(result).model_dump(mode="json") == result

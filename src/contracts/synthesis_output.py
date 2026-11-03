@@ -577,6 +577,9 @@ Version History:
   the design trade-offs grouped by engine and topic, then the ``warning`` and
   ``review_note`` groups, each with its label, ``trade_off_count`` and positions, so the
   engineering report and the results page list repeated trade-offs together.
+- 1.75 (2026-11-04, #1078): Added the ``extension`` value to ``GapObject.kind``: a
+  relational-move gap can name an installed extension as its evidence; and optional
+  ``GapObject.note`` (the Aurora PostgreSQL version an extension is offered from).
 """
 
 from datetime import datetime
@@ -2268,8 +2271,18 @@ GapImpactLevel = Literal["blocks_move", "needs_rewrite", "behaves_differently", 
 class GapObject(BaseModel):
     """A schema object a relational-move gap was found in (#471)."""
 
-    kind: Literal["column", "view", "procedure", "function", "trigger"]
-    id: str = Field(..., description="The object id; a column is <table_id>.<column_name>")
+    kind: Literal["column", "view", "procedure", "function", "trigger", "extension"]
+    id: str = Field(
+        ...,
+        description="The object id; a column is <table_id>.<column_name>, an extension its name",
+    )
+    note: str | None = Field(
+        None,
+        description=(
+            "What the gap says about this object beyond its id: the Aurora PostgreSQL "
+            "version an extension is offered from (#1078)"
+        ),
+    )
 
 
 class RelationalGap(BaseModel):
@@ -2283,7 +2296,8 @@ class RelationalGap(BaseModel):
     tables: list[str] = Field(default_factory=list, description="Table ids it touches")
     queries: list[str] = Field(default_factory=list, description="Query ids it was found in")
     objects: list[GapObject] = Field(
-        default_factory=list, description="Columns, views, routines and triggers it was found in"
+        default_factory=list,
+        description="Columns, views, routines, triggers and extensions it was found in",
     )
 
 
@@ -2774,7 +2788,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.74",
+        default="1.75",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

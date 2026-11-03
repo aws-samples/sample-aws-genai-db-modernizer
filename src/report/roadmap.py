@@ -386,12 +386,16 @@ def _evidence_md(gap: dict[str, Any], cap: int = 8) -> str:
     queries = [str(q) for q in gap.get("queries") or []]
     if queries:
         parts.append(f"{plural_noun(len(queries), 'query', 'queries')} {names(queries)}")
-    by_kind: dict[str, list[str]] = {}
+    by_kind: dict[str, list[tuple[str, str]]] = {}
     for o in gap.get("objects") or []:
         if isinstance(o, dict) and o.get("id"):
-            by_kind.setdefault(str(o.get("kind") or "object"), []).append(str(o["id"]))
-    for kind, ids in by_kind.items():
-        parts.append(f"{plural_noun(len(ids), kind)} {names(ids)}")
+            # #1078: an object's note follows its name (an extension's later line).
+            note = f" ({escaping.md_text(o['note'])})" if o.get("note") else ""
+            by_kind.setdefault(str(o.get("kind") or "object"), []).append((str(o["id"]), note))
+    for kind, items in by_kind.items():
+        shown = ", ".join(f"`{escaping.md_code(x)}`{note}" for x, note in items[:cap])
+        more = f" (+{len(items) - cap} more)" if len(items) > cap else ""
+        parts.append(f"{plural_noun(len(items), kind)} {shown}{more}")
     return f" Found in: {'; '.join(parts)}" if parts else ""
 
 

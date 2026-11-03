@@ -7,7 +7,9 @@ One ``src/catalog/gaps/<rule_id>.toml`` per rule says, in one place, which sourc
 and target Aurora engines it applies to, what it looks for in the collection, how much it
 matters for the relational move (``impact``) and why, citing the public AWS documentation
 it rests on. ``src/catalog/aurora_versions.toml`` lists, per Aurora engine, the major
-version lines a homogeneous source is compared against. This module loads both into
+version lines a homogeneous source is compared against, and
+``src/catalog/aurora_postgresql_extensions.toml`` the extensions Aurora PostgreSQL offers
+on each of those lines (#1078). This module loads all three into
 strict Pydantic models (an unknown, missing or mistyped field fails at load time); the
 detector (:mod:`src.tools.analysis.relational_gaps`) only reads them, so no rule lives
 in code.
@@ -38,6 +40,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from datetime import date
 from functools import cache
 from pathlib import Path
 from typing import Literal
@@ -48,19 +51,26 @@ from src.contracts.collector_output import IndexType
 from src.shared.catalog.engines import CatalogError
 
 __all__ = [
+    "AURORA_EXTENSIONS_FILE",
     "AURORA_TARGETS",
     "AURORA_VERSIONS_FILE",
     "GAPS_DIR",
     "GAP_IMPACTS",
     "GAP_IMPACT_LABELS",
     "SOURCE_ENGINES",
+    "AuroraExtensionLine",
+    "AuroraExtensionLines",
     "AuroraVersionLines",
+    "ExtensionCheck",
     "GapImpact",
     "GapMatch",
     "GapRule",
     "INDEX_TYPES",
+    "aurora_extension_lines",
     "aurora_version_lines",
+    "extension_version",
     "gap_rules",
+    "load_aurora_extensions",
     "load_aurora_versions",
     "load_gap_rules",
     "parse_version_line",
@@ -69,6 +79,7 @@ __all__ = [
 _CATALOG = Path(__file__).resolve().parents[2] / "catalog"
 GAPS_DIR = _CATALOG / "gaps"
 AURORA_VERSIONS_FILE = _CATALOG / "aurora_versions.toml"
+AURORA_EXTENSIONS_FILE = _CATALOG / "aurora_postgresql_extensions.toml"
 
 GapImpact = Literal["blocks_move", "needs_rewrite", "behaves_differently", "informational"]
 # Most severe first: the order gaps are listed in.
@@ -97,6 +108,28 @@ _ONE_LINE = r"^[^\n]+$"
 INDEX_TYPES = frozenset(t.value for t in IndexType)
 
 VersionCheck = Literal["older_than_target", "newer_than_target", "unknown"]
+# What an ``extensions`` rule finds among the source's installed extensions (#1078),
+# against the line the move lands on (see GapMatch.extensions): one that line does not
+# offer, one installed at a version newer than that line offers, or one only a later line
+# than the source's own offers (the move is then a major version upgrade).
+ExtensionCheck = Literal["not_offered", "newer_than_offered", "on_a_later_line"]
+
+_EXTENSION_NAME = r"^[a-z0-9][a-z0-9_-]*$"
+_EXTENSION_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def extension_version(version: str | None) -> tuple[int, ...] | None:
+    """An extension version as numbers, trailing zeros dropped so ``1.0`` equals ``1``
+    and ``18.0`` equals ``18`` (``0.8.0`` is ``(0, 8)``), compared number by number
+    (``1.2.3`` is below ``1.10``); None when it is not a plain dotted number (``dev``,
+    ``1.2beta``, none): such a version is not compared."""
+    text = str(version or "").strip()
+    if not _EXTENSION_VERSION.match(text):
+        return None
+    parts = [int(part) for part in text.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 
 def parse_version_line(engine: str, version: str | None) -> tuple[int, ...] | None:
@@ -188,6 +221,19 @@ class GapMatch(BaseModel):
     routines: bool = False
     # The source's major version line against the target's lines (homogeneous only).
     version: VersionCheck | None = None
+    # The source's installed extensions (Metadata.extensions) against the target's
+    # extension lists (#1078). The move lands on the lowest line, among the ones the
+    # source can move to, that offers every installed extension at its version (a
+    # server module's version is not compared, its name is): for a source on a listed
+    # line, its own line or a later one; for one older than every line or of unknown
+    # version, any line; for one newer than every line, the newest. ``on_a_later_line``
+    # finds the extensions that land it above a listed source's own line. When no line
+    # offers them all, each extension is checked against the source's own line (any
+    # line, or the newest, for the other sources): ``not_offered`` finds the ones it
+    # does not offer, ``newer_than_offered`` the ones installed above its version. An
+    # extension another rule of the same target names (``extension``) is that rule's
+    # evidence, not this one's. A collection with no extension list finds nothing.
+    extensions: ExtensionCheck | None = None
     # The rule applies to every source of its engines (no evidence to find).
     always: bool = False
 
@@ -212,12 +258,14 @@ class GapMatch(BaseModel):
             self.routine_languages,
         )
         flags = (self.routines, self.auto_increment, self.uppercase_names, self.partial_indexes)
-        if not (any(lists) or any(flags) or self.version or self.always):
+        if not (any(lists) or any(flags) or self.version or self.always or self.extensions):
             raise ValueError("[match] needs at least one matcher")
         if (self.always or self.version) and (any(lists) or any(flags)):
             raise ValueError("an 'always' or 'version' rule takes no other matcher")
         if self.always and self.version:
             raise ValueError("a rule is 'always' or 'version', not both")
+        if self.extensions and (any(lists) or any(flags) or self.version or self.always):
+            raise ValueError("an 'extensions' rule takes no other matcher")
         if bool(self.extension) != bool(self.extension_calls):
             raise ValueError("extension and extension_calls go together")
         if self.extension_schemas and not self.extension:
@@ -309,6 +357,80 @@ class AuroraVersions(BaseModel):
         return self
 
 
+class AuroraExtensionLine(BaseModel):
+    """The extensions one Aurora PostgreSQL major version line offers
+    (``[lines."<line>"]``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # The line's newest release the list was read from ("16.11").
+    newest_release: str = Field(min_length=1, pattern=r"^\d+(?:\.\d+)+$")
+    # pg_extension name -> the newest version any release of the line offers.
+    extensions: dict[str, str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid(self) -> AuroraExtensionLine:
+        for name, version in self.extensions.items():
+            if not re.match(_EXTENSION_NAME, name):
+                raise ValueError(f"extension {name!r}: a pg_extension name is lower case")
+            if extension_version(version) is None:
+                raise ValueError(f"extension {name!r}: {version!r} is not a version number")
+        return self
+
+
+class AuroraExtensionLines(BaseModel):
+    """The extensions Aurora PostgreSQL offers, per major version line
+    (``aurora_postgresql_extensions.toml``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # The source engines whose pg_extension the lists are compared with.
+    source_engines: tuple[str, ...] = Field(min_length=1)
+    docs: str = Field(min_length=1, pattern=_ONE_LINE)
+    # The day the public list was read.
+    retrieved_on: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    # The extensions that ship with the PostgreSQL server (its supplied modules and
+    # procedural languages): their version follows the server's line, so only their
+    # name is checked, never their version.
+    server_modules: tuple[str, ...] = Field(min_length=1)
+    server_modules_docs: str = Field(min_length=1, pattern=_ONE_LINE)
+    lines: dict[str, AuroraExtensionLine] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid(self) -> AuroraExtensionLines:
+        if set(self.source_engines) != {"postgresql"}:
+            raise ValueError("the extension lists are compared with postgresql sources only")
+        try:
+            date.fromisoformat(self.retrieved_on)
+        except ValueError as exc:
+            raise ValueError(f"retrieved_on {self.retrieved_on!r} is not a date") from exc
+        for name in self.server_modules:
+            if not re.match(_EXTENSION_NAME, name):
+                raise ValueError(f"server module {name!r}: a pg_extension name is lower case")
+        if len(set(self.server_modules)) != len(self.server_modules):
+            raise ValueError("a server module is listed twice")
+        for line, entry in self.lines.items():
+            if parse_version_line("postgresql", line) is None or "." in line:
+                raise ValueError(f"{line!r} is not a postgresql version line")
+            if entry.newest_release.split(".")[0] != line:
+                raise ValueError(
+                    f"line {line}: newest_release {entry.newest_release!r} is not on it"
+                )
+        return self
+
+
+def load_aurora_extensions(
+    path: Path = AURORA_EXTENSIONS_FILE,
+) -> dict[str, AuroraExtensionLines]:
+    """Aurora engine -> the extensions it offers per line, from ``path`` (only Aurora
+    PostgreSQL has a list)."""
+    try:
+        with path.open("rb") as fh:
+            return {"aurora_postgresql": AuroraExtensionLines.model_validate(tomllib.load(fh))}
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as exc:
+        raise CatalogError(f"{path.name}: {exc}") from exc
+
+
 def load_aurora_versions(path: Path = AURORA_VERSIONS_FILE) -> dict[str, AuroraVersionLines]:
     """Aurora engine -> its version lines, from ``path``."""
     try:
@@ -319,14 +441,19 @@ def load_aurora_versions(path: Path = AURORA_VERSIONS_FILE) -> dict[str, AuroraV
 
 
 def load_gap_rules(
-    directory: Path = GAPS_DIR, versions: dict[str, AuroraVersionLines] | None = None
+    directory: Path = GAPS_DIR,
+    versions: dict[str, AuroraVersionLines] | None = None,
+    extension_lines: dict[str, AuroraExtensionLines] | None = None,
 ) -> tuple[GapRule, ...]:
     """Every gap rule file in ``directory``, validated, sorted by id.
 
     A ``version`` rule must pair each of its source engines with each of its targets
-    homogeneously (``versions``: the source engines each target lists).
+    homogeneously (``versions``: the source engines each target lists). An
+    ``extensions`` rule must target only engines with an extension list for each of its
+    source engines (``extension_lines``).
     """
     versions = load_aurora_versions() if versions is None else versions
+    extension_lines = aurora_extension_lines() if extension_lines is None else extension_lines
     rules: list[GapRule] = []
     for path in sorted(directory.glob("*.toml")):
         try:
@@ -347,6 +474,17 @@ def load_gap_rules(
                         f"{path.name}: a version rule needs a homogeneous pair; {target} "
                         f"lists no version lines for {stray}"
                     )
+        if rule.match.extensions:
+            for target in rule.targets:
+                listed = extension_lines.get(target)
+                stray = sorted(
+                    set(rule.source_engines) - set(listed.source_engines if listed else ())
+                )
+                if stray:
+                    raise CatalogError(
+                        f"{path.name}: an extensions rule needs an extension list; {target} "
+                        f"has none for {stray}"
+                    )
         rules.append(rule)
     if not rules:
         raise CatalogError(f"no gap rule files under {directory}")
@@ -360,6 +498,12 @@ def aurora_version_lines() -> dict[str, AuroraVersionLines]:
 
 
 @cache
+def aurora_extension_lines() -> dict[str, AuroraExtensionLines]:
+    """The loaded extension lists (read once per process)."""
+    return load_aurora_extensions()
+
+
+@cache
 def gap_rules() -> tuple[GapRule, ...]:
     """The loaded gap rules (read once per process), sorted by id."""
-    return load_gap_rules(versions=aurora_version_lines())
+    return load_gap_rules(versions=aurora_version_lines(), extension_lines=aurora_extension_lines())

@@ -6182,6 +6182,52 @@
                 "kind": "array"
               }
             },
+            "extensions": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "version": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maxLength": 64,
+                                "type": "string"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
             "query_capture": {
               "required": false,
               "schema": {
@@ -8942,8 +8988,8 @@
         }
       }
     },
-    "schema_hash": "64d49fb2f3ec7edc26e175fbf7d5c700ec01c1fe0b6c2b869f1607e8df0cfcfe",
-    "version": "5.3"
+    "schema_hash": "79cb10df2fab334311dee06890a008cbe86ab453f9c585d2c6f650e3b566b959",
+    "version": "5.4"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -27012,10 +27058,27 @@
                                               "kind": "enum",
                                               "values": [
                                                 "column",
+                                                "extension",
                                                 "function",
                                                 "procedure",
                                                 "trigger",
                                                 "view"
+                                              ]
+                                            }
+                                          },
+                                          "note": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                }
                                               ]
                                             }
                                           }
@@ -32850,8 +32913,8 @@
         }
       }
     },
-    "schema_hash": "6356c11d9d35024d5163bf62cff267b1448e64915906fb13488715a4df687494",
-    "version": "1.74"
+    "schema_hash": "e367ec30803e61e93719e9c1e7343f8923d232aedcb4428982b95e126e1161bd",
+    "version": "1.75"
   },
   "transformation_contract.StepContract": {
     "fields": {

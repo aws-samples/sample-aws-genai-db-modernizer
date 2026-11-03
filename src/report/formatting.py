@@ -129,6 +129,28 @@ def fmt_num(value: Any, decimals: int = 2) -> str:
 SHORT_QUERY_ID_CHARS = 8
 
 
+def report_query_ids(report: Any) -> frozenset[str]:
+    """Every query id ``report`` holds, at any depth (``query_id`` and
+    ``representative_id`` values, ``query_ids`` and ``source_query_ids`` items): the
+    ids the report prints as code spans, so model text that names one prints it the
+    same way (#1078 review, :func:`src.report.escaping.md_text_with_ids`)."""
+    found: set[str] = set()
+    stack = [report]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("query_id", "representative_id") and isinstance(value, str):
+                    found.add(value)
+                elif key in ("query_ids", "source_query_ids") and isinstance(value, list):
+                    found.update(v for v in value if isinstance(v, str))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return frozenset(found)
+
+
 def short_query_id(query_id: Any) -> str:
     """``22726c84`` for a 64-character query hash; a short id stays as it is."""
     text = str(query_id)

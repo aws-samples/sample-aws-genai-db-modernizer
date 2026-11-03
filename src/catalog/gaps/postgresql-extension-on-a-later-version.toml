@@ -1,0 +1,13 @@
+# Gap rule postgresql-extension-on-a-later-version (#1078). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL (src/catalog/aurora_postgresql_extensions.toml).
+id = "postgresql-extension-on-a-later-version"
+feature = "Installed extensions offered only from a later Aurora PostgreSQL version"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "The source's own Aurora PostgreSQL version does not offer these installed extensions at their version, and the lowest version that offers every installed extension is a later major version, so the move is also a major version upgrade: review the incompatible changes in each release's notes."
+docs = "Extension versions for Amazon Aurora PostgreSQL; Amazon Aurora PostgreSQL release notes"
+
+# Looks for: Metadata.extensions that land the move on a later line than the source's own (each names that line).
+[match]
+extensions = "on_a_later_line"

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -18,8 +19,10 @@ from src.shared.catalog.gaps import (
     GAP_IMPACT_LABELS,
     GAP_IMPACTS,
     SOURCE_ENGINES,
+    aurora_extension_lines,
     aurora_version_lines,
     gap_rules,
+    load_aurora_extensions,
     load_aurora_versions,
     load_gap_rules,
     parse_version_line,
@@ -276,3 +279,144 @@ def test_the_index_types_are_the_collectors() -> None:
     from src.shared.catalog.gaps import INDEX_TYPES
 
     assert INDEX_TYPES == {t.value for t in IndexType}
+
+
+# -- the extensions Aurora PostgreSQL offers (#1078) ------------------------------------
+
+EXTENSIONS_GOOD = """
+source_engines = ["postgresql"]
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+retrieved_on = "2026-11-03"
+server_modules = ["hstore", "seg"]
+server_modules_docs = "PostgreSQL documentation, Additional Supplied Modules and Extensions"
+
+[lines."16"]
+newest_release = "16.11"
+
+[lines."16".extensions]
+hstore = "1.8"
+vector = "0.8.0"
+"""
+
+
+def test_the_extension_lists_cover_every_aurora_postgresql_version_line() -> None:
+    lists = aurora_extension_lines()
+    assert set(lists) == {"aurora_postgresql"}
+    entry = lists["aurora_postgresql"]
+    assert tuple(entry.lines) == aurora_version_lines()["aurora_postgresql"].lines
+    assert entry.source_engines == ("postgresql",)
+    assert "Extension versions for Amazon Aurora PostgreSQL" in entry.docs
+    for line, offered in entry.lines.items():
+        assert offered.newest_release.split(".")[0] == line
+        # Extensions every Aurora PostgreSQL line offers, by their pg_extension names.
+        assert {"plpgsql", "hstore", "pg_trgm", "citext", "unaccent", "vector"} <= set(
+            offered.extensions
+        ), line
+        assert "timescaledb" not in offered.extensions and "citus" not in offered.extensions
+
+
+def test_a_valid_extension_list_loads(tmp_path: Path) -> None:
+    path = tmp_path / "aurora_postgresql_extensions.toml"
+    path.write_text(EXTENSIONS_GOOD)
+    entry = load_aurora_extensions(path)["aurora_postgresql"]
+    assert dict(entry.lines["16"].extensions) == {"hstore": "1.8", "vector": "0.8.0"}
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ('retrieved_on = "2026-11-03"', 'retrieved_on = "last week"', "retrieved_on"),
+        ('lines."16"', 'lines."sixteen"', "version line"),
+        ('newest_release = "16.11"', 'newest_release = "17.1"', "newest_release"),
+        ('hstore = "1.8"', 'HStore = "1.8"', "lower case"),
+        ('hstore = "1.8"', 'hstore = "latest"', "version"),
+        ('source_engines = ["postgresql"]', 'source_engines = ["mysql"]', "postgresql"),
+        ('docs = "Extension', 'unknown = 1\ndocs = "Extension', "unknown"),
+        ('server_modules = ["hstore", "seg"]', 'server_modules = ["Seg"]', "lower case"),
+        ('server_modules = ["hstore", "seg"]', 'server_modules = ["seg", "seg"]', "twice"),
+        (
+            'server_modules_docs = "PostgreSQL documentation, Additional Supplied Modules and '
+            'Extensions"',
+            'server_modules_docs = ""',
+            "server_modules_docs",
+        ),
+        ('retrieved_on = "2026-11-03"', 'retrieved_on = "2026-13-40"', "not a date"),
+    ],
+)
+def test_a_bad_extension_list_fails_to_load(
+    tmp_path: Path, old: str, new: str, message: str
+) -> None:
+    path = tmp_path / "aurora_postgresql_extensions.toml"
+    path.write_text(EXTENSIONS_GOOD.replace(old, new))
+    with pytest.raises(CatalogError, match=message):
+        load_aurora_extensions(path)
+
+
+@pytest.mark.parametrize("check", ["not_offered", "newer_than_offered", "on_a_later_line"])
+def test_an_extension_rule_loads_on_its_own(tmp_path: Path, check: str) -> None:
+    text = GOOD.format(id="e", match=f'extensions = "{check}"')
+    text = text.replace('source_engines = ["mysql"]', 'source_engines = ["postgresql"]')
+    (tmp_path / "e.toml").write_text(text.replace('["aurora_mysql"]', '["aurora_postgresql"]'))
+    (rule,) = load_gap_rules(tmp_path, versions=aurora_version_lines())
+    assert rule.match.extensions == check
+
+
+@pytest.mark.parametrize(
+    ("match", "message"),
+    [
+        ('extensions = "not_offered"\ncalls = ["X"]', "no other matcher"),
+        ('extensions = "not_offered"\nversion = "unknown"', "no other matcher"),
+        ('extensions = "missing"', "extensions"),
+    ],
+)
+def test_a_bad_extension_match_fails_to_load(tmp_path: Path, match: str, message: str) -> None:
+    _write(tmp_path, match=match)
+    with pytest.raises(CatalogError, match=message):
+        load_gap_rules(tmp_path, versions=aurora_version_lines())
+
+
+def test_an_extension_rule_needs_a_target_with_an_extension_list(tmp_path: Path) -> None:
+    """Aurora MySQL runs no PostgreSQL extension and has no list to compare with."""
+    text = GOOD.format(id="e", match='extensions = "not_offered"')
+    (tmp_path / "e.toml").write_text(
+        text.replace('source_engines = ["mysql"]', 'source_engines = ["postgresql"]')
+    )
+    with pytest.raises(CatalogError, match="extension list"):
+        load_gap_rules(tmp_path, versions=aurora_version_lines())
+
+
+def test_the_rule_catalog_page_says_what_the_extension_rules_look_for() -> None:
+    page = "\n".join(render_gaps_md(gap_rules(), aurora_version_lines(), {}))
+    assert "installed extensions Aurora PostgreSQL does not offer" in page
+    assert "installed extensions newer than Aurora PostgreSQL offers" in page
+    assert (
+        "installed extensions offered only from a later Aurora PostgreSQL version than the "
+        "source's own"
+    ) in page
+    assert "modules that ship with PostgreSQL" in page
+    assert "src/catalog/aurora_postgresql_extensions.toml" in page
+
+
+def test_the_extension_list_age_warns_after_the_limit_and_never_fails() -> None:
+    from scripts.check_extension_list_age import MAX_AGE_DAYS, age_warning
+
+    day = dt.date(2026, 11, 3)
+    assert age_warning(day, day) is None
+    assert age_warning(day, day + dt.timedelta(days=MAX_AGE_DAYS)) is None
+    warning = age_warning(day, day + dt.timedelta(days=MAX_AGE_DAYS + 1))
+    assert warning is not None and warning.startswith("warning:")
+    assert "aurora_postgresql_extensions.toml" in warning and "2026-11-03" in warning
+
+
+def test_the_extension_list_age_check_exits_zero_when_stale(capsys) -> None:
+    from scripts import check_extension_list_age
+
+    assert check_extension_list_age.main(["--max-age-days", "0", "--today", "2100-01-01"]) == 0
+    assert capsys.readouterr().out.startswith("warning:")
+
+
+def test_the_extension_list_age_limit_is_90_days() -> None:
+    """ci/README.md states the limit: lint warns once the lists are more than 90 days old."""
+    from scripts.check_extension_list_age import MAX_AGE_DAYS
+
+    assert MAX_AGE_DAYS == 90

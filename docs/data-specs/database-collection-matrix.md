@@ -27,6 +27,7 @@ What each collection script emits. The scripts (`scripts/collect-*.sql`) are the
 | `queries` | yes | yes | yes | yes |
 | `global_stats` | yes | yes | yes | yes |
 | `io_stats`, `wait_events`, `os_stats` | no | no | yes | yes |
+| `extensions` | no | yes | no | no <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_the_script_reads_every_installed_extension_and_its_version --> |
 
 ### Input check
 
@@ -105,6 +106,8 @@ Sources: MySQL `performance_schema.events_statements_summary_by_digest`; Postgre
 ## Other sections
 
 SQL Server and Oracle add `io_stats` (physical reads and writes per second, bytes per second, read and write latency), `wait_events` (event, total waits, time waited, average wait, wait class) and `os_stats` (memory and uptime; Oracle also CPU count and SGA and PGA sizes).
+
+PostgreSQL adds `extensions`: every extension installed in the database, from `pg_extension`, as `name` and `version` (#1078). <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_the_script_reads_every_installed_extension_and_its_version --> The collector keeps them on `metadata.extensions`, <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_the_offline_builder_keeps_each_extension_and_its_version, tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_a_live_collection_keeps_the_extensions_it_read --> and the relational-move gap check compares them with the extensions Aurora PostgreSQL offers per version line (`src/catalog/aurora_postgresql_extensions.toml`). <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_run_collect_carries_the_extensions_to_the_gap_check, tests/unit/tools/analysis/test_relational_gaps.py::test_an_unknown_extension_blocks_the_move_and_is_named --> A collection without the section (one written before #1078) has no extension list, and the extension rules then find nothing. <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_a_collection_without_the_section_has_no_extension_list, tests/unit/tools/analysis/test_relational_gaps.py::test_no_extension_list_or_an_empty_one_raises_no_extension_gap -->
 
 Views, procedures, triggers, columns, indexes and keys carry the fields the contract needs (names, definitions, parameters, referenced tables); read the scripts for the exact list per engine.
 

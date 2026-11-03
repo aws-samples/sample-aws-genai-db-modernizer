@@ -34,7 +34,10 @@ models, #1183), the AWS Transform image's pinned requirements
 `uv.lock`, #1725) and the price table's age
 (`scripts/refresh_prices.py --check-age`: it warns, never fails, when
 `src/catalog/prices.toml` was retrieved more than 45 days ago; refresh it with
-`uv run python scripts/refresh_prices.py`, #1196). The `Refresh prices` workflow
+`uv run python scripts/refresh_prices.py`, #1196), and the Aurora PostgreSQL extension
+lists' age (`scripts/check_extension_list_age.py`: it warns, never fails, when
+`src/catalog/aurora_postgresql_extensions.toml` was retrieved more than 90 days ago; update
+it by hand from the public extension versions page, #1078). <!-- claim: tests/unit/shared/test_gap_catalog.py::test_the_extension_list_age_warns_after_the_limit_and_never_fails, tests/unit/shared/test_gap_catalog.py::test_the_extension_list_age_check_exits_zero_when_stale, tests/unit/shared/test_gap_catalog.py::test_the_extension_list_age_limit_is_90_days --> The `Refresh prices` workflow
 (`.github/workflows/refresh-prices.yml`) runs that refresh on the 1st of every month and
 on demand, and opens or updates one pull request from `chore/price-table-refresh` when
 the table changes; 45 days is the longest gap between two runs (31) plus two weeks to
