@@ -3,7 +3,7 @@
 The graph explorer is an experimental page of the local UI. It draws one assessment's context graph: the source tables and the destination engines, linked by the queries that move between them. You can start from a wave, a table, an engine or a single query, expand from there, and follow the assessment's own reasoning in guided walkthroughs.
 
 !!! warning "Experimental, data incomplete"
-    The explorer is a first pass. It is off by default, it may change or go away, and the context graph does not hold everything yet: risks, some decision links and the Aurora table designs are missing (completing the graph data is tracked in [#306](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/306)). An empty result does not mean there is nothing there. The deliverables and the results page remain the reference.
+    The explorer is a first pass. It is off by default, it may change or go away, and the context graph does not hold everything yet. Risks and every engine's design, Aurora included, are in it; still missing are the design targets per assignment version, the scores on every engine, the version history and the read/write split, and the explorer reads waves, move units, writers and costs from the job's files instead of the graph (completing the graph data is tracked in [#306](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/306)). The explorer does not show risks yet. An empty result does not mean there is nothing there. The deliverables and the results page remain the reference.
 
 ![The explorer workspace: the query list on the left, Aurora MySQL and DynamoDB with their source tables, busy links in orange](assets/graph-explorer/workspace.png)
 
