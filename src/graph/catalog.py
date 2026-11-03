@@ -50,6 +50,7 @@ class ParamKind(str, Enum):
     QUERY = "query"
     ACCESS_PATTERN = "access_pattern"
     VERSION = "version"
+    TARGET = "target"
 
 
 @dataclass(frozen=True)
@@ -202,6 +203,19 @@ RESOLVED_RISKS = Need(
     "MATCH (n:Risk {status: 'resolved'}) RETURN count(n) AS n",
 )
 
+DESIGN_TARGETS = Need(
+    "design_targets",
+    "Schema design, per engine",
+    "`TargetObject` nodes from a design (not a fallback)",
+    "MATCH (n:TargetObject {fallback: false}) RETURN count(n) AS n",
+)
+SCORED_LADDERS = Need(
+    "scored",
+    "Assignment move ledger, with candidate ladders",
+    "`SCORED` edges",
+    "MATCH ()-[s:SCORED]->() RETURN count(s) AS n",
+)
+
 NEEDS: tuple[Need, ...] = (
     TRIAGE,
     ANALYSIS,
@@ -214,6 +228,8 @@ NEEDS: tuple[Need, ...] = (
     LOAD_TEST,
     SYNTHESIS,
     RESOLVED_RISKS,
+    DESIGN_TARGETS,
+    SCORED_LADDERS,
 )
 
 # ---------------------------------------------------------------------------
@@ -235,6 +251,14 @@ DESTINATION_ENGINE_PARAM = Param(
     "MATCH (d:Destination) RETURN DISTINCT d.engine AS value ORDER BY value",
     "dynamodb",
     "MATCH (d:Destination {engine: $value}) RETURN d.engine AS value",
+)
+TARGET_PARAM = Param(
+    "target_id",
+    ParamKind.TARGET,
+    "A design target object id: engine, kind, name and schema version.",
+    "MATCH (o:TargetObject {fallback: false}) RETURN o.id AS value ORDER BY value",
+    "aurora_mysql:table:wp_posts@v2",
+    "MATCH (o:TargetObject {id: $value, fallback: false}) RETURN o.id AS value",
 )
 QUERY_PARAM = Param(
     "query_id",
@@ -520,7 +544,7 @@ CATALOG: tuple[CatalogEntry, ...] = (
         ref="B",
         section="impact",
         title="Everything going to a given engine",
-        question="Which destinations, source tables and access patterns does this engine get?",
+        question="Which queries, source tables and access patterns does this engine get?",
         cypher=(
             "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) "
             "OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) "
@@ -544,6 +568,10 @@ CATALOG: tuple[CatalogEntry, ...] = (
         params=(DESTINATION_ENGINE_PARAM,),
         needs=(ASSIGNMENT,),
         row_key=("destination",),
+        note=(
+            "A query's `destination` is its engine (#306); where it lands in the design "
+            "is `TARGETS` (questions L and M)."
+        ),
     ),
     CatalogEntry(
         id="query_provenance",
@@ -794,6 +822,93 @@ CATALOG: tuple[CatalogEntry, ...] = (
         needs=(VERSION_CHAIN,),
         row_key=("query_id",),
         note="Role `moved` is a query the version's Moves changed; `tie` one whose tie alone changed.",
+    ),
+    CatalogEntry(
+        id="query_targets",
+        ref="L",
+        section="impact",
+        title="Where one query lands in the design",
+        question="Which design objects does this query land on, per assignment version?",
+        cypher=(
+            "MATCH (q:Query {id: $query_id})-[t:TARGETS]->(o:TargetObject) "
+            "RETURN q.id AS query_id, t.version AS version, t.effective AS effective, "
+            "o.id AS target_id, o.engine AS engine, o.kind AS kind, o.name AS name, "
+            "o.parent AS parent, t.schema_version AS schema_version, o.fallback AS fallback "
+            "ORDER BY version DESC, target_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(NodeRef("query_id", "Query"), NodeRef("target_id", "TargetObject")),
+            edges=(EdgeRef("query_id", "target_id", "TARGETS"),),
+        ),
+        params=(QUERY_PARAM,),
+        needs=(ASSIGNMENT,),
+        row_key=("version", "target_id"),
+        note=(
+            "A `fallback` target is no design object: `not_designed` (no design for the "
+            "engine at that version), `out_of_scope` (the design does not serve the "
+            "query) or `not_in_design` (no access pattern for it in the design)."
+        ),
+    ),
+    CatalogEntry(
+        id="target_queries",
+        ref="M",
+        section="impact",
+        title="The queries one design object serves",
+        question="Which queries does this table, index, collection or key pattern serve?",
+        cypher=(
+            "MATCH (o:TargetObject {id: $target_id}) "
+            "MATCH (q:Query)-[t:TARGETS]->(x:TargetObject) "
+            "WHERE x.id = o.id OR (o.kind = 'table' AND x.kind = 'gsi' "
+            "AND x.engine = o.engine AND x.parent = o.name "
+            "AND x.schema_version = o.schema_version) "
+            "RETURN o.id AS target_id, q.id AS query_id, x.id AS via, t.version AS version, "
+            "t.effective AS effective, t.pattern_ids_json AS access_patterns, "
+            "q.calls_per_second AS calls_per_second "
+            "ORDER BY calls_per_second DESC, query_id, version, via"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(
+                NodeRef("target_id", "TargetObject"),
+                NodeRef("via", "TargetObject"),
+                NodeRef("query_id", "Query"),
+            ),
+            edges=(EdgeRef("query_id", "via", "TARGETS"),),
+        ),
+        params=(TARGET_PARAM,),
+        needs=(DESIGN_TARGETS,),
+        row_key=("query_id", "version", "via"),
+        note=(
+            "For a DynamoDB table, the queries that read one of its GSIs are listed too, "
+            "with `via` the GSI; otherwise `via` is the object itself. A cache key pattern "
+            "lists the reads it serves, not the writes that invalidate it."
+        ),
+    ),
+    CatalogEntry(
+        id="query_scores_now",
+        ref="N",
+        section="impact",
+        title="One query's score on every engine now",
+        question="What did routing score this query on every engine, in the effective version?",
+        cypher=(
+            "MATCH (q:Query {id: $query_id})-[s:SCORED {current: true}]->(e:Engine) "
+            "RETURN q.id AS query_id, e.id AS engine, s.score AS score, s.gate AS gate, "
+            "s.assigned AS assigned, s.ladder_version AS ladder_version, s.pass AS pass, "
+            "s.ladder_copied_from AS ladder_copied_from ORDER BY engine"
+        ),
+        max_rows=50,
+        projection=Projection(
+            nodes=(NodeRef("query_id", "Query"), NodeRef("engine", "Engine")),
+            edges=(EdgeRef("query_id", "engine", "SCORED"),),
+        ),
+        params=(QUERY_PARAM,),
+        needs=(SCORED_LADDERS,),
+        row_key=("engine",),
+        note=(
+            "The ladder comes from `ladder_version`'s Move (`pass`); a rollback's ladder is "
+            "copied from the abandoned reroute `ladder_copied_from`."
+        ),
     ),
 )
 

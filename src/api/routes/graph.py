@@ -858,7 +858,9 @@ def graph_engine_detail(
     job_id: str = Depends(job_id_param),
     graph: Any = Depends(get_graph_for_job),
 ):
-    """Destinations and source tables migrating to a given engine."""
+    """The engine's destination with the source tables and access patterns of the
+    queries migrating to it. A query's Destination is its engine (#306); its design
+    objects are TARGETS edges, read by the graph query catalog."""
     store, _ = graph
     with _curated_errors():
         return graph_queries.engine_detail(store, engine)

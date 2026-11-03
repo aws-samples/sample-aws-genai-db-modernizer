@@ -129,8 +129,8 @@ def _ap(pattern_id: str, qids: list[str]) -> dict:
 
 
 def test_engine_detail_lists_and_ties_are_ordered(graph_store):
-    # Every list is inserted in reverse sorted order, and the two destinations tie on
-    # query_count with the larger id inserted first.
+    # Every list is inserted in reverse sorted order. A query's Destination is its
+    # engine (#306: the design's objects are TARGETS), so the engine has one.
     populate_from_collector(
         _collector({"q1": ["zeta", "mid"], "q2": ["alpha"], "q3": ["x"], "q4": ["y"]}),
         graph_store,
@@ -162,10 +162,10 @@ def test_engine_detail_lists_and_ties_are_ordered(graph_store):
         graph_store,
     )
     dests = engine_detail(graph_store, "dynamodb").destinations
-    assert [d.destination_id for d in dests] == ["aa-dynamodb", "zz-dynamodb"]
-    zz = dests[1]
-    assert zz.source_tables == ["alpha", "mid", "zeta"]
-    assert zz.access_patterns == ["DDB-AP-1", "DDB-AP-2", "DDB-AP-3"]
+    assert [(d.destination_id, d.query_count) for d in dests] == [("dynamodb", 4)]
+    (only,) = dests
+    assert only.source_tables == ["alpha", "mid", "x", "y", "zeta"]
+    assert only.access_patterns == ["DDB-AP-1", "DDB-AP-2", "DDB-AP-3"]
 
 
 def test_query_provenance_signals_and_decisions_are_ordered(graph_store):

@@ -36,7 +36,10 @@ from src.graph.store import GraphStore
 #   consolidation and reroute Decisions AFFECTS their engines.
 # - 8 (#306): SCORED edges, each query's candidate ladder per assignment
 #   version with its recorded score dimensions.
-GRAPH_SCHEMA_REVISION = 8
+# - 9 (#306): TargetObject nodes and TARGETS edges, each query's design objects
+#   per version; a Destination is the query's engine, no longer a guess from its
+#   first source table.
+GRAPH_SCHEMA_REVISION = 9
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -55,6 +58,19 @@ NODE_TABLES = [
     )""",
     """CREATE NODE TABLE IF NOT EXISTS SourceTable (
         id STRING, database STRING, row_estimate INT64,
+        PRIMARY KEY (id)
+    )""",
+    # A design's target object (#306): a DynamoDB table or GSI (parent: its table),
+    # a DocumentDB collection, an OpenSearch index or stream, an ElastiCache key
+    # pattern, an Aurora table, at one schema version (id ...@v<N>). A fallback
+    # (no schema version) labels a query with no design object: 'not_designed'
+    # (no design for the engine at that version), 'out_of_scope' (the design marks
+    # its patterns out of scope or unsupported) or 'not_in_design' (no access
+    # pattern for the query, or one naming an object the design does not define);
+    # id '<engine>:<kind>'.
+    """CREATE NODE TABLE IF NOT EXISTS TargetObject (
+        id STRING, engine STRING, kind STRING, name STRING, parent STRING,
+        schema_version INT64, fallback BOOLEAN,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS Destination (
@@ -144,7 +160,17 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS MEMBER_OF (FROM Query TO CoDependencyGroup)",
     "CREATE REL TABLE IF NOT EXISTS TESTED_IN (FROM Query TO LoadTestRun)",
     "CREATE REL TABLE IF NOT EXISTS VALIDATES (FROM LoadTestRun TO Destination)",
-    "CREATE REL TABLE IF NOT EXISTS HOSTED_ON (FROM Destination TO Engine)",
+    """CREATE REL TABLE IF NOT EXISTS HOSTED_ON (
+        FROM Destination TO Engine,
+        FROM TargetObject TO Engine
+    )""",
+    # A query's design objects per assignment version (#306), with the schema
+    # version they come from (null for a fallback), whether the version is the
+    # effective one, and the access patterns that name the object (JSON list).
+    """CREATE REL TABLE IF NOT EXISTS TARGETS (
+        FROM Query TO TargetObject,
+        version INT64, schema_version INT64, effective BOOLEAN, pattern_ids_json STRING
+    )""",
     # AFFECTS and SUPERSEDES keep their meaning, made versioned (#306): an
     # assignment version AFFECTS the queries its Moves changed (role 'moved', or
     # 'tie' when they changed no engine) and the engines they left (role 'from')

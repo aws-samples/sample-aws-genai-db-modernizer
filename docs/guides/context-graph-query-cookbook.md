@@ -97,7 +97,7 @@ Content-Type: application/json
 
 - `GET .../graph/catalog` lists every entry: `id`, `ref`, `section`, `title`, `question`, `note`, `max_rows`, `needs`, and `params`, each with its `kind`, `description`, `example` and `choices`, the values it takes on this job's graph (at most 1,000; `choices_truncated` is true when the graph holds more).
 - `POST .../graph/catalog/{entry_id}` runs one entry. The response has `columns`, `rows`, `row_count`, `truncated` (more rows matched than `max_rows`), `max_rows`, a `projection` of the rows as `nodes` and `edges`, and, when no rows came back, `unmet_needs` and an `explanation` naming the stages the job has not run. An entry without parameters takes `{}` or an empty body.
-- Both are always on, like the curated endpoints below, and use the same read-only handle, freshness check and limits: a 10-second timeout on each statement (`504`) and the shared read slots (`503` with `Retry-After: 1`). A request runs its statements one after another. A list runs one choice query per distinct parameter (6 today), and a run at most 3 (a one-row lookup per parameter, the entry, and on an empty result one probe per need), plus the freshness check every graph read does. So a list spends at most 6 × 10 s running statements and a run 3 × 10 s; any wait for a read slot (at most 30 s per statement) comes on top.
+- Both are always on, like the curated endpoints below, and use the same read-only handle, freshness check and limits: a 10-second timeout on each statement (`504`) and the shared read slots (`503` with `Retry-After: 1`). A request runs its statements one after another. A list runs one choice query per distinct parameter (7 today), and a run at most 3 (a one-row lookup per parameter, the entry, and on an empty result one probe per need), plus the freshness check every graph read does. So a list spends at most 7 × 10 s running statements and a run 3 × 10 s; any wait for a read slot (at most 30 s per statement) comes on top.
 - At most half the read slots' worth of catalog requests run at once (2 with the default of 4 `MODERNIZER_GRAPH_MAX_CONCURRENT_READS`; more get `429`). Each holds one read slot at a time, so the curated views always keep the other half.
 - A run needs `Content-Type: application/json` (`415`) and a body of at most 64 KiB (`413`). An unknown entry is `404`. A missing, unknown, non-string or over-1,024-character parameter is `422`, and so is a body that is not a JSON object (nesting too deep included) or a value that is not among the parameter's choices on the job's graph. The value is checked with a one-row lookup, so a value past the 1,000 listed choices is still checked. All of this, except the value lookup, is answered before a catalog slot is taken or the graph is opened. Errors never repeat the names or values sent.
 - Row values come back as stored. Customer text (descriptions, table and query ids) is data: escape it when you render it.
@@ -114,7 +114,7 @@ catalog routes above; use raw `POST /graph/query` for anything not covered.
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/provenance` | Why a query migrated where it did, plus the producing agent/phase |
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/trace` | Why a query ended on its engine and not another: its first assignment with each engine's score or gate, each later move with its reason, and the runner-up |
 | `GET /api/v1/assessments/{job_id}/query-journeys` and `.../query-journeys/{query_id}` | The query journeys: one page of queries, or one query's journey, read from the graph |
-| `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | Destinations and source tables migrating to an engine |
+| `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | The engine's destination (a query's `Destination` is its engine, #306) with the source tables and access patterns of the queries it gets; its design objects are `TARGETS` (catalog L and M) |
 | `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying open risk and anti-patterns, weighted by traffic |
 | `GET /api/v1/assessments/{job_id}/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
 
@@ -134,6 +134,7 @@ function to `src/graph/queries.py` (Cypher + shaping), a Pydantic model to
 Node types: `Query`, `SourceTable`, `Destination`, `Engine`, `Signal`,
 `CoDependencyGroup`, `Decision`, `LoadTestRun`, `AntiPattern`, `Risk`,
 `AccessPattern`, `AssignmentVersion` (one per version of the effective assignment lineage),
+`TargetObject` (a design's table, index, collection or key pattern at one schema version, or a labelled fallback),
 `Agent` (the producing agent and phase), `GraphMeta` (the schema revision
 and assignment version the graph was built from).
 
@@ -148,6 +149,8 @@ Relationships:
 (Query)-[:TESTED_IN]->(LoadTestRun)
 (LoadTestRun)-[:VALIDATES]->(Destination)
 (Destination)-[:HOSTED_ON]->(Engine)
+(Query)-[:TARGETS {version, schema_version, effective, pattern_ids_json}]->(TargetObject)
+(TargetObject)-[:HOSTED_ON]->(Engine)
 (Decision)-[:AFFECTS]->(Destination)
 (Decision)-[:INFORMED_BY]->(Query)
 (AntiPattern)-[:OBSERVED_IN_QUERY]->(Query)
@@ -165,6 +168,8 @@ Relationships:
 ```
 
 An `AssignmentVersion` (`id` `assignment-v<N>`) has `version`, `kind` (the pass that made it: `first_assignment`, `reality_check`, `customer_pick`, `customer_scope`, `post_schema_reroute`, `rollback`, `source_of_truth_reroute` or `auto_decided`), `source`, `status`, `effective`, `created_at`, `move_count`, `passes_json` and `actors_json` (its Moves' distinct passes and actors). It `SUPERSEDES` the version before it, and a rollback `RESTORES` the version it restates. It `AFFECTS` the queries its Moves changed (role `moved`, or `tie` when they changed only a tie) and the engines those Moves left (`from`) or landed on (`to`). A consolidation Decision is `INFORMED_BY` the queries whose net move in the reality-check version is its from and to engine (its `query_count`), and a consolidation or reroute Decision `AFFECTS` the engines it moves queries from and to.
+
+A query's `Destination` is its engine in the effective assignment (one `MIGRATES_TO` per query). Where it lands in the design is `TARGETS`: per assignment version, each `TargetObject` the design names for it, at its `schema_version`, with `effective` on the effective version. That is a DynamoDB table or GSI (`kind` `gsi`, `parent` its table), a DocumentDB collection, an OpenSearch index or stream, an ElastiCache key pattern or an Aurora table. A query can target several objects in one version. Only objects the design defines count. With no design for the engine at that version it targets `<engine>:not_designed` ("not designed yet"); with a design that marks its patterns out of scope or lists it as unsupported, `<engine>:out_of_scope` ("the design does not serve it"); with a design that has no access pattern for it or names an object it does not define, `<engine>:not_in_design` ("no target in the design"). A deterministic run has no design, so every query targets its engine's `not_designed`.
 
 `SCORED` is a query's candidate ladder per assignment version: one edge per engine on the ladder its last Move with recorded candidates holds, in that version or an earlier one (a customer pick, an auto pick or a source-of-truth reroute records none, so the query keeps its earlier ladder). `ladder_version`, `move_seq` and `pass` (that Move's own pass, as on `MOVED`) say where the ladder came from; a rollback copies the abandoned reroute's ladder, and `ladder_copied_from` names the reroute version. Each edge has the `score` (null, with the `gate`, when a gate excluded the engine), `assigned` (the engine the version's assignment gives the query) and `current` (the effective version). `dimensions_json` holds the recorded score dimensions for that query and engine (pattern, cost, base, penalty, fit and per-table complexity, performance and weights) when the version's access-pattern record has them and their score is the edge's, and is null otherwise. A query that filters on neither `version` nor `current` counts each query once per version it has edges for. A query's score on every engine now, with where that ladder came from: `MATCH (q:Query {id: $qid})-[s:SCORED {current: true}]->(e:Engine) RETURN e.id, s.score, s.gate, s.assigned, s.ladder_version, s.pass, s.ladder_copied_from`.
 
@@ -348,7 +353,7 @@ Parameters:
 
 ### B. Everything going to a given engine
 
-Which destinations, source tables and access patterns does this engine get?
+Which queries, source tables and access patterns does this engine get?
 
 Catalog id `engine_destinations`; at most 1,000 rows. Needs: Assignment (`Destination` nodes and `MIGRATES_TO` edges).
 
@@ -357,6 +362,8 @@ Graph view: nodes `Destination` (`destination`), `SourceTable` (`source_tables`)
 Parameters:
 
 - `engine` (engine): An engine id the assignment migrates queries to. Example `dynamodb`. Change `dynamodb` to `aurora_mysql`, `aurora_postgresql`, `documentdb`, `elasticache`, `opensearch`. Choices: `MATCH (d:Destination) RETURN DISTINCT d.engine AS value ORDER BY value`
+
+A query's `destination` is its engine (#306); where it lands in the design is `TARGETS` (questions L and M).
 
 ```json
 {"cypher": "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) RETURN d.id AS destination, collect(DISTINCT st.id) AS source_tables, collect(DISTINCT ap.id) AS access_patterns, count(DISTINCT q) AS queries ORDER BY queries DESC, destination", "params": {"engine": "dynamodb"}}
@@ -496,6 +503,60 @@ Role `moved` is a query the version's Moves changed; `tie` one whose tie alone c
 {"cypher": "MATCH (v:AssignmentVersion {id: $version_id})-[a:AFFECTS]->(q:Query) OPTIONAL MATCH (q)-[m:MOVED]->(e:Engine) WHERE m.version = v.version RETURN v.id AS version_id, q.id AS query_id, a.role AS role, collect(DISTINCT m.from_engine) AS from_engines, collect(DISTINCT e.id) AS to_engines ORDER BY role, query_id", "params": {"version_id": "assignment-v2"}}
 ```
 
+### L. Where one query lands in the design
+
+Which design objects does this query land on, per assignment version?
+
+Catalog id `query_targets`; at most 1,000 rows. Needs: Assignment (`Destination` nodes and `MIGRATES_TO` edges).
+
+Graph view: nodes `Query` (`query_id`), `TargetObject` (`target_id`); edges `Query` → `TargetObject` (TARGETS).
+
+Parameters:
+
+- `query_id` (query): A query id, busiest first. Example `66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799`. Choices: `MATCH (q:Query) RETURN q.id AS value ORDER BY q.calls_per_second DESC, value`
+
+A `fallback` target is no design object: `not_designed` (no design for the engine at that version), `out_of_scope` (the design does not serve the query) or `not_in_design` (no access pattern for it in the design).
+
+```json
+{"cypher": "MATCH (q:Query {id: $query_id})-[t:TARGETS]->(o:TargetObject) RETURN q.id AS query_id, t.version AS version, t.effective AS effective, o.id AS target_id, o.engine AS engine, o.kind AS kind, o.name AS name, o.parent AS parent, t.schema_version AS schema_version, o.fallback AS fallback ORDER BY version DESC, target_id", "params": {"query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"}}
+```
+
+### M. The queries one design object serves
+
+Which queries does this table, index, collection or key pattern serve?
+
+Catalog id `target_queries`; at most 1,000 rows. Needs: Schema design, per engine (`TargetObject` nodes from a design (not a fallback)).
+
+Graph view: nodes `TargetObject` (`target_id`), `TargetObject` (`via`), `Query` (`query_id`); edges `Query` → `TargetObject` (TARGETS).
+
+Parameters:
+
+- `target_id` (target): A design target object id: engine, kind, name and schema version. Example `aurora_mysql:table:wp_posts@v2`. Choices: `MATCH (o:TargetObject {fallback: false}) RETURN o.id AS value ORDER BY value`
+
+For a DynamoDB table, the queries that read one of its GSIs are listed too, with `via` the GSI; otherwise `via` is the object itself. A cache key pattern lists the reads it serves, not the writes that invalidate it.
+
+```json
+{"cypher": "MATCH (o:TargetObject {id: $target_id}) MATCH (q:Query)-[t:TARGETS]->(x:TargetObject) WHERE x.id = o.id OR (o.kind = 'table' AND x.kind = 'gsi' AND x.engine = o.engine AND x.parent = o.name AND x.schema_version = o.schema_version) RETURN o.id AS target_id, q.id AS query_id, x.id AS via, t.version AS version, t.effective AS effective, t.pattern_ids_json AS access_patterns, q.calls_per_second AS calls_per_second ORDER BY calls_per_second DESC, query_id, version, via", "params": {"target_id": "aurora_mysql:table:wp_posts@v2"}}
+```
+
+### N. One query's score on every engine now
+
+What did routing score this query on every engine, in the effective version?
+
+Catalog id `query_scores_now`; at most 50 rows. Needs: Assignment move ledger, with candidate ladders (`SCORED` edges).
+
+Graph view: nodes `Query` (`query_id`), `Engine` (`engine`); edges `Query` → `Engine` (SCORED).
+
+Parameters:
+
+- `query_id` (query): A query id, busiest first. Example `66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799`. Choices: `MATCH (q:Query) RETURN q.id AS value ORDER BY q.calls_per_second DESC, value`
+
+The ladder comes from `ladder_version`'s Move (`pass`); a rollback's ladder is copied from the abandoned reroute `ladder_copied_from`.
+
+```json
+{"cypher": "MATCH (q:Query {id: $query_id})-[s:SCORED {current: true}]->(e:Engine) RETURN q.id AS query_id, e.id AS engine, s.score AS score, s.gate AS gate, s.assigned AS assigned, s.ladder_version AS ladder_version, s.pass AS pass, s.ladder_copied_from AS ladder_copied_from ORDER BY engine", "params": {"query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"}}
+```
+
 ## Empty results
 
 A query that returns `row_count: 0` usually means the pipeline stage that
@@ -507,7 +568,7 @@ names the stages it needs.
 |---------|--------------------------|---------|
 | `Signal` nodes | Referee triage | 7 |
 | `AntiPattern` nodes | Analysis, per engine | 5, D |
-| `Destination` nodes and `MIGRATES_TO` edges | Assignment | 2, 3, B, E |
+| `Destination` nodes and `MIGRATES_TO` edges | Assignment | 2, 3, B, E, L |
 | `MOVED` edges | Assignment move ledger | G |
 | `AssignmentVersion` nodes | Assignment version chain | J, K |
 | `Decision` nodes | Reality check or schema design | 8 |
@@ -516,6 +577,8 @@ names the stages it needs.
 | `LoadTestRun` nodes | Load test, per engine | 9, F |
 | active `Risk` nodes | Referee synthesis | 6, D |
 | resolved `Risk` nodes | Referee synthesis, when the assignment resolved a risk | 6b |
+| `TargetObject` nodes from a design (not a fallback) | Schema design, per engine | M |
+| `SCORED` edges | Assignment move ledger, with candidate ladders | N |
 
 <!-- END GENERATED by scripts/render_graph_catalog.py -->
 

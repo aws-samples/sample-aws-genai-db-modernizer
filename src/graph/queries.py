@@ -119,7 +119,8 @@ def query_provenance(store: GraphStore, query_id: str) -> QueryProvenanceRespons
 
 
 def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
-    """Destinations for an engine, with their source tables and access patterns."""
+    """The engine's destination (a query's Destination is its engine, #306), with the
+    source tables and access patterns of the queries migrating to it."""
     rows = store.query(
         "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) "
         "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
