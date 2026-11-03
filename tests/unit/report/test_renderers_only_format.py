@@ -630,6 +630,10 @@ JUDGE_RECOUNTS: dict[tuple[str, str], str] = {
         "the e2e-llm run's own model spend, the /modernize run plus the /explore session "
         "(#307; a false match on the word cost), not a report figure"
     ),
+    ("ci/llm/run.py", "table_cli - total_cost"): (
+        "the gap between the token-usage table's CLI cost and the run's own total_cost_usd "
+        "(#763; a false match on the word total), not a report figure"
+    ),
     **{
         ("ci/llm/judge_facts.py", expr): _CLOSE_CALLS_FALLBACK
         for expr in (

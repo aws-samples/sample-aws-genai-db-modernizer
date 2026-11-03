@@ -1,0 +1,27 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Soft cost budgets per e2e-llm fixture and mode (#355, #763). A run whose
+# results.json `total_cost_usd` (the CLI's own cost figure, the run plus its
+# /explore session; see ci/llm/token_usage.py for how it relates to the list
+# price) is above `max_total_cost_usd` gets a `warnings` entry and
+# `budget.exceeded: true`. It never fails the run.
+#
+# The budget for `<fixture>.<mode>` (chat, ui or both) applies first, then the
+# fixture's own. Only both-mode runs are measured so far, so chat and ui runs use
+# the fixture's figure until they have their own. Set from the both-mode runs on
+# Claude Sonnet 5.5 (2026-10-28 to 2026-11-03): wordpress $3.58-3.91 over 24
+# runs, discourse $40-41 for most runs and about $60 when the DynamoDB merge needs
+# a fix round. A scoped run (E2E_LLM_TARGET_DATABASES) is held to the same figure.
+
+[wordpress]
+max_total_cost_usd = 4.50
+
+[wordpress.both]
+max_total_cost_usd = 4.50
+
+[discourse]
+max_total_cost_usd = 50.00
+
+[discourse.both]
+max_total_cost_usd = 50.00

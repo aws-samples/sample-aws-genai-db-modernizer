@@ -162,6 +162,7 @@ import shlex
 import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrusted input
 import sys
 import tarfile
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1755,18 +1756,94 @@ def _wall_duration_s(claude_exit_path: Path | None) -> float | None:
     return float(match.group(1)) if match else None
 
 
-def _load_token_usage(path: Path | None) -> dict[str, Any] | None:
-    """``{total, phases}`` from ci/llm/token_usage.py's output, or None."""
-    payload = _load_json(path) if path is not None else None
-    if not isinstance(payload, dict) or not isinstance(payload.get("total"), dict):
-        return None
+_TOKEN_USAGE_KEYS = ("agents", "cost", "unattributed_calls", "skipped_lines")
+
+
+def _load_token_usage(path: Path | None) -> tuple[dict[str, Any] | None, str | None]:
+    """(``{total, phases, agents, cost, ...}`` from ci/llm/token_usage.py's output,
+    ``token_usage_error``). No path (the step did not run): ``(None, None)``; a
+    missing, unreadable or failed file: ``(None, <why>)`` (#745)."""
+    if path is None:
+        return None, None
+    payload = _load_json(path)
+    if payload is None:
+        return None, f"{path.name} not found: the token-usage step wrote nothing"
+    if "error" in payload:
+        return None, str(payload["error"])
+    if not isinstance(payload.get("total"), dict):
+        return None, f"{path.name} has no total"
     phases = payload.get("phases")
-    return {"total": payload["total"], "phases": phases if isinstance(phases, dict) else {}}
+    section: dict[str, Any] = {
+        "total": payload["total"],
+        "phases": phases if isinstance(phases, dict) else {},
+    }
+    for key in _TOKEN_USAGE_KEYS:
+        if key in payload:
+            section[key] = payload[key]
+    return section, None
 
 
 def _total_cost(cost_usd: Any, explore: dict[str, Any] | None) -> float | None:
     costs = [c for c in (cost_usd, (explore or {}).get("cost_usd")) if _is_number(c)]
     return round(sum(costs), 6) if costs else None
+
+
+DEFAULT_BUDGETS = Path(__file__).resolve().with_name("budgets.toml")
+#: The results.json field the soft budgets compare: the CLI's own figure, the one every
+#: saved run and the budgets were measured with (see ci/llm/token_usage.py).
+BUDGET_FIELD = "total_cost_usd"
+_BUDGET_KEY = "max_total_cost_usd"
+# The token-usage table's cli_cost_usd and total_cost_usd come from the same result
+# records, so they agree to rounding; a larger gap means one read the wrong session.
+_COST_AGREEMENT_USD = 0.01
+_MODES = ("chat", "ui", "both")
+
+
+def load_budgets(path: Path) -> dict[str, float]:
+    """``{"<fixture>": limit, "<fixture>.<mode>": limit}`` from ``ci/llm/budgets.toml``."""
+    try:
+        with path.open("rb") as handle:
+            table = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    limits: dict[str, float] = {}
+    for fixture, entry in table.items():
+        if not isinstance(entry, dict):
+            continue
+        if _is_number(entry.get(_BUDGET_KEY)):
+            limits[str(fixture)] = float(entry[_BUDGET_KEY])
+        for mode in _MODES:
+            sub = entry.get(mode)
+            if isinstance(sub, dict) and _is_number(sub.get(_BUDGET_KEY)):
+                limits[f"{fixture}.{mode}"] = float(sub[_BUDGET_KEY])
+    return limits
+
+
+def _budget(
+    fixture: str, mode: str, total_cost: Any, budgets_path: Path
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """The soft budget check (#355): the fixture-and-mode budget, else the fixture's.
+    A warning, never a failure."""
+    limits = load_budgets(budgets_path)
+    key = next((k for k in (f"{fixture}.{mode}", fixture) if k in limits), None)
+    if key is None:
+        return None, []
+    limit = limits[key]
+    value = float(total_cost) if _is_number(total_cost) else None
+    exceeded = None if value is None else value > limit
+    budget = {
+        "key": key,
+        "field": BUDGET_FIELD,
+        "limit_usd": limit,
+        "value_usd": value,
+        "exceeded": exceeded,
+    }
+    warnings = (
+        [f"{BUDGET_FIELD} ${value:.2f} exceeds the {key} soft budget ${limit:.2f}"]
+        if exceeded and value is not None
+        else []
+    )
+    return budget, warnings
 
 
 def build_results_row(
@@ -1780,6 +1857,7 @@ def build_results_row(
     claude_exit_path: Path | None = None,
     token_usage_path: Path | None = None,
     explore_path: Path | None = None,
+    budgets_path: Path = DEFAULT_BUDGETS,
 ) -> dict[str, Any]:
     checks: dict[str, bool | None] = {
         "transcript": None,
@@ -1905,6 +1983,24 @@ def build_results_row(
         required.append("explore")
     overall_pass = (not missing_required) and all(checks.get(k) is True for k in required)
 
+    # Cost reporting (#355, #745, #763): the per-agent table, its error, the soft
+    # budget. Warnings only: none of this changes `pass`.
+    total_cost = _total_cost(cost_usd, explore_section)
+    token_usage, token_usage_error = _load_token_usage(token_usage_path)
+    budget, warnings = _budget(fixture, mode, total_cost, budgets_path)
+    table_cost = (token_usage or {}).get("cost") or {}
+    table_cli = table_cost.get("cli_cost_usd")
+    if (
+        _is_number(table_cli)
+        and _is_number(total_cost)
+        and abs(table_cli - total_cost) > _COST_AGREEMENT_USD
+    ):
+        warnings.append(
+            f"token_usage cost.cli_cost_usd ${table_cli:.2f} differs from "
+            f"total_cost_usd ${total_cost:.2f}: the two read different sessions"
+        )
+    list_price = table_cost.get("list_price_cost_usd")
+
     return {
         # 2 (#987): the "html" check became "engineering" when the HTML reports
         # were retired.
@@ -1917,8 +2013,11 @@ def build_results_row(
         "job_id": job_id,
         "db": db,
         "cost_usd": cost_usd,
-        # The /modernize run's cost plus the /explore session's (#307).
-        "total_cost_usd": _total_cost(cost_usd, explore_section),
+        # The /modernize run's cost plus the /explore session's (#307), as the CLI
+        # estimates it; the soft budgets compare it.
+        "total_cost_usd": total_cost,
+        # The same usage at the catalog's list prices (#763; ci/llm/token_usage.py).
+        "list_price_cost_usd": list_price if _is_number(list_price) else None,
         "num_turns": num_turns,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
@@ -1931,7 +2030,10 @@ def build_results_row(
         "unlisted_tool_denials": unlisted_tool_denials,
         "prevented_by_hook": prevented_by_hook,
         "hook_errors": hook_errors,
-        "token_usage": _load_token_usage(token_usage_path),
+        "token_usage": token_usage,
+        "token_usage_error": token_usage_error,
+        "budget": budget,
+        "warnings": warnings,
         "judge": judge_section,
         "explore": explore_section,
         "pass": overall_pass,
