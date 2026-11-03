@@ -220,6 +220,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"_DESIGN_READERS"}),
         _PLUMBING + ": how each engine's schema output maps onto assess()'s design block (#1493)",
     ),
+    "src/graph/catalog.py": (
+        frozenset({"DESTINATION_ENGINE_PARAM"}),
+        _WORDING + ": the engine parameter's example value in the graph query catalog's "
+        "docs; its choices come from the graph (#307)",
+    ),
     "src/agents/schema_design/group_merger.py": (frozenset({"ENGINE_LIST_FIELDS"}), _PLUMBING),
     "src/agents/schema_design/handler.py": (frozenset({"_NON_GROUPED_ENGINES"}), _PLUMBING),
     "src/agents/schema_design/pattern_input.py": (

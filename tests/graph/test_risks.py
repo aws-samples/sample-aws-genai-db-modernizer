@@ -267,7 +267,8 @@ def test_cookbook_risk_queries_run(graph_store, sample_collector_output):
     register, resolved, hotspots = _cookbook_risk_queries()
     assert [r["description"] for r in graph_store.query(register)] == ["RISK-001 description"]
     rows = graph_store.query(resolved)
-    assert [(r["id"], r["raised_by"], r["resolved_on"], r["queries"]) for r in rows] == [
+    # The catalog names the column risk_id, as in the risk register (#307).
+    assert [(r["risk_id"], r["raised_by"], r["resolved_on"], r["queries"]) for r in rows] == [
         ("RESOLVED-001", "aurora_mysql", "dynamodb", ["q2"])
     ]
     assert {r["table_id"]: r["risks"] for r in graph_store.query(hotspots)} == {"orders": 1}

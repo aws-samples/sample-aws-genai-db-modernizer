@@ -295,6 +295,16 @@ repos:
         files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js|docs/architecture/rule-catalog\.md)'
         pass_filenames: false
 
+  # The cookbook's query section is generated from the graph query catalog (#307)
+  - repo: local
+    hooks:
+      - id: render-graph-catalog
+        name: Graph query catalog section of the cookbook is fresh
+        entry: uv run python scripts/render_graph_catalog.py --check
+        language: system
+        files: '(src/graph/catalog\.py|src/graph/store\.py|src/shared/catalog/.*\.py|src/catalog/engines/.*\.toml|scripts/render_graph_catalog\.py|docs/guides/context-graph-query-cookbook\.md)'
+        pass_filenames: false
+
   # The assess() request and result JSON Schemas are generated from the public models (#1183)
   - repo: local
     hooks:
