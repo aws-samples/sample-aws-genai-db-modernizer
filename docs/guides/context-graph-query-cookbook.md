@@ -56,6 +56,28 @@ artifacts (the artifact store, which is the local `artifacts/` folder by default
 corresponding pipeline stage may not have produced artifacts yet (see
 [Empty results](#empty-results)).
 
+## From the command line
+
+`scripts/graph_query.py` asks a job's graph any catalog question below, without the API and without writing Cypher:
+
+```bash
+uv run python scripts/graph_query.py list
+uv run python scripts/graph_query.py params table_blast_radius --job-id <job>
+uv run python scripts/graph_query.py run table_blast_radius --job-id <job> --param table_id=wordpress.wp_posts
+uv run python scripts/graph_query.py run engine_distribution --job-id <job> --format md
+```
+
+- Each command prints one compact JSON line (`--format md` prints Markdown). Any error, a usage error included, prints `{"status": "error", "message": ...}` and exits 1.
+- `run` returns `columns`, `rows`, `row_count`, `truncated` (more rows matched than the entry's bound) and `graph`: its `source` (`api` or `cli`), `path` and whether the copy was `rebuilt`. An empty result also lists `unmet_needs` and an `explanation` that names the stages the job has not run.
+- `params` lists each parameter's choices from the job's graph when `--job-id` is given.
+- `--db` is found from the job id when only one database folder under `--artifact-root` (default `$ARTIFACT_DIR` or `./artifacts`) holds that job.
+- The graph is opened read-only, with the read timeout and the entry's row bound.
+  - When the API's graph (`<db>/<job>/graph/context.lbug`) is current, it is read as it is.
+  - Otherwise the script builds its own copy (`graph/cli/context.lbug`) under a file lock and reads that, so it never writes the file the API serves while the API rebuilds it. Two runs at once build the copy once, and reads of a current copy run side by side.
+  - The copy is removed by the next run that finds the API's graph current again. `--clean` removes `graph/cli/` (copy and lock file) once the command has answered.
+  - Reading the API's file while the API replaces it relies on POSIX rename semantics: an open handle keeps the file it opened. On Windows the script always reads its own copy.
+- Under `MODERNIZER_CI_SANDBOX=1`, an artifact root outside the repository or a database or job name that is not a plain name is refused.
+
 ## Curated endpoints (preferred)
 
 For the highest-value questions there are typed `GET` endpoints that return

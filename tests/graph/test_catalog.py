@@ -599,3 +599,13 @@ def test_version_choices_are_newest_first(graphs):
         "assignment-v2",
         "assignment-v1",
     ]
+
+
+def test_check_params_is_public_so_callers_validate_before_opening_a_graph():
+    """The CLI checks parameters before it opens (or builds) the job's graph (#307)."""
+    entry = catalog.get_entry("table_blast_radius")
+    assert catalog.check_params(entry, {"table_id": "wordpress.wp_posts"}) == {
+        "table_id": "wordpress.wp_posts"
+    }
+    with pytest.raises(ValueError, match="missing"):
+        catalog.check_params(entry, {})

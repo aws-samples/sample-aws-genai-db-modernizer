@@ -31,7 +31,7 @@ from src.api.models.graph_responses import (
     TableImpactResponse,
 )
 from src.api.services.local_execution import LocalExecutionService
-from src.graph import GraphStoreCache
+from src.graph import GraphStoreCache, job_graph
 from src.graph import queries as graph_queries
 from src.graph.cypher_guard import DisallowedStatementError, bound_result_rows
 from src.graph.inputs_digest import graph_inputs_digest
@@ -124,52 +124,8 @@ def _services() -> tuple[GraphStoreCache, ArtifactStore, GraphPersistence]:
 def _is_populated_file(
     path: str, effective_version: int | None = None, inputs_digest: str | None = None
 ) -> bool:
-    """True when ``path`` holds a readable, current graph with at least one node.
-
-    Current means built with this code's schema revision (``GraphMeta``): a
-    graph saved by an earlier release (no MOVED table, say) is stale, so the
-    caller rebuilds it from the artifacts instead of serving it (ADR-023).
-    When ``effective_version`` is given, the graph must also have been built
-    from that assignment version: a graph saved before a customer edit or any
-    later assignment version is stale too (#819). When ``inputs_digest`` is
-    given, it must match the digest of the artifacts the graph was built from:
-    a phase re-run on the same version rewrites artifacts without a new
-    version (#847).
-    """
-    if not Path(path).exists():
-        return False
-    try:
-        probe = GraphStore(path, read_only=True)
-    except Exception as exc:  # corrupt/unreadable file -> caller rebuilds
-        logger.warning("graph at %s unusable: %s", path, exc)
-        return False
-    try:
-        if not probe.is_populated():
-            return False
-        meta = probe.graph_meta()
-        revision = meta["schema_revision"]
-        if revision != GRAPH_SCHEMA_REVISION:
-            logger.info(
-                "graph at %s has schema revision %s, not %s: rebuilding",
-                path,
-                revision,
-                GRAPH_SCHEMA_REVISION,
-            )
-            return False
-        if effective_version is not None and meta["effective_version"] != effective_version:
-            logger.info(
-                "graph at %s was built from assignment v%s, not v%s: rebuilding",
-                path,
-                meta["effective_version"],
-                effective_version,
-            )
-            return False
-        if inputs_digest is not None and meta["inputs_digest"] != inputs_digest:
-            logger.info("graph at %s was built from older artifacts: rebuilding", path)
-            return False
-        return True
-    finally:
-        probe.close()
+    """True when ``path`` holds a readable, current graph (``job_graph.is_current_graph_file``)."""
+    return job_graph.is_current_graph_file(path, effective_version, inputs_digest)
 
 
 def _inputs_digest(db_name: str, job_id: str) -> str | None:
@@ -280,65 +236,36 @@ def _clear_rebuild_failure(db_name: str, job_id: str) -> None:
 
 
 def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
-    """Rebuild the graph into a temporary file, move it over ``path``, then upload it.
+    """Rebuild the graph over ``path`` and upload it (``job_graph.build_graph_file``).
 
-    The caller must hold exclusive access to ``path`` (see GraphStoreCache).
-    Building next to the live file and renaming it into place means a failed
-    or interrupted build leaves the previous graph intact, and the file never
-    accumulates the history of earlier builds. Closing the writer before the
-    rename checkpoints the new file.
+    The caller must hold exclusive access to ``path`` (see GraphStoreCache). A
+    complete build clears this job's rebuild back-off; an incomplete one starts it.
     """
     _, store, persistence = _services()
     # The build digests the inputs itself: a digest cached before it must not
     # judge the new graph stale.
     with _inputs_digests_lock:
         _inputs_digests.pop((db_name, job_id), None)
-    building = f"{path}.building"
-    for leftover in _sidecars(building):
-        Path(leftover).unlink(missing_ok=True)
-    # Always build on a brand-new handle. Re-running the same parameterised
-    # inserts on one connection after the schema is dropped and recreated makes
-    # the engine silently insert nothing, so a reused writer would produce an
-    # empty graph.
-    writer = GraphStore(building)
-    try:
-        initialize_schema(writer)
-        stats = rebuild_graph(db_name, job_id, store, writer)
-    finally:
-        writer.close()
-    complete = stats.get("complete", True)
-    if complete:
-        _clear_rebuild_failure(db_name, job_id)
-    else:
-        _record_rebuild_failure(db_name, job_id)
-    if not complete and _is_populated_file(path):
-        # An artifact could not be read: keep the previous graph (and its
-        # stamp), so a later read retries instead of serving a partial one.
-        logger.warning(
-            "graph rebuild for %s/%s was incomplete; keeping the previous graph", db_name, job_id
-        )
-        for leftover in _sidecars(building):
-            Path(leftover).unlink(missing_ok=True)
-        return stats
-    for leftover in _sidecars(path)[1:]:
-        Path(leftover).unlink(missing_ok=True)
-    os.replace(building, path)
-    for leftover in _sidecars(building)[1:]:
-        Path(leftover).unlink(missing_ok=True)
-    if not complete:
-        # No previous graph: serve this unstamped one, which a later read
-        # rebuilds; never upload it for other API tasks to reuse.
-        return stats
-    try:
-        persistence.upload(db_name, job_id, path)
-    except Exception as exc:  # upload failure must not break the response
-        logger.warning("graph upload failed for %s/%s: %s", db_name, job_id, exc)
-    return stats
+
+    def on_built(complete: bool) -> None:
+        if complete:
+            _clear_rebuild_failure(db_name, job_id)
+        else:
+            _record_rebuild_failure(db_name, job_id)
+
+    return job_graph.build_graph_file(
+        db_name,
+        job_id,
+        path,
+        store,
+        persistence,
+        rebuild=rebuild_graph,
+        init_schema=initialize_schema,
+        on_built=on_built,
+    )
 
 
-def _sidecars(path: str) -> tuple[str, str, str]:
-    """The database file and the engine's write-ahead-log and shadow files."""
-    return path, f"{path}.wal", f"{path}.shadow"
+_sidecars = job_graph.sidecars
 
 
 def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool = False) -> None:
@@ -357,15 +284,14 @@ def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool
         else _effective_assignment_version(db_name, job_id)
     )
     digest = None if version is None else _inputs_digest(db_name, job_id)
-    if _is_populated_file(path, version, digest):
-        return
-    _, _, persistence = _services()
-    if persistence.download_if_exists(db_name, job_id, path) and _is_populated_file(
-        path, version, digest
-    ):
-        return
-    # Cache miss or unusable download: build fresh, then upload (self-healing).
-    _build_graph_file(db_name, job_id, path)
+    job_graph.prepare_graph_file(
+        path,
+        version=version,
+        digest=digest,
+        download=lambda target: _services()[2].download_if_exists(db_name, job_id, target),
+        # Cache miss or unusable download: build fresh, then upload (self-healing).
+        build=lambda: _build_graph_file(db_name, job_id, path),
+    )
 
 
 def graph_error_to_http(exc: Exception) -> HTTPException | None:

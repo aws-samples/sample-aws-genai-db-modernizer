@@ -806,7 +806,8 @@ def bounded_cypher(entry: CatalogEntry) -> str:
     return bound_result_rows(entry.cypher, entry.max_rows)
 
 
-def _check_params(entry: CatalogEntry, params: Mapping[str, object]) -> dict[str, str]:
+def check_params(entry: CatalogEntry, params: Mapping[str, object]) -> dict[str, str]:
+    """The parameters as strings; ValueError when one is missing, unknown or not a string."""
     names = {p.name for p in entry.params}
     missing = sorted(names - set(params))
     if missing:
@@ -824,7 +825,7 @@ def run_entry(
     store: GraphStore, entry: CatalogEntry, params: Mapping[str, object] | None = None
 ) -> CatalogResult:
     """Run one entry with its parameters bound, returning at most ``max_rows`` rows."""
-    bound = _check_params(entry, params or {})
+    bound = check_params(entry, params or {})
     rows, truncated = store.query_bounded(
         bounded_cypher(entry), bound or None, max_rows=entry.max_rows
     )
