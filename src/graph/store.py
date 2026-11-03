@@ -318,6 +318,14 @@ class GraphStore:
                     self._exec_schema_cypher(f"DROP TABLE {table[1]}")
         except Exception as exc:  # noqa: BLE001
             logger.warning("clear() failed: %s", exc)
+        # The engine's connection caches each prepared statement by its text, and a
+        # cached statement still points at the dropped tables: the same write after
+        # the tables are created again would write nothing (a second rebuild_graph on
+        # one handle emptied the graph). A fresh connection has no cache.
+        if self._conn is not None:
+            with self._lock:
+                self._conn.close()
+                self._conn = self._new_connection()
 
     def close(self) -> None:
         """Close the database connection and release file locks."""

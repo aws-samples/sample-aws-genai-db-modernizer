@@ -155,10 +155,13 @@ Relationships:
 (AssignmentVersion)-[:AFFECTS {role}]->(Query|Engine)
 (Decision)-[:AFFECTS {role}]->(Engine)
 (Query)-[:MOVED {version, seq, pass, reason_code, from_engine, score_before, score_after, ...}]->(Engine)
+(Query)-[:SCORED {version, score, gate, assigned, current, ladder_version, move_seq, pass, ladder_copied_from, dimensions_json}]->(Engine)
 (Decision|Signal|AntiPattern|AccessPattern|LoadTestRun|Risk)-[:PRODUCED_BY]->(Agent)
 ```
 
 An `AssignmentVersion` (`id` `assignment-v<N>`) has `version`, `kind` (the pass that made it: `first_assignment`, `reality_check`, `customer_pick`, `customer_scope`, `post_schema_reroute`, `rollback`, `source_of_truth_reroute` or `auto_decided`), `source`, `status`, `effective`, `created_at`, `move_count`, `passes_json` and `actors_json` (its Moves' distinct passes and actors). It `SUPERSEDES` the version before it, and a rollback `RESTORES` the version it restates. It `AFFECTS` the queries its Moves changed (role `moved`, or `tie` when they changed only a tie) and the engines those Moves left (`from`) or landed on (`to`). A consolidation Decision is `INFORMED_BY` the queries whose net move in the reality-check version is its from and to engine (its `query_count`), and a consolidation or reroute Decision `AFFECTS` the engines it moves queries from and to.
+
+`SCORED` is a query's candidate ladder per assignment version: one edge per engine on the ladder its last Move with recorded candidates holds, in that version or an earlier one (a customer pick, an auto pick or a source-of-truth reroute records none, so the query keeps its earlier ladder). `ladder_version`, `move_seq` and `pass` (that Move's own pass, as on `MOVED`) say where the ladder came from; a rollback copies the abandoned reroute's ladder, and `ladder_copied_from` names the reroute version. Each edge has the `score` (null, with the `gate`, when a gate excluded the engine), `assigned` (the engine the version's assignment gives the query) and `current` (the effective version). `dimensions_json` holds the recorded score dimensions for that query and engine (pattern, cost, base, penalty, fit and per-table complexity, performance and weights) when the version's access-pattern record has them and their score is the edge's, and is null otherwise. A query that filters on neither `version` nor `current` counts each query once per version it has edges for. A query's score on every engine now, with where that ladder came from: `MATCH (q:Query {id: $qid})-[s:SCORED {current: true}]->(e:Engine) RETURN e.id, s.score, s.gate, s.assigned, s.ladder_version, s.pass, s.ladder_copied_from`.
 
 `MOVED` is the move ledger in the graph: one edge per Move for every assignment version in the lineage, so a query's whole routing history stays.
 

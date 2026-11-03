@@ -12,7 +12,8 @@ from types import SimpleNamespace
 
 from pydantic import ValidationError
 
-from src.contracts.move_ledger import Move
+from src.contracts.assignment_models import AssignmentStatus
+from src.contracts.move_ledger import Move, ReasonCode
 from src.graph.inputs_digest import graph_inputs_digest
 from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
@@ -403,7 +404,7 @@ def _version_kind(assignment: dict, previous: dict | None) -> str:
     """
     from src.storage.assignment_versioning import _is_override_edit, is_reality_check_produced
 
-    if assignment.get("status") == "reroute_rolled_back":
+    if assignment.get("status") == AssignmentStatus.REROUTE_ROLLED_BACK.value:
         return "rollback"
     source = assignment.get("source")
     if source is not None:
@@ -532,6 +533,146 @@ def populate_version_chain(lineage: list[dict], effective_version: int, store: G
             {"rows": query_rows},
         )
     _affects_engines(store, "AssignmentVersion", engine_rows)
+
+
+def _recorded_dimensions(record: dict | None) -> tuple[dict, dict, dict]:
+    """The score dimensions an access-pattern record holds, read through the record
+    writer's own reader (``query_pattern.dimensions_of_record``), and each query's
+    tables; all empty for a record written before them (schema version 3 or older)."""
+    from src.agents.referee.query_pattern import dimensions_of_record
+
+    recorded = dimensions_of_record(record)
+    tables_of = {
+        str(r.get("query_id")): list(r.get("tables") or [])
+        for r in (record or {}).get("queries") or []
+        if isinstance(r, dict)
+    }
+    return recorded["queries"], recorded["tables"], tables_of
+
+
+def _rung_dimensions(
+    qid: str, engine: str, score: float | None, by_query: dict, by_engine: dict, tables_of: dict
+) -> str | None:
+    """The recorded dimensions for ``qid`` on ``engine``, when they explain ``score``:
+    the record's score (its ``fit``, else its ``base``) equals the edge's, the rule the
+    detailed report's facts use (``report_facts.detail_round``). A reroute or a
+    rollback carries the previous record's dimensions while its scores come from the
+    router, so those edges get none rather than another score's breakdown."""
+    from src.shared.report_facts import detail_round
+
+    entry = (by_query.get(qid) or {}).get(engine)
+    if not entry or score is None:
+        return None
+    if detail_round(entry.get("fit", entry.get("base"))) != detail_round(score):
+        return None
+    dims = dict(entry)
+    rated = by_engine.get(engine) or {}
+    common = rated.get("weights")
+    tables = {}
+    for table in tables_of.get(qid) or []:
+        row = (rated.get("tables") or {}).get(table)
+        if row:
+            tables[table] = {**row, "weights": row.get("weights") or common}
+    if tables:
+        dims["tables"] = tables
+    return json.dumps(dims, sort_keys=True)
+
+
+def populate_scored(
+    lineage: list[dict],
+    effective_version: int,
+    records: dict[int, dict | None],
+    store: GraphStore,
+) -> int:
+    """SCORED edges (#306): each query's candidate ladder per assignment version.
+
+    A query's ladder is the one its last Move with recorded candidates
+    (``evidence.candidates``) holds, in that version or an earlier one: a customer
+    pick, its group propagation, an auto pick or a source-of-truth reroute records
+    none, so the query keeps its earlier ladder, and the edge says which version and
+    Move it came from (``ladder_version``, ``move_seq``, ``pass``: that Move's own
+    pass, as on its MOVED edge). A rollback's Moves copy the abandoned reroute's
+    candidates: ``ladder_copied_from`` names the reroute version they came from.
+
+    Edges are written for each version a query has a Move in, and for every query in
+    the effective version (``current``). ``assigned`` is the version's own
+    ``assigned_engine``, never read from the ladder. ``records`` maps a version to its
+    access-pattern record; its score dimensions are attached when they explain the
+    edge's score. One edge per (query, version, engine); the populator replaces every
+    SCORED edge, so it can run again. Returns the edge count.
+    """
+    store.execute("MATCH ()-[s:SCORED]->() DELETE s")
+    ladder: dict[str, tuple[int, Move, str, int | None]] = {}
+    rows: list[dict] = []
+    for assignment in lineage:
+        version = int(assignment.get("version") or 0)
+        if version < 1:
+            continue
+        rolled = assignment.get("rolled_back_version")
+        rollback = assignment.get(
+            "status"
+        ) == AssignmentStatus.REROUTE_ROLLED_BACK.value and isinstance(rolled, int)
+        moves = sorted(version_moves(assignment), key=lambda m: m.seq)
+        for m in moves:
+            if not m.evidence.candidates:
+                continue
+            copied = (
+                rolled
+                if rollback and m.reason_code is ReasonCode.ROLLBACK_REDESIGN_FAILED
+                else None
+            )
+            ladder[m.query_id] = (version, m, m.pass_.value, copied)
+        assigned: dict[str, str | None] = {
+            str(qa.get("query_id")): qa.get("assigned_engine")
+            for qa in assignment.get("query_assignments") or []
+            if isinstance(qa, dict) and qa.get("query_id")
+        }
+        current = version == effective_version
+        wanted = {m.query_id for m in moves}
+        if current:
+            wanted |= set(assigned)
+        by_query, by_engine, tables_of = _recorded_dimensions(records.get(version))
+        for qid in sorted(wanted):
+            if qid not in ladder:
+                continue
+            ladder_version, m, pass_, copied = ladder[qid]
+            seen: set[str] = set()
+            for rung in m.evidence.candidates:
+                if rung.engine in seen:
+                    continue
+                seen.add(rung.engine)
+                rows.append(
+                    {
+                        "qid": qid,
+                        "eng": rung.engine,
+                        "ver": version,
+                        "score": rung.score,
+                        "gate": rung.gate,
+                        "assigned": assigned.get(qid) == rung.engine,
+                        "current": current,
+                        "lver": ladder_version,
+                        "seq": m.seq,
+                        "pss": pass_,
+                        "copied": copied,
+                        "dims": _rung_dimensions(
+                            qid, rung.engine, rung.score, by_query, by_engine, tables_of
+                        ),
+                    }
+                )
+    if not rows:
+        return 0
+    _merge_engines(store, {r["eng"] for r in rows})
+    # CREATE after the DELETE above: one edge per row, and twice as fast as MERGE on a
+    # large job. CAST: an all-null batch would otherwise type a column STRING.
+    store.execute(
+        "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (e:Engine {id: r.eng}) "
+        "CREATE (q)-[:SCORED {version: r.ver, score: CAST(r.score AS DOUBLE), "
+        "gate: r.gate, assigned: r.assigned, current: r.current, "
+        "ladder_version: r.lver, move_seq: r.seq, pass: r.pss, "
+        "ladder_copied_from: CAST(r.copied AS INT64), dimensions_json: r.dims}]->(e)",
+        {"rows": rows},
+    )
+    return len(rows)
 
 
 def link_consolidations(reality_check_output: dict, lineage: list[dict], store: GraphStore) -> None:
@@ -1025,6 +1166,19 @@ def rebuild_graph(
             populate_from_moves(version, graph_store)
         # 4d. The version chain of the effective lineage (#306).
         populate_version_chain(lineage, assignment_version, graph_store)
+        # 4e. Each query's candidate ladder per version, with the score dimensions
+        # each version's access-pattern record holds (#306, #1471).
+        populate_scored(
+            lineage,
+            assignment_version,
+            {
+                int(a["version"]): _read_safe(
+                    f"{prefix}/assignment/v{int(a['version'])}/access_patterns.json"
+                )
+                for a in lineage
+            },
+            graph_store,
+        )
         # 4c. The candidate keys of each query, from the effective version's
         # access-pattern record (#1361). An older job has none: a missing file is a
         # partial run, like any artifact.

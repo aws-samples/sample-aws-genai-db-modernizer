@@ -34,7 +34,9 @@ from src.graph.store import GraphStore
 #   engines; consolidation Decisions INFORMED_BY the queries of their net
 #   ledger moves, and
 #   consolidation and reroute Decisions AFFECTS their engines.
-GRAPH_SCHEMA_REVISION = 7
+# - 8 (#306): SCORED edges, each query's candidate ladder per assignment
+#   version with its recorded score dimensions.
+GRAPH_SCHEMA_REVISION = 8
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -173,6 +175,22 @@ REL_TABLES = [
     # scores are DOUBLE (written through CAST); evidence_json is the Move's
     # evidence (candidate ladder, group scores, tie rule, earlier tie) and
     # tied_engines_json its unresolved tie, both display-only JSON strings.
+    # One edge per rung of a query's candidate ladder per assignment version
+    # (#306), for each version the query has a Move in and for every query in the
+    # effective version (current). The ladder is the one the query's last Move with
+    # recorded candidates holds, in that version or an earlier one: ladder_version,
+    # move_seq and pass (that Move's own pass, as on MOVED) say where it came
+    # from; ladder_copied_from is the abandoned reroute version a rollback's Move
+    # copied its candidates from, null otherwise. score is null and gate set when a gate excluded the engine. assigned
+    # is the version's own assigned_engine. dimensions_json holds the version's
+    # access-pattern record's score dimensions (#1471) when they explain the score
+    # (the record's score equals it), else null. Routing never reads these edges.
+    """CREATE REL TABLE IF NOT EXISTS SCORED (
+        FROM Query TO Engine,
+        version INT64, score DOUBLE, gate STRING, assigned BOOLEAN, current BOOLEAN,
+        ladder_version INT64, move_seq INT64, pass STRING, ladder_copied_from INT64,
+        dimensions_json STRING
+    )""",
     """CREATE REL TABLE IF NOT EXISTS MOVED (
         FROM Query TO Engine,
         version INT64, seq INT64, pass STRING, reason_code STRING, actor STRING,

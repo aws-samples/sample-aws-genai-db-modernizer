@@ -3486,7 +3486,10 @@ PLACEHOLDER_TABLE_NAMES = frozenset(
 )
 
 
-def _detail_round(x: Any) -> float | None:
+def detail_round(x: Any) -> float | None:
+    """A score as the detailed report shows and compares it: rounded to
+    ``_DETAIL_PLACES``; None for anything that is not a number (a bool included).
+    The context graph uses it to match recorded score dimensions to a SCORED edge."""
     if isinstance(x, (int, float)) and not isinstance(x, bool):
         return round(float(x), _DETAIL_PLACES)
     return None
@@ -3507,7 +3510,7 @@ def _latest_ladder(trace: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             return {
                 str(c.get("engine")): {
                     "engine": str(c.get("engine")),
-                    "score": _detail_round(c.get("score")),
+                    "score": detail_round(c.get("score")),
                     "gate": c.get("gate"),
                     "gate_text": c.get("gate_text"),
                 }
@@ -3562,10 +3565,10 @@ def recorded_pattern_score(row: Mapping[str, Any], engine: str) -> float | None:
     if not isinstance(entry, Mapping):
         return None
     if "pattern" in entry:
-        return _detail_round(entry["pattern"])
+        return detail_round(entry["pattern"])
     if "cost" not in entry:  # a statement with no access-pattern class reads neither
         return None
-    return _detail_round(class_pattern_score(row, engine))
+    return detail_round(class_pattern_score(row, engine))
 
 
 def _recorded_entry(
@@ -3579,14 +3582,14 @@ def _recorded_entry(
     if not isinstance(entry, Mapping):
         return None
     shown = (ladder.get(engine) or {}).get("score")
-    recorded = _detail_round(entry.get("fit", entry.get("base")))
+    recorded = detail_round(entry.get("fit", entry.get("base")))
     return entry if shown is not None and recorded == shown else None
 
 
 def _weights(value: Any) -> dict[str, float] | None:
     if not isinstance(value, Mapping):
         return None
-    out = {str(k): float(v) for k, v in value.items() if _detail_round(v) is not None}
+    out = {str(k): float(v) for k, v in value.items() if detail_round(v) is not None}
     return out or None
 
 
@@ -3628,10 +3631,10 @@ def _dimension_rows(
             table_rows.append(
                 {
                     "table": t,
-                    "complexity": _detail_round(
+                    "complexity": detail_round(
                         own.get("complexity", (by_table.get(t) or {}).get("complexity_score"))
                     ),
-                    "performance": _detail_round(
+                    "performance": detail_round(
                         own.get("performance", (by_table.get(t) or {}).get("performance_score"))
                     ),
                     "weights": (
@@ -3644,7 +3647,7 @@ def _dimension_rows(
         weights = sets[0] if sets and all(w == sets[0] for w in sets) else None
         if recorded is not None:
             # The penalty routing applied, as the scorer call recorded it (#1471).
-            penalty = _detail_round(recorded.get("penalty", 0)) or 0.0
+            penalty = detail_round(recorded.get("penalty", 0)) or 0.0
         else:
             # The biggest intrinsic penalty is the one routing applies (ADR-031
             # Decision 8, ``query_scoring.build_anti_pattern_map``), never their sum.
@@ -3661,15 +3664,15 @@ def _dimension_rows(
             {
                 "engine": engine,
                 "routed": dict(ladder.get(engine) or {"engine": engine}),
-                "pattern_score": _detail_round(written.get(engine)),
-                "redesigned_pattern_score": _detail_round(redesigned.get(engine)),
+                "pattern_score": detail_round(written.get(engine)),
+                "redesigned_pattern_score": detail_round(redesigned.get(engine)),
                 "parity_anchor": anchors.get(engine),
                 "dimensions_recorded": recorded is not None,
                 "routed_pattern_score": (
                     recorded_pattern_score(row, engine) if recorded is not None else None
                 ),
-                "base_score": _detail_round((recorded or {}).get("base")),
-                "cost_score": _detail_round((recorded or {}).get("cost")),
+                "base_score": detail_round((recorded or {}).get("base")),
+                "cost_score": detail_round((recorded or {}).get("cost")),
                 "weights": weights if recorded is not None else None,
                 "intrinsic_penalty": penalty,
                 "intrinsic_findings": [str(f.get("pattern") or "") for f in intrinsic],
@@ -3741,7 +3744,7 @@ def _group_detail(
     )
     rows = []
     for qid in members:
-        own = _detail_round((traces.get(qid) or {}).get("final_score"))
+        own = detail_round((traces.get(qid) or {}).get("final_score"))
         record = (carried or {}).get(qid)
         poor = (
             record is not None
@@ -3865,7 +3868,7 @@ def routing_detail_facts(
                 "tables": tables,
                 "in_scope": bool(qa.get("in_scope", True)),
                 "engine": engine,
-                "final_score": _detail_round(trace.get("final_score")),
+                "final_score": detail_round(trace.get("final_score")),
                 "pinned": trace.get("pinned") or qa.get("pinned"),
                 "access_class": (row or {}).get("class"),
                 "access_reason": (row or {}).get("reason"),
