@@ -85,7 +85,8 @@ function to `src/graph/queries.py` (Cypher + shaping), a Pydantic model to
 
 Node types: `Query`, `SourceTable`, `Destination`, `Engine`, `Signal`,
 `CoDependencyGroup`, `Decision`, `LoadTestRun`, `AntiPattern`, `Risk`,
-`AccessPattern`, `Agent` (the producing agent and phase), `GraphMeta` (the schema revision
+`AccessPattern`, `AssignmentVersion` (one per version of the effective assignment lineage),
+`Agent` (the producing agent and phase), `GraphMeta` (the schema revision
 and assignment version the graph was built from).
 
 Relationships:
@@ -106,9 +107,15 @@ Relationships:
 (Risk)-[:IMPACTS]->(SourceTable)
 (Risk)-[:EVIDENCED_BY]->(Query)
 (Decision)-[:SUPERSEDES]->(Decision)
+(AssignmentVersion)-[:SUPERSEDES]->(AssignmentVersion)
+(AssignmentVersion)-[:RESTORES]->(AssignmentVersion)
+(AssignmentVersion)-[:AFFECTS {role}]->(Query|Engine)
+(Decision)-[:AFFECTS {role}]->(Engine)
 (Query)-[:MOVED {version, seq, pass, reason_code, from_engine, score_before, score_after, ...}]->(Engine)
 (Decision|Signal|AntiPattern|AccessPattern|LoadTestRun|Risk)-[:PRODUCED_BY]->(Agent)
 ```
+
+An `AssignmentVersion` (`id` `assignment-v<N>`) has `version`, `kind` (the pass that made it: `first_assignment`, `reality_check`, `customer_pick`, `customer_scope`, `post_schema_reroute`, `rollback`, `source_of_truth_reroute` or `auto_decided`), `source`, `status`, `effective`, `created_at`, `move_count`, `passes_json` and `actors_json` (its Moves' distinct passes and actors). It `SUPERSEDES` the version before it, and a rollback `RESTORES` the version it restates. It `AFFECTS` the queries its Moves changed (role `moved`, or `tie` when they changed only a tie) and the engines those Moves left (`from`) or landed on (`to`). A consolidation Decision is `INFORMED_BY` the queries whose net move in the reality-check version is its from and to engine (its `query_count`), and a consolidation or reroute Decision `AFFECTS` the engines it moves queries from and to.
 
 `MOVED` is the move ledger in the graph: one edge per Move for every assignment version in the lineage, so a query's whole routing history stays.
 
