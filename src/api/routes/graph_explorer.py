@@ -202,6 +202,7 @@ def graph_explore_overlays(
     with graph_route._curated_errors():
         traffic = explorer.traffic_scale(store)
         bundle_traffic = explorer.bundle_traffic_scale(store)
+        placeholders = sorted(explorer.placeholder_tables(store))
     return ExplorerOverlays(
         views=overlays.views(),
         waves=[
@@ -216,7 +217,7 @@ def graph_explore_overlays(
         traffic=traffic,
         bundle_traffic=bundle_traffic,
         cost=explorer.cost_scale(overlays.engine_costs),
-        placeholder_tables=sorted(t for t in explorer.PSEUDO_TABLES if t),
+        placeholder_tables=placeholders,
     )
 
 

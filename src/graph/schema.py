@@ -39,7 +39,9 @@ from src.graph.store import GraphStore
 # - 9 (#306): TargetObject nodes and TARGETS edges, each query's design objects
 #   per version; a Destination is the query's engine, no longer a guess from its
 #   first source table.
-GRAPH_SCHEMA_REVISION = 9
+# - 10 (#306): WRITES edges (the tables a query writes or locks, as routing's
+#   one-writer rule reads them) and SourceTable.placeholder / placeholder_reason.
+GRAPH_SCHEMA_REVISION = 10
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -56,8 +58,12 @@ NODE_TABLES = [
         key_candidates_json STRING,
         PRIMARY KEY (id)
     )""",
+    # placeholder: a collector's name for "no table" (report_facts.
+    # PLACEHOLDER_TABLE_NAMES: 'unknown', a dummy table), kept and flagged, with
+    # placeholder_reason (#306).
     """CREATE NODE TABLE IF NOT EXISTS SourceTable (
         id STRING, database STRING, row_estimate INT64,
+        placeholder BOOLEAN, placeholder_reason STRING,
         PRIMARY KEY (id)
     )""",
     # A design's target object (#306): a DynamoDB table or GSI (parent: its table),
@@ -154,7 +160,12 @@ NODE_TABLES = [
 ]
 
 REL_TABLES = [
+    # READS_FROM: every table a query accesses. WRITES: every table it writes or
+    # locks, as routing's one-writer rule reads it (write_groups.written_tables,
+    # ADR-031 Amendment 9); locking for a locking read (#306). Named like the
+    # planned Routine-to-SourceTable WRITES (#1677), which can add its pair here.
     "CREATE REL TABLE IF NOT EXISTS READS_FROM (FROM Query TO SourceTable)",
+    "CREATE REL TABLE IF NOT EXISTS WRITES (FROM Query TO SourceTable, locking BOOLEAN)",
     "CREATE REL TABLE IF NOT EXISTS MIGRATES_TO (FROM Query TO Destination, confidence DOUBLE, pinned STRING, assignment_reason STRING)",
     "CREATE REL TABLE IF NOT EXISTS EMITS_SIGNAL (FROM Query TO Signal, strength DOUBLE)",
     "CREATE REL TABLE IF NOT EXISTS MEMBER_OF (FROM Query TO CoDependencyGroup)",

@@ -201,6 +201,15 @@ describe('traffic scale and views', () => {
     expect(byId(toElements(fanned, {}))['q:busy|wp_posts'].classes).not.toMatch('access-');
   });
 
+  test('who writes: a read the report cannot yet place carries its own class', () => {
+    const pending = JSON.parse(JSON.stringify(fanned));
+    Object.values(pending.bundles).forEach((b) => {
+      b.access = 'read_or_replica';
+    });
+    const els = byId(toElements(pending, { mode: 'who-writes' }));
+    expect(els['bundle:wp_posts|aurora'].classes).toMatch('access-read_or_replica');
+  });
+
   test('moves together marks the edges of a placement unit', () => {
     const els = byId(toElements(fanned, { mode: 'moves-together' }));
     expect(els['q:busy|wp_posts'].classes).toMatch('in-unit');

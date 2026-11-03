@@ -53,15 +53,55 @@ def _stamp_agent(
     )
 
 
+# Why a SourceTable is a placeholder (#306): one of the collector's names for "no
+# table" (``report_facts.PLACEHOLDER_TABLE_NAMES``, in any case, or an empty name).
+PLACEHOLDER_REASON = (
+    "a collector placeholder, not a table of the source database: no table resolved "
+    "for the statement, or a dummy table such as DUAL"
+)
+
+
+def _placeholder_reason(table: str) -> str | None:
+    from src.shared.report_facts import PLACEHOLDER_TABLE_NAMES
+
+    folded = {name.casefold() for name in PLACEHOLDER_TABLE_NAMES}
+    if table.strip() and table.strip().casefold() not in folded:
+        return None
+    return PLACEHOLDER_REASON
+
+
 def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
-    """Create Query and SourceTable nodes, READS_FROM edges from collector output."""
+    """Create Query and SourceTable nodes, READS_FROM and WRITES edges from collector output.
+
+    READS_FROM links a query to every table it accesses (``tables_accessed``): an
+    UPDATE or DELETE reads the rows it changes and a locking read reads what it
+    locks, so a query that reads a table only is one with READS_FROM and no WRITES.
+    WRITES links it to every table it writes or locks, exactly as routing's
+    one-writer rule reads it (``write_groups.written_tables``, ADR-031 Amendment 9,
+    in the collection's source dialect), with ``locking`` on a table the statement
+    locks by a locking read and does not write (an ``INSERT ... SELECT ... FOR
+    UPDATE`` target is a write, the tables its read locks are locking). A
+    SourceTable a collector placeholder names (``unknown``, a dummy table) is kept
+    and flagged ``placeholder``, with its reason (#306); it gets WRITES whenever
+    routing counts it as written.
+    """
+    from src.agents.referee.cache_overlay import is_locking_read, is_write_query
+    from src.agents.referee.table_resolution import SourceScope
+    from src.agents.referee.write_groups import written_tables
+    from src.agents.schema_design.scope import normalize_table_name
+    from src.tools.sql.query_facts import query_facts, source_engine_of
+
     patterns = collector_output["queries"]["query_patterns"]
 
-    table_rows = [{"id": t} for t in sorted({t for p in patterns for t in p["tables_accessed"]})]
+    table_rows = [
+        {"id": t, "reason": _placeholder_reason(t)}
+        for t in sorted({t for p in patterns for t in p["tables_accessed"]})
+    ]
     if table_rows:
         store.execute(
             "UNWIND $rows AS r MERGE (st:SourceTable {id: r.id}) "
-            "SET st.database = '', st.row_estimate = 0",
+            "SET st.database = '', st.row_estimate = 0, "
+            "st.placeholder = r.reason IS NOT NULL, st.placeholder_reason = r.reason",
             {"rows": table_rows},
         )
 
@@ -101,6 +141,34 @@ def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
             "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (st:SourceTable {id: r.tid}) "
             "MERGE (q)-[:READS_FROM]->(st)",
             {"rows": edge_rows},
+        )
+
+    engine = source_engine_of(collector_output)
+    scope = SourceScope.from_collector(collector_output)
+    write_rows: list[dict] = []
+    for p in patterns:
+        written = written_tables(p, engine, scope)
+        if not written:
+            continue
+        locks = is_locking_read(p, engine)
+        targets = (
+            set(query_facts(str(p.get("query_text") or ""), engine).write_targets)
+            if locks and is_write_query(p, engine)
+            else set()
+        )
+        write_rows.extend(
+            {
+                "qid": p["query_id"],
+                "tid": t,
+                "lock": locks and normalize_table_name(t) not in targets,
+            }
+            for t in written
+        )
+    if write_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (st:SourceTable {id: r.tid}) "
+            "MERGE (q)-[w:WRITES]->(st) SET w.locking = r.lock",
+            {"rows": write_rows},
         )
 
 

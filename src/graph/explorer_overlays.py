@@ -18,8 +18,9 @@ pipeline wrote it; nothing here works out a new figure:
   that engine from wave 1, then moves in its own wave;
 - placement units ("moves together"): ``assignment_placement_groups`` of the
   assignment, the units every routing pass places as one (ADR-031 Amendment 9);
-- who writes: ``report.json`` ``table_sources`` (each written table's source
-  of truth, its write queries, and the read queries served from a replica);
+- who writes: the graph's WRITES edges say which query writes or locks which
+  table (#306); ``report.json`` ``table_sources`` gives each written table's
+  source of truth and the read queries served from a replica;
 - cost: ``facts.engines[].monthly_cost_usd`` (per engine; there is no
   per-query cost);
 - access-pattern class: ``assignment/v<N>/access_patterns.json`` (each
@@ -41,7 +42,9 @@ from src.storage.assignment_versioning import (
 
 logger = logging.getLogger(__name__)
 
-Access = Literal["write", "replica_read", "read"]
+# "read_or_replica": a read the job's report cannot yet say is served from a
+# replica, because it was built from another assignment version than the graph's.
+Access = Literal["write", "replica_read", "read", "read_or_replica"]
 
 # The view menu. Waves is a filter (and a start point), not a view: it applies
 # on top of whichever view is shown.
@@ -75,6 +78,8 @@ class Overlays:
     engine_costs: dict[str, float] = field(default_factory=dict)
     # query -> (access-pattern class, its reason)
     query_classes: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    # The assignment version the report was built from (``assignment_summary.version``).
+    report_version: int | None = None
 
     def views(self) -> list[str]:
         """The views whose data this job has, in menu order (traffic always)."""
@@ -209,6 +214,12 @@ def build_overlays(
         table_sources=table_sources,
         engine_costs=engine_costs,
         query_classes=query_classes,
+        report_version=(
+            summary.get("version")
+            if isinstance(summary := report.get("assignment_summary"), Mapping)
+            and isinstance(summary.get("version"), int)
+            else None
+        ),
     )
 
 
@@ -245,28 +256,47 @@ def read_overlays(store: Any, db_name: str, job_id: str, version: int) -> Overla
     return build_overlays(assignment, _read_first(store, report_keys), access_patterns)
 
 
-def access_of(overlays: Overlays, query_id: str, table: str) -> Access | None:
-    """How ``query_id`` uses ``table``: "write" (one of the table's write
-    statements), "replica_read" (a read served from a replica kept in sync) or
-    "read"; None when the job's report says nothing about who writes."""
-    if not overlays.table_sources:
-        return None
-    ts = overlays.table_sources.get(table)
-    if ts and query_id in ts["writers"]:
+def replicas_pending(overlays: Overlays, graph_version: int | None) -> bool:
+    """True when the report's replica reads may be stale: it was built from another
+    assignment version than the graph's effective one (a reroute or a customer edit
+    since, with synthesis not run again yet)."""
+    return (
+        bool(overlays.table_sources)
+        and isinstance(overlays.report_version, int)
+        and bool(graph_version)
+        and overlays.report_version != graph_version
+    )
+
+
+def access_of(
+    overlays: Overlays, query_id: str, table: str, writes: bool, pending: bool = False
+) -> Access:
+    """How ``query_id`` uses ``table``: "write" when it writes or locks it (the
+    graph's WRITES edge, ``writes``, #306); for a read, "read_or_replica" when the
+    report's replica reads may be stale (``pending``), "replica_read" when the job's
+    report serves it from a replica kept in sync, else "read"."""
+    if writes:
         return "write"
+    if pending:
+        return "read_or_replica"
+    ts = overlays.table_sources.get(table)
     if ts and query_id in ts["replica_reads"]:
         return "replica_read"
     return "read"
 
 
-def bundle_access(overlays: Overlays, table: str, query_ids: list[str]) -> Access | None:
-    """A bundle's access: "write" when one of its queries writes the table,
-    "replica_read" when every one reads a replica copy, else "read"."""
-    if not overlays.table_sources:
-        return None
-    kinds = {access_of(overlays, q, table) for q in query_ids}
+def bundle_access(
+    overlays: Overlays, table: str, query_ids: list[str], writers: set[str], pending: bool = False
+) -> Access:
+    """A bundle's access: "write" when one of its queries writes or locks the table
+    (``writers``, from the graph), "read_or_replica" when the report's replica reads
+    may be stale (``pending``), "replica_read" when every one reads a replica copy,
+    else "read"."""
+    kinds = {access_of(overlays, q, table, q in writers, pending) for q in query_ids}
     if "write" in kinds:
         return "write"
+    if pending:
+        return "read_or_replica"
     if kinds == {"replica_read"}:
         return "replica_read"
     return "read"

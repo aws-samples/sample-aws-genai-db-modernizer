@@ -142,6 +142,7 @@ Relationships:
 
 ```text
 (Query)-[:READS_FROM]->(SourceTable)
+(Query)-[:WRITES {locking}]->(SourceTable)
 (Query)-[:MIGRATES_TO {confidence, assignment_reason}]->(Destination)
 (Query)-[:EMITS_SIGNAL {strength}]->(Signal)
 (Query)-[:MEMBER_OF]->(CoDependencyGroup)
@@ -168,6 +169,8 @@ Relationships:
 ```
 
 An `AssignmentVersion` (`id` `assignment-v<N>`) has `version`, `kind` (the pass that made it: `first_assignment`, `reality_check`, `customer_pick`, `customer_scope`, `post_schema_reroute`, `rollback`, `source_of_truth_reroute` or `auto_decided`), `source`, `status`, `effective`, `created_at`, `move_count`, `passes_json` and `actors_json` (its Moves' distinct passes and actors). It `SUPERSEDES` the version before it, and a rollback `RESTORES` the version it restates. It `AFFECTS` the queries its Moves changed (role `moved`, or `tie` when they changed only a tie) and the engines those Moves left (`from`) or landed on (`to`). A consolidation Decision is `INFORMED_BY` the queries whose net move in the reality-check version is its from and to engine (its `query_count`), and a consolidation or reroute Decision `AFFECTS` the engines it moves queries from and to.
+
+`READS_FROM` is every table a query accesses; `WRITES` the tables it writes or locks, as routing's one-writer rule reads them (`locking` for a locking read). A table a query only reads has `READS_FROM` and no `WRITES`: `MATCH (q:Query)-[:READS_FROM]->(st:SourceTable) WHERE NOT (q)-[:WRITES]->(st) RETURN q.id, st.id`. A `SourceTable` named by a collector placeholder (`unknown`, or a dummy table such as `DUAL`, in any case) has `placeholder` true and a `placeholder_reason`; it has `WRITES` when routing counts it as written. `locking` is on a table a locking read locks and the statement does not write.
 
 A query's `Destination` is its engine in the effective assignment (one `MIGRATES_TO` per query). Where it lands in the design is `TARGETS`: per assignment version, each `TargetObject` the design names for it, at its `schema_version`, with `effective` on the effective version. That is a DynamoDB table or GSI (`kind` `gsi`, `parent` its table), a DocumentDB collection, an OpenSearch index or stream, an ElastiCache key pattern or an Aurora table. A query can target several objects in one version. Only objects the design defines count. With no design for the engine at that version it targets `<engine>:not_designed` ("not designed yet"); with a design that marks its patterns out of scope or lists it as unsupported, `<engine>:out_of_scope` ("the design does not serve it"); with a design that has no access pattern for it or names an object it does not define, `<engine>:not_in_design` ("no target in the design"). A deterministic run has no design, so every query targets its engine's `not_designed`.
 

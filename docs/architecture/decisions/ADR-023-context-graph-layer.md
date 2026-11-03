@@ -79,7 +79,9 @@ Query {
 SourceTable {
   id: STRING,                    -- table name (e.g., "orders")
   database: STRING,              -- source database name
-  row_estimate: INT64            -- estimated row count if available
+  row_estimate: INT64,           -- estimated row count if available
+  placeholder: BOOLEAN,          -- a collector's name for "no table" ('unknown', a dummy table such as DUAL), #306
+  placeholder_reason: STRING     -- why it is a placeholder; null for a real table
 }
 
 Destination {
@@ -143,6 +145,9 @@ LoadTestRun {
 (Query)-[READS_FROM]->(SourceTable)
   -- Which source tables does this query access?
 
+(Query)-[WRITES {locking}]->(SourceTable)
+  -- Which source tables does this query write or lock? (#306)
+
 (Query)-[MIGRATES_TO {
   confidence: FLOAT,
   assignment_reason: STRING
@@ -199,6 +204,8 @@ LoadTestRun {
 
 **Traffic representation.** Traffic (`calls_per_second`) is a property on the `Query` node. Table-level traffic is computed on read by aggregating across all queries that `READS_FROM` a given `SourceTable`. At this scale (hundreds to low-thousands of queries), that aggregation is sub-millisecond and does not need materialization.
 
+**Read/write split (#306).** `READS_FROM` links a query to every table it accesses (`tables_accessed`): an UPDATE or DELETE reads the rows it changes and a locking read reads what it locks, so a table a query only reads is one with `READS_FROM` and no `WRITES`. Keeping `READS_FROM` on every accessed table also keeps the readers that count a table's queries through it (the blast radius, the hotspots, the explorer's bundles) unchanged. `WRITES` links a query to every table it writes or locks, computed by routing's own one-writer rule (`write_groups.written_tables`, ADR-031 Amendment 9) in the collection's source dialect, so the graph never disagrees with routing; `locking` marks a table the statement locks by a locking read and does not write (an `INSERT ... SELECT ... FOR UPDATE` target is a write, the tables its read locks are locking). It is named like the `WRITES` edge planned from procedures and triggers to tables (#1677), which can add its pair to the same relationship. A source table named by a collector placeholder (`report_facts.PLACEHOLDER_TABLE_NAMES`: `unknown` when no table resolved, or a dummy table of a statement with no `FROM`) stays in the graph, flagged `placeholder` with its reason (matched in any case, an empty name included). The graph copies routing here too: `written_tables` skips only the lowercase `unknown`, so a write whose only collected table is another placeholder (`UNKNOWN`, `DUAL`, `None`) gets `WRITES` to it.
+
 **Destination abstraction.** A query's `Destination` is the engine it migrates to in the effective assignment (`artifact_type` `engine`). The design's own objects (DynamoDB tables and GSIs, DocumentDB collections, OpenSearch indexes and data streams, ElastiCache key patterns, Aurora tables) are `TargetObject` nodes told apart by `kind`, which avoids engine-specific node types while preserving semantic clarity; see the next paragraph.
 
 **Versioned target objects (#306).** A query's `Destination` is its engine in the effective assignment (`id` the engine id, `artifact_type` `engine`), with one `MIGRATES_TO` per query, so every reader of `MIGRATES_TO` keeps its one-edge-per-query shape. It used to be guessed from the query's first source table, which was wrong for about a quarter of the queries. The design's real objects are `TargetObject` nodes, one `kind` per engine contract: a DynamoDB `table_name`, or the `gsi_name` on it; a DocumentDB `collection_name`; an OpenSearch `index_or_stream`; an ElastiCache `key_pattern`; or the Aurora `table_definitions` an access pattern's `source_tables` name, matched as the Aurora derivation matches them. Each is at the schema version it comes from, and engine-specific node types stay out. `TARGETS` links each query of each lineage version to the objects of the engines it uses in that version (its assigned engine and its cache engine), from `schema-<engine>/v<N>` for that version N. An object counts only when the design defines it: a DynamoDB table in `table_definitions` and a GSI in that table's `gsis`, a DocumentDB `collections` entry, an OpenSearch `index_designs` or `data_stream_designs` entry, an ElastiCache `key_designs` entry, an Aurora `table_definitions` entry; an access pattern marked `in_scope: false` serves none of its queries, as the scope check reads it. A query can target several objects in one version, and the effective version's edges are `effective`. With no design for an engine at that version, the query targets the `not_designed` fallback ("not designed yet"); with a design that marks its patterns out of scope or lists it as unsupported, the `out_of_scope` fallback ("the design does not serve it"); with a design that has no access pattern for it, or names an object it does not define, the `not_in_design` fallback ("no target in the design"). A fallback is never a guessed object. A load test `VALIDATES` the Destination of its own engine, so a cache load test validates the cache layer, not the engine the query is assigned to.
@@ -232,7 +239,7 @@ The graph is populated on the API node after each pipeline stage completes. The 
 
 | Pipeline Stage | Nodes Created | Edges Created |
 |---------------|---------------|---------------|
-| COLLECT_TRIAGE | Query, SourceTable | READS_FROM |
+| COLLECT_TRIAGE | Query, SourceTable (placeholders flagged, #306) | READS_FROM, WRITES (#306) |
 | ANALYSIS | Signal | EMITS_SIGNAL |
 | ASSIGNMENT | Destination (the query's engine), Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306), TargetObject (each version's design objects and fallbacks, #306) | TARGETS (each query to its design objects per version), MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines, SCORED (each query's candidate ladder per version) |
 | REALITY_CHECK | Decision (consolidation) | INFORMED_BY (to the queries its ledger Moves moved), AFFECTS (to the engines it moves from and to) |

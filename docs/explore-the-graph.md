@@ -3,7 +3,7 @@
 The graph explorer is an experimental page of the local UI. It draws one assessment's context graph: the source tables and the destination engines, linked by the queries that move between them. You can start from a wave, a table, an engine or a single query, expand from there, and follow the assessment's own reasoning in guided walkthroughs.
 
 !!! warning "Experimental, data incomplete"
-    The explorer is a first pass. It is off by default, it may change or go away, and the context graph does not hold everything yet. Risks and every engine's design, Aurora included, are in it; still missing are the design targets per assignment version, the scores on every engine, the version history and the read/write split, and the explorer reads waves, move units, writers and costs from the job's files instead of the graph (completing the graph data is tracked in [#306](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/306)). The explorer does not show risks yet. An empty result does not mean there is nothing there. The deliverables and the results page remain the reference.
+    The explorer is a first pass. It is off by default, it may change or go away, and the context graph does not hold everything yet. Risks, every engine's design (Aurora included), the design targets per assignment version, the scores on every engine, the version history and the read/write split are in it, so which query writes or locks which table comes from the graph. Still missing are waves, move units, each table's source of truth, the cache layer and engine cost: the explorer reads those from the job's files instead of the graph (completing the graph data is tracked in [#306](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/306)). The explorer does not show risks yet. An empty result does not mean there is nothing there. The deliverables and the results page remain the reference.
 
 ![The explorer workspace: the query list on the left, Aurora MySQL and DynamoDB with their source tables, busy links in orange](assets/graph-explorer/workspace.png)
 
@@ -34,7 +34,7 @@ The query list and the graph follow each other: select a query in the list and i
 
 ## Nodes and links
 
-Source tables are small rectangles with a table icon. Destination engines are rounded squares with the engine's AWS service icon and its name. Statements the collector could not tie to a table (such as `SET SESSION` or `SELECT FOUND_ROWS()`) gather under a muted **No table** node; it is not a table of the source database.
+Source tables are small rectangles with a table icon. Destination engines are rounded squares with the engine's AWS service icon and its name. Statements the collector could not tie to a table (such as `SET SESSION` or `SELECT FOUND_ROWS()`, or a `SELECT` from a dummy table like `DUAL`) gather under a muted **No table** node; the graph flags that source table as a placeholder, and it is not a table of the source database.
 
 Each query is a link from every table it touches to its engine. The queries between one table and one engine start as one straight **bundle**; click it to fan it out into one curved link per query, and use **Collapse** in the details (or the toolbar) to fold it back. Click a table or an engine to expand it with its links, and a query link to see its details: its operation, traffic, engine, wave, access pattern, the unit it moves with, its tables, why it landed on its engine and its SQL.
 
@@ -44,7 +44,7 @@ Link width is traffic, in calls per second on a log scale, and busy links pull t
 
 - **Traffic** sizes links by calls per second.
 - **Moves together** marks, with dotted links, the queries that move as one unit (a table's writes and the queries co-dependent with them); select one to see its whole unit.
-- **Who writes** draws each table's writer (the query that writes or locks it, on the table's source of truth) solid, and its replica reads (served from a copy kept in sync by CDC) dashed.
+- **Who writes** draws each table's writer (the query that writes or locks it, from the graph's `WRITES` edges, on the table's source of truth) solid, and its replica reads (served from a copy kept in sync by CDC) dashed. When the job's report was built from another assignment version than the graph (a reroute or an edit since, with the report not rebuilt yet), a read is drawn faint and dotted as "Reads, or reads a replica (report pending)", since the report's replica reads may no longer hold.
 - **Cost** sizes engines by their projected monthly cost.
 
 ## Waves

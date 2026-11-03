@@ -87,6 +87,7 @@ export function Legend({ mode, traffic, cost, t }) {
         <LineSample width={3} label={t('graph-explorer.legend.write')} />
         <LineSample width={3} dashed label={t('graph-explorer.legend.replica-read')} />
         <LineSample width={3} faint label={t('graph-explorer.legend.read')} />
+        <LineSample width={3} dotted faint label={t('graph-explorer.legend.read-or-replica')} />
       </SpaceBetween>
     );
   }
