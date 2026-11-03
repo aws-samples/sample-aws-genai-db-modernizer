@@ -481,3 +481,23 @@ def test_rebuild_graph_reads_the_aurora_design_of_a_real_run(tmp_path):
     assert len(expected) == 68
     assert sorted((r["q"], r["ap"]) for r in linked) == expected
     graph_store.close()
+
+
+def test_rebuilding_twice_on_one_handle_gives_the_same_graph(artifact_dir):
+    """``rebuild_graph`` clears the graph and creates its tables again. The engine's
+    connection caches each prepared statement by its text, pointing at the dropped
+    tables, so a second rebuild on the same handle used to write nothing: the
+    graph came out empty. ``clear`` now replaces the connection."""
+    base, db_name, job_id = artifact_dir
+    store = LocalArtifactStore(str(base))
+    graph_store = GraphStore(str(base / "twice.lbug"))
+    initialize_schema(graph_store)
+    first = rebuild_graph(db_name, job_id, store, graph_store)
+    second = rebuild_graph(db_name, job_id, store, graph_store)
+    assert first["nodes_created"] > 3
+    assert (second["nodes_created"], second["edges_created"]) == (
+        first["nodes_created"],
+        first["edges_created"],
+    )
+    assert graph_store.query("MATCH (q:Query) RETURN COUNT(q) AS c")[0]["c"] == 3
+    graph_store.close()

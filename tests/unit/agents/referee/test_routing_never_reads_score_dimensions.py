@@ -12,14 +12,19 @@ under ``src/`` and ``scripts/`` and fails on a read:
 1. ``key_read`` -- ``x["score_dimensions"]`` / ``x["table_dimensions"]`` loaded, or
    ``x.get(...)`` / ``x.pop(...)`` of either key.
 2. ``attr_read`` -- ``x.score_dimensions`` / ``x.table_dimensions`` loaded.
-3. ``sink_read`` -- the sink variable ``score_dimensions`` subscripted, iterated or read
+3. ``reader_call`` -- a call of a reader that returns the recorded dimensions:
+   ``dimensions_of_record`` or the record writer's private ``_carried_dimensions``, by
+   name, as an attribute, or under any name a ``from ... import ... as`` gives it.
+4. ``sink_read`` -- the sink variable ``score_dimensions`` subscripted, iterated or read
    through any method other than ``setdefault`` (filling it) and ``values`` (the resolver
    drops the engine the heterogeneous Aurora choice removed). Comparing it with ``None``
    and passing it on as an argument are not reads.
 
 Allowed to read the keys: the record writer (``query_pattern.py``, which builds and carries
-them), the facts layer (``report_facts.py``, the detailed report's one reader), and the
-reality-check handler, which hands its resolver re-run's sink to the writer.
+them), the facts layer (``report_facts.py``, the detailed report's one reader), the
+reality-check handler, which hands its resolver re-run's sink to the writer, and the context
+graph's populator (``src/graph/populators.py``, #306), which copies them onto SCORED edges
+through ``dimensions_of_record``; routing never reads the graph.
 
 Not caught statically: a key built at run time, ``getattr`` with a computed name, and
 ``exec``/``eval``.
@@ -37,11 +42,13 @@ _SCANNED_DIRS = (_REPO / "src", _REPO / "scripts")
 _KEYS = frozenset({"score_dimensions", "table_dimensions"})
 _SINK = "score_dimensions"
 _SINK_WRITES = frozenset({"setdefault", "values"})
+_READERS = frozenset({"dimensions_of_record", "_carried_dimensions"})
 ALLOWED_KEY_READERS = frozenset(
     {
         "src/agents/referee/query_pattern.py",
         "src/shared/report_facts.py",
         "src/agents/referee/reality_check_handler.py",
+        "src/graph/populators.py",
     }
 )
 
@@ -55,6 +62,14 @@ def _findings(rel: str, source: str) -> list[tuple[str, str, int]]:
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     out: list[tuple[str, str, int]] = []
     key_reader = rel in ALLOWED_KEY_READERS
+    # The names a reader is called by in this module: its own, and any alias.
+    readers = set(_READERS) | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name in _READERS and alias.asname
+    }
     for node in ast.walk(tree):
         if not key_reader:
             if (
@@ -77,6 +92,11 @@ def _findings(rel: str, source: str) -> list[tuple[str, str, int]]:
                 and node.attr in _KEYS
             ):
                 out.append((rel, "attr_read", node.lineno))
+            elif isinstance(node, ast.Call) and (
+                (isinstance(node.func, ast.Name) and node.func.id in readers)
+                or (isinstance(node.func, ast.Attribute) and node.func.attr in _READERS)
+            ):
+                out.append((rel, "reader_call", node.lineno))
         if isinstance(node, ast.Name) and node.id == _SINK and isinstance(node.ctx, ast.Load):
             parent = parents.get(node)
             if isinstance(parent, ast.Subscript) and parent.value is node:
@@ -128,6 +148,30 @@ def test_a_planted_read_is_caught() -> None:
     )
     shapes = [s for _, s, _ in _findings("src/agents/referee/planted.py", planted)]
     assert shapes == ["key_read", "key_read", "attr_read", "sink_read", "sink_read", "sink_read"]
+
+
+# A guard of the guard: it checks the scan above, which lives in this test file.
+@pytest.mark.passes_on_main
+def test_a_planted_reader_call_is_caught() -> None:
+    """A routing module that reads a record through ``dimensions_of_record`` (by name,
+    attribute or alias) or the private ``_carried_dimensions`` is caught; the graph
+    populator, an allowed reader, is not."""
+    planted = (
+        "from src.agents.referee import query_pattern\n"
+        "from src.agents.referee.query_pattern import dimensions_of_record\n"
+        "from src.agents.referee.query_pattern import dimensions_of_record as recorded\n"
+        "from src.agents.referee.query_pattern import _carried_dimensions as carried\n"
+        "def route(record, store):\n"
+        "    a = dimensions_of_record(record)\n"
+        "    b = query_pattern.dimensions_of_record(record)\n"
+        "    c = recorded(record)\n"
+        "    d = carried(store, 'db/job', 2)\n"
+        "    e = query_pattern._carried_dimensions(store, 'db/job', 2)\n"
+        "    return a, b, c, d, e\n"
+    )
+    shapes = [s for _, s, _ in _findings("src/agents/referee/planted.py", planted)]
+    assert shapes == ["reader_call"] * 5
+    assert _findings("src/graph/populators.py", planted) == []
 
 
 # A guard: main has no read of the dimensions (they do not exist there).

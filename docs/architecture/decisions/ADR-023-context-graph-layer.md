@@ -176,6 +176,9 @@ LoadTestRun {
   -- Which queries did this version's Moves change, and which engines did they
   -- leave (role 'from') or land on ('to')? Which engines does a consolidation
   -- or reroute move queries between? (#306)
+
+(Query)-[SCORED {version, score, gate, assigned, current, ladder_version, move_seq, pass, ladder_copied_from, dimensions_json}]->(Engine)
+  -- What did routing score this query on every engine, per version? (#306)
 ```
 
 ### Schema Design Rationale
@@ -215,7 +218,7 @@ The graph is populated on the API node after each pipeline stage completes. The 
 |---------------|---------------|---------------|
 | COLLECT_TRIAGE | Query, SourceTable | READS_FROM |
 | ANALYSIS | Signal | EMITS_SIGNAL |
-| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306) | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines |
+| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306) | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines, SCORED (each query's candidate ladder per version) |
 | REALITY_CHECK | Decision (consolidation) | INFORMED_BY (to the queries its ledger Moves moved), AFFECTS (to the engines it moves from and to) |
 | POST_SCHEMA_ROUTER | Decision (reroute) | INFORMED_BY (to its query), AFFECTS (to the engines it moves from and to) |
 | SCHEMA_DESIGN | Decision | AFFECTS, INFORMED_BY |
@@ -227,9 +230,11 @@ Analysis, schema design and load test are read for every active engine in the ru
 
 The version chain follows the move ledger and assignment versioning (ADR-028, #306). An `AssignmentVersion` records the pass that made it (`kind`): a rollback from its `status`; otherwise from its `source` (first assignment, reality check, post-schema reroute, source-of-truth reroute, auto-decided, or a customer edit). A version written before `source` existed has no Moves either, so it is read from the legacy shapes ADR-028's own readers use (`is_reality_check_produced`, then an override edit's int `previous_version`, else a first assignment). A customer edit is `customer_scope` when no query changed engine and only the in-scope set did, else `customer_pick`. It also records its Moves' passes and actors, whether it is the effective version and its timestamp. `AFFECTS` and `SUPERSEDES` keep their meaning and gain versioned pairs, rather than new relationship names. A query whose Moves in a version changed its engine is `AFFECTS` role `moved`; one whose Moves changed no engine (a cleared tie) is role `tie` and adds no engine edge. A rollback version `RESTORES` the version it restates: the one the abandoned reroute (`rolled_back_version`) came from; only a rollback records `rolled_back_version`. A consolidation's queries are the queries whose net engine change over the Moves of the version the reality check wrote (first engine to last, in `seq` order) goes from its from engine to its to engine: the per-query count its record's `query_count` holds. A query consolidated A to B and flagged on to C in the same version counts under A to C.
 
+`SCORED` edges carry each query's candidate ladder per assignment version, as routing recorded it (#306). A query's ladder is the one its last Move with recorded candidates (`evidence.candidates`) holds, in that version or an earlier one: a customer pick, its group propagation, an auto pick or a source-of-truth reroute records no candidates, so the query keeps its earlier ladder, and each edge says which version and Move the ladder came from (`ladder_version`, `move_seq`, `pass`). Only the last ladder of a version is kept as edges, so each query, version and engine has one edge; an earlier Move's ladder in the same version stays in that MOVED edge's evidence. `pass` is that Move's own pass, as on its MOVED edge. A rollback's Moves copy the abandoned reroute's candidates: `ladder_copied_from` names the reroute version they came from, so its scores are the reroute's, not a fresh scoring. Edges are written for each version a query has a Move in, and for every query in the effective version (`current`). An edge has the rung's score (null when a gate excluded the engine, with the `gate`); `assigned` is the engine the version's own assignment gives the query, never read from the ladder. `dimensions_json` holds the score dimensions the version's access-pattern record holds for that query and engine (#1471: pattern, cost, base, penalty, fit, method, and per table complexity, performance and weights), read through the record writer's own reader, only when the record's score for them (its `fit`, else its `base`) equals the edge's score, the rule the detailed report's facts use: a reroute or rollback version carries the previous record's dimensions while its scores come from the router, so its edges get none, as does a record written before them (schema version 3 or older). Nothing is rescored, and routing never reads these edges.
+
 Each populator is idempotent. Re-running it with the same artifact data produces the same graph state. You can rebuild the graph from scratch by replaying all artifacts in order.
 
-For a full rebuild of a 3,500-query assessment (the largest workload tested), expect < 2 seconds. This is fast enough to run on API startup or on-demand when an assessment completes.
+Measured on a developer laptop, a full rebuild of the discourse sample (1,654 queries, two assignment versions) takes about 1.2 s without SCORED edges and about 1.9 s with them (16,540 SCORED edges, #306). Rebuild time grows with the number of queries times the number of lineage versions, so a 3,500-query assessment with a few versions takes a few seconds. The earlier "< 2 seconds for 3,500 queries" is not met even without SCORED edges on that machine. This is fast enough to run on demand when an assessment completes; a saved graph is reused until its inputs change.
 
 ### Storage
 
@@ -311,7 +316,7 @@ Rejected. Graph traversal in DynamoDB requires multiple round trips (one per hop
 | LadybugDB project becomes inactive | Cypher queries are portable. Swap to Neo4j or Neptune. The graph is rebuildable from S3 artifacts regardless of which database runs it. |
 | Graph diverges from S3 artifacts | Rebuild script validates graph against artifacts. Can run as a CI check or on every API deployment. |
 | Performance degrades at scale | Unlikely for <5K nodes per assessment. If it happens, swap to Neo4j sidecar or Neptune. Queries don't change. |
-| API task replacement loses graph | Rebuild from artifacts on startup. Takes <2 seconds for the largest workloads. Acceptable cold-start cost. |
+| API task replacement loses graph | Rebuild from artifacts on startup or first read. About 1.9 s on the discourse sample (1,654 queries); a few seconds for a 3,500-query assessment. Acceptable cold-start cost. |
 
 ## References
 
