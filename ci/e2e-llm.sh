@@ -388,18 +388,8 @@ PYEOF
   read -r DB JOB <<<"$DB_JOB"
 fi
 
-# --- per-phase token usage (#676) --------------------------------------------
-
 TOKEN_USAGE_ARGS=()
 EXPLORE_ARGS=()
-if [ -n "$DB" ] && [ -n "$JOB" ]; then
-  run_token_usage() {
-    uv run python ci/llm/token_usage.py "$OUT/transcript.jsonl" \
-      --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB"
-  }
-  step token-usage run_token_usage
-  TOKEN_USAGE_ARGS=(--token-usage "$ARTIFACT_ROOT/$DB/$JOB/_logs/token_usage.json")
-fi
 
 # --- deliverable checks + judge, only if we have a job to point them at -----
 
@@ -523,6 +513,25 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   fi
 else
   log "no job_id/db parsed from the transcript (check-transcript failed) -- skipping deliverable checks and judge"
+fi
+
+# --- per-phase and per-agent token usage (#676, #763) ------------------------
+
+# After the /explore session, so its turns and cost are a row of the same table.
+# A failed step still leaves token_usage.json (with an error) or no file at all;
+# either way results.json reports token_usage_error.
+if [ -n "$DB" ] && [ -n "$JOB" ]; then
+  TOKEN_USAGE_EXPLORE=()
+  if [ "${#EXPLORE_ARGS[@]}" -gt 0 ] && [ -s "$OUT/explore-transcript.jsonl" ]; then
+    TOKEN_USAGE_EXPLORE=(--explore "$OUT/explore-transcript.jsonl")
+  fi
+  run_token_usage() {
+    uv run python ci/llm/token_usage.py "$OUT/transcript.jsonl" \
+      --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" \
+      "${TOKEN_USAGE_EXPLORE[@]+"${TOKEN_USAGE_EXPLORE[@]}"}"
+  }
+  step token-usage run_token_usage
+  TOKEN_USAGE_ARGS=(--token-usage "$ARTIFACT_ROOT/$DB/$JOB/_logs/token_usage.json")
 fi
 
 # --- merge everything into results.json -------------------------------------

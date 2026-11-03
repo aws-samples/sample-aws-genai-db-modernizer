@@ -122,7 +122,7 @@ and `ci/e2e-llm.sh` build it for you.
 - `E2E_LLM_MODE` is `chat`, `ui` or `both`; `E2E_LLM_FIXTURE` is `wordpress`
   (fast iteration) or `discourse` (scale).
 - Read e2e-llm results in `test-results/llm-<mode>-<fixture>/`: `results.json`
-  (one merged row: checks, cost, turns, `pass`), `judge.json` (rubric scores,
+  (one merged row: checks, cost, turns, `pass`, the per-agent `token_usage` table and soft-budget `warnings`; compare runs with `ci/llm/compare_costs.py`), `judge.json` (rubric scores,
   rubric in `ci/llm/rubric.md`), `transcript.jsonl`, `steps.json`,
   `deliverables/`, `job-logs/`.
 - Tests never call a real model; patch the model entry points.
