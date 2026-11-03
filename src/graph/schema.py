@@ -29,7 +29,12 @@ from src.graph.store import GraphStore
 # - 6 (#306): Risk.status (active or resolved), rule, wave, engine, resolved_on
 #   and reason; the report's resolved risks become Risk nodes, and EVIDENCED_BY
 #   edges link each risk to its queries.
-GRAPH_SCHEMA_REVISION = 6
+# - 7 (#306): the version chain: AssignmentVersion nodes, SUPERSEDES and
+#   RESTORES between them, AFFECTS from a version to its Moves' queries and
+#   engines; consolidation Decisions INFORMED_BY the queries of their net
+#   ledger moves, and
+#   consolidation and reroute Decisions AFFECTS their engines.
+GRAPH_SCHEMA_REVISION = 7
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -69,6 +74,21 @@ NODE_TABLES = [
     """CREATE NODE TABLE IF NOT EXISTS Decision (
         id STRING, category STRING, description STRING,
         rationale STRING, phase STRING, metadata STRING,
+        PRIMARY KEY (id)
+    )""",
+    # One node per assignment version of the effective lineage (ADR-028, #306):
+    # kind is the pass that made it (first_assignment, reality_check,
+    # customer_pick, customer_scope, post_schema_reroute, rollback,
+    # source_of_truth_reroute, auto_decided; unknown for a source this code does
+    # not know), from its status and source, or the legacy shapes for a version
+    # written before source; rolled_back_version is set on a rollback only;
+    # passes_json and actors_json are its Moves' distinct passes and actors;
+    # created_at its timestamp ('' when none).
+    """CREATE NODE TABLE IF NOT EXISTS AssignmentVersion (
+        id STRING, version INT64, kind STRING, source STRING, status STRING,
+        effective BOOLEAN, created_at STRING, move_count INT64,
+        passes_json STRING, actors_json STRING,
+        previous_version INT64, rolled_back_version INT64,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS LoadTestRun (
@@ -123,9 +143,25 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS TESTED_IN (FROM Query TO LoadTestRun)",
     "CREATE REL TABLE IF NOT EXISTS VALIDATES (FROM LoadTestRun TO Destination)",
     "CREATE REL TABLE IF NOT EXISTS HOSTED_ON (FROM Destination TO Engine)",
-    "CREATE REL TABLE IF NOT EXISTS AFFECTS (FROM Decision TO Destination)",
+    # AFFECTS and SUPERSEDES keep their meaning, made versioned (#306): an
+    # assignment version AFFECTS the queries its Moves changed (role 'moved', or
+    # 'tie' when they changed no engine) and the engines they left (role 'from')
+    # or landed on ('to'); a consolidation or reroute
+    # Decision AFFECTS the engines it moves queries from and to. A version
+    # SUPERSEDES the one before it; a rollback RESTORES the version it restates.
+    """CREATE REL TABLE IF NOT EXISTS AFFECTS (
+        FROM Decision TO Destination,
+        FROM Decision TO Engine,
+        FROM AssignmentVersion TO Query,
+        FROM AssignmentVersion TO Engine,
+        role STRING
+    )""",
     "CREATE REL TABLE IF NOT EXISTS INFORMED_BY (FROM Decision TO Query)",
-    "CREATE REL TABLE IF NOT EXISTS SUPERSEDES (FROM Decision TO Decision)",
+    """CREATE REL TABLE IF NOT EXISTS SUPERSEDES (
+        FROM Decision TO Decision,
+        FROM AssignmentVersion TO AssignmentVersion
+    )""",
+    "CREATE REL TABLE IF NOT EXISTS RESTORES (FROM AssignmentVersion TO AssignmentVersion)",
     "CREATE REL TABLE IF NOT EXISTS OBSERVED_IN_QUERY (FROM AntiPattern TO Query)",
     "CREATE REL TABLE IF NOT EXISTS OBSERVED_IN_TABLE (FROM AntiPattern TO SourceTable)",
     "CREATE REL TABLE IF NOT EXISTS IMPACTS (FROM Risk TO SourceTable)",

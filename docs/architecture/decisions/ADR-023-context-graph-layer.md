@@ -164,6 +164,18 @@ LoadTestRun {
 
 (Decision)-[SUPERSEDES]->(Decision)
   -- Which decision replaced a previous one? (versioning)
+
+(AssignmentVersion)-[SUPERSEDES]->(AssignmentVersion)
+  -- Which assignment version did this one replace? (#306)
+
+(AssignmentVersion)-[RESTORES]->(AssignmentVersion)
+  -- Which version does this rollback restate? (#306)
+
+(AssignmentVersion)-[AFFECTS {role}]->(Query | Engine)
+(Decision)-[AFFECTS {role}]->(Engine)
+  -- Which queries did this version's Moves change, and which engines did they
+  -- leave (role 'from') or land on ('to')? Which engines does a consolidation
+  -- or reroute move queries between? (#306)
 ```
 
 ### Schema Design Rationale
@@ -203,13 +215,17 @@ The graph is populated on the API node after each pipeline stage completes. The 
 |---------------|---------------|---------------|
 | COLLECT_TRIAGE | Query, SourceTable | READS_FROM |
 | ANALYSIS | Signal | EMITS_SIGNAL |
-| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339) |
+| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306) | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines |
+| REALITY_CHECK | Decision (consolidation) | INFORMED_BY (to the queries its ledger Moves moved), AFFECTS (to the engines it moves from and to) |
+| POST_SCHEMA_ROUTER | Decision (reroute) | INFORMED_BY (to its query), AFFECTS (to the engines it moves from and to) |
 | SCHEMA_DESIGN | Decision | AFFECTS, INFORMED_BY |
 | LOAD_TEST | LoadTestRun | TESTED_IN, VALIDATES |
 | ASSIGNMENT_REVIEW | Decision (overrides) | SUPERSEDES |
 | SYNTHESIS | Risk: the report's open risks (`status = 'active'`) and the risks the assignment resolved (`status = 'resolved'`, #306) | IMPACTS (to its tables), EVIDENCED_BY (to each query it names that has a Query node) |
 
 Analysis, schema design and load test are read for every active engine in the rule catalog (Aurora included). Schema design and load test are read at the effective assignment version only: `schema-<engine>/v<N>` and `load-test-<engine>/v<N>`, where N is the version the assignment resolver picks (v1 when there is no assignment yet). A design of an older or abandoned version is never read (#306). A rollback restates the designs of the version it restores on its own version; a design that fails its output contract is not restated, so that engine has no design in the graph, as in synthesis. A rollback does not restate load tests: the load test runs after post-schema routing, so the restored version has none in a normal run, and a load test run on it earlier is not read after the rollback.
+
+The version chain follows the move ledger and assignment versioning (ADR-028, #306). An `AssignmentVersion` records the pass that made it (`kind`): a rollback from its `status`; otherwise from its `source` (first assignment, reality check, post-schema reroute, source-of-truth reroute, auto-decided, or a customer edit). A version written before `source` existed has no Moves either, so it is read from the legacy shapes ADR-028's own readers use (`is_reality_check_produced`, then an override edit's int `previous_version`, else a first assignment). A customer edit is `customer_scope` when no query changed engine and only the in-scope set did, else `customer_pick`. It also records its Moves' passes and actors, whether it is the effective version and its timestamp. `AFFECTS` and `SUPERSEDES` keep their meaning and gain versioned pairs, rather than new relationship names. A query whose Moves in a version changed its engine is `AFFECTS` role `moved`; one whose Moves changed no engine (a cleared tie) is role `tie` and adds no engine edge. A rollback version `RESTORES` the version it restates: the one the abandoned reroute (`rolled_back_version`) came from; only a rollback records `rolled_back_version`. A consolidation's queries are the queries whose net engine change over the Moves of the version the reality check wrote (first engine to last, in `seq` order) goes from its from engine to its to engine: the per-query count its record's `query_count` holds. A query consolidated A to B and flagged on to C in the same version counts under A to C.
 
 Each populator is idempotent. Re-running it with the same artifact data produces the same graph state. You can rebuild the graph from scratch by replaying all artifacts in order.
 

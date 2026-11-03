@@ -18,7 +18,7 @@ from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
 from src.shared import catalog
 from src.shared.engine_names import display_engine
-from src.shared.query_trace import assignment_lineage, candidate_keys_by_query
+from src.shared.query_trace import assignment_lineage, candidate_keys_by_query, version_moves
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -362,6 +362,217 @@ def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore
         )
 
 
+# A version's kind from its recorded source (ADR-028 provenance).
+_KIND_BY_SOURCE = {
+    "assignment_resolution": "first_assignment",
+    "reality_check": "reality_check",
+    "customer_gate": "customer_pick",
+    "post_schema_routing": "post_schema_reroute",
+    "source_of_truth_reroute": "source_of_truth_reroute",
+    "auto_decided": "auto_decided",
+}
+
+
+def _engines_and_scope(assignment: dict | None) -> tuple[dict, dict]:
+    qas = [qa for qa in (assignment or {}).get("query_assignments") or [] if isinstance(qa, dict)]
+    return (
+        {qa.get("query_id"): qa.get("assigned_engine") for qa in qas},
+        {qa.get("query_id"): qa.get("in_scope", True) for qa in qas},
+    )
+
+
+def _customer_edit_kind(assignment: dict, previous: dict | None) -> str:
+    """``customer_scope`` for an edit that changed only which queries are in scope
+    (no query changed engine), else ``customer_pick``."""
+    if previous is None:
+        return "customer_pick"
+    engines, scope = _engines_and_scope(assignment)
+    engines_before, scope_before = _engines_and_scope(previous)
+    if engines == engines_before and scope != scope_before:
+        return "customer_scope"
+    return "customer_pick"
+
+
+def _version_kind(assignment: dict, previous: dict | None) -> str:
+    """The pass that made a version, from its status and recorded ``source``.
+
+    A version written before ``source`` existed (contract 1.1) has no Moves either
+    (1.10), so its kind comes from the legacy shapes ADR-028's own readers use:
+    the old Reality Check writer left ``previous_version`` null and set
+    ``reality_check_applied``; every override edit set an int ``previous_version``.
+    """
+    from src.storage.assignment_versioning import _is_override_edit, is_reality_check_produced
+
+    if assignment.get("status") == "reroute_rolled_back":
+        return "rollback"
+    source = assignment.get("source")
+    if source is not None:
+        kind = _KIND_BY_SOURCE.get(source, "unknown")
+    elif is_reality_check_produced(assignment):
+        kind = "reality_check"
+    elif _is_override_edit(assignment):
+        kind = "customer_pick"
+    else:
+        kind = "first_assignment"
+    if kind == "customer_pick":
+        return _customer_edit_kind(assignment, previous)
+    return kind
+
+
+def _net_moves(moves: list[Move]) -> dict[str, tuple[str | None, str]]:
+    """Each query's net engine change over one version's Moves, in ``seq`` order:
+    the engine it started on and the engine it ended on."""
+    net: dict[str, tuple[str | None, str]] = {}
+    for m in sorted(moves, key=lambda m: m.seq):
+        start = net[m.query_id][0] if m.query_id in net else m.from_engine
+        net[m.query_id] = (start, m.to_engine)
+    return net
+
+
+def _merge_engines(store: GraphStore, engine_ids: set[str]) -> None:
+    if engine_ids:
+        store.execute(
+            "UNWIND $rows AS r MERGE (e:Engine {id: r.id}) ON CREATE SET e.display_name = r.name",
+            {"rows": [{"id": e, "name": display_engine(e)} for e in sorted(engine_ids)]},
+        )
+
+
+def _affects_engines(store: GraphStore, label: str, rows: list[dict]) -> None:
+    """AFFECTS edges from ``label`` nodes (``r.src`` is the id) to engines, by role."""
+    rows = [dict(t) for t in {tuple(sorted(r.items())) for r in rows}]
+    if not rows:
+        return
+    _merge_engines(store, {r["eng"] for r in rows})
+    store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query -- Cypher text from internal label names; values are bound parameters
+        f"UNWIND $rows AS r MATCH (n:{label} {{id: r.src}}), (e:Engine {{id: r.eng}}) "
+        "MERGE (n)-[:AFFECTS {role: r.role}]->(e)",
+        {"rows": rows},
+    )
+
+
+def populate_version_chain(lineage: list[dict], effective_version: int, store: GraphStore) -> None:
+    """The assignment version chain (#306): one AssignmentVersion per version of the
+    effective lineage, SUPERSEDES to the version before it, RESTORES from a
+    rollback to the version it restates (the one the abandoned reroute
+    ``rolled_back_version`` came from), and AFFECTS to the queries each version's
+    Moves changed and the engines they left or landed on."""
+    by_version = {int(a.get("version") or 0): a for a in lineage}
+    node_rows: list[dict] = []
+    query_rows: list[dict] = []
+    engine_rows: list[dict] = []
+    for version, assignment in sorted(by_version.items()):
+        if version < 1:
+            continue
+        moves = version_moves(assignment)
+        prev = assignment.get("previous_version")
+        kind = _version_kind(assignment, by_version.get(prev) if isinstance(prev, int) else None)
+        # Only a rollback names the version it rolled back; a later version that
+        # copies the field forward (a source-of-truth reroute) does not.
+        rolled = assignment.get("rolled_back_version") if kind == "rollback" else None
+        node_rows.append(
+            {
+                "id": f"assignment-v{version}",
+                "ver": version,
+                "kind": kind,
+                "source": assignment.get("source") or "",
+                "status": assignment.get("status") or "",
+                "eff": version == effective_version,
+                "created": str(assignment.get("timestamp") or ""),
+                "n": len(moves),
+                "passes": json.dumps(sorted({m.pass_.value for m in moves})),
+                "actors": json.dumps(sorted({m.actor.value for m in moves})),
+                "prev": prev if isinstance(prev, int) else None,
+                "rolled": rolled if isinstance(rolled, int) else None,
+            }
+        )
+        vid = f"assignment-v{version}"
+        # A query whose Moves changed its engine is 'moved'; one whose Moves only
+        # cleared or changed a tie (no engine change) is 'tie' and moves no engine.
+        roles: dict[str, str] = {}
+        for m in moves:
+            if m.from_engine == m.to_engine:
+                roles.setdefault(m.query_id, "tie")
+                continue
+            roles[m.query_id] = "moved"
+            engine_rows.append({"src": vid, "eng": m.to_engine, "role": "to"})
+            if m.from_engine:
+                engine_rows.append({"src": vid, "eng": m.from_engine, "role": "from"})
+        query_rows.extend({"src": vid, "qid": q, "role": r} for q, r in roles.items())
+    if not node_rows:
+        return
+    store.execute(
+        "UNWIND $rows AS r MERGE (v:AssignmentVersion {id: r.id}) "
+        "SET v.version = r.ver, v.kind = r.kind, v.source = r.source, v.status = r.status, "
+        "v.effective = r.eff, v.created_at = r.created, v.move_count = r.n, "
+        "v.passes_json = r.passes, v.actors_json = r.actors, "
+        "v.previous_version = CAST(r.prev AS INT64), "
+        "v.rolled_back_version = CAST(r.rolled AS INT64)",
+        {"rows": node_rows},
+    )
+    chain_rows: list[dict] = []
+    restore_rows: list[dict] = []
+    for row in node_rows:
+        if row["prev"] in by_version:
+            chain_rows.append({"a": row["id"], "b": f"assignment-v{row['prev']}"})
+        abandoned = by_version.get(row["rolled"]) if row["rolled"] else None
+        restored = abandoned.get("previous_version") if abandoned else None
+        if row["kind"] == "rollback" and restored in by_version:
+            restore_rows.append({"a": row["id"], "b": f"assignment-v{restored}"})
+    for rel, rows in (("SUPERSEDES", chain_rows), ("RESTORES", restore_rows)):
+        if rows:
+            store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query -- Cypher text from internal rel names; values are bound parameters
+                "UNWIND $rows AS r MATCH (a:AssignmentVersion {id: r.a}), "
+                f"(b:AssignmentVersion {{id: r.b}}) MERGE (a)-[:{rel}]->(b)",
+                {"rows": rows},
+            )
+    if query_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (v:AssignmentVersion {id: r.src}), (q:Query {id: r.qid}) "
+            "MERGE (v)-[:AFFECTS {role: r.role}]->(q)",
+            {"rows": query_rows},
+        )
+    _affects_engines(store, "AssignmentVersion", engine_rows)
+
+
+def link_consolidations(reality_check_output: dict, lineage: list[dict], store: GraphStore) -> None:
+    """Link each ``consolidation-{i}`` Decision to its queries (INFORMED_BY) through the
+    move ledger, and to the engines it moves from and to (AFFECTS) (#306).
+
+    A consolidation's queries are the queries whose net engine change over the
+    Moves of the version the reality check wrote (``output_assignment_version``;
+    any reality-check version of the lineage when it is not recorded) goes from
+    its ``from_engine`` to its ``to_engine``: the same per-query start-to-end
+    count as the record's ``query_count`` (``reality_check_request.moved_queries``).
+    A query consolidated A to B and then flagged on to C in the same version
+    counts under A to C, not A to B.
+    """
+    written = reality_check_output.get("output_assignment_version")
+    versions = [a for a in lineage if written is not None and a.get("version") == written]
+    if not versions:
+        versions = [a for a in lineage if a.get("source") == "reality_check"]
+    net: dict[str, tuple[str | None, str]] = {}
+    for a in versions:
+        net.update(_net_moves(version_moves(a)))
+    informed: list[dict] = []
+    engines: list[dict] = []
+    for i, cons in enumerate(reality_check_output.get("consolidations") or []):
+        did = f"consolidation-{i}"
+        frm, to = cons.get("from_engine"), cons.get("to_engine")
+        informed.extend({"did": did, "qid": q} for q, pair in net.items() if pair == (frm, to))
+        if frm:
+            engines.append({"src": did, "eng": frm, "role": "from"})
+        if to:
+            engines.append({"src": did, "eng": to, "role": "to"})
+    informed = [dict(t) for t in {tuple(sorted(r.items())) for r in informed}]
+    if informed:
+        store.execute(
+            "UNWIND $rows AS r MATCH (d:Decision {id: r.did}), (q:Query {id: r.qid}) "
+            "MERGE (d)-[:INFORMED_BY]->(q)",
+            {"rows": informed},
+        )
+    _affects_engines(store, "Decision", engines)
+
+
 def populate_from_reality_check(reality_check_output: dict, store: GraphStore) -> None:
     """Create Decision nodes (consolidation) from reality check output."""
     consolidations = reality_check_output.get("consolidations", [])
@@ -498,6 +709,7 @@ def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> 
 
     decision_rows: list[dict] = []
     informed_rows: list[dict] = []
+    engine_rows: list[dict] = []
     for i, routing in enumerate(routings):
         did = f"reroute-{i}"
         metadata = {
@@ -517,6 +729,11 @@ def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> 
             }
         )
         informed_rows.append({"did": did, "qid": routing["query_id"]})
+        # The engines the reroute moves the query from and to (#306); none for a
+        # query rerouted to the application layer.
+        engine_rows.append({"src": did, "eng": routing["from_engine"], "role": "from"})
+        if routing.get("to_engine"):
+            engine_rows.append({"src": did, "eng": routing["to_engine"], "role": "to"})
 
     if decision_rows:
         store.execute(
@@ -539,6 +756,7 @@ def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> 
             "MERGE (d)-[:INFORMED_BY]->(q)",
             {"rows": informed_rows},
         )
+    _affects_engines(store, "Decision", engine_rows)
 
 
 _LATENCY_PERCENTILES = ("p50", "p90", "p95", "p99", "p999", "min", "max")
@@ -787,6 +1005,7 @@ def rebuild_graph(
     )
 
     assignment_version = resolve_effective_assignment_version(artifact_store, db_name, job_id)
+    lineage: list[dict] = []
     if assignment_version > 0:
         lineage = assignment_lineage(
             lambda v: _read_safe(assignment_artifact_path(db_name, job_id, v)),
@@ -804,6 +1023,8 @@ def rebuild_graph(
         # 4b. The move ledger of every version in the effective lineage (#339).
         for version in lineage:
             populate_from_moves(version, graph_store)
+        # 4d. The version chain of the effective lineage (#306).
+        populate_version_chain(lineage, assignment_version, graph_store)
         # 4c. The candidate keys of each query, from the effective version's
         # access-pattern record (#1361). An older job has none: a missing file is a
         # partial run, like any artifact.
@@ -833,6 +1054,7 @@ def rebuild_graph(
     )
     if reality:
         populate_from_reality_check(reality, graph_store)
+        link_consolidations(reality, lineage, graph_store)
 
     # 6. Schema design: every engine, at the effective assignment
     # version (#306). ``schema-<engine>/v<N>`` is designed from assignment v<N>
