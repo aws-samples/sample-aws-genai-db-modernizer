@@ -25,6 +25,8 @@ surrounding markup is the only markup in the output.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Collection
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,30 @@ def md_code(value: Any) -> str:
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
     s = s.replace("`", "").replace("\\", "")
     return s
+
+
+# A word as the report's id checks read one (#1078 review): letters, digits, "_" and "-".
+_ID_WORD = re.compile(r"[0-9A-Za-z_-]+")
+
+
+def md_text_with_ids(value: Any, query_ids: Collection[str]) -> str:
+    """:func:`md_text`, with each of the report's query ids (full, or its 8-character
+    prefix, as the report's tables name one) that ``value`` holds as a whole word set
+    as a code span, as the report prints every other query id. Only the ids the
+    report itself holds count, so a hash or UUID in model prose stays prose; every
+    other part of ``value`` is escaped exactly as :func:`md_text` escapes it."""
+    text = str(value)
+    known = set(query_ids) | {q[:8] for q in query_ids if len(q) >= 8}
+    if not known:
+        return md_text(text)
+    out: list[str] = []
+    last = 0
+    for match in _ID_WORD.finditer(text):
+        if match.group(0) in known:
+            out += [md_text(text[last : match.start()]), f"`{md_code(match.group(0))}`"]
+            last = match.end()
+    out.append(md_text(text[last:]))
+    return "".join(out)
 
 
 def md_yaml_value(value: Any) -> str:

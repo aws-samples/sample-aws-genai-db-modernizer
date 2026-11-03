@@ -195,7 +195,7 @@ def _parse_offline_collection(
 
     Returns dict with keys: metadata, tables (list of table dicts with
     nested columns/indexes/fks/pk), views, procedures, triggers,
-    queries, global_stats.
+    queries, global_stats, extensions.
 
     Raises:
         IngestionLimitError: the collection's table or query count exceeds the
@@ -347,6 +347,9 @@ def _parse_offline_collection(
         "io_stats": data.get("io_stats", {}),
         "wait_events": data.get("wait_events", []),
         "os_stats": data.get("os_stats", {}),
+        # #1078: the PostgreSQL script's installed extensions; None when the collection
+        # has no such section (written before #1078, or another engine's).
+        "extensions": data.get("extensions"),
     }
 
 

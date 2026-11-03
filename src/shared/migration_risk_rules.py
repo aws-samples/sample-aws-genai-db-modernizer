@@ -381,7 +381,7 @@ def _gap_detail(gap: Mapping[str, Any]) -> str:
     if docs:
         text += f" Documentation: {docs}."
     objects = [
-        f"{o.get('kind')} {o.get('id')}"
+        f"{o.get('kind')} {o.get('id')}" + (f" ({o['note']})" if o.get("note") else "")
         for o in gap.get("objects") or []
         if isinstance(o, Mapping) and o.get("id")
     ]

@@ -1,0 +1,13 @@
+# Gap rule postgresql-extension-not-offered (#1078). Fields: src/shared/catalog/gaps.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL (src/catalog/aurora_postgresql_extensions.toml).
+id = "postgresql-extension-not-offered"
+feature = "Installed extensions Aurora PostgreSQL does not offer"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+impact = "blocks_move"
+reason = "No Aurora PostgreSQL version the source can move to offers every installed extension, and the source's own version does not offer these ones, so what they provide must be replaced (in SQL, with an extension Aurora PostgreSQL offers, or outside the database) or removed before the move."
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+
+# Looks for: Metadata.extensions the source's own line lacks when no line offers them all (TimescaleDB and Citus have rules of their own).
+[match]
+extensions = "not_offered"

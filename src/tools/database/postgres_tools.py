@@ -261,6 +261,14 @@ class PostgreSQLRemoteCollector:
             ORDER BY routine_type, routine_name
         """)
 
+    def collect_extensions(self) -> list[dict]:
+        """Every extension installed in the database and its version (#1078)."""
+        return self._query("""
+            SELECT extname AS name, extversion AS version
+            FROM pg_extension
+            ORDER BY extname
+        """)
+
     def collect_triggers(self) -> list[dict]:
         return self._query("""
             SELECT

@@ -27,6 +27,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -51,6 +53,7 @@ from src.contracts.collector_output import (
     RDSInstanceMetadata,
     Schema,
     SourceDatabase,
+    SourceExtension,
     SourceHost,
     SourceSettings,
     Table,
@@ -1480,6 +1483,39 @@ def source_settings(raw: object) -> SourceSettings | None:
     return SourceSettings(**kept) if kept else None
 
 
+def source_extensions(raw: object) -> list[SourceExtension] | None:
+    """The installed extensions a collection reported (#1078), as the contract keeps
+    them: each named entry once, its name lower case, in the order given; ``None`` when
+    the collection has no extension list (not read), ``[]`` when it read none. An entry
+    the contract refuses (a hand-made offline file's name or version past its limit) is
+    dropped with a warning naming its position, so it costs that entry only."""
+    if not isinstance(raw, list):
+        return None
+    out: list[SourceExtension] = []
+    seen: set[str] = set()
+    for position, entry in enumerate(raw):
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name") or "").strip().lower()
+        if not name or name in seen:
+            continue
+        version = entry.get("version")
+        try:
+            extension = SourceExtension(
+                name=name, version=str(version) if version not in (None, "") else None
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "extension entry %d dropped: the contract refuses its %s",
+                position,
+                " and ".join(sorted({str(e["loc"][0]) for e in exc.errors()})),
+            )
+            continue
+        seen.add(name)
+        out.append(extension)
+    return out
+
+
 def _build_output(
     inp: CollectorInput,
     start: float,
@@ -1497,6 +1533,7 @@ def _build_output(
     database_name: str | None = None,
     settings: object = None,
     query_capture: QueryCapture | None = None,
+    extensions: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
@@ -1504,7 +1541,9 @@ def _build_output(
     (#1572); ``inp.database_name`` when not given. ``settings``: the source settings the
     collection read (``sql_mode``, ``standard_conforming_strings``, #1482), kept as
     :func:`source_settings` reads them. ``query_capture``: the statement cap, minimum
-    execution count and count a live collection captured (#384)."""
+    execution count and count a live collection captured (#384). ``extensions``: the
+    installed extensions an offline PostgreSQL collection lists (#1078), kept as
+    :func:`source_extensions` reads them."""
     elapsed = time.monotonic() - start
     return CollectorOutputContract(
         job_id=inp.job_id,
@@ -1528,6 +1567,7 @@ def _build_output(
                 else []
             ),
             query_capture=query_capture,
+            extensions=source_extensions(extensions),
         ),
         database_schema=Schema(
             tables=tables, views=views, procedures=procedures, triggers=triggers

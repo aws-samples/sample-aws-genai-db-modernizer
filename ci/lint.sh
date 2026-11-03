@@ -16,3 +16,4 @@ log "contract schemas"; uv run python scripts/render_contract_schemas.py --check
 log "image requirements"; uv run python scripts/render_atx_requirements.py --check
 log "group draft agent"; uv run python scripts/render_group_draft_agent.py --check
 log "prices"; uv run python scripts/refresh_prices.py --check-age
+log "extension lists"; uv run python scripts/check_extension_list_age.py

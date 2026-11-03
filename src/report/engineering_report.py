@@ -70,6 +70,7 @@ from .formatting import (
     plural_noun,
     plural_verb,
     price_list_text,
+    report_query_ids,
 )
 from .merge_conflicts import merge_conflicts_md
 from .merge_reviews import merge_reviews_md
@@ -370,7 +371,11 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
-def _migration_note_md(mn: dict[str, Any], said: _SaidOnce | None = None) -> str:
+def _migration_note_md(
+    mn: dict[str, Any],
+    said: _SaidOnce | None = None,
+    query_ids: frozenset[str] = frozenset(),
+) -> str:
     """One readable Markdown bullet for a schema-design ``migration_notes`` entry.
 
     ``migration_notes`` is a list of dicts (``object_name``, ``object_type``,
@@ -384,6 +389,9 @@ def _migration_note_md(mn: dict[str, Any], said: _SaidOnce | None = None) -> str
 
     ``said`` (#1574) is the report's ledger of long sentences: a sentence an earlier
     note stated (a model often words two triggers' logic the same) points at that note.
+    ``query_ids`` are the report's query ids: one the model names in the note's name or
+    logic is a code span, as the report prints every query id (#1078 review); the
+    rest of the model's text is escaped as plain text.
     """
     object_type = str(mn.get("object_type") or "").strip()
     object_name = str(mn.get("object_name") or "").strip()
@@ -392,12 +400,13 @@ def _migration_note_md(mn: dict[str, Any], said: _SaidOnce | None = None) -> str
     head_bits = []
     if object_type:
         head_bits.append(f"**{escaping.md_text(object_type)}**")
+    name = escaping.md_text_with_ids(object_name, query_ids)
     if object_name:
-        head_bits.append(escaping.md_text(object_name))
+        head_bits.append(name)
     head = " ".join(head_bits)
-    body = escaping.md_text(logic)
+    body = escaping.md_text_with_ids(logic, query_ids)
     if said is not None and body:
-        where = f"in the {escaping.md_text(object_name)} migration note" if object_name else "above"
+        where = f"in the {name} migration note" if object_name else "above"
         body = said.line(body, where)
 
     if head and body:
@@ -1335,6 +1344,7 @@ def render_engineering_report_md(
     # #1454, #1574: one ledger of long sentences for the migration notes and the risk
     # register, so a sentence is stated once in the report.
     said = _SaidOnce()
+    query_ids = report_query_ids(report)
     designs = _completed_designs(report)
     if designs:
         out += ["## Target schemas by engine", ""]
@@ -1443,7 +1453,7 @@ def render_engineering_report_md(
             if notes:
                 out += ["**Migration notes:**", ""]
                 out += [
-                    f"- {_migration_note_md(mn, said) if isinstance(mn, dict) else escaping.md_text(mn)}"
+                    f"- {_migration_note_md(mn, said, query_ids) if isinstance(mn, dict) else escaping.md_text_with_ids(mn, query_ids)}"
                     for mn in notes
                 ]
                 out.append("")

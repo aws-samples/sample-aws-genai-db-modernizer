@@ -29,6 +29,7 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _normalize_index_type,
     _parse_ddl_raw,
+    source_extensions,
     source_settings,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
@@ -237,6 +238,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 settings=source_settings(meta_raw.get("settings")),
             ),
             query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+            # #1078: an older checkpoint's schema stage has none.
+            extensions=source_extensions(schema_raw.get("extensions")),
         ),
         database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),
         queries=queries,
@@ -350,12 +353,20 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
     except Exception:
         logger.warning("Failed to collect global stats")
 
+    # #1078: None (not read) is not "nothing installed", so the gap check reads nothing.
+    extensions: list[dict] | None = None
+    try:
+        extensions = db.collect_extensions()
+    except Exception:
+        logger.warning("Failed to collect extensions")
+
     return {
         "tables": tables,
         "views": views,
         "procedures": procedures,
         "triggers": triggers,
         "global_stats": global_stats,
+        "extensions": extensions,
     }
 
 

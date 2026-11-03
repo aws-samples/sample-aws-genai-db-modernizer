@@ -49,6 +49,7 @@ from src.shared.catalog.gaps import (  # noqa: E402
     GAP_IMPACTS,
     AuroraVersionLines,
     GapRule,
+    aurora_extension_lines,
     aurora_version_lines,
     gap_rules,
 )
@@ -388,6 +389,66 @@ _MATCH_FLAGS = (
 )
 
 
+# The claim markers (CONTRIBUTING.md, "Claims name their test") of the page's sentences
+# on the extension rules (#1078): an HTML comment after the sentence, outside md_cell's
+# escaping, naming the tests that prove it.
+_GAP_TESTS = "tests/unit/tools/analysis/test_relational_gaps.py::"
+_LINE_TEST = _GAP_TESTS + "test_the_line_the_source_moves_to_offers_every_extension"
+_SERVER_TEST = _GAP_TESTS + "test_a_module_that_ships_with_postgresql_is_never_newer_than_offered"
+_EXTENSION_CLAIMS = {
+    "not_offered": (
+        _GAP_TESTS + "test_an_unknown_extension_blocks_the_move_and_is_named",
+        _LINE_TEST,
+    ),
+    "newer_than_offered": (
+        _GAP_TESTS + "test_an_extension_newer_than_aurora_offers",
+        _LINE_TEST,
+        _SERVER_TEST,
+    ),
+    "on_a_later_line": (
+        _GAP_TESTS + "test_the_reviewers_case_needs_a_later_line_for_roaringbitmap",
+        _LINE_TEST,
+    ),
+}
+_SYNTHESIS_ONLY_CLAIM = (
+    "tests/unit/shared/test_gap_catalog.py::"
+    "test_the_rule_catalog_page_says_what_the_extension_rules_look_for",
+    "tests/unit/agents/referee/test_synthesis_relational_gaps.py::"
+    "test_synthesis_writes_the_gaps_of_the_retained_aurora_engine",
+    "tests/unit/agents/referee/test_routing_never_reads_gaps.py::"
+    "test_no_routing_module_reaches_the_gap_check",
+)
+_SERVER_MODULES_CLAIM = (
+    _SERVER_TEST,
+    _GAP_TESTS + "test_a_server_module_aurora_does_not_offer_is_still_not_offered",
+)
+
+
+def _claim(tests: tuple[str, ...]) -> str:
+    return f" <!-- claim: {', '.join(tests)} -->"
+
+
+_EXTENSION_LINE = (
+    " (`src/catalog/aurora_postgresql_extensions.toml`; the move lands on the lowest "
+    "version line the source can move to that offers every installed extension)"
+)
+_EXTENSION_CHECKS = {
+    "not_offered": (
+        "installed extensions Aurora PostgreSQL does not offer on the source's own version "
+        "line, when no line offers them all" + _EXTENSION_LINE
+    ),
+    "newer_than_offered": (
+        "installed extensions newer than Aurora PostgreSQL offers on the source's own "
+        "version line, when no line offers them all; never modules that ship with "
+        "PostgreSQL" + _EXTENSION_LINE
+    ),
+    "on_a_later_line": (
+        "installed extensions offered only from a later Aurora PostgreSQL version than "
+        "the source's own" + _EXTENSION_LINE
+    ),
+}
+
+
 def _match_text(rule: GapRule) -> str:
     """What a rule looks for, as one Markdown line."""
     match = rule.match
@@ -395,6 +456,8 @@ def _match_text(rule: GapRule) -> str:
         return "every source of these engines"
     if match.version:
         return f"version: {match.version.replace('_', ' ')}"
+    if match.extensions:
+        return _EXTENSION_CHECKS[match.extensions]
     parts = [
         f"{label} " + ", ".join(f"`{v}`" for v in getattr(match, name))
         for name, label in _MATCH_LABELS
@@ -426,10 +489,13 @@ def render_gaps_md(
     out = [
         "## Relational move: version and feature gaps",
         "",
-        "Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` "
-        "(#471; field definitions: `src/shared/catalog/gaps.py`). Synthesis checks the "
+        "Generated from `src/catalog/gaps/*.toml`, `src/catalog/aurora_versions.toml` "
+        "and `src/catalog/aurora_postgresql_extensions.toml` "
+        "(#471, #1078; field definitions: `src/shared/catalog/gaps.py`). Synthesis checks the "
         "collection against the rules for wave 1's Aurora engine and writes the gaps to "
-        "`report.json`'s `facts.relational_gaps`; routing never reads them. Impacts, most "
+        "`report.json`'s `facts.relational_gaps`; routing never reads them."
+        + _claim(_SYNTHESIS_ONLY_CLAIM)
+        + " Impacts, most "
         "severe first: "
         + ", ".join(f"`{i}` ({_IMPACT_LABELS[i].lower()})" for i in GAP_IMPACTS)
         + ".",
@@ -442,6 +508,19 @@ def render_gaps_md(
             f"| {md_cell(labels.get(engine, engine))} | {', '.join(entry.source_engines)} | "
             f"{', '.join(entry.lines)} | {md_cell(entry.docs)} |"
         )
+    for engine, listed in sorted(aurora_extension_lines().items()):
+        out += [
+            "",
+            f"{md_text(labels.get(engine, engine))} extensions compared per version line "
+            f"({md_text(listed.docs)}, read on {listed.retrieved_on}): "
+            + "; ".join(
+                f"{line}: {len(entry.extensions)} extensions (to {entry.newest_release})"
+                for line, entry in sorted(listed.lines.items(), key=lambda kv: int(kv[0]))
+            )
+            + f". The {len(listed.server_modules)} modules that ship with PostgreSQL "
+            f"({md_text(listed.server_modules_docs)}) are compared by name only: their "
+            "version follows the server's." + _claim(_SERVER_MODULES_CLAIM),
+        ]
     out += [
         "",
         "| Rule | Sources | Targets | Impact | Looks for |",
@@ -452,7 +531,9 @@ def render_gaps_md(
         targets = ", ".join(labels.get(t, t) for t in r.targets)
         out.append(
             f"| [`{r.id}`](#{r.id}) | {', '.join(r.source_engines)} | {md_cell(targets)} | "
-            f"{_IMPACT_LABELS[r.impact]} | {md_cell(_match_text(r))} |"
+            f"{_IMPACT_LABELS[r.impact]} | {md_cell(_match_text(r))}"
+            + (_claim(_EXTENSION_CLAIMS[r.match.extensions]) if r.match.extensions else "")
+            + " |"
         )
     out.append("")
     for r in ordered:

@@ -282,9 +282,20 @@ global_stats_data AS (
     'created_tmp_disk_tables', (SELECT sum(temp_blks_read) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text,
     'created_tmp_tables', (SELECT sum(temp_blks_written) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text
   ) AS data
+),
+
+-- ===================== 12. Installed Extensions =====================
+-- Every extension installed in this database and its version (#1078): the
+-- relational-move gap check compares them with the extensions Aurora PostgreSQL offers.
+extensions_data AS (
+  SELECT coalesce(json_agg(e ORDER BY e.name), '[]'::json) AS data
+  FROM (
+    SELECT extname AS name, extversion AS version
+    FROM pg_extension
+  ) e
 )
 
--- ===================== 12. Assemble Final JSON =====================
+-- ===================== 13. Assemble Final JSON =====================
 SELECT json_build_object(
   'collection_version', '1.0',
   'collected_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -298,5 +309,6 @@ SELECT json_build_object(
   'procedures', (SELECT data FROM procedures_data),
   'triggers', (SELECT data FROM triggers_data),
   'queries', (SELECT data FROM queries_data),
-  'global_stats', (SELECT data FROM global_stats_data)
+  'global_stats', (SELECT data FROM global_stats_data),
+  'extensions', (SELECT data FROM extensions_data)
 );

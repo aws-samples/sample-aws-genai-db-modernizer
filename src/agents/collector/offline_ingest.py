@@ -179,6 +179,8 @@ def build_offline_contract(
         views=views,
         procedures=procedures,
         triggers=triggers,
+        # #1078: the installed extensions the PostgreSQL script read.
+        extensions=parsed.get("extensions"),
         # #949: AWS engines the application already runs next to the source.
         engines_in_use=offline_meta.get("engines_in_use"),
         database_name=collected_name,

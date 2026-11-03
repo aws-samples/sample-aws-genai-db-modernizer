@@ -93,9 +93,18 @@ DATA_KEYED: dict[str, tuple[str, ...]] = {
     # The instance classes of each offer section and the offer files' dates, generated
     # from the public price list by scripts/refresh_prices.py. The section names
     # (``service.configuration``) are part of the format and stay literal.
-    "prices": ("?.?.instance_hourly.*", "?.?.multi_az_instance_hourly.*", "?.?.instance_memory_gib.*", "published.*"),
+    "prices": (
+        "?.?.instance_hourly.*",
+        "?.?.multi_az_instance_hourly.*",
+        "?.?.instance_memory_gib.*",
+        "published.*",
+    ),
     # Model name -> inference profile -> per-token prices.
     "model_prices": ("*.*.{input,output,cache_read,cache_write}",),
+    # Aurora PostgreSQL version line -> its newest release and the extensions it offers
+    # (#1078), copied from the public extension list: a line or an extension coming or
+    # going is not a format change.
+    "aurora_postgresql_extensions": ("lines.*.newest_release", "lines.*.extensions.*"),
 }
 
 

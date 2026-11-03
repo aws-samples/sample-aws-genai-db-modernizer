@@ -23,7 +23,13 @@ them:
   column names, table storage engines and collations, index types and predicates,
   object schemas and procedure languages; ``routines`` lists every procedure,
   function and trigger;
-  ``always`` applies to every source of the rule's engines.
+  ``always`` applies to every source of the rule's engines;
+- an ``extensions`` rule compares the source's installed extensions
+  (``metadata.extensions``, PostgreSQL's ``pg_extension``) with the line the move lands
+  on, the lowest one that offers them all, in
+  ``src/catalog/aurora_postgresql_extensions.toml`` (#1078, see
+  :class:`~src.shared.catalog.gaps.GapMatch`); an extension a rule of its own names
+  (TimescaleDB, Citus) is that rule's evidence instead.
 
 Each gap carries its rule's impact, plain reason and documentation, and the evidence:
 the table ids, query ids and other objects (columns, views, routines, triggers) it was
@@ -44,10 +50,14 @@ from src.shared.catalog.gaps import (
     AURORA_TARGETS,
     GAP_IMPACTS,
     SOURCE_ENGINES,
+    AuroraExtensionLine,
+    AuroraExtensionLines,
     AuroraVersionLines,
     GapMatch,
     GapRule,
+    aurora_extension_lines,
     aurora_version_lines,
+    extension_version,
     gap_rules,
     parse_version_line,
 )
@@ -85,6 +95,8 @@ class _Evidence:
     tables: set[str] = field(default_factory=set)
     queries: set[str] = field(default_factory=set)
     objects: set[tuple[str, str]] = field(default_factory=set)
+    # An object's note (#1078: the line an extension is offered from).
+    notes: dict[tuple[str, str], str] = field(default_factory=dict)
 
     def add_text(self, text: _Text) -> None:
         if text.kind == "query":
@@ -493,18 +505,107 @@ def _version_hit(
     return line > lines[-1]
 
 
+def _installed_extensions(collector: Mapping[str, Any]) -> dict[str, str | None] | None:
+    """The source's installed extensions, lower-case name -> version, or None when the
+    collection has no extension list (collected before #1078, or not PostgreSQL)."""
+    raw = (collector.get("metadata") or {}).get("extensions")
+    if not isinstance(raw, list):
+        return None
+    out: dict[str, str | None] = {}
+    for entry in raw:
+        if isinstance(entry, Mapping) and str(entry.get("name") or "").strip():
+            version = entry.get("version")
+            out[str(entry["name"]).strip().lower()] = (
+                str(version) if version not in (None, "") else None
+            )
+    return out
+
+
+def _extension_findings(
+    installed: Mapping[str, str | None] | None,
+    offered: AuroraExtensionLines | None,
+    line: tuple[int, ...] | None,
+    own_rules: frozenset[str],
+) -> dict[str, dict[str, str | None]]:
+    """What each ``extensions`` check finds: check -> {extension: note}.
+
+    The move lands on the lowest line, among the ones the source can move to, that
+    offers every installed extension at its version (a server module's name only): for a
+    source on a listed line its own line or a later one, for one older than every line or
+    of unknown version any line, for one newer than every line the newest. When that line
+    is above a listed source's own, the extensions its own line lacks are noted with the
+    line that offers them (``on_a_later_line``). When no line offers them all, each one is
+    checked against the source's own line (any line, or the newest, for the other
+    sources). An extension a rule of its own names (``own_rules``) is left to that rule.
+    """
+    out: dict[str, dict[str, str | None]] = {
+        "not_offered": {},
+        "newer_than_offered": {},
+        "on_a_later_line": {},
+    }
+    considered = {n: v for n, v in (installed or {}).items() if n not in own_rules}
+    if offered is None or not considered:
+        return out
+    parsed = sorted(
+        (key, name, entry)
+        for name, entry in offered.lines.items()
+        if (key := parse_version_line("postgresql", name)) is not None
+    )
+    if not parsed:
+        return out
+    server = frozenset(offered.server_modules)
+
+    def fits(entry: AuroraExtensionLine, name: str, version: str | None) -> bool:
+        if name not in entry.extensions:
+            return False
+        if name in server:
+            return True
+        have, top = extension_version(version), extension_version(entry.extensions[name])
+        return have is None or top is None or have <= top
+
+    own = None
+    if line is None or line < parsed[0][0]:
+        candidates = parsed
+    elif line > parsed[-1][0]:
+        candidates = [parsed[-1]]
+    else:
+        candidates = [p for p in parsed if p[0] >= line]
+        own = next((p for p in parsed if p[0] == line), None)
+    chosen = next(
+        (c for c in candidates if all(fits(c[2], n, v) for n, v in considered.items())), None
+    )
+    if chosen is not None:
+        if own is not None and chosen[0] > own[0]:
+            for name, version in considered.items():
+                if not fits(own[2], name, version):
+                    out["on_a_later_line"][name] = f"offered from Aurora PostgreSQL {chosen[1]}"
+        return out
+    reference = [own[2]] if own is not None else [c[2] for c in candidates]
+    for name, version in considered.items():
+        listed = [e.extensions[name] for e in reference if name in e.extensions]
+        if not listed:
+            out["not_offered"][name] = None
+        elif name not in server:
+            have = extension_version(version)
+            top = max((v for x in listed if (v := extension_version(x)) is not None), default=None)
+            if have is not None and top is not None and have > top:
+                out["newer_than_offered"][name] = None
+    return out
+
+
 def detect_relational_gaps(
     collector: Mapping[str, Any] | None,
     target_engine: str | None,
     *,
     rules: Iterable[GapRule] | None = None,
     versions: Mapping[str, AuroraVersionLines] | None = None,
+    extension_lines: Mapping[str, AuroraExtensionLines] | None = None,
 ) -> dict[str, Any] | None:
     """The relational move's version and feature gaps (``RelationalGapFacts``), or None
     when there is no collection, no known source engine or no Aurora target.
 
-    ``target_engine`` is wave 1's Aurora engine (``retained_engine_for``). ``rules`` and
-    ``versions`` default to the catalog's.
+    ``target_engine`` is wave 1's Aurora engine (``retained_engine_for``). ``rules``,
+    ``versions`` and ``extension_lines`` default to the catalog's.
     """
     if not isinstance(collector, Mapping) or target_engine not in AURORA_TARGETS:
         return None
@@ -539,12 +640,33 @@ def detect_relational_gaps(
     word_sets = [frozenset(t.tokens.tokens) for t in texts]
 
     resolver = TableNameResolver.from_collector(collector)
+    installed = _installed_extensions(collector)
+    # #1078: the extensions the target offers on the lines this source can move to, and
+    # the ones a rule of this move names (that rule's evidence, not the generic one's).
+    offered = (extension_lines if extension_lines is not None else aurora_extension_lines()).get(
+        str(target_engine)
+    )
+    own_rules = frozenset(r.match.extension.lower() for r in applicable if r.match.extension)
+    findings = _extension_findings(
+        installed,
+        offered if offered is not None and engine in offered.source_engines else None,
+        parse_version_line(engine, version),
+        own_rules,
+    )
     gaps: list[dict[str, Any]] = []
     for rule in applicable:
         evidence = _Evidence()
         match = rule.match
         if match.version is not None:
             if not (version_checked and _version_hit(match.version, line, parsed_lines)):
+                continue
+        elif match.extensions is not None:
+            # A collection with no extension list (None) finds nothing.
+            for name, note in findings[match.extensions].items():
+                evidence.objects.add(("extension", name))
+                if note:
+                    evidence.notes[("extension", name)] = note
+            if not evidence:
                 continue
         elif not match.always:
             if _reads_text(rule):
@@ -553,6 +675,9 @@ def detect_relational_gaps(
                     if _text_hit(rule, text, words, user_routines):
                         evidence.add_text(text)
             _schema_evidence(rule, collector, evidence, resolver)
+            if match.extension and installed and match.extension.lower() in installed:
+                # #1078: the extension itself is installed.
+                evidence.objects.add(("extension", match.extension.lower()))
             if not evidence:
                 continue
         gaps.append(
@@ -564,7 +689,13 @@ def detect_relational_gaps(
                 "docs": rule.docs,
                 "tables": sorted(evidence.tables),
                 "queries": sorted(evidence.queries),
-                "objects": [{"kind": k, "id": i} for k, i in sorted(evidence.objects)],
+                # Every field GapObject dumps, ``note`` None when there is none: report.json
+                # stores these facts through the contract, and the facts layer recomputes
+                # them from this function (ADR-032), so the two must be the same dict.
+                "objects": [
+                    {"kind": k, "id": i, "note": evidence.notes.get((k, i))}
+                    for k, i in sorted(evidence.objects)
+                ],
             }
         )
     gaps.sort(key=lambda g: (GAP_IMPACTS.index(g["impact"]), g["rule_id"]))

@@ -66,6 +66,10 @@ Version History:
   collection captured and chose from, whether a cap cut it, a failed statement query's
   error, and the writes a cap dropped per table (#384). Backward compatible: defaults to
   None (the collection does not record them).
+- 5.4 (2026-11-04, #1078): Added optional ``Metadata.extensions`` (``SourceExtension``:
+  name, version): the extensions installed in the source database, PostgreSQL's
+  pg_extension, read by the relational-move gap check. Backward compatible: defaults to
+  None (not collected), and the extension gap rules then find nothing.
 """
 
 import re
@@ -334,6 +338,21 @@ class QueryCapture(BaseModel):
     )
 
 
+class SourceExtension(BaseModel):
+    """One extension installed in the source database (#1078): PostgreSQL's
+    ``pg_extension``, as the server names it. The relational-move gap check compares it
+    with the extensions the Aurora target offers."""
+
+    name: str = Field(
+        ..., min_length=1, max_length=128, description="The extension's name (extname)"
+    )
+    version: str | None = Field(
+        None,
+        max_length=64,
+        description="The installed version (extversion); None when not reported",
+    )
+
+
 class Metadata(BaseModel):
     collection_timestamp: datetime = Field(
         ..., description="ISO 8601 timestamp when collection completed"
@@ -358,6 +377,13 @@ class Metadata(BaseModel):
         description=(
             "The statement cap, minimum execution count and coverage of the capture "
             "(#384); None for a collection that does not record them"
+        ),
+    )
+    extensions: list[SourceExtension] | None = Field(
+        None,
+        description=(
+            "The extensions installed in the source database, with their versions "
+            "(PostgreSQL's pg_extension, #1078); None when the collection did not read them"
         ),
     )
 
@@ -1038,7 +1064,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.3",
+        default="5.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

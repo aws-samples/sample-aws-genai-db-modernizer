@@ -377,6 +377,17 @@ def write_elasticache_design(store: LocalArtifactStore, db: str, job_id: str, ve
                     "and keep only the option reads in the cache.",
                 }
             ],
+            # A model-shaped note that names a query by its 8-character id, as the
+            # wordpress e2e-llm run's did (#1078 review): the report prints it as a code
+            # span, never bare (test_report_concision's bare-id check).
+            "migration_notes": [
+                {
+                    "object_name": f"SQL_CALC_FOUND_ROWS in query {uncached[:8]}",
+                    "object_type": "function",
+                    "application_logic_required": "The application takes the total row count "
+                    f"from ZCARD in place of query {uncached[:8]} and pages with ZREVRANGE.",
+                }
+            ],
             "validation_passed": True,
         }
     )

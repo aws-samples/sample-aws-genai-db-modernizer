@@ -410,3 +410,55 @@ def test_a_sentence_two_notes_and_a_mitigation_share_is_stated_once(report) -> N
     assert "Stated in the cs\\_reply\\_readonly migration note." in mitigation
     # The sentence each note states on its own is kept.
     assert "deprecated require\\_topic\\_approval column is written." in second
+
+
+# --- A query id inside model-written migration notes (#1078 review) ---------------
+
+
+def _a_query_id(report: dict[str, Any]) -> str:
+    return sorted(q for q in known_query_ids(report) if len(q) >= 8)[0]
+
+
+def test_a_query_id_a_designer_writes_in_a_migration_note_is_a_code_span(report) -> None:
+    """The wordpress e2e-llm run printed "**function** SQL\\_CALC\\_FOUND\\_ROWS in query
+    d4bf16d6: ..." in the ElastiCache design's migration notes: the model named a query
+    id, full or by its 8-character prefix, and the note printed it bare. A known query
+    id in the note's name or logic is now a code span, as everywhere else in the
+    report; the rest of the text is escaped as before."""
+    qid = _a_query_id(report)
+    report["schema_designs"]["dynamodb"]["migration_notes"] = [
+        {
+            "object_name": f"SQL_CALC_FOUND_ROWS in query {qid[:8]}",
+            "object_type": "function",
+            "application_logic_required": (
+                f"Take the total from ZCARD in place of query {qid} and page with *ZREVRANGE*."
+            ),
+        }
+    ]
+    md = render_engineering_report_md(report)
+    assert bare_ids(md, known_query_ids(report)) == []
+    line = next(ln for ln in md.splitlines() if "SQL\\_CALC\\_FOUND\\_ROWS" in ln)
+    assert line == (
+        f"- **function** SQL\\_CALC\\_FOUND\\_ROWS in query `{qid[:8]}`: Take the total from "
+        f"ZCARD in place of query `{qid}` and page with \\*ZREVRANGE\\*."
+    )
+
+
+def test_only_known_query_ids_become_code_spans_and_the_text_stays_data(report) -> None:
+    """A hash-like word the report holds as no query id stays prose, and a note's
+    Markdown stays escaped text around the id: untrusted model text is data."""
+    qid = _a_query_id(report)
+    report["schema_designs"]["dynamodb"]["migration_notes"] = [
+        {
+            "object_name": "deadbeef",
+            "object_type": "trigger",
+            "application_logic_required": f"See [x](http://e.example) for {qid[:8]}; <b>x</b>",
+        }
+    ]
+    md = render_engineering_report_md(report)
+    line = next(ln for ln in md.splitlines() if ln.startswith("- **trigger** deadbeef"))
+    assert line == (
+        f"- **trigger** deadbeef: See \\[x\\]\\(http://e.example\\) for `{qid[:8]}`; "
+        "&lt;b&gt;x&lt;/b&gt;"
+    )
+    assert "](http" not in line

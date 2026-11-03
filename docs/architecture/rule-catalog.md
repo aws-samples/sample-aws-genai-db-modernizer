@@ -1022,16 +1022,19 @@ No analysis reports this pattern today.
 
 ## Relational move: version and feature gaps
 
-Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` (#471; field definitions: `src/shared/catalog/gaps.py`). Synthesis checks the collection against the rules for wave 1's Aurora engine and writes the gaps to `report.json`'s `facts.relational_gaps`; routing never reads them. Impacts, most severe first: `blocks_move` (blocks the move), `needs_rewrite` (needs a rewrite), `behaves_differently` (behaves differently), `informational` (informational).
+Generated from `src/catalog/gaps/*.toml`, `src/catalog/aurora_versions.toml` and `src/catalog/aurora_postgresql_extensions.toml` (#471, #1078; field definitions: `src/shared/catalog/gaps.py`). Synthesis checks the collection against the rules for wave 1's Aurora engine and writes the gaps to `report.json`'s `facts.relational_gaps`; routing never reads them. <!-- claim: tests/unit/shared/test_gap_catalog.py::test_the_rule_catalog_page_says_what_the_extension_rules_look_for, tests/unit/agents/referee/test_synthesis_relational_gaps.py::test_synthesis_writes_the_gaps_of_the_retained_aurora_engine, tests/unit/agents/referee/test_routing_never_reads_gaps.py::test_no_routing_module_reaches_the_gap_check --> Impacts, most severe first: `blocks_move` (blocks the move), `needs_rewrite` (needs a rewrite), `behaves_differently` (behaves differently), `informational` (informational).
 
 | Aurora engine | Homogeneous sources | Version lines compared | Documentation |
 |---|---|---|---|
 | Aurora MySQL | mysql | 8.0, 8.4 | Amazon Aurora MySQL release calendar (Aurora MySQL version 3 is MySQL 8.0-compatible, Aurora MySQL version 8.4 is MySQL 8.4-compatible); Amazon RDS Extended Support |
 | Aurora PostgreSQL | postgresql | 14, 15, 16, 17, 18 | Amazon Aurora PostgreSQL release calendar |
 
+Aurora PostgreSQL extensions compared per version line (Extension versions for Amazon Aurora PostgreSQL, read on 2026-11-03): 14: 91 extensions (to 14.24); 15: 91 extensions (to 15.19); 16: 93 extensions (to 16.15); 17: 93 extensions (to 17.11); 18: 94 extensions (to 18.6). The 60 modules that ship with PostgreSQL (PostgreSQL documentation, Additional Supplied Modules and Extensions; Procedural Languages) are compared by name only: their version follows the server's. <!-- claim: tests/unit/tools/analysis/test_relational_gaps.py::test_a_module_that_ships_with_postgresql_is_never_newer_than_offered, tests/unit/tools/analysis/test_relational_gaps.py::test_a_server_module_aurora_does_not_offer_is_still_not_offered -->
+
 | Rule | Sources | Targets | Impact | Looks for |
 |---|---|---|---|---|
 | [`postgresql-citus`](#postgresql-citus) | postgresql | Aurora PostgreSQL | Blocks the move | the `citus` extension: CREATE EXTENSION, its installed C functions, or calls to `CREATE_DISTRIBUTED_TABLE`, `CREATE_REFERENCE_TABLE`, `CITUS_ADD_NODE` unqualified or in `pg_catalog` (not a user's same-named function) |
+| [`postgresql-extension-not-offered`](#postgresql-extension-not-offered) | postgresql | Aurora PostgreSQL | Blocks the move | installed extensions Aurora PostgreSQL does not offer on the source's own version line, when no line offers them all (`src/catalog/aurora_postgresql_extensions.toml`; the move lands on the lowest version line the source can move to that offers every installed extension) <!-- claim: tests/unit/tools/analysis/test_relational_gaps.py::test_an_unknown_extension_blocks_the_move_and_is_named, tests/unit/tools/analysis/test_relational_gaps.py::test_the_line_the_source_moves_to_offers_every_extension --> |
 | [`postgresql-timescaledb`](#postgresql-timescaledb) | postgresql | Aurora PostgreSQL | Blocks the move | the `timescaledb` extension: CREATE EXTENSION, its installed C functions, or calls to `TIME_BUCKET`, `CREATE_HYPERTABLE`, `ADD_RETENTION_POLICY`, `ADD_COMPRESSION_POLICY`, `ADD_CONTINUOUS_AGGREGATE_POLICY` unqualified or in `public`, `_timescaledb_functions`, `timescaledb_experimental`, `timescaledb_information` (not a user's same-named function) |
 | [`postgresql-untrusted-language`](#postgresql-untrusted-language) | postgresql | Aurora PostgreSQL | Blocks the move | routine languages `plperlu`, `plpythonu`, `plpython2u`, `plpython3u`, `pltclu` |
 | [`db2-special-registers`](#db2-special-registers) | db2 | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | words `SYSDUMMY1`; syntax `CURRENT DATE`, `CURRENT TIMESTAMP`, `CURRENT TIME` |
@@ -1122,6 +1125,8 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`oracle-date-type`](#oracle-date-type) | oracle | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `date` |
 | [`oracle-empty-string-is-null`](#oracle-empty-string-is-null) | oracle | Aurora MySQL, Aurora PostgreSQL | Behaves differently | every source of these engines |
 | [`postgresql-case-sensitive-comparison`](#postgresql-case-sensitive-comparison) | postgresql | Aurora MySQL | Behaves differently | every source of these engines |
+| [`postgresql-extension-newer-than-offered`](#postgresql-extension-newer-than-offered) | postgresql | Aurora PostgreSQL | Behaves differently | installed extensions newer than Aurora PostgreSQL offers on the source's own version line, when no line offers them all; never modules that ship with PostgreSQL (`src/catalog/aurora_postgresql_extensions.toml`; the move lands on the lowest version line the source can move to that offers every installed extension) <!-- claim: tests/unit/tools/analysis/test_relational_gaps.py::test_an_extension_newer_than_aurora_offers, tests/unit/tools/analysis/test_relational_gaps.py::test_the_line_the_source_moves_to_offers_every_extension, tests/unit/tools/analysis/test_relational_gaps.py::test_a_module_that_ships_with_postgresql_is_never_newer_than_offered --> |
+| [`postgresql-extension-on-a-later-version`](#postgresql-extension-on-a-later-version) | postgresql | Aurora PostgreSQL | Behaves differently | installed extensions offered only from a later Aurora PostgreSQL version than the source's own (`src/catalog/aurora_postgresql_extensions.toml`; the move lands on the lowest version line the source can move to that offers every installed extension) <!-- claim: tests/unit/tools/analysis/test_relational_gaps.py::test_the_reviewers_case_needs_a_later_line_for_roaringbitmap, tests/unit/tools/analysis/test_relational_gaps.py::test_the_line_the_source_moves_to_offers_every_extension --> |
 | [`postgresql-functions-behave-differently`](#postgresql-functions-behave-differently) | postgresql | Aurora MySQL | Behaves differently | calls `LENGTH`, `LOG`, `CONCAT`, `GREATEST`, `LEAST` |
 | [`postgresql-lateral-joins`](#postgresql-lateral-joins) | postgresql | Aurora MySQL | Behaves differently | words `LATERAL` |
 | [`postgresql-older-major-version`](#postgresql-older-major-version) | postgresql | Aurora PostgreSQL | Behaves differently | version: older than target |
@@ -1144,6 +1149,12 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 ### postgresql-citus
 
 Citus distributed tables: blocks the move. Citus is not among the extensions Aurora PostgreSQL offers, so distributed and reference tables must become ordinary tables \(or move to a service that runs Citus\) before the move.
+
+Documentation: Extension versions for Amazon Aurora PostgreSQL.
+
+### postgresql-extension-not-offered
+
+Installed extensions Aurora PostgreSQL does not offer: blocks the move. No Aurora PostgreSQL version the source can move to offers every installed extension, and the source's own version does not offer these ones, so what they provide must be replaced \(in SQL, with an extension Aurora PostgreSQL offers, or outside the database\) or removed before the move.
 
 Documentation: Extension versions for Amazon Aurora PostgreSQL.
 
@@ -1686,6 +1697,18 @@ Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS document
 Case-sensitive text comparison: behaves differently. PostgreSQL compares text case-sensitively, and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents, so lookups, GROUP BY, DISTINCT and unique keys on text can change unless the columns use a \_bin or \_as\_cs collation.
 
 Documentation: PostgreSQL documentation, Collation Support; MySQL 8.0 Reference Manual, Character Sets and Collations.
+
+### postgresql-extension-newer-than-offered
+
+Installed extensions newer than Aurora PostgreSQL offers: behaves differently. These extensions are installed at a newer version than the source's Aurora PostgreSQL version offers, so what the newer version added may be missing: test the workload against the version Aurora PostgreSQL offers.
+
+Documentation: Extension versions for Amazon Aurora PostgreSQL.
+
+### postgresql-extension-on-a-later-version
+
+Installed extensions offered only from a later Aurora PostgreSQL version: behaves differently. The source's own Aurora PostgreSQL version does not offer these installed extensions at their version, and the lowest version that offers every installed extension is a later major version, so the move is also a major version upgrade: review the incompatible changes in each release's notes.
+
+Documentation: Extension versions for Amazon Aurora PostgreSQL; Amazon Aurora PostgreSQL release notes.
 
 ### postgresql-functions-behave-differently
 
