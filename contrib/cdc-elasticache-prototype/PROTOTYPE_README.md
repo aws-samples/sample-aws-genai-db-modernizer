@@ -134,6 +134,8 @@ Common overrides (env vars): `AWS_PROFILE`, `AWS_REGION` (required),
 | `tools/` | The Go sink, Go bulk loader, splitter and aggregator, benchmark harnesses and load generators, and the live observability panel (`observe.py`). |
 | `docs/` | Architecture (`architecture.md`/`.drawio`), and the benchmark writeups (`docs/benchmarks/`). |
 
+The Kafka benchmark in `tools/go-kafka/` layers `docker-compose.ssl.yml` over a base Kafka compose file that this repo does not include. In that base file, publish both the plaintext port (9092) and the SSL port (9093) on `127.0.0.1` (for example `"127.0.0.1:9092:9092"`), never as a bare `"9092:9092"`, so the broker is not reachable from other machines.
+
 ## Full CDC pipeline & transforms
 
 `quickstart.sh` proves the tool end to end via the bulk-loader path. For **live
