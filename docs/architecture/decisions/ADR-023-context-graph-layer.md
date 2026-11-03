@@ -83,10 +83,20 @@ SourceTable {
 }
 
 Destination {
-  id: STRING,                    -- e.g., "orders-by-customer"
-  engine: STRING,                -- dynamodb | documentdb | opensearch | elasticache | aurora
-  artifact_type: STRING,         -- table | collection | index | key_pattern
-  artifact_name: STRING          -- the actual name in the target engine
+  id: STRING,                    -- the query's engine in the effective assignment (#306)
+  engine: STRING,                -- dynamodb | documentdb | opensearch | elasticache | aurora_mysql | aurora_postgresql
+  artifact_type: STRING,         -- engine
+  artifact_name: STRING          -- the engine's display name
+}
+
+TargetObject {
+  id: STRING,                    -- "<engine>:<kind>:<name>@v<schema version>", "<engine>:<kind>" for a fallback
+  engine: STRING,
+  kind: STRING,                  -- table | gsi | collection | index | key_pattern | not_designed | not_in_design
+  name: STRING,                  -- the name in the design, or the fallback's label
+  parent: STRING,                -- a GSI's table
+  schema_version: INT64,         -- null for a fallback
+  fallback: BOOLEAN
 }
 
 Engine {
@@ -154,7 +164,11 @@ LoadTestRun {
   -- Which destination was the load test run against?
 
 (Destination)-[HOSTED_ON]->(Engine)
+(TargetObject)-[HOSTED_ON]->(Engine)
   -- Which engine hosts this destination artifact?
+
+(Query)-[TARGETS {version, schema_version, effective, pattern_ids_json}]->(TargetObject)
+  -- Which design objects does this query land on, per assignment version? (#306)
 
 (Decision)-[AFFECTS]->(Destination)
   -- Which destinations were shaped by this decision?
@@ -185,7 +199,9 @@ LoadTestRun {
 
 **Traffic representation.** Traffic (`calls_per_second`) is a property on the `Query` node. Table-level traffic is computed on read by aggregating across all queries that `READS_FROM` a given `SourceTable`. At this scale (hundreds to low-thousands of queries), that aggregation is sub-millisecond and does not need materialization.
 
-**Destination abstraction.** The `Destination` node uses `artifact_type` to distinguish DynamoDB tables from DocumentDB collections from OpenSearch indexes from ElastiCache key patterns. This avoids engine-specific node types while preserving semantic clarity.
+**Destination abstraction.** A query's `Destination` is the engine it migrates to in the effective assignment (`artifact_type` `engine`). The design's own objects (DynamoDB tables and GSIs, DocumentDB collections, OpenSearch indexes and data streams, ElastiCache key patterns, Aurora tables) are `TargetObject` nodes told apart by `kind`, which avoids engine-specific node types while preserving semantic clarity; see the next paragraph.
+
+**Versioned target objects (#306).** A query's `Destination` is its engine in the effective assignment (`id` the engine id, `artifact_type` `engine`), with one `MIGRATES_TO` per query, so every reader of `MIGRATES_TO` keeps its one-edge-per-query shape. It used to be guessed from the query's first source table, which was wrong for about a quarter of the queries. The design's real objects are `TargetObject` nodes, one `kind` per engine contract: a DynamoDB `table_name`, or the `gsi_name` on it; a DocumentDB `collection_name`; an OpenSearch `index_or_stream`; an ElastiCache `key_pattern`; or the Aurora `table_definitions` an access pattern's `source_tables` name, matched as the Aurora derivation matches them. Each is at the schema version it comes from, and engine-specific node types stay out. `TARGETS` links each query of each lineage version to the objects of the engines it uses in that version (its assigned engine and its cache engine), from `schema-<engine>/v<N>` for that version N. An object counts only when the design defines it: a DynamoDB table in `table_definitions` and a GSI in that table's `gsis`, a DocumentDB `collections` entry, an OpenSearch `index_designs` or `data_stream_designs` entry, an ElastiCache `key_designs` entry, an Aurora `table_definitions` entry; an access pattern marked `in_scope: false` serves none of its queries, as the scope check reads it. A query can target several objects in one version, and the effective version's edges are `effective`. With no design for an engine at that version, the query targets the `not_designed` fallback ("not designed yet"); with a design that marks its patterns out of scope or lists it as unsupported, the `out_of_scope` fallback ("the design does not serve it"); with a design that has no access pattern for it, or names an object it does not define, the `not_in_design` fallback ("no target in the design"). A fallback is never a guessed object. A load test `VALIDATES` the Destination of its own engine, so a cache load test validates the cache layer, not the engine the query is assigned to.
 
 **Load test as separate node.** `LoadTestRun` is a first-class node rather than edge properties. This supports multiple test runs per query. Even if there's typically only one run, you can compare results across iterations without schema changes.
 
@@ -218,7 +234,7 @@ The graph is populated on the API node after each pipeline stage completes. The 
 |---------------|---------------|---------------|
 | COLLECT_TRIAGE | Query, SourceTable | READS_FROM |
 | ANALYSIS | Signal | EMITS_SIGNAL |
-| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306) | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines, SCORED (each query's candidate ladder per version) |
+| ASSIGNMENT | Destination (the query's engine), Engine, CoDependencyGroup, GraphMeta, AssignmentVersion (one per version of the effective lineage, #306), TargetObject (each version's design objects and fallbacks, #306) | TARGETS (each query to its design objects per version), MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339), SUPERSEDES and RESTORES between versions, AFFECTS from a version to its Moves' queries and engines, SCORED (each query's candidate ladder per version) |
 | REALITY_CHECK | Decision (consolidation) | INFORMED_BY (to the queries its ledger Moves moved), AFFECTS (to the engines it moves from and to) |
 | POST_SCHEMA_ROUTER | Decision (reroute) | INFORMED_BY (to its query), AFFECTS (to the engines it moves from and to) |
 | SCHEMA_DESIGN | Decision | AFFECTS, INFORMED_BY |

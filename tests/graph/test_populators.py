@@ -261,7 +261,8 @@ def test_populate_from_load_test_creates_validates_edge(
         "MATCH (lt:LoadTestRun)-[:VALIDATES]->(d:Destination) RETURN d.id"
     )
     assert len(validated) == 1
-    assert validated[0]["d.id"] == "orders-dynamodb"
+    # The query's Destination is its engine (#306); the design objects are TARGETS.
+    assert validated[0]["d.id"] == "dynamodb"
 
 
 def test_populate_from_synthesis_creates_risks(

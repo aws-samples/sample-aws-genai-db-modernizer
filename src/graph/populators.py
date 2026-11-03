@@ -171,13 +171,18 @@ def populate_from_triage(triage_output: dict, store: GraphStore) -> None:
 
 
 def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
-    """Create Destination, Engine, CoDependencyGroup nodes and edges from assignment."""
+    """Create Destination, Engine, CoDependencyGroup nodes and edges from assignment.
+
+    A query's Destination is its engine in the effective assignment (``artifact_type``
+    ``engine``), one MIGRATES_TO per query: the design's real objects are
+    TargetObject nodes, linked per version by TARGETS (#306,
+    :func:`populate_targets`). The Destination used to be guessed from the query's
+    first source table.
+    """
     qas = assignment["query_assignments"]
 
     def _dest_id(qa: dict) -> str:
-        tables = qa.get("source_tables", [])
-        engine = qa["assigned_engine"]
-        return f"{tables[0]}-{engine}" if tables else f"unknown-{engine}"
+        return str(qa["assigned_engine"])
 
     engine_rows = [
         {"id": e, "name": display_engine(e)} for e in sorted({qa["assigned_engine"] for qa in qas})
@@ -188,12 +193,19 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
             {"rows": engine_rows},
         )
 
-    dest_rows = [{"id": _dest_id(qa), "engine": qa["assigned_engine"]} for qa in qas]
+    dest_rows = [
+        {
+            "id": _dest_id(qa),
+            "engine": qa["assigned_engine"],
+            "name": display_engine(qa["assigned_engine"]),
+        }
+        for qa in qas
+    ]
     if dest_rows:
         store.execute(
             "UNWIND $rows AS r MERGE (d:Destination {id: r.id}) "
-            "SET d.engine = r.engine, d.artifact_type = 'table', d.artifact_name = r.id",
-            {"rows": dest_rows},
+            "SET d.engine = r.engine, d.artifact_type = 'engine', d.artifact_name = r.name",
+            {"rows": [dict(t) for t in {tuple(sorted(r.items())) for r in dest_rows}]},
         )
         store.execute(
             "UNWIND $rows AS r MATCH (d:Destination {id: r.id}), (e:Engine {id: r.engine}) "
@@ -675,6 +687,210 @@ def populate_scored(
     return len(rows)
 
 
+# The engines whose design is a set of relational tables (Aurora).
+AURORA_TARGET_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
+# The labelled fallbacks of a query with no design object (#306): never a guess.
+NOT_DESIGNED = ("not_designed", "not designed yet")
+NOT_IN_DESIGN = ("not_in_design", "no target in the design")
+OUT_OF_SCOPE = ("out_of_scope", "the design does not serve it")
+
+
+def _names(rows: list | None, field: str) -> set[str]:
+    return {str(r[field]) for r in rows or [] if isinstance(r, dict) and r.get(field)}
+
+
+def _defined_objects(engine: str, design: dict) -> set[tuple[str, str, str | None]]:
+    """The objects ``design`` defines, as ``(kind, name, parent)``: DynamoDB
+    ``table_definitions`` and each table's ``gsis``, DocumentDB ``collections``,
+    OpenSearch ``index_designs`` and ``data_stream_designs``, ElastiCache
+    ``key_designs``, Aurora ``table_definitions``. An access pattern naming anything
+    else names no object (#306)."""
+    tables = [t for t in design.get("table_definitions") or [] if isinstance(t, dict)]
+    if engine == "dynamodb":
+        defined: set[tuple[str, str, str | None]] = {
+            ("table", n, None) for n in _names(tables, "table_name")
+        }
+        for t in tables:
+            for gsi in _names(t.get("gsis"), "gsi_name"):
+                defined.add(("gsi", gsi, str(t.get("table_name"))))
+        return defined
+    if engine == "documentdb":
+        return {
+            ("collection", n, None) for n in _names(design.get("collections"), "collection_name")
+        }
+    if engine == "opensearch":
+        return {
+            ("index", n, None)
+            for n in _names(design.get("index_designs"), "index_name")
+            | _names(design.get("data_stream_designs"), "data_stream_name")
+        }
+    if engine == "elasticache":
+        return {("key_pattern", n, None) for n in _names(design.get("key_designs"), "key_pattern")}
+    return {("table", n, None) for n in _names(tables, "table_name")}
+
+
+def _pattern_query_ids(ap: dict) -> list[str]:
+    return [str(q) for q in ap.get("query_ids") or ap.get("source_query_ids") or []]
+
+
+def _design_objects(
+    engine: str, design: dict, schema_version: int
+) -> tuple[dict[str, dict], set[str]]:
+    """``({query_id: {object_id: (object row, [pattern ids])}}, not served)`` from one
+    schema output: each access pattern's target object under the engine's own
+    contract field (DynamoDB ``table_name`` or, with ``gsi_name``, that GSI on it;
+    DocumentDB ``collection_name``; OpenSearch ``index_or_stream``; ElastiCache
+    ``key_pattern``; Aurora, the ``table_definitions`` its ``source_tables`` name,
+    matched as the Aurora derivation matches them), only when the design defines that
+    object. An access pattern marked ``in_scope: false`` serves none of its queries
+    (``schema_design.scope.covered_query_ids``' rule), and an ``unsupported_patterns``
+    entry records a query the design does not serve: those queries are returned as
+    not served, unless another pattern serves them."""
+    from src.agents.schema_design.scope import normalize_table_name
+
+    defined = _defined_objects(engine, design)
+    aurora_tables = {normalize_table_name(n): n for kind, n, _ in defined if kind == "table"}
+    by_query: dict[str, dict] = {}
+    not_served: set[str] = set()
+    for up in design.get("unsupported_patterns") or []:
+        if isinstance(up, dict):
+            not_served.update(_pattern_query_ids(up))
+    for ap in design.get("access_patterns") or []:
+        if not isinstance(ap, dict):
+            continue
+        if ap.get("in_scope") is False:
+            not_served.update(_pattern_query_ids(ap))
+            continue
+        named: list[tuple[str, str, str | None]] = []
+        if engine == "dynamodb" and ap.get("table_name"):
+            if ap.get("gsi_name"):
+                named.append(("gsi", str(ap["gsi_name"]), str(ap["table_name"])))
+            else:
+                named.append(("table", str(ap["table_name"]), None))
+        elif engine == "documentdb" and ap.get("collection_name"):
+            named.append(("collection", str(ap["collection_name"]), None))
+        elif engine == "opensearch" and ap.get("index_or_stream"):
+            named.append(("index", str(ap["index_or_stream"]), None))
+        elif engine == "elasticache" and ap.get("key_pattern"):
+            named.append(("key_pattern", str(ap["key_pattern"]), None))
+        elif engine in AURORA_TARGET_ENGINES:
+            for source in ap.get("source_tables") or []:
+                name = aurora_tables.get(normalize_table_name(str(source)))
+                if name:
+                    named.append(("table", name, None))
+        for kind, name, parent in named:
+            if (kind, name, parent) not in defined:
+                continue
+            full = f"{parent}.{name}" if parent else name
+            oid = f"{engine}:{kind}:{full}@v{schema_version}"
+            row = {
+                "id": oid,
+                "engine": engine,
+                "kind": kind,
+                "name": name,
+                "parent": parent,
+                "sv": schema_version,
+                "fallback": False,
+            }
+            for qid in _pattern_query_ids(ap):
+                entry = by_query.setdefault(qid, {}).setdefault(oid, (row, []))
+                if ap.get("pattern_id") and ap["pattern_id"] not in entry[1]:
+                    entry[1].append(ap["pattern_id"])
+    return by_query, not_served - set(by_query)
+
+
+def populate_targets(
+    lineage: list[dict],
+    effective_version: int,
+    designs: dict[tuple[str, int], dict],
+    store: GraphStore,
+) -> int:
+    """TARGETS edges (#306): each query of each lineage version to its design's target
+    objects for the engines it uses in that version (its ``assigned_engine`` and
+    ``cache_engine``), from that version's schema output (``designs[(engine,
+    version)]``, ``schema-<engine>/v<N>`` designed from assignment v<N>, ADR-028).
+    A query can target several objects in one version. An engine with no design at
+    that version gives the ``not designed yet`` fallback; a design with no access
+    pattern for the query gives ``no target in the design``; a design that marks the
+    query's patterns out of scope or unsupported gives ``the design does not serve
+    it`` (``out_of_scope``). The effective version's
+    edges are ``effective``. Returns the edge count."""
+    active = catalog.engine_ids(status=catalog.ACTIVE)
+    objects: dict[str, dict] = {}
+    rows: list[dict] = []
+    parsed: dict[tuple[str, int], tuple[dict, set[str]]] = {}
+    for assignment in lineage:
+        version = int(assignment.get("version") or 0)
+        if version < 1:
+            continue
+        for qa in assignment.get("query_assignments") or []:
+            if not isinstance(qa, dict) or not qa.get("query_id"):
+                continue
+            qid = str(qa["query_id"])
+            used = {str(e) for e in (qa.get("assigned_engine"), qa.get("cache_engine")) if e}
+            for engine in sorted(used & active):
+                key = (engine, version)
+                if key not in parsed:
+                    design = designs.get(key)
+                    parsed[key] = (
+                        _design_objects(engine, design, version) if design else ({}, set())
+                    )
+                served, not_served = parsed[key]
+                found = served.get(qid)
+                if not found:
+                    if not designs.get(key):
+                        kind, label = NOT_DESIGNED
+                    elif qid in not_served:
+                        kind, label = OUT_OF_SCOPE
+                    else:
+                        kind, label = NOT_IN_DESIGN
+                    oid = f"{engine}:{kind}"
+                    row = {
+                        "id": oid,
+                        "engine": engine,
+                        "kind": kind,
+                        "name": label,
+                        "parent": None,
+                        "sv": None,
+                        "fallback": True,
+                    }
+                    found = {oid: (row, [])}
+                for oid, (row, pattern_ids) in found.items():
+                    objects[oid] = row
+                    rows.append(
+                        {
+                            "qid": qid,
+                            "oid": oid,
+                            "ver": version,
+                            "sv": row["sv"],
+                            "eff": version == effective_version,
+                            "ids": json.dumps(pattern_ids),
+                        }
+                    )
+    if not rows:
+        return 0
+    _merge_engines(store, {o["engine"] for o in objects.values()})
+    store.execute(
+        "UNWIND $rows AS r MERGE (o:TargetObject {id: r.id}) "
+        "SET o.engine = r.engine, o.kind = r.kind, o.name = r.name, o.parent = r.parent, "
+        "o.schema_version = CAST(r.sv AS INT64), o.fallback = r.fallback",
+        {"rows": list(objects.values())},
+    )
+    store.execute(
+        "UNWIND $rows AS r MATCH (o:TargetObject {id: r.id}), (e:Engine {id: r.engine}) "
+        "MERGE (o)-[:HOSTED_ON]->(e)",
+        {"rows": list(objects.values())},
+    )
+    store.execute("MATCH ()-[t:TARGETS]->() DELETE t")
+    store.execute(
+        "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (o:TargetObject {id: r.oid}) "
+        "CREATE (q)-[:TARGETS {version: r.ver, schema_version: CAST(r.sv AS INT64), "
+        "effective: r.eff, pattern_ids_json: r.ids}]->(o)",
+        {"rows": rows},
+    )
+    return len(rows)
+
+
 def link_consolidations(reality_check_output: dict, lineage: list[dict], store: GraphStore) -> None:
     """Link each ``consolidation-{i}`` Decision to its queries (INFORMED_BY) through the
     move ledger, and to the engines it moves from and to (AFFECTS) (#306).
@@ -970,12 +1186,27 @@ def populate_from_load_test(
             "MERGE (q)-[:TESTED_IN]->(lt)",
             {"rows": edge_rows},
         )
-        # VALIDATES: the run validates every destination the query migrates to.
+        # VALIDATES: the run validates its own engine's Destination (#306), not the
+        # query's assigned engine: a cache load test validates the cache layer.
+        store.execute(
+            "MERGE (e:Engine {id: $engine}) ON CREATE SET e.display_name = $name",
+            {"engine": engine, "name": display_engine(engine)},
+        )
+        store.execute(
+            "MERGE (d:Destination {id: $engine}) "
+            "ON CREATE SET d.engine = $engine, d.artifact_type = 'engine', "
+            "d.artifact_name = $name",
+            {"engine": engine, "name": display_engine(engine)},
+        )
+        store.execute(
+            "MATCH (d:Destination {id: $engine}), (e:Engine {id: $engine}) "
+            "MERGE (d)-[:HOSTED_ON]->(e)",
+            {"engine": engine},
+        )
         store.execute(
             "UNWIND $rows AS r MATCH (lt:LoadTestRun {id: r.ltid}), "
-            "(q:Query {id: r.qid})-[:MIGRATES_TO]->(d:Destination) "
-            "MERGE (lt)-[:VALIDATES]->(d)",
-            {"rows": edge_rows},
+            "(d:Destination {id: $engine}) MERGE (lt)-[:VALIDATES]->(d)",
+            {"rows": edge_rows, "engine": engine},
         )
 
 
@@ -1187,6 +1418,22 @@ def rebuild_graph(
         )
         if access_patterns:
             populate_from_access_patterns(access_patterns, graph_store)
+        # 4f. Each query's design target objects per lineage version (#306).
+        populate_targets(
+            lineage,
+            assignment_version,
+            {
+                (engine, int(a["version"])): design
+                for a in lineage
+                for engine in engines
+                if (
+                    design := _read_safe(
+                        f"{prefix}/schema-{engine}/v{int(a['version'])}/schema_output.json"
+                    )
+                )
+            },
+            graph_store,
+        )
 
     # 5. Reality check
     # The run the effective assignment descends from (#193). The lineage is read
