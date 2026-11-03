@@ -40,9 +40,11 @@ def test_counters_are_summed_across_variants() -> None:
 
 
 def test_floor_and_cap_apply_after_grouping() -> None:
+    # The floor is the grouped rows' HAVING; the cap (none by default, #384) ranks them.
     section = _queries_section()
-    assert section.index("GROUP BY v.query_key") < section.index("WHERE g.executions >= 10")
-    assert section.index("WHERE g.executions >= 10") < section.index("FETCH FIRST 1000 ROWS ONLY")
+    floor = "HAVING SUM(v.executions) >= :min_executions"
+    cap = "WHERE :query_limit IS NULL OR g.time_rank <= :query_limit"
+    assert section.index("GROUP BY v.query_key") < section.index(floor) < section.index(cap)
 
 
 def test_sample_text_is_the_costliest_variant_with_a_stable_tiebreak() -> None:
@@ -54,4 +56,4 @@ def test_sample_text_is_the_costliest_variant_with_a_stable_tiebreak() -> None:
 def test_total_elapsed_denominator_uses_the_same_grouping() -> None:
     declare = SCRIPT[SCRIPT.index("-- Pre-compute total elapsed") : SCRIPT.index('"queries": [')]
     assert "FORCE_MATCHING_SIGNATURE" in declare
-    assert "HAVING SUM(EXECUTIONS) >= 10" in declare
+    assert "HAVING SUM(EXECUTIONS) >= :min_executions" in declare

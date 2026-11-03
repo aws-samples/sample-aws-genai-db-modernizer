@@ -112,6 +112,7 @@ def build_offline_contract(
         _merge_into_queries,
         _offline_query_log_source,
     )
+    from src.shared.query_capture import offline_query_capture
     from src.tools.database.offline_parser import offline_version_label
 
     start = time.monotonic()
@@ -183,6 +184,10 @@ def build_offline_contract(
         database_name=collected_name,
         # #1482: the source settings the collection script read.
         settings=offline_meta.get("settings"),
+        # #384: the cap and floor the collection script ran with, when it says.
+        query_capture=offline_query_capture(
+            offline_meta, int(parsed.get("script_query_rows") or 0)
+        ),
     )
 
 

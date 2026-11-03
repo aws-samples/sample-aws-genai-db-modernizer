@@ -13,7 +13,7 @@ This directory describes what the collection scripts gather from a source databa
 | Source database | Script | Collector | Status |
 |---|---|---|---|
 | MySQL 8.0+ | `scripts/collect-mysql.sql` | `mysql_collector.py` | Shipped |
-| MariaDB | `scripts/collect-mysql.sql` | `mariadb_collector.py` | Shipped |
+| MariaDB 10.5+ | `scripts/collect-mysql.sql` | `mariadb_collector.py` | Shipped |
 | PostgreSQL 12+ | `scripts/collect-postgresql.sql` | `postgres_collector.py` | Shipped |
 | SQL Server 2016+ | `scripts/collect-sqlserver.sql` | `sqlserver_collector.py` | Shipped |
 | Oracle 12.2+ | `scripts/collect-oracle.sql` | `oracle_collector.py` | Shipped |

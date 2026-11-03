@@ -42,6 +42,7 @@ __all__ = [
     "cap_collection",
     "capture_settings",
     "live_query_capture",
+    "offline_query_capture",
     "parse_query_limit",
     "query_stage_rows",
     "statement_query_failed",
@@ -127,6 +128,65 @@ def live_query_capture(
         available=None,
         truncated=truncated,
         error=error,
+    )
+
+
+def _whole_count(value: object) -> int | None:
+    """``value`` as a positive whole number: an int, or a float a JSON writer made of
+    one (Oracle's NUMBER); anything else (a bool, a string, 0) is None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value if isinstance(value, int) and value >= 1 else None
+
+
+def offline_query_capture(metadata: object, rows: int) -> QueryCapture | None:
+    """What a collection script captured: the settings it wrote into
+    ``metadata.query_capture`` (``query_limit``, null when there was no cap, and
+    ``min_executions``) and the ``rows`` of statements it wrote (#384).
+
+    No cap: nothing was cut (``truncated`` false). A cap: the run is truncated when it
+    wrote as many statements as the cap, so the source may hold more. A collection that
+    records no settings (an older script) records no capture, so the ingest leaves
+    whether it was cut unknown. So do settings that cannot be trusted: a cap that is
+    not a positive whole number, or a floor that is missing or not one (a settings
+    block that failed leaves both null and writes no statement, which must never read
+    as a complete capture of nothing). A script that also says how many statements it
+    selected (``statements``) records an error when it wrote fewer: the statement list
+    came back short, as MySQL's does when it outgrows the server's
+    ``max_allowed_packet``.
+    """
+    from src.contracts.collector_output import QueryCapture
+
+    settings = metadata.get("query_capture") if isinstance(metadata, Mapping) else None
+    if not isinstance(settings, Mapping):
+        return None
+    raw_limit = settings.get("query_limit")
+    limit = _whole_count(raw_limit)
+    floor = _whole_count(settings.get("min_executions"))
+    if (raw_limit is not None and limit is None) or floor is None:
+        return None
+    selected = _whole_count(settings.get("statements"))
+    if selected is not None and rows < selected:
+        return QueryCapture(
+            query_limit=limit,
+            min_executions=floor,
+            captured=rows,
+            available=None,
+            truncated=None,
+            error=(
+                f"the collection script selected {selected:,} statements but wrote {rows:,}: "
+                "the statement list came back short (for MySQL, raise the server's "
+                "max_allowed_packet)"
+            ),
+        )
+    return QueryCapture(
+        query_limit=limit,
+        min_executions=floor,
+        captured=rows,
+        available=None,
+        truncated=limit is not None and rows >= limit,
     )
 
 

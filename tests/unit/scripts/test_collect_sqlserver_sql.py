@@ -60,10 +60,14 @@ def test_keeps_one_sample_text_from_highest_elapsed_variant() -> None:
 
 def test_top_and_execution_count_floor_apply_after_grouping() -> None:
     sql = _script_text()
-    # The outer SELECT TOP applies to the grouped alias `g`, after the
-    # GROUP BY query_hash subquery — not to the raw per-variant rows.
-    assert "SELECT TOP 1000" in sql
-    assert "WHERE g.execution_count >= 10" in sql
+    # The floor is the GROUP BY query_hash subquery's HAVING and the cap (none by
+    # default, #384) a rank over its rows: both apply to query shapes, not to the
+    # raw per-variant rows.
+    floor = "HAVING SUM(v.execution_count) >= @min_executions"
+    cap = "WHERE @query_limit IS NULL OR g.time_rank <= @query_limit"
+    assert sql.index("GROUP BY v.query_hash, v.statement_dbid") < sql.index(floor)
+    assert sql.index(floor) < sql.index(cap)
+    assert "SELECT TOP 1000" not in sql
     # Field names in the FOR JSON PATH output must stay stable so the
     # offline parser keeps working unchanged.
     assert "AS digest" in sql

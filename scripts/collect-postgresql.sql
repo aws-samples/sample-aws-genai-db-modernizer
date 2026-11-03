@@ -17,9 +17,30 @@
 --   psql -U <user> -h <host> -d <database> -t -A -f collect-postgresql.sql > collection.json
 --
 -- The -t (tuples only) and -A (unaligned) flags ensure clean JSON output.
+--
+-- Optional settings (#384), as psql variables:
+--   -v query_limit=20000    keep only the 20,000 costliest statements by total time
+--                           (default: no cap, every statement is kept)
+--   -v min_executions=5     keep statements that ran at least 5 times (default: 10)
+-- Both are recorded in the collection's metadata.query_capture. The defaults use
+-- \if and :{?var}, which need psql 10 or later (the client; the server is 12+). A
+-- value that is not a number stops the script at its CAST.
 -- ==========================================================================
 
 \set db_name :DBNAME
+
+-- The settings: a variable psql was not given gets its default.
+\if :{?min_executions}
+\else
+  \set min_executions 10
+\endif
+\if :{?query_limit}
+  \set query_limit_clause 'LIMIT CAST(' :'query_limit' ' AS bigint)'
+  \set query_limit_value 'CAST(' :'query_limit' ' AS bigint)'
+\else
+  \set query_limit_clause ''
+  \set query_limit_value 'NULL::bigint'
+\endif
 
 WITH
 
@@ -33,6 +54,11 @@ metadata AS (
     'database_size_gb', round(pg_database_size(current_database()) / 1024.0 / 1024.0 / 1024.0, 4),
     'settings', json_build_object(
       'standard_conforming_strings', current_setting('standard_conforming_strings')
+    ),
+    -- The capture settings (#384): no cap (null) unless query_limit is set.
+    'query_capture', json_build_object(
+      'query_limit', :query_limit_value,
+      'min_executions', CAST(:'min_executions' AS bigint)
     )
   ) AS data
 ),
@@ -238,9 +264,9 @@ queries_data AS (
       temp_blks_written
     FROM pg_stat_statements
     WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-      AND calls >= 10
+      AND calls >= CAST(:'min_executions' AS bigint)
     ORDER BY total_exec_time DESC
-    LIMIT 5000
+    :query_limit_clause
   ) q
 ),
 

@@ -13,13 +13,32 @@
 --   User needs SELECT on performance_schema and information_schema
 --
 -- Usage:
---   mysql -N -u <user> -p -h <host> -D <database> < collect-mysql.sql > collection.json
+--   mysql -N --max-allowed-packet=1G -u <user> -p -h <host> -D <database> < collect-mysql.sql > collection.json
+--
+-- --max-allowed-packet=1G lets the client receive a large collection. The statement
+-- list is built on the server, whose max_allowed_packet (64 MB by default) bounds it:
+-- past that the server returns it as NULL with a warning. The script records how many
+-- statements it selected, so the ingest reports a list that came back short.
 --
 -- The -N flag suppresses column headers so the output is valid JSON.
 -- If you forgot -N, the parser will strip the header line automatically.
+--
+-- Optional settings (#384), as session variables set when the client connects:
+--   mysql --init-command="SET @query_limit=20000, @min_executions=5" -N --max-allowed-packet=1G ... < collect-mysql.sql
+--   @query_limit     keep only the costliest statements by total time
+--                    (default: no cap, every statement is kept)
+--   @min_executions  keep statements that ran at least this often (default: 10)
+-- Both are recorded in the collection's metadata.query_capture. A value that is not a
+-- positive whole number falls back to the default (no cap, or 10): the client cannot
+-- stop a script on a condition, so the metadata records the values the run used.
 -- ==========================================================================
 
 SET @db = DATABASE();
+-- The settings: an unset variable is NULL, so the cap stays off and the floor is 10. A
+-- value that is not a positive whole number takes the default too, never 0 (a typo's
+-- CAST) or a wrapped negative.
+SET @min_executions = IF(CAST(@min_executions AS CHAR) REGEXP '^[1-9][0-9]*$', CAST(@min_executions AS UNSIGNED), 10);
+SET @query_limit = IF(CAST(@query_limit AS CHAR) REGEXP '^[1-9][0-9]*$', CAST(@query_limit AS UNSIGNED), NULL);
 SET SESSION group_concat_max_len = 1048576;
 
 -- We build each section as a JSON fragment, then combine at the end.
@@ -35,7 +54,9 @@ SELECT JSON_OBJECT(
     SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 4)
     FROM information_schema.tables WHERE table_schema = @db
   ),
-  'settings', JSON_OBJECT('sql_mode', @@GLOBAL.sql_mode)
+  'settings', JSON_OBJECT('sql_mode', @@GLOBAL.sql_mode),
+  -- The capture settings (#384): no cap (null) unless @query_limit is set.
+  'query_capture', JSON_OBJECT('query_limit', @query_limit, 'min_executions', @min_executions)
 ) INTO @metadata;
 
 -- ===================== 2. Tables =====================
@@ -192,12 +213,25 @@ SELECT JSON_ARRAYAGG(q_obj) INTO @queries FROM (
     'first_seen', DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s'),
     'last_seen', DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s')
   ) AS q_obj
-  FROM performance_schema.events_statements_summary_by_digest
-  WHERE SCHEMA_NAME = @db
-    AND COUNT_STAR >= 10
-  ORDER BY SUM_TIMER_WAIT DESC
-  LIMIT 5000
+  -- LIMIT takes no variable outside a prepared statement, so the cap is a rank:
+  -- the costliest statements first, all of them when @query_limit is NULL (#384).
+  FROM (
+    SELECT d.*, ROW_NUMBER() OVER (ORDER BY SUM_TIMER_WAIT DESC, DIGEST) AS time_rank
+    FROM performance_schema.events_statements_summary_by_digest d
+    WHERE SCHEMA_NAME = @db
+      AND COUNT_STAR >= @min_executions
+  ) AS ranked
+  WHERE @query_limit IS NULL OR ranked.time_rank <= @query_limit
+  ORDER BY ranked.time_rank
 ) AS q;
+
+-- How many statements the list above holds when it comes back whole: the ingest
+-- reports a list the server's max_allowed_packet turned into NULL (#384).
+SELECT COUNT(*) INTO @query_rows
+FROM performance_schema.events_statements_summary_by_digest
+WHERE SCHEMA_NAME = @db
+  AND COUNT_STAR >= @min_executions;
+SET @query_rows = IF(@query_limit IS NULL, @query_rows, LEAST(@query_rows, @query_limit));
 
 -- ===================== 11. Global Stats =====================
 SELECT JSON_OBJECTAGG(name, val) INTO @global_stats FROM (
@@ -219,7 +253,7 @@ SELECT JSON_OBJECTAGG(name, val) INTO @global_stats FROM (
 SELECT JSON_OBJECT(
   'collection_version', '1.0',
   'collected_at', DATE_FORMAT(NOW(), '%Y-%m-%dT%H:%i:%sZ'),
-  'metadata', JSON_EXTRACT(@metadata, '$'),
+  'metadata', JSON_SET(@metadata, '$.query_capture.statements', @query_rows),
   'tables', IFNULL(JSON_EXTRACT(@tables, '$'), JSON_ARRAY()),
   'columns', IFNULL(JSON_EXTRACT(@columns, '$'), JSON_ARRAY()),
   'indexes', IFNULL(JSON_EXTRACT(@indexes, '$'), JSON_ARRAY()),

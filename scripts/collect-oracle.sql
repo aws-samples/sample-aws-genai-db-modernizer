@@ -14,7 +14,7 @@
 -- The script performs the Oracle→MySQL field name translation inline.
 --
 -- Requirements:
---   Oracle 12.2+ (12c Release 2 or later — uses JSON_OBJECT, FETCH FIRST N ROWS ONLY)
+--   Oracle 12.2+ (12c Release 2 or later — uses JSON_OBJECT)
 --   Does NOT work on 11g or 12.1 (12c R1) — JSON_OBJECT requires 12.2.
 --   For 11g/12.1 support, a separate script using string concatenation would be needed.
 --   User needs SELECT on V$SQL, V$SESSION, V$SYSSTAT, V$SYSTEM_EVENT,
@@ -23,6 +23,15 @@
 --
 -- Usage:
 --   sqlplus -S <user>/<pass>@<host>:<port>/<service> @collect-oracle.sql > collection.json
+--
+-- Optional settings (#384), as positional arguments after the script name:
+--   @collect-oracle.sql 20000      keep only the 20,000 costliest statements by
+--                                  elapsed time (default: no cap, every one is kept)
+--   @collect-oracle.sql none 5     no cap; keep statements run at least 5 times
+--                                  (default: 10). Write none, not "": a shell drops
+--                                  an empty argument, and 5 would become the cap.
+--   A setting that is not a positive whole number stops the script with an error.
+-- Both are recorded in the collection's metadata.query_capture.
 --
 -- Output: Single JSON object matching offline_parser expectations.
 -- ==========================================================================
@@ -36,6 +45,36 @@ SET HEADING OFF
 SET TRIMSPOOL ON
 SET TRIMOUT ON
 SET VERIFY OFF
+
+-- The capture settings (#384), read before substitution is turned off below. The
+-- zero-row query defines &1 and &2 as empty when they were not passed (the
+-- COLUMN ... NEW_VALUE idiom), so SQL*Plus never prompts for them.
+COLUMN 1 NEW_VALUE 1 NOPRINT
+COLUMN 2 NEW_VALUE 2 NOPRINT
+SELECT '' "1", '' "2" FROM dual WHERE ROWNUM = 0;
+VARIABLE query_limit NUMBER
+VARIABLE min_executions NUMBER
+-- A setting that fails to convert (20k) or is not a positive whole number stops the
+-- script here: it must never run with both settings left null and read as a complete
+-- capture of nothing (#384).
+WHENEVER SQLERROR EXIT FAILURE
+BEGIN
+    IF '&1' IS NULL OR LOWER('&1') = 'none' THEN
+        :query_limit := NULL;
+    ELSE
+        :query_limit := TO_NUMBER('&1');
+        IF :query_limit < 1 OR :query_limit <> TRUNC(:query_limit) THEN
+            RAISE_APPLICATION_ERROR(-20001, 'query_limit must be a positive whole number or none');
+        END IF;
+    END IF;
+    :min_executions := NVL(TO_NUMBER('&2'), 10);
+    IF :min_executions < 1 OR :min_executions <> TRUNC(:min_executions) THEN
+        RAISE_APPLICATION_ERROR(-20002, 'min_executions must be a positive whole number');
+    END IF;
+END;
+/
+WHENEVER SQLERROR CONTINUE
+
 SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
 
@@ -53,7 +92,7 @@ BEGIN
         FROM V$SQL
         WHERE PARSING_SCHEMA_NAME = v_owner
         GROUP BY CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END
-        HAVING SUM(EXECUTIONS) >= 10
+        HAVING SUM(EXECUTIONS) >= :min_executions
     );
 
     DBMS_OUTPUT.PUT_LINE('{');
@@ -74,9 +113,10 @@ BEGIN
     -- SQL_ID when the signature is 0. The digest is 'fms_<signature>' or the
     -- SQL_ID. Counters are SUMmed across variants, first_seen / last_seen take
     -- MIN / MAX, and the query text is the variant with the highest
-    -- ELAPSED_TIME (SQL_ID breaks ties). The 10-execution floor and the
-    -- FETCH FIRST 1000 cap apply AFTER grouping, so the cap limits query shapes
-    -- rather than literal-variant rows. V$SQL has no per-execution min/max, so
+    -- ELAPSED_TIME (SQL_ID breaks ties). The :min_executions floor (HAVING) and the
+    -- :query_limit cap (a rank over the grouped rows; none when it is NULL, #384)
+    -- apply AFTER grouping, so the cap limits query shapes rather than
+    -- literal-variant rows. V$SQL has no per-execution min/max, so
     -- those stay 0.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"queries": [');
@@ -112,7 +152,10 @@ BEGIN
                    SUM(v.application_wait_time) AS application_wait_time,
                    MIN(v.first_load_time) AS first_load_time,
                    MAX(v.last_active_time) AS last_active_time,
-                   MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+                   MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text,
+                   ROW_NUMBER() OVER (
+                       ORDER BY SUM(v.elapsed_time) DESC, v.query_key
+                   ) AS time_rank
             FROM (
                 -- One row per cached statement (literal variant); variant_rank
                 -- picks the costliest variant per query_key as the sample text.
@@ -139,10 +182,10 @@ BEGIN
                 ) p
             ) v
             GROUP BY v.query_key
+            HAVING SUM(v.executions) >= :min_executions
         ) g
-        WHERE g.executions >= 10
-        ORDER BY g.elapsed_time DESC, g.query_key
-        FETCH FIRST 1000 ROWS ONLY
+        WHERE :query_limit IS NULL OR g.time_rank <= :query_limit
+        ORDER BY g.time_rank
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.json_row || ',');
     END LOOP;
@@ -157,7 +200,13 @@ BEGIN
         SELECT JSON_OBJECT(
             'version' VALUE BANNER,
             'database_name' VALUE SYS_CONTEXT('USERENV', 'DB_NAME'),
-            'current_schema' VALUE v_owner
+            'current_schema' VALUE v_owner,
+            -- The capture settings (#384): query_limit null when there is no cap.
+            'query_capture' VALUE JSON_OBJECT(
+                'query_limit' VALUE :query_limit,
+                'min_executions' VALUE :min_executions
+                NULL ON NULL
+            )
         ) AS j FROM V$VERSION WHERE ROWNUM = 1
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
