@@ -705,7 +705,11 @@ def graph_catalog(
             for param in entry.params:
                 if param not in choices:
                     choices[param] = catalog.param_choices(store, param)
-    return {"job_id": job_id, "entries": [_entry_info(e, choices) for e in catalog.entries()]}
+    return {
+        "job_id": job_id,
+        "entries": [_entry_info(e, choices) for e in catalog.entries()],
+        "max_choices": catalog.MAX_CHOICES,
+    }
 
 
 @router.post(

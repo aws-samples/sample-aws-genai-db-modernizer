@@ -269,6 +269,8 @@ export function toElements(view, options = {}) {
     placeholderLabel = null,
     showOtherWaves = true,
     waveBadge = null,
+    resultKeys = new Set(),
+    resultQueries = new Set(),
   } = options;
   const states = {};
   const edges = drawnEdges(view).map((e) => {
@@ -286,6 +288,8 @@ export function toElements(view, options = {}) {
     const access = isBundle ? item.access : e.access;
     if (mode === 'who-writes' && access) classes.push(`access-${access}`);
     if (mode === 'moves-together' && !isBundle && item.unit) classes.push('in-unit');
+    // A question's result: the link carries one of its queries.
+    if (resultQueries.size && (isBundle ? (item.queries || []).some((q) => resultQueries.has(q.query_id)) : resultQueries.has(item.query_id))) classes.push('result');
     const data = {
       id: e.id,
       kind: e.kind,
@@ -349,6 +353,8 @@ export function toElements(view, options = {}) {
       }
     }
     if (engineFilter && node.kind === 'engine' && node.id !== engineFilter) classes.push('hidden');
+    // A question's result (the Questions tab): its own tables and engines stand out.
+    if (resultKeys.has(node.key)) classes.push('result');
     return { group: 'nodes', data, classes: classes.join(' ') };
   });
   return [...nodes, ...edges];
@@ -506,4 +512,149 @@ export function filterListed(items, text) {
 /** Whether a query's edges are drawn (fanned out, or pinned). */
 export function isQueryDrawn(view, queryId) {
   return drawnEdges(view).some((e) => e.kind === 'query' && e.query.query_id === queryId);
+}
+
+// ---------------------------------------------------------------------------
+// The Questions tab (#308): the graph query catalog (#1789). The API lists the
+// fixed questions with their parameters' choices and runs one; no Cypher is
+// ever sent from here. A result's projection is drawn as a new start.
+// ---------------------------------------------------------------------------
+
+export function catalogPath(jobId) {
+  return `assessments/${encodeURIComponent(jobId)}/graph/catalog`;
+}
+
+export function catalogRunPath(jobId, entryId) {
+  return `${catalogPath(jobId)}/${encodeURIComponent(entryId)}`;
+}
+
+/**
+ * The API's refusals that have their own message: body too large, not JSON,
+ * invalid values, too many catalog runs, no read slot, and the time limit.
+ */
+export const CATALOG_ERROR_STATUSES = [413, 415, 422, 429, 503, 504];
+
+export function catalogErrorKey(result) {
+  const status = result && result.status;
+  return CATALOG_ERROR_STATUSES.includes(status)
+    ? `graph-explorer.questions.errors.${status}`
+    : 'graph-explorer.questions.errors.default';
+}
+
+/**
+ * The catalog's entries grouped by section, in the API's order, keeping only
+ * those whose section, title or question contains `text` (any case).
+ */
+export function groupEntries(entries, text) {
+  const needle = (text || '').trim().toLowerCase();
+  const groups = [];
+  const bySection = new Map();
+  (entries || []).forEach((entry) => {
+    const words = [entry.section, entry.title, entry.question].join(' ').toLowerCase();
+    if (needle && !words.includes(needle)) return;
+    if (!bySection.has(entry.section)) {
+      const group = { section: entry.section, entries: [] };
+      bySection.set(entry.section, group);
+      groups.push(group);
+    }
+    bySection.get(entry.section).entries.push(entry);
+  });
+  return groups;
+}
+
+// How many start points "Show on graph" expands at most (each one is a bounded links read).
+export const RESULT_START_LIMIT = 12;
+const KIND_OF_LABEL = { Query: 'query', SourceTable: 'table', Engine: 'engine', Destination: 'engine' };
+
+/**
+ * How a result's projection is drawn. The start points cover the result with
+ * as few reads as they can: its tables first (their bundles carry their
+ * queries); its engines only when it has neither tables nor queries (an engine
+ * start draws the engine's busiest bundles, not the result's); then, once the
+ * table reads are back, the queries they did not reach (`queryStarts`). At
+ * most RESULT_START_LIMIT starts in all. `keys` are the result's own table and
+ * engine nodes and `queryIds` its queries, drawn highlighted; `undrawn` names
+ * the node kinds this view has no place for.
+ */
+export function resultPlan(projection) {
+  const keys = new Set();
+  const undrawn = new Set();
+  const found = { query: [], table: [], engine: [] };
+  ((projection && projection.nodes) || []).forEach((n) => {
+    const kind = KIND_OF_LABEL[n.label];
+    if (!kind) {
+      undrawn.add(n.label);
+      return;
+    }
+    if (!found[kind].includes(n.id)) found[kind].push(n.id);
+    if (kind !== 'query') keys.add(`${kind}:${n.id}`);
+  });
+  const lead = found.table.length
+    ? found.table.map((id) => ({ kind: 'table', id }))
+    : found.query.length
+      ? []
+      : found.engine.map((id) => ({ kind: 'engine', id }));
+  return {
+    first: lead.slice(0, RESULT_START_LIMIT),
+    more: lead.length > RESULT_START_LIMIT,
+    queries: found.query,
+    keys,
+    queryIds: new Set(found.query),
+    undrawn: [...undrawn].sort(),
+  };
+}
+
+export const hasStarts = (plan) => plan.first.length + plan.queries.length > 0;
+
+// The most query ids one membership read names (the API's MAX_VIEW_QUERIES).
+export const MEMBERSHIP_LIMIT = 150;
+
+export function queryBundlesPath(jobId, queryIds) {
+  const query = new URLSearchParams(queryIds.map((id) => ['query_id', String(id)]));
+  return `assessments/${encodeURIComponent(jobId)}/graph/explore/query-bundles?${query.toString()}`;
+}
+
+/** The result's queries whose full bundle membership is asked for: only when tables were read first. */
+export function membershipQueries(plan) {
+  return plan.first.length ? plan.queries.slice(0, MEMBERSHIP_LIMIT) : [];
+}
+
+/**
+ * The query starts left after the first reads: the result's queries no drawn
+ * bundle holds. `membership` (the API's every bundle each query is in, or
+ * null when it could not be read) decides for the queries it names: a query
+ * is covered when every bundle it is in was drawn. Otherwise the drawn
+ * bundles' listed queries (their busiest) are all that is known.
+ */
+export function queryStarts(plan, firstLinks, membership = null) {
+  const drawn = new Set();
+  const listed = new Set();
+  (firstLinks || []).forEach((links) => {
+    if (links && links.success) {
+      (links.bundles || []).forEach((b) => {
+        drawn.add(`${b.table}|${b.engine}`);
+        (b.queries || []).forEach((q) => listed.add(q.query_id));
+      });
+    }
+  });
+  const inBundles = new Map();
+  (membership || []).forEach((m) => {
+    if (!inBundles.has(m.query_id)) inBundles.set(m.query_id, []);
+    inBundles.get(m.query_id).push(`${m.table}|${m.engine}`);
+  });
+  const covered = (id) => (inBundles.has(id) ? inBundles.get(id).every((key) => drawn.has(key)) : listed.has(id));
+  const left = plan.queries.filter((id) => !covered(id));
+  const room = Math.max(0, RESULT_START_LIMIT - plan.first.length);
+  return {
+    starts: left.slice(0, room).map((id) => ({ kind: 'query', id })),
+    more: plan.more || left.length > room,
+  };
+}
+
+/** One result cell as plain text: a list shows its items, anything else its value. */
+export function cellText(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.map(cellText).join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }

@@ -23,6 +23,7 @@ EXPLORER_PATHS = (
     "/api/v1/assessments/job-1/graph/explore/overlays",
     "/api/v1/assessments/job-1/graph/explore/walkthroughs",
     "/api/v1/assessments/job-1/graph/explore/below-traffic?min_calls_per_second=1&query_id=q",
+    "/api/v1/assessments/job-1/graph/explore/query-bundles?query_id=q",
 )
 
 

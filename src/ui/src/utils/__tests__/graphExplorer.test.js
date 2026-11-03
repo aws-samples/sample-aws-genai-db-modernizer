@@ -453,3 +453,134 @@ describe('the start picker options', () => {
     expect(truncatedPickerLimit('table', null)).toBe(null);
   });
 });
+
+// #308 Questions tab: the graph query catalog (#1789) in the explorer.
+describe('the questions tab helpers', () => {
+  // eslint-disable-next-line global-require
+  const q = require('../graphExplorer');
+
+  test('the catalog paths encode the job and the entry', () => {
+    expect(q.catalogPath('job 1')).toBe('assessments/job%201/graph/catalog');
+    expect(q.catalogRunPath('job-1', 'table_engines')).toBe('assessments/job-1/graph/catalog/table_engines');
+  });
+
+  test('entries are grouped by section in the API order and filtered by their words', () => {
+    const entries = [
+      { id: 'a', section: 'summary', title: 'Engine distribution', question: 'How many queries go to each engine?' },
+      { id: 'b', section: 'impact', title: 'Table blast radius', question: 'What touches this table?' },
+      { id: 'c', section: 'summary', title: 'Risk register', question: 'Which risks are open?' },
+    ];
+    expect(q.groupEntries(entries, '')).toEqual([
+      { section: 'summary', entries: [entries[0], entries[2]] },
+      { section: 'impact', entries: [entries[1]] },
+    ]);
+    expect(q.groupEntries(entries, 'TABLE')).toEqual([{ section: 'impact', entries: [entries[1]] }]);
+    expect(q.groupEntries(entries, 'risks')).toEqual([{ section: 'summary', entries: [entries[2]] }]);
+    expect(q.groupEntries(entries, 'nothing like it')).toEqual([]);
+  });
+
+  test('each API refusal has its own friendly message', () => {
+    [413, 415, 422, 429].forEach((status) => {
+      expect(q.catalogErrorKey({ success: false, status })).toBe(`graph-explorer.questions.errors.${status}`);
+    });
+    expect(q.catalogErrorKey({ success: false, status: 500 })).toBe('graph-explorer.questions.errors.default');
+    expect(q.catalogErrorKey({ success: false })).toBe('graph-explorer.questions.errors.default');
+  });
+
+  const proj = (...nodes) => ({ nodes: nodes.map(([label, id]) => ({ id, label })), edges: [] });
+
+  test('a result starts from its tables; its queries only where the tables do not reach them', () => {
+    const projection = proj(
+      ['SourceTable', 'db.t1'], ['Query', 'q1'], ['Query', 'q9'], ['Destination', 'dynamodb'],
+      ['Risk', 'R-1'], ['AccessPattern', 'AP-1'], ['Risk', 'R-2'],
+    );
+    const plan = q.resultPlan(projection);
+    // Tables first: an engine start would draw the engine's busiest bundles, not the result's.
+    expect(plan.first).toEqual([{ kind: 'table', id: 'db.t1' }]);
+    expect(plan.queries).toEqual(['q1', 'q9']);
+    expect([...plan.keys].sort()).toEqual(['engine:dynamodb', 'table:db.t1']);
+    expect([...plan.queryIds].sort()).toEqual(['q1', 'q9']);
+    // Node kinds the explorer does not draw are named, not counted.
+    expect(plan.undrawn).toEqual(['AccessPattern', 'Risk']);
+    expect(q.hasStarts(plan)).toBe(true);
+    // The table's bundles already carry q1: only q9 needs a start of its own.
+    const tableLinks = { success: true, bundles: [{ queries: [{ query_id: 'q1' }] }] };
+    expect(q.queryStarts(plan, [tableLinks])).toEqual({ starts: [{ kind: 'query', id: 'q9' }], more: false });
+  });
+
+  test("the reviewer's blast radius: one table and 36 queries start from the table alone", () => {
+    const ids = Array.from({ length: 36 }, (_, i) => `q${i}`);
+    const plan = q.resultPlan(proj(['SourceTable', 'wordpress.wp_posts'], ...ids.map((id) => ['Query', id]), ['Destination', 'aurora_mysql']));
+    expect(plan.first).toEqual([{ kind: 'table', id: 'wordpress.wp_posts' }]);
+    const links = { success: true, bundles: [{ queries: ids.slice(0, 30).map((query_id) => ({ query_id })) }, { queries: ids.slice(30).map((query_id) => ({ query_id })) }] };
+    expect(q.queryStarts(plan, [links])).toEqual({ starts: [], more: false });
+  });
+
+  test("a busy table's queries past its bundle's 40 busiest are covered by the API's full membership", () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `q${i}`);
+    const plan = q.resultPlan(proj(['SourceTable', 't'], ...ids.map((id) => ['Query', id])));
+    // The links read lists the bundle's 40 busiest; the other 20 are in it too.
+    const links = { success: true, bundles: [{ key: 'bundle:t|dynamodb', table: 't', engine: 'dynamodb', queries: ids.slice(0, 40).map((query_id) => ({ query_id })) }] };
+    // Without it, 20 look uncovered: 11 starts (the bound, after the table) and the note.
+    expect(q.queryStarts(plan, [links])).toMatchObject({ more: true });
+    expect(q.queryStarts(plan, [links]).starts).toHaveLength(q.RESULT_START_LIMIT - 1);
+    const membership = ids.map((query_id) => ({ query_id, table: 't', engine: 'dynamodb' }));
+    expect(q.queryStarts(plan, [links], membership)).toEqual({ starts: [], more: false });
+    // A query also in a bundle no start drew still needs its own start.
+    const plus = [...membership, { query_id: 'q5', table: 'other', engine: 'dynamodb' }];
+    expect(q.queryStarts(plan, [links], plus)).toEqual({ starts: [{ kind: 'query', id: 'q5' }], more: false });
+    expect(q.membershipQueries(plan)).toHaveLength(60);
+  });
+
+  test('the membership read asks for at most the bound of query ids', () => {
+    const ids = Array.from({ length: q.MEMBERSHIP_LIMIT + 5 }, (_, i) => `q${i}`);
+    const plan = q.resultPlan(proj(['SourceTable', 't'], ...ids.map((id) => ['Query', id])));
+    expect(q.membershipQueries(plan)).toHaveLength(q.MEMBERSHIP_LIMIT);
+    expect(q.queryBundlesPath('job 1', ['a&b', 'c'])).toBe('assessments/job%201/graph/explore/query-bundles?query_id=a%26b&query_id=c');
+    expect(q.membershipQueries(q.resultPlan(proj(['Query', 'q1'])))).toEqual([]);
+  });
+
+  test('engines start only a result with neither tables nor queries', () => {
+    expect(q.resultPlan(proj(['Engine', 'dynamodb'], ['Engine', 'aurora_mysql'])).first).toEqual([
+      { kind: 'engine', id: 'dynamodb' }, { kind: 'engine', id: 'aurora_mysql' },
+    ]);
+    expect(q.resultPlan(proj(['Engine', 'dynamodb'], ['Query', 'q1'])).first).toEqual([]);
+  });
+
+  test('the start points are bounded and say so', () => {
+    const ids = Array.from({ length: q.RESULT_START_LIMIT + 3 }, (_, i) => `q${i}`);
+    const plan = q.resultPlan(proj(...ids.map((id) => ['Query', id])));
+    const out = q.queryStarts(plan, []);
+    expect(out.starts).toHaveLength(q.RESULT_START_LIMIT);
+    expect(out.more).toBe(true);
+    const tables = q.resultPlan(proj(...Array.from({ length: q.RESULT_START_LIMIT + 2 }, (_, i) => ['SourceTable', `t${i}`]), ['Query', 'qx']));
+    expect(tables.first).toHaveLength(q.RESULT_START_LIMIT);
+    expect(tables.more).toBe(true);
+    // The tables used the whole bound: no room for the uncovered query.
+    expect(q.queryStarts(tables, [])).toEqual({ starts: [], more: true });
+    const none = q.resultPlan(proj());
+    expect(q.hasStarts(none)).toBe(false);
+    expect(q.hasStarts(q.resultPlan(null))).toBe(false);
+  });
+
+  test("only the result's own nodes and query links are drawn highlighted", () => {
+    let view = q.emptyView();
+    view = q.mergeLinks(view, links);
+    const plain = q.toElements(view);
+    expect(plain.filter((e) => /\bresult\b/.test(e.classes))).toEqual([]);
+    const lit = q.toElements(view, { resultKeys: new Set(['table:wp_posts']), resultQueries: new Set(['busy']) });
+    // wp_users comes along (a join of the result's query) but is not in the result.
+    expect(lit.filter((e) => e.group === 'nodes' && /\bresult\b/.test(e.classes)).map((e) => e.data.id)).toEqual(['table:wp_posts']);
+    // The bundle that carries the result's query is lit, the other is not.
+    expect(lit.filter((e) => e.group !== 'nodes' && /\bresult\b/.test(e.classes)).map((e) => e.data.id)).toEqual(['bundle:wp_posts|dynamodb']);
+  });
+
+  test('a cell shows a value as text, a list as its items', () => {
+    expect(q.cellText('wp_posts')).toBe('wp_posts');
+    expect(q.cellText(3)).toBe('3');
+    expect(q.cellText(['a', 'b'])).toBe('a, b');
+    expect(q.cellText(null)).toBe('');
+    expect(q.cellText(true)).toBe('true');
+    expect(q.cellText({ k: 1 })).toBe('{"k":1}');
+  });
+});

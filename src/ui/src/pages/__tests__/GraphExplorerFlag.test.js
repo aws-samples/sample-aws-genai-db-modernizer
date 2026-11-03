@@ -76,8 +76,8 @@ jest.mock('@cloudscape-design/components/box', () => mockPlain());
 jest.mock('@cloudscape-design/components/breadcrumb-group', () => mockPlain());
 jest.mock('@cloudscape-design/components/button', () => ({
   __esModule: true,
-  default: ({ children, onClick, href, ariaLabel, ariaExpanded, disabled }) => (
-    <button type="button" data-href={href} onClick={onClick} aria-label={ariaLabel} aria-expanded={ariaExpanded} disabled={disabled}>
+  default: ({ children, onClick, href, ariaLabel, ariaExpanded, disabled, loading }) => (
+    <button type="button" data-href={href} data-loading={String(Boolean(loading))} onClick={onClick} aria-label={ariaLabel} aria-expanded={ariaExpanded} disabled={disabled}>
       {children}
     </button>
   ),
@@ -172,6 +172,7 @@ jest.mock('@cloudscape-design/components/toggle', () => ({
   ),
 }));
 jest.mock('@cloudscape-design/components/slider', () => mockPlain());
+jest.mock('@cloudscape-design/components/autosuggest', () => mockPlain());
 
 /* eslint-disable import/first */
 import ExploreGraphButton from '../../components/ExploreGraphButton';
@@ -940,5 +941,261 @@ describe('the start pickers ask for every option the API allows', () => {
       container.querySelector('[data-segment=engine]').click();
     });
     expect(container.querySelector('[data-testid=select-finished]')).toBe(null);
+  });
+});
+
+// #308: the Questions tab, the graph query catalog (#1789) in the explorer.
+describe('the Questions tab', () => {
+  const ENTRY = {
+    id: 'top_traffic_queries', ref: 'S8', section: 'summary', title: 'Top traffic queries',
+    question: 'Which queries are the busiest?', note: '', max_rows: 50, params: [], needs: [],
+  };
+  const RESULT = {
+    success: true, status: 200, job_id: 'job-1', entry: ENTRY.id, params: {},
+    columns: ['query_id', 'table_id', 'risk_id'],
+    rows: [{ query_id: 'q1', table_id: 'wordpress.wp_posts', risk_id: 'R-1' }],
+    row_count: 1, truncated: false, max_rows: 50,
+    projection: {
+      nodes: [
+        { id: 'q1', label: 'Query' },
+        { id: 'wordpress.wp_posts', label: 'SourceTable' },
+        { id: 'R-1', label: 'Risk' },
+      ],
+      edges: [],
+    },
+    unmet_needs: [], explanation: null,
+  };
+  const QUERY_LINKS = { ...LINKS, anchor_kind: 'query', anchor_id: 'q1' };
+  const TABLE_LINKS = { ...LINKS, anchor_kind: 'table', anchor_id: 'wordpress.wp_posts' };
+
+  function questions(calls) {
+    const out = {};
+    calls.forEach((call) => {
+      if (call.id === 'catalog') out.catalog = { success: true, status: 200, job_id: 'job-1', entries: [ENTRY] };
+      else if (call.id === 'catalog-run') out['catalog-run'] = RESULT;
+      else if (call.id === 'result-members') out[call.id] = { success: true, bundles: [{ query_id: 'q1', table: 'wordpress.wp_posts', engine: 'dynamodb' }] };
+      else if (call.id.startsWith('result-')) out[call.id] = call.path.includes('kind=query') ? QUERY_LINKS : TABLE_LINKS;
+    });
+    return Object.keys(out).length ? out : answer(calls);
+  }
+
+  const button = (text) => [...container.querySelectorAll('button')].find((b) => b.textContent === text);
+
+  test('a fourth tab, next to Queries, Walkthrough and Details', async () => {
+    mockExecute.mockImplementation(async (calls) => questions(calls));
+    await render(<GraphExplorer />);
+    const tabs = [...container.querySelectorAll('[role=tab]')].map((b) => b.textContent);
+    expect(tabs).toEqual([
+      'graph-explorer.panel.tab.queries', 'graph-explorer.panel.tab.walkthrough',
+      'graph-explorer.panel.tab.details', 'graph-explorer.panel.tab.questions',
+    ]);
+    // The catalog is read only once the tab is opened.
+    expect(mockExecute.mock.calls.some(([calls]) => calls[0].id === 'catalog')).toBe(false);
+    await act(async () => {
+      button('graph-explorer.panel.tab.questions').click();
+    });
+    await act(async () => {});
+    expect(mockExecute.mock.calls.find(([calls]) => calls[0].id === 'catalog')[0][0].path).toBe('assessments/job-1/graph/catalog');
+    expect(container.querySelector('[data-testid=graph-explorer-panel-questions]').textContent).toMatch('Which queries are the busiest?');
+  });
+
+  async function runAndShow() {
+    await act(async () => {
+      button('graph-explorer.panel.tab.questions').click();
+    });
+    await act(async () => {});
+    await act(async () => {
+      button('Which queries are the busiest?').click();
+    });
+    await act(async () => {
+      button('graph-explorer.questions.run').click();
+    });
+    await act(async () => {});
+    await act(async () => {
+      button('graph-explorer.questions.show-on-graph').click();
+    });
+    await act(async () => {});
+  }
+  const resultCalls = () => mockExecute.mock.calls.flatMap(([calls]) => calls).filter((c) => c.id.startsWith('result-') && c.id !== 'result-members');
+  const memberCalls = () => mockExecute.mock.calls.flatMap(([calls]) => calls).filter((c) => c.id === 'result-members');
+  const lit = () => mockCanvasProps.elements.filter((e) => /\bresult\b/.test(e.classes || '')).map((e) => e.data.id).sort();
+
+  test("Show on graph starts from the result's table, collapsed, and outlines only the result", async () => {
+    mockExecute.mockImplementation(async (calls) => questions(calls));
+    await render(<GraphExplorer />);
+    await runAndShow();
+    // The table's bundles carry q1 (by the API's full membership), so q1 needs no read of its own.
+    expect(resultCalls().map((c) => c.path)).toEqual([
+      'assessments/job-1/graph/explore/links?kind=table&id=wordpress.wp_posts&limit=25',
+    ]);
+    expect(memberCalls().map((c) => c.path)).toEqual(['assessments/job-1/graph/explore/query-bundles?query_id=q1']);
+    const els = mockCanvasProps.elements;
+    // Collapsed, like every other start: one bundle, no query edges.
+    expect(els.filter((e) => e.group !== 'nodes').map((e) => e.data.kind)).toEqual(['bundle']);
+    // The result's own table, and the link that carries its query; not the engine, which is not in it.
+    expect(lit()).toEqual(['bundle:wordpress.wp_posts|dynamodb', 'table:wordpress.wp_posts']);
+    // Risks have no place in this view: named, not drawn.
+    expect(container.textContent).toMatch('graph-explorer.questions.undrawn');
+    // Clearing the graph clears the highlight.
+    await act(async () => {
+      container.querySelector('[aria-label="graph-explorer.actions.reset"]').click();
+    });
+    expect(lit()).toEqual([]);
+  });
+
+  test('a result query no table bundle carries gets a read of its own', async () => {
+    mockExecute.mockImplementation(async (calls) => {
+      const out = questions(calls);
+      if (out['catalog-run']) {
+        out['catalog-run'] = {
+          ...RESULT,
+          projection: { nodes: [...RESULT.projection.nodes, { id: 'q7', label: 'Query' }], edges: [] },
+        };
+      }
+      return out;
+    });
+    await render(<GraphExplorer />);
+    await runAndShow();
+    expect(resultCalls().map((c) => c.path)).toEqual([
+      'assessments/job-1/graph/explore/links?kind=table&id=wordpress.wp_posts&limit=25',
+      'assessments/job-1/graph/explore/links?kind=query&id=q7&limit=25',
+    ]);
+  });
+
+  test('when every graph read fails, the graph stays and the tab says so', async () => {
+    mockExecute.mockImplementation(async (calls) => {
+      if (calls[0].id.startsWith('result-')) return Object.fromEntries(calls.map((c) => [c.id, { success: false, status: 500 }]));
+      return questions(calls);
+    });
+    await render(<GraphExplorer />);
+    // A graph first, from the toolbar.
+    await act(async () => {
+      container.querySelector('[data-segment=engine]').click();
+    });
+    await act(async () => {
+      container.querySelector('[data-testid=select] [data-option=dynamodb]').click();
+    });
+    await act(async () => {
+      button('graph-explorer.actions.explore').click();
+    });
+    await act(async () => {});
+    const before = mockCanvasProps.elements.map((e) => e.data.id).sort();
+    expect(before.length).toBeGreaterThan(0);
+    await runAndShow();
+    expect(mockCanvasProps.elements.map((e) => e.data.id).sort()).toEqual(before);
+    expect(container.textContent).toMatch('graph-explorer.questions.show-failed');
+  });
+
+  test('an Explore after Show on graph wins, even when the result read answers later', async () => {
+    let release;
+    const held = new Promise((r) => {
+      release = r;
+    });
+    mockExecute.mockImplementation(async (calls) => {
+      if (calls[0].id.startsWith('result-')) {
+        await held;
+        return { 'result-0': { ...TABLE_LINKS, nodes: [...TABLE_LINKS.nodes, { key: 'table:late', kind: 'table', id: 'late', label: 'late' }] } };
+      }
+      return questions(calls);
+    });
+    await render(<GraphExplorer />);
+    await runAndShow();
+    // Explore from the toolbar while the result's read is still out.
+    await act(async () => {
+      container.querySelector('[data-segment=engine]').click();
+    });
+    await act(async () => {
+      container.querySelector('[data-testid=select] [data-option=dynamodb]').click();
+    });
+    await act(async () => {
+      button('graph-explorer.actions.explore').click();
+    });
+    await act(async () => {});
+    const explored = mockCanvasProps.elements.map((e) => e.data.id).sort();
+    await act(async () => {
+      release();
+    });
+    await act(async () => {});
+    expect(mockCanvasProps.elements.map((e) => e.data.id).sort()).toEqual(explored);
+    expect(lit()).toEqual([]);
+  });
+
+  // Round 3 review: a superseded Show on graph must not leave either button loading.
+  function holdResults() {
+    let release;
+    const held = new Promise((r) => {
+      release = r;
+    });
+    mockExecute.mockImplementation(async (calls) => {
+      if (calls[0].id.startsWith('result-')) {
+        await held;
+        return questions(calls);
+      }
+      return questions(calls);
+    });
+    return () => release();
+  }
+  const exploreButton = () => button('graph-explorer.actions.explore');
+  const showButton = () => button('graph-explorer.questions.show-on-graph');
+
+  test('Clear graph during a pending Show on graph leaves neither button loading', async () => {
+    const release = holdResults();
+    await render(<GraphExplorer />);
+    // A graph to clear, from the toolbar.
+    await act(async () => {
+      container.querySelector('[data-segment=engine]').click();
+    });
+    await act(async () => {
+      container.querySelector('[data-testid=select] [data-option=dynamodb]').click();
+    });
+    await act(async () => {
+      exploreButton().click();
+    });
+    await act(async () => {});
+    await runAndShow();
+    expect(exploreButton().getAttribute('data-loading')).toBe('true');
+    expect(showButton().getAttribute('data-loading')).toBe('true');
+    await act(async () => {
+      container.querySelector('[aria-label="graph-explorer.actions.reset"]').click();
+    });
+    expect(exploreButton().getAttribute('data-loading')).toBe('false');
+    await act(async () => {
+      release();
+    });
+    await act(async () => {});
+    expect(exploreButton().getAttribute('data-loading')).toBe('false');
+    expect(showButton().getAttribute('data-loading')).toBe('false');
+    // The late read was dropped: the graph stays cleared.
+    expect(mockCanvasProps.elements).toEqual([]);
+  });
+
+  test('a tour step during a pending Show on graph leaves neither button loading', async () => {
+    const release = holdResults();
+    await render(<GraphExplorer />);
+    await runAndShow();
+    expect(showButton().getAttribute('data-loading')).toBe('true');
+    await act(async () => {
+      button('graph-explorer.panel.tab.walkthrough').click();
+    });
+    await act(async () => {
+      button('graph-explorer.walkthroughs.waves.title').click();
+    });
+    await act(async () => {});
+    expect(exploreButton().getAttribute('data-loading')).toBe('false');
+    await act(async () => {
+      release();
+    });
+    await act(async () => {});
+    expect(exploreButton().getAttribute('data-loading')).toBe('false');
+    expect(showButton().getAttribute('data-loading')).toBe('false');
+    expect(lit()).toEqual([]);
+  });
+
+  test('with the flag off there is no explorer, so no Questions tab and no catalog read', async () => {
+    mockExecute.mockResolvedValue(FLAG_OFF);
+    await render(<GraphExplorer />);
+    expect(container.querySelector('[data-testid=graph-explorer-panel-questions]')).toBe(null);
+    expect(container.textContent).not.toMatch('graph-explorer.panel.tab.questions');
+    expect(mockExecute.mock.calls.some(([calls]) => calls.some((c) => c.id === 'catalog'))).toBe(false);
   });
 });

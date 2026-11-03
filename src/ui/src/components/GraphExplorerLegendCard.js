@@ -6,7 +6,7 @@ import Button from '@cloudscape-design/components/button';
 import { IconLegend, Legend, LinkLegend } from './GraphExplorerViewBar';
 
 /** The legend as a small collapsible card in the graph's corner, with how much the view draws. */
-export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status, engines, placeholder, wave = null }) {
+export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status, engines, placeholder, wave = null, result = false }) {
   const [open, setOpen] = useState(true);
   return (
     <div
@@ -40,7 +40,7 @@ export default function GraphExplorerLegendCard({ t, mode, traffic, cost, status
       {open && (
         <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <IconLegend t={t} engines={engines} placeholder={placeholder} />
-          <LinkLegend t={t} wave={wave} />
+          <LinkLegend t={t} wave={wave} result={result} />
           <Legend mode={mode} traffic={traffic} cost={cost} t={t} />
         </div>
       )}

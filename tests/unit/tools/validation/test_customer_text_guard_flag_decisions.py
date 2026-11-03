@@ -135,6 +135,10 @@ _TRACE_RENDERERS = {
     # #1364: the detailed engineering report, with each trace step's and key
     # candidate's sentence.
     "src/report/detailed_report.py",
+    # #308: the explorer's Questions tab shows a catalog run's `explanation`, the
+    # catalog's own fixed wording for an empty result (src/graph/catalog.py
+    # explain_empty), not a flag decision's.
+    "src/ui/src/components/GraphExplorerQuestions.js",
 }
 
 

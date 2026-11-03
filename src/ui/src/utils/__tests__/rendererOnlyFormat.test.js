@@ -127,6 +127,7 @@ const GUARDED_UI_FILES = [
   'components/graphExplorerPhysics.js',
   'components/GraphExplorerQueryList.js',
   'components/GraphExplorerQueryPanel.js',
+  'components/GraphExplorerQuestions.js',
   'components/GraphExplorerSidePanel.js',
   'components/GraphExplorerToolbar.js',
   'components/GraphExplorerViewBar.js',
@@ -198,6 +199,8 @@ const EXPLORER_FIGURE_KEYS = new Set([
   'query_count', 'calls_per_second', 'total_bundles', 'hidden_count', 'unit_size',
   'workload_percent', 'monthly_cost_usd', 'table_count', 'group_total', 'busiest_tables',
   'confidence',
+  // The Questions tab (the graph query catalog, #1789): its result's figures.
+  'row_count', 'max_rows', 'max_choices',
 ]);
 // Every explorer UI file (#308): GUARDED_UI_FILES lists them all, and the explorer's
 // figure keys are owned in each.
@@ -209,6 +212,7 @@ const EXPLORER_UI_FILES = [
   'components/graphExplorerPhysics.js',
   'components/GraphExplorerQueryList.js',
   'components/GraphExplorerQueryPanel.js',
+  'components/GraphExplorerQuestions.js',
   'components/GraphExplorerSidePanel.js',
   'components/GraphExplorerToolbar.js',
   'components/GraphExplorerViewBar.js',
@@ -794,6 +798,11 @@ describe('renderers only format (#748, ADR-032)', () => {
     expect(violationsIn(page, 'src/ui/src/pages/GraphExplorer.js').join(' ')).toMatch('lastLinks.total_bundles + 1');
     expect(violationsIn(page, 'src/ui/src/pages/GraphExplorer.js').join(' ')).toMatch('below.hidden_count * 2');
     expect(violationsIn(bundle, 'src/ui/src/utils/graphExplorer.js').length).toBeGreaterThan(0);
+    // The Questions tab (#308): its result's row count and bound are the API's.
+    const questions = `export default function Q({ result }) {
+  return result.max_rows - result.row_count + result.rows.length;
+}`;
+    expect(violationsIn(questions, 'src/ui/src/components/GraphExplorerQuestions.js').join(' ')).toMatch('result.max_rows - result.row_count');
     // Formatting one is fine.
     expect(violationsIn(`const s = (b) => t('x', { count: b.query_count });`, 'src/ui/src/utils/graphExplorer.js')).toEqual([]);
   });

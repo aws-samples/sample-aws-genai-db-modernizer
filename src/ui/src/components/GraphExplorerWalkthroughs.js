@@ -90,7 +90,7 @@ export function stepTitle(step, t) {
 }
 
 /**
- * The Walkthrough tab: the walkthroughs to start (those the API returns),
+ * The Tours tab: the walkthroughs to start (those the API returns),
  * then, while one runs, its step's explanation and the list of its steps to
  * jump to. Previous and Next live in the step bar over the graph.
  */
