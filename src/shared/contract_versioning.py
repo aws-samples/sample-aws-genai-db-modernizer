@@ -529,6 +529,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         r"data-movement/wave-\d+/plan\.json",
         "src.contracts.data_movement_plan:DataMovementPlan",
     ),
+    (
+        r"transformation-contract/v\d+/step-\d+\.json",
+        "src.contracts.transformation_contract:StepContract",
+    ),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),
     (r"[^/]+/answers\.json", "src.contracts.agent_interaction_models:AgentAnswers"),
     # ``.meta/<job_id>.json``; job ids never start with ``_`` (marker files do).

@@ -84,7 +84,7 @@ This release is one-way: data flows from the engine that holds the writes to the
 
 | Decision | Enforced by |
 |---|---|
-| 1. A transformation contract per step | none yet -- #1762 |
+| 1. A transformation contract per step | none yet -- #1764 |
 | 2. The contract's boundary | none yet -- #1766 |
 | 3. The contract is a catalog | none yet -- #1766 |
 | 4. Lineage at design time, in typed operations | none yet -- #1772 |

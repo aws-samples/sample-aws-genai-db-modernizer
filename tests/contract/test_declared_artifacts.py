@@ -382,6 +382,10 @@ NOT_PRODUCED_HERE: dict[str, str] = {
         "a load test's per-pattern result, written by the load test runner (no load test "
         "runs here; its path is a caller's parameter the scan cannot render)"
     ),
+    r"transformation-contract/v\d+/step-\d+\.json": (
+        "a step's transformation contract (ADR-033, #1762); its writer arrives with the "
+        "step 1 builder and script (#1764), so no run writes it yet"
+    ),
 }
 
 

@@ -626,6 +626,13 @@
     ],
     "version": "1.3"
   },
+  "lineage_ops.TransformFunction": {
+    "module": "lineage_ops",
+    "values": [
+      "cast"
+    ],
+    "version": "1.0"
+  },
   "model_flag.FlagReason": {
     "module": "model_flag",
     "values": [
@@ -928,5 +935,49 @@
       "needs_rewrite"
     ],
     "version": "1.72"
+  },
+  "transformation_contract.InputSchema": {
+    "module": "transformation_contract",
+    "values": [
+      "collector",
+      "step-1"
+    ],
+    "version": "1.0"
+  },
+  "transformation_contract.RuleStatus": {
+    "module": "transformation_contract",
+    "values": [
+      "blocked",
+      "valid"
+    ],
+    "version": "1.0"
+  },
+  "transformation_contract.Severity": {
+    "module": "transformation_contract",
+    "values": [
+      "error",
+      "warning"
+    ],
+    "version": "1.0"
+  },
+  "transformation_contract.StepStatus": {
+    "module": "transformation_contract",
+    "values": [
+      "has_blocked_rules",
+      "no_relational_anchor",
+      "staged_move_pending",
+      "valid"
+    ],
+    "version": "1.0"
+  },
+  "transformation_contract.TableClass": {
+    "module": "transformation_contract",
+    "values": [
+      "leaves",
+      "replicated_out",
+      "stays",
+      "unread"
+    ],
+    "version": "1.0"
   }
 }
