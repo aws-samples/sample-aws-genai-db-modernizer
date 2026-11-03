@@ -563,6 +563,7 @@ NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_QUERY_FACTS}:timestamp_column_trace": "a trace over a collection, not a detector",
     f"{_QUERY_FACTS}:remember_stored_facts": "caches a stored reading",
     f"{_QUERY_FACTS}:remember_collected_facts": "caches a collection's stored readings",
+    f"{_QUERY_FACTS}:reserve_fact_caches": "sizes the facts caches to a collection; reads no SQL",
     f"{_QUERY_FACTS}:source_engine_of": "reads a collection's engine name",
     f"{_UNSUPPORTED}:unsupported_pattern_ids": "reads a schema design's pattern record",
     f"{_UNSUPPORTED}:unsupported_pattern_label": "reads a schema design's pattern record",

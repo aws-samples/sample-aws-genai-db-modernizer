@@ -40,6 +40,7 @@ from src.agents.collector.mysql_collector import (
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import CollectorOutputContract
 from src.shared.contract_versioning import load_contract
+from src.shared.query_capture import live_query_capture, query_stage_rows
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.mariadb_tools import MariaDBRemoteCollector
@@ -110,6 +111,7 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
     )
+    queries_raw, query_error = query_stage_rows(queries_raw)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables(
@@ -157,4 +159,5 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         procedures=schema_procs,
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
+        query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
     )

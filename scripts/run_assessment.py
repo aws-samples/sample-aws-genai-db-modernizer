@@ -73,7 +73,6 @@ from src.tools.database.offline_collection_check import (  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
     IngestionLimitError,
     check_collection_counts,
-    check_file_size,
 )
 
 os.environ.setdefault("RUNTIME_MODE", "local")
@@ -336,11 +335,13 @@ def phase_collect(
     store,
     engines_in_use: list[str] | None = None,
     from_file_name: bool = False,
+    query_limit: int | None = None,
 ) -> tuple[str, str]:
     """Parse collector output and initialize artifacts. Returns (job_id, db_name).
 
     ``engines_in_use`` (#963): engine ids the operator declared as already running.
     ``from_file_name`` (#1096): name the job from the file name, not its metadata.
+    ``query_limit`` (#384): a cap on the statements kept; None (the default) keeps all.
     """
     from src.shared.engines_in_use import merge_engines_in_use
 
@@ -350,12 +351,6 @@ def phase_collect(
     try:
         collector_file = resolve_collection_path(collector_file)
     except CollectionPathError as exc:
-        _error("collect", str(exc))
-
-    # Check the file size before reading it into memory (#142).
-    try:
-        check_file_size(os.path.getsize(collector_file), source=collector_file)
-    except IngestionLimitError as exc:
         _error("collect", str(exc))
 
     if zipfile.is_zipfile(collector_file):
@@ -410,6 +405,7 @@ def phase_collect(
         )
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    sql_shadow = None  # the facade-vs-regex cross-check, raw collections only (#553)
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
     absent_sections: list[str] = []  # #131: common sections a raw collection lacks
 
@@ -452,7 +448,7 @@ def phase_collect(
             DatabaseNameMismatchError,
             parse_offline_collection,
         )
-        from src.tools.sql.shadow import TableShadow, write_shadow_artifact
+        from src.tools.sql.shadow import TableShadow
 
         try:
             # Table references come from the sqlglot facade, with the regex as
@@ -464,8 +460,6 @@ def phase_collect(
             )
         except (IngestionLimitError, DatabaseNameMismatchError, OfflineCollectionError) as exc:
             _error("collect", str(exc))
-        write_shadow_artifact(store, db_name, job_id, sql_shadow)
-        table_refs = sql_shadow.status_summary()
 
         # Build collector contract output (the one source-engine detector, #1177)
         from src.agents.collector.offline_ingest import build_offline_collector_output
@@ -479,6 +473,18 @@ def phase_collect(
             other_name = {"collected_database_name": collected_name}
         # #131: the common sections the file lacks, read as empty.
         absent_sections = parsed.get("absent_sections") or []
+
+    # #384: the capture is recorded; only an explicit --query-limit cuts the collection.
+    from src.shared.query_capture import cap_collection
+    from src.tools.sql.shadow import write_shadow_artifact
+
+    capped = cap_collection(collector_data, query_limit)
+    if sql_shadow is not None:
+        # The cross-check counts the statements kept, after any cut (#384).
+        if capped.kept_query_ids is not None:
+            sql_shadow = sql_shadow.restricted_to(capped.kept_query_ids)
+        write_shadow_artifact(store, db_name, job_id, sql_shadow)
+        table_refs = sql_shadow.status_summary()
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
@@ -508,6 +514,7 @@ def phase_collect(
             **({"table_refs": table_refs} if table_refs is not None else {}),
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
             **({"absent_sections": absent_sections} if absent_sections else {}),
+            **({"query_capture": capped.capture} if capped.cut else {}),
         },
     )
     return job_id, db_name
@@ -1175,6 +1182,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--query-limit",
+        default=None,
+        metavar="N",
+        help=(
+            "With --file: cap the statements kept (default: no cap, every statement is "
+            "kept). A collection holding more keeps every write and locking read, then the "
+            "costliest reads by total time; metadata.query_capture records the cap and the cut"
+        ),
+    )
+    parser.add_argument(
         "--target-databases",
         default=None,
         metavar="ENGINES",
@@ -1244,11 +1261,15 @@ def main() -> None:
     )
     args = parser.parse_args()
     from src.shared.engines_in_use import parse_engines_in_use_option
+    from src.shared.query_capture import parse_query_limit
     from src.shared.target_databases import parse_target_databases_option
 
     try:
         args.engines_in_use_ids = parse_engines_in_use_option(args.engines_in_use)
         args.target_database_ids = parse_target_databases_option(args.target_databases)
+        args.query_limit_n = (
+            None if args.query_limit is None else parse_query_limit(args.query_limit)
+        )
     except ValueError as exc:
         parser.error(str(exc))
     if args.llm_mode == "bedrock":
@@ -1392,6 +1413,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         collect_kwargs: dict = {"engines_in_use": declared} if declared else {}
         if args.db_from_file_name:
             collect_kwargs["from_file_name"] = True
+        if getattr(args, "query_limit_n", None) is not None:
+            collect_kwargs["query_limit"] = args.query_limit_n
         job_id, db_name = phase_collect(args.file, args.db, store, **collect_kwargs)
         _attach_log(args.artifact_root, db_name, job_id)
         _set_job_context(store, db_name, job_id)

@@ -228,6 +228,12 @@ def run_synthesis_deterministic(
         f"{len(data.source_tables)} source tables, "
         f"{len(data.source_queries)} queries"
     )
+    # Every step after this reads the collection's stored query facts and string
+    # settings, as routing did: without them the ranking parsed every statement again,
+    # the slowest part of a large synthesis (#384).
+    from src.tools.sql.query_facts import remember_collected_facts
+
+    remember_collected_facts(data.collector or {})
 
     # Load reality check output if available (optional — may not exist)
     # The run this assignment descends from (#193): a forced run that changed

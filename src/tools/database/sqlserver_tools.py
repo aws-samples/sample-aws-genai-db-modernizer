@@ -17,6 +17,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
@@ -311,7 +312,9 @@ class SQLServerRemoteCollector:
     # Query patterns (DMV-based)
     # -------------------------------------------------------------------
 
-    def collect_query_patterns(self, min_executions: int = 10, limit: int = 1000) -> list[dict]:
+    def collect_query_patterns(
+        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+    ) -> list[dict]:
         """Collect query stats from ``sys.dm_exec_query_stats``.
 
         Per-execution averages derive from totals divided by ``execution_count``.
@@ -339,8 +342,11 @@ class SQLServerRemoteCollector:
         # CONVERT(NVARCHAR(MAX), ...) keeps the query text on a single line for
         # tab-separated parsing; CHAR(13)/CHAR(10)/CHAR(9) are stripped explicitly,
         # as the offline script does, to avoid embedded line breaks and tabs.
+        limit, min_executions = capture_settings(limit, min_executions)
+        # No cap (the default, #384): every statement that ran often enough.
+        top_clause = f"TOP {limit}" if limit is not None else ""
         raw = self._query(f"""
-            SELECT TOP {limit}
+            SELECT {top_clause}
                 CONVERT(VARCHAR(40), g.query_hash, 1) AS query_id,
                 g.query_text,
                 g.execution_count,
@@ -418,7 +424,7 @@ class SQLServerRemoteCollector:
             ) g
             WHERE g.execution_count >= {min_executions}
             ORDER BY g.total_elapsed_time DESC
-        """)  # nosec B608 — min_executions and limit are internal constants
+        """)  # nosec B608 — both settings are checked ints (#384)
 
         patterns = []
         reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())

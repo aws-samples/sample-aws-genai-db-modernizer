@@ -5,7 +5,7 @@
 """Parse collector output and initialize a modernization job.
 
 Usage:
-    uv run python scripts/run_collect.py --file <collector-json> [--db <name> | --db-from-file-name] [--artifact-root ./artifacts]
+    uv run python scripts/run_collect.py --file <collector-json> [--db <name> | --db-from-file-name] [--artifact-root ./artifacts] [--query-limit 10000]
 
 Outputs JSON to stdout:
     {"status": "complete", "job_id": "...", "database_name": "...", "tables": N, "queries": N}
@@ -31,7 +31,6 @@ from src.tools.database.offline_collection_check import (  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
     IngestionLimitError,
     check_collection_counts,
-    check_file_size,
 )
 
 # Phase name for the durable failure marker (#517). Set once job_id and
@@ -113,9 +112,25 @@ def main() -> None:
             "retiring one shows a saving; added to any the file already lists"
         ),
     )
+    parser.add_argument(
+        "--query-limit",
+        default=None,
+        metavar="N",
+        help=(
+            "Cap the statements kept (default: no cap, every statement is kept). A "
+            "collection holding more keeps every write and locking read, then the costliest "
+            "reads by total time; metadata.query_capture records the cap and the cut"
+        ),
+    )
     args = parser.parse_args()
 
     from src.shared.engines_in_use import merge_engines_in_use, parse_engines_in_use_option
+    from src.shared.query_capture import cap_collection, parse_query_limit
+
+    try:
+        query_limit = None if args.query_limit is None else parse_query_limit(args.query_limit)
+    except ValueError as exc:
+        _error(str(exc))
 
     try:
         engines_in_use = parse_engines_in_use_option(args.engines_in_use)
@@ -148,12 +163,6 @@ def main() -> None:
     try:
         args.file = resolve_collection_path(args.file)
     except CollectionPathError as exc:
-        _error(str(exc))
-
-    # Check the file size before reading it into memory (#142).
-    try:
-        check_file_size(os.path.getsize(args.file), source=args.file)
-    except IngestionLimitError as exc:
         _error(str(exc))
 
     if zipfile.is_zipfile(args.file):
@@ -203,6 +212,7 @@ def main() -> None:
     job_id = args.job_id or str(uuid.uuid4())[:8]
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    sql_shadow = None  # the facade-vs-regex cross-check, raw collections only (#553)
     absent_sections: list[str] = []  # #131: common sections a raw collection lacks
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
 
@@ -256,7 +266,7 @@ def main() -> None:
             DatabaseNameMismatchError,
             parse_offline_collection,
         )
-        from src.tools.sql.shadow import TableShadow, write_shadow_artifact
+        from src.tools.sql.shadow import TableShadow
 
         try:
             # Table references come from the sqlglot facade, with the regex as
@@ -268,8 +278,6 @@ def main() -> None:
             )
         except (IngestionLimitError, DatabaseNameMismatchError, OfflineCollectionError) as exc:
             _error(str(exc))
-        write_shadow_artifact(store, db_name, job_id, sql_shadow)
-        table_refs = sql_shadow.status_summary()
 
         # Build collector contract output
         from src.agents.collector.offline_ingest import build_offline_collector_output
@@ -283,6 +291,17 @@ def main() -> None:
             other_name = {"collected_database_name": collected_name}
         # #131: the common sections the file lacks, read as empty.
         absent_sections = parsed.get("absent_sections") or []
+
+    # #384: the capture is recorded; only an explicit --query-limit cuts the collection.
+    from src.tools.sql.shadow import write_shadow_artifact
+
+    capped = cap_collection(collector_data, query_limit)
+    if sql_shadow is not None:
+        # The cross-check counts the statements kept, after any cut (#384).
+        if capped.kept_query_ids is not None:
+            sql_shadow = sql_shadow.restricted_to(capped.kept_query_ids)
+        write_shadow_artifact(store, db_name, job_id, sql_shadow)
+        table_refs = sql_shadow.status_summary()
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
@@ -308,6 +327,7 @@ def main() -> None:
             **({"table_refs": table_refs} if table_refs is not None else {}),
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
             **({"absent_sections": absent_sections} if absent_sections else {}),
+            **({"query_capture": capped.capture} if capped.cut else {}),
         }
     )
 

@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""``run_collect.py`` enforces upload size/row caps before ingestion (#142).
+"""``run_collect.py`` enforces the upload table and query caps before ingestion (#142),
+and no file size limit (#384).
 
 Mirrors ``test_run_assessment_ingestion_limits.py`` for the standalone
 ``run_collect.py`` entry point used directly (not through ``run_assessment.py``).
@@ -44,6 +45,17 @@ def _write_collection(tmp_path, data: dict) -> str:
     return str(path)
 
 
+def _write_large_collection(tmp_path, data: dict) -> str:
+    """A real file over the old 100 MB limit: the collection, then spaces to 150 MB.
+    Writing and reading it takes well under a second."""
+    path = tmp_path / "large-collection.json"
+    body = json.dumps(data)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+        f.write(" " * (150 * 1024 * 1024 - len(body)))
+    return str(path)
+
+
 def _run(monkeypatch, tmp_path, collector_file: str) -> None:
     monkeypatch.setattr(
         sys,
@@ -70,16 +82,24 @@ def test_passes_under_default_limits(tmp_path, monkeypatch, capsys):
     assert out["status"] == "complete"
 
 
-def test_rejects_oversized_file_before_parsing(tmp_path, monkeypatch, capsys):
+def test_a_file_over_100_mb_is_not_refused_for_its_size(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("MODERNIZER_MAX_UPLOAD_BYTES", raising=False)
+    collector_file = _write_large_collection(tmp_path, RAW_COLLECTION)
+
+    _run(monkeypatch, tmp_path, collector_file)
+
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["status"] == "complete" and out["queries"] == 5
+
+
+def test_the_old_size_variable_refuses_nothing(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
     collector_file = _write_collection(tmp_path, RAW_COLLECTION)
 
-    with pytest.raises(SystemExit):
-        _run(monkeypatch, tmp_path, collector_file)
+    _run(monkeypatch, tmp_path, collector_file)
 
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    assert out["status"] == "error"
-    assert "MODERNIZER_MAX_UPLOAD_BYTES" in out["message"]
+    assert out["status"] == "complete"
 
 
 def test_rejects_too_many_tables(tmp_path, monkeypatch, capsys):

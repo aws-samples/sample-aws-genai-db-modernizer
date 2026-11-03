@@ -12,6 +12,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -272,7 +273,12 @@ class MySQLRemoteCollector:
     # Query patterns (performance_schema)
     # -------------------------------------------------------------------
 
-    def collect_query_patterns(self, min_executions: int = 10, limit: int = 1000) -> list[dict]:
+    def collect_query_patterns(
+        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+    ) -> list[dict]:
+        limit, min_executions = capture_settings(limit, min_executions)
+        # No cap (the default, #384): every statement that ran often enough.
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
         # Detect version to know which columns are available
         version = self.get_version()
         has_quantiles = _version_gte(version, "8.0.25")
@@ -288,8 +294,7 @@ class MySQLRemoteCollector:
         if has_first_last_seen:
             extra_cols += "FIRST_SEEN, LAST_SEEN, "
 
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 DIGEST AS digest, DIGEST_TEXT AS query_text, SCHEMA_NAME AS schema_name,
                 COUNT_STAR AS execution_count,
@@ -311,9 +316,8 @@ class MySQLRemoteCollector:
             WHERE SCHEMA_NAME = DATABASE()
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
-            LIMIT {limit}
-        """  # nosec B608 — extra_cols, min_executions, limit are internal constants, not user input
-        )
+            {limit_clause}
+        """)  # nosec B608 — extra_cols fixed; both settings are checked ints (#384)
 
         patterns = []
         reader = LiveQueryReader("mysql", "mysql_tools")

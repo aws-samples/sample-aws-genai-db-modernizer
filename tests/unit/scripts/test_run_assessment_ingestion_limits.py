@@ -47,6 +47,17 @@ def _write_collection(tmp_path, data: dict) -> str:
     return str(path)
 
 
+def _write_large_collection(tmp_path, data: dict) -> str:
+    """A real file over the old 100 MB limit: the collection, then spaces to 150 MB.
+    Writing and reading it takes well under a second."""
+    path = tmp_path / "large-collection.json"
+    body = json.dumps(data)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+        f.write(" " * (150 * 1024 * 1024 - len(body)))
+    return str(path)
+
+
 def test_passes_under_default_limits(tmp_path, capsys):
     collector_file = _write_collection(tmp_path, RAW_COLLECTION)
     store = LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
@@ -57,18 +68,14 @@ def test_passes_under_default_limits(tmp_path, capsys):
     assert job_id
 
 
-def test_rejects_oversized_file_before_parsing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
-    collector_file = _write_collection(tmp_path, RAW_COLLECTION)
+def test_a_file_over_100_mb_is_not_refused_for_its_size(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")  # read by nothing now
+    collector_file = _write_large_collection(tmp_path, RAW_COLLECTION)
     store = LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
 
-    with pytest.raises(SystemExit):
-        run_assessment.phase_collect(collector_file, None, store)
+    job_id, db_name = run_assessment.phase_collect(collector_file, None, store)
 
-    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    assert out["status"] == "error"
-    assert "exceeds" in out["message"]
-    assert "MODERNIZER_MAX_UPLOAD_BYTES" in out["message"]
+    assert db_name == "testdb" and job_id
 
 
 def test_rejects_too_many_tables(tmp_path, monkeypatch, capsys):

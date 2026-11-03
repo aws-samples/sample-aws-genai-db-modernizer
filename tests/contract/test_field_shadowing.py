@@ -12,7 +12,7 @@ This test module verifies that:
 Requirements: 3.1, 3.2, 3.3
 """
 
-import warnings
+import pytest
 
 from src.contracts.collector_output import CollectorOutputContract
 
@@ -20,6 +20,7 @@ from src.contracts.collector_output import CollectorOutputContract
 class TestFieldShadowingResolution:
     """Test suite for field shadowing resolution."""
 
+    @pytest.mark.passes_on_main
     def test_import_produces_no_warnings(self):
         """
         Test that importing CollectorOutputContract produces no warnings.
@@ -29,29 +30,41 @@ class TestFieldShadowingResolution:
 
         Requirements: 3.1, 3.2
         """
-        # Capture warnings during import
-        with warnings.catch_warnings(record=True) as warning_list:
-            warnings.simplefilter("always")
+        # Import it fresh in a new interpreter. Reloading it in this process
+        # (``importlib.reload``) replaced its classes for every later test on the same
+        # worker: a module that had imported ``Metadata`` before kept the old class,
+        # one that imported ``QueryCapture`` after got the new one, and pydantic
+        # refused the mix (#384).
+        import json
+        import subprocess  # nosec B404 -- runs this interpreter on a fixed snippet
+        import sys
+        from pathlib import Path
 
-            # Re-import the module to trigger any warnings
-            import importlib
+        snippet = (
+            "import json, warnings\n"
+            "with warnings.catch_warnings(record=True) as caught:\n"
+            "    warnings.simplefilter('always')\n"
+            "    import src.contracts.collector_output\n"
+            "print(json.dumps([str(w.message) for w in caught]))\n"
+        )
+        proc = subprocess.run(  # nosec B603 -- fixed interpreter and snippet
+            [sys.executable, "-c", snippet],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        messages = json.loads(proc.stdout.strip().splitlines()[-1])
 
-            import src.contracts.collector_output
+        # Check for field shadowing warnings
+        shadowing_warnings = [
+            m for m in messages if "shadows an attribute" in m.lower() or "field name" in m.lower()
+        ]
 
-            importlib.reload(src.contracts.collector_output)
-
-            # Check for field shadowing warnings
-            shadowing_warnings = [
-                w
-                for w in warning_list
-                if "shadows an attribute" in str(w.message).lower()
-                or "field name" in str(w.message).lower()
-            ]
-
-            assert len(shadowing_warnings) == 0, (
-                f"Expected no field shadowing warnings, but found {len(shadowing_warnings)}: "
-                f"{[str(w.message) for w in shadowing_warnings]}"
-            )
+        assert len(shadowing_warnings) == 0, (
+            f"Expected no field shadowing warnings, but found {len(shadowing_warnings)}: "
+            f"{shadowing_warnings}"
+        )
 
     def test_database_schema_field_exists(self):
         """

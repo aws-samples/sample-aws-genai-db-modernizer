@@ -18,6 +18,27 @@ from src.contracts.collector_output import CollectorOutputContract
 from src.storage.artifact_store import ArtifactStore
 
 
+def _capture_options() -> dict[str, int]:
+    """``QUERY_LIMIT`` and ``MIN_EXECUTIONS``, each a positive whole number when set (#384).
+
+    Raises:
+        ValueError: a set one is not a positive whole number; the message names it.
+    """
+    options: dict[str, int] = {}
+    for variable, field in (("QUERY_LIMIT", "query_limit"), ("MIN_EXECUTIONS", "min_executions")):
+        text = os.environ.get(variable, "").strip()
+        if not text:
+            continue
+        try:
+            value = int(text)
+        except ValueError:
+            value = 0
+        if value < 1:
+            raise ValueError(f"{variable} must be a positive whole number, got {text!r}")
+        options[field] = value
+    return options
+
+
 def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None:
     """Run the collector agent. Reads config from env vars, writes output via ArtifactStore."""
     cluster_endpoint = os.environ.get("CLUSTER_ENDPOINT", "")
@@ -80,6 +101,13 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     if in_use:
         input_data["engines_in_use"] = in_use
 
+    # #384: the statement cap and minimum execution count, 10,000 and 10 when unset.
+    try:
+        input_data["collection_options"] = _capture_options()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     if region:
         input_data["aws_config"] = {
             "region": region,
@@ -96,6 +124,12 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     import json
 
     output = json.loads(result.model_dump_json())
+    if mode == "offline":
+        # #384: an offline collection is cut only to an explicit QUERY_LIMIT, as every
+        # ingest of a collection file does; a live collector applied it at the source.
+        from src.shared.query_capture import cap_collection
+
+        cap_collection(output, input_contract.collection_options.query_limit)
     if input_contract.engines_in_use:
         from src.shared.engines_in_use import merge_engines_in_use
 

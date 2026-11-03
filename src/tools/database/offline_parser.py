@@ -37,7 +37,7 @@ from src.tools.sql.redact import (
     redact_definition,
     redact_literals,
 )
-from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
+from src.tools.validation.ingestion_limits import check_collection_counts
 
 if TYPE_CHECKING:
     from src.tools.sql.facade import SqlReading, TableReferences
@@ -113,14 +113,9 @@ def collected_database_name(
 
 
 def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict:
-    """Download the offline collection JSON from S3.
-
-    Checks the object's size via ``head_object`` (#142) and rejects it before
-    downloading the body if it exceeds the configured ingestion limit.
-    """
+    """Download the offline collection JSON from S3, whatever its size (#384); its
+    table and query counts are checked when it is parsed (#142)."""
     s3 = boto3.client("s3", region_name=region)
-    head = s3.head_object(Bucket=bucket, Key=key)
-    check_file_size(head["ContentLength"], source=f"s3://{bucket}/{key}")
     resp = s3.get_object(Bucket=bucket, Key=key)
     # One reader for every path (#131): the object found in the text, Oracle 19c's
     # unescaped control characters made spaces (newlines kept), the trailing
@@ -214,6 +209,10 @@ def _parse_offline_collection(
         query_count=len(data.get("queries") or []),
         source="offline collection",
     )
+    # Room for every statement's facts, so a large collection reads each text once (#384).
+    from src.tools.sql.query_facts import reserve_fact_caches
+
+    reserve_fact_caches(len(data.get("queries") or []))
 
     metadata = data.get("metadata", {})
     if isinstance(metadata, str):

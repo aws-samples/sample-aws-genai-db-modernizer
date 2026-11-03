@@ -16,6 +16,7 @@ import hashlib
 import logging
 import re
 
+from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.index_keys import add_index_key
@@ -359,7 +360,10 @@ class OracleRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_query_patterns(
-        self, min_executions: int = 10, limit: int = 1000, owner: str | None = None
+        self,
+        min_executions: int = DEFAULT_MIN_EXECUTIONS,
+        limit: int | None = None,
+        owner: str | None = None,
     ) -> list[dict]:
         """Collect query stats from V$SQL, one row per statement shape.
 
@@ -383,6 +387,9 @@ class OracleRemoteCollector:
         ``scripts/collect-oracle.sql``. It has not been run against an Oracle
         database; the tests check the generated SQL and the row handling.
         """
+        limit, min_executions = capture_settings(limit, min_executions)
+        # No cap (the default, #384): every statement that ran often enough.
+        rownum_clause = f"WHERE ROWNUM <= {limit}" if limit is not None else ""
         owner = owner or self.get_current_schema()
         raw = self._query(f"""
             SELECT *
@@ -437,8 +444,8 @@ class OracleRemoteCollector:
                 WHERE g.executions >= {min_executions}
                 ORDER BY g.elapsed_time DESC, g.query_key
             )
-            WHERE ROWNUM <= {limit}
-        """)  # nosec B608 — min_executions/limit are internal; owner from catalog
+            {rownum_clause}
+        """)  # nosec B608 — min_executions/limit are checked positive ints; owner from catalog
 
         patterns = []
         reader = LiveQueryReader("oracle", "oracle_tools", empty=())

@@ -61,6 +61,11 @@ Version History:
 - 5.2 (2026-11-02, #292): Added optional ``Column.datetime_precision``:
   fractional-seconds digits of a PostgreSQL time type (#292). Backward compatible:
   defaults to None (not reported).
+- 5.3 (2026-11-03, #384): Added optional ``Metadata.query_capture`` (``QueryCapture``):
+  the statement cap (None: no cap), the minimum execution count, how many statements the
+  collection captured and chose from, whether a cap cut it, a failed statement query's
+  error, and the writes a cap dropped per table (#384). Backward compatible: defaults to
+  None (the collection does not record them).
 """
 
 import re
@@ -277,6 +282,58 @@ class SourceDatabase(BaseModel):
     )
 
 
+class QueryCapture(BaseModel):
+    """How many statements the collection captured, and under which settings (#384).
+
+    A live collector keeps every statement that ran at least ``min_executions`` times;
+    with a cap (``query_limit``, off by default) it keeps the costliest of them, by
+    total time, up to the cap. An ingest cuts a collection only to an explicit cap, and
+    then keeps every write and locking read before any read. ``truncated`` is true
+    when a cap was reached, so the source may hold statements the collection does not;
+    ``available`` is how many statements the cap chose from, when known.
+    """
+
+    query_limit: PositiveInt | None = Field(
+        None,
+        description=(
+            "The smallest statement cap known to have applied to the capture; None when "
+            "no cap applied"
+        ),
+    )
+    min_executions: PositiveInt | None = Field(
+        None,
+        description=(
+            "Minimum execution count a statement needed to be captured; None when the "
+            "collection does not say"
+        ),
+    )
+    captured: int = Field(..., ge=0, description="Statements the collection holds")
+    available: int | None = Field(
+        None, ge=0, description="Statements the cap chose from, when known"
+    )
+    truncated: bool | None = Field(
+        None,
+        description=(
+            "True when a cap was reached, so the source may hold more statements; None "
+            "when the collection does not say"
+        ),
+    )
+    error: str | None = Field(
+        None,
+        description=(
+            "Why the statement query failed, when it did: the collection then holds no "
+            "statement from it, which is not a complete capture"
+        ),
+    )
+    writes_dropped_by_table: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Per table, the writes and locking reads a cap dropped because the writes "
+            "alone exceeded it; empty when none was dropped"
+        ),
+    )
+
+
 class Metadata(BaseModel):
     collection_timestamp: datetime = Field(
         ..., description="ISO 8601 timestamp when collection completed"
@@ -294,6 +351,13 @@ class Metadata(BaseModel):
             "Engine ids (e.g. elasticache, documentdb) of the AWS databases the application "
             "already runs today next to the source. Only these and the source engine can be "
             "retired for a saving (#949)."
+        ),
+    )
+    query_capture: QueryCapture | None = Field(
+        None,
+        description=(
+            "The statement cap, minimum execution count and coverage of the capture "
+            "(#384); None for a collection that does not record them"
         ),
     )
 
@@ -974,7 +1038,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.2",
+        default="5.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

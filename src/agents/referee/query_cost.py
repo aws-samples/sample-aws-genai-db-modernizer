@@ -163,7 +163,8 @@ class QueryCostModel:
         """``query``'s cost on ``engine``, sharing the standing cost over ``servable``
         (the query itself counts once, whether or not the workload lists it)."""
         qid = str(query.get("query_id") or "")
-        sharers = len(servable | {qid})
+        # The count without copying the set (#384): a copy per call was n^2 over a pass.
+        sharers = len(servable) + (qid not in servable)
         return QueryCost(
             standing_share=catalog.pricing(engine).base_monthly / sharers,
             variable=self.variable_monthly(query, engine),

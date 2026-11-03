@@ -122,6 +122,9 @@ class TableShadow:
     categories: Counter[str] = field(default_factory=Counter)
     disagreements: list[dict] = field(default_factory=list)
     fallbacks: list[dict] = field(default_factory=list)
+    # Each recorded query's outcome, in order, so the counts can be taken again over
+    # the statements a cap kept (:meth:`restricted_to`, #384).
+    _outcomes: list[tuple] = field(default_factory=list, repr=False)
 
     def record(
         self,
@@ -132,31 +135,23 @@ class TableShadow:
         refs: TableReferences,
     ) -> None:
         """Compare one query's table ids (``facade`` drives the output)."""
-        self.queries += 1
         self.dialect = refs.dialect
-        self.parsed_by[refs.parsed_by] += 1
-        if refs.fallback_reason:
-            self.fallback_reasons[refs.fallback_reason] += 1
-            self.fallbacks.append(
-                {
-                    "query_id": query_id,
-                    "reason": refs.fallback_reason,
-                    "truncated": refs.truncated,
-                }
-            )
+        fallback = (
+            {"query_id": query_id, "reason": refs.fallback_reason, "truncated": refs.truncated}
+            if refs.fallback_reason
+            else None
+        )
         if set(regex) == set(facade):
-            self.agree += 1
-            if refs.parsed_by == "sqlglot":
-                self.parsed_agree += 1
-            if regex != facade:
-                self.order_differs += 1
+            self._add(query_id, refs.parsed_by, fallback, None, regex != facade)
             return
         # "unknown" is the resolver's placeholder for "no table", not a table.
         regex_only = [t for t in regex if t not in facade and t != "unknown"]
         facade_only = [t for t in facade if t not in regex and t != "unknown"]
         categories = _categories(query_text, regex_only, facade_only, self.source_engine)
-        self.categories.update(categories)
-        self.disagreements.append(
+        self._add(
+            query_id,
+            refs.parsed_by,
+            fallback,
             {
                 "query_id": query_id,
                 "regex": regex,
@@ -166,8 +161,43 @@ class TableShadow:
                 "categories": categories,
                 "parsed_by": refs.parsed_by,
                 "query_text": query_text[:_QUERY_TEXT_LIMIT],
-            }
+            },
+            False,
         )
+
+    def _add(
+        self,
+        query_id: str,
+        parsed_by: str,
+        fallback: dict | None,
+        disagreement: dict | None,
+        order_differs: bool,
+    ) -> None:
+        """Count one query's outcome: it agrees when ``disagreement`` is None."""
+        self._outcomes.append((query_id, parsed_by, fallback, disagreement, order_differs))
+        self.queries += 1
+        self.parsed_by[parsed_by] += 1
+        if fallback is not None:
+            self.fallback_reasons[fallback["reason"]] += 1
+            self.fallbacks.append(fallback)
+        if disagreement is None:
+            self.agree += 1
+            if parsed_by == "sqlglot":
+                self.parsed_agree += 1
+            if order_differs:
+                self.order_differs += 1
+            return
+        self.categories.update(disagreement["categories"])
+        self.disagreements.append(disagreement)
+
+    def restricted_to(self, query_ids: set[str]) -> TableShadow:
+        """The same comparison over the queries in ``query_ids`` only: the statements
+        a cap kept (#384), so the status line and ``sql_shadow.json`` count those."""
+        out = TableShadow(source_engine=self.source_engine, dialect=self.dialect)
+        for outcome in self._outcomes:
+            if outcome[0] in query_ids:
+                out._add(*outcome)
+        return out
 
     @property
     def disagree(self) -> int:

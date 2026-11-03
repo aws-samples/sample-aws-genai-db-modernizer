@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Container, Iterable, Mapping
+from typing import NoReturn
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import can_engine_serve_capability
@@ -404,6 +405,37 @@ def _group_eligible_engines(
     ]
 
 
+class GroupedTrace(dict):
+    """A routing trace by query id with its co-dependency group members indexed once.
+
+    ``_moving_members`` scanned every query's trace for each grouped query it was
+    asked about, so a pass over n queries cost n^2 steps (#384). The reality check
+    wraps the resolver's ``RoutingTrace.by_query`` in this once, after the resolver
+    filled it in and before any pass reads it; nothing writes a group afterwards, so
+    the index stays true for the whole check. A plain dict still works: it is scanned.
+    """
+
+    def __init__(self, by_query: Mapping[str, dict]) -> None:
+        super().__init__(by_query)
+        index: dict[str, list[str]] = {}
+        key_of: dict[str, str] = {}
+        for mqid, payload in self.items():
+            if (group := payload.get("group")) is not None and group:
+                index.setdefault(group["key"], []).append(mqid)
+                key_of[mqid] = group["key"]
+        self.group_members: dict[str, list[str]] = index
+        self.group_key_of: dict[str, str] = key_of
+
+    # The index is true only while the trace's queries stay as wrapped, so the mapping
+    # refuses every write (review of #1781), and ``_moving_members`` refuses a query
+    # whose payload's group changed after wrapping (a payload is the resolver's dict).
+    def _refuse(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise TypeError("a GroupedTrace is read-only: its group index would go stale")
+
+    __setitem__ = __delitem__ = __ior__ = _refuse
+    clear = pop = popitem = setdefault = update = _refuse  # type: ignore[assignment]
+
+
 def _moving_members(
     qid: str,
     trace_by_query: dict[str, dict],
@@ -424,11 +456,18 @@ def _moving_members(
     group_info = trace_by_query.get(qid, {}).get("group")
     if not group_info:
         return [qid]
+    if isinstance(trace_by_query, GroupedTrace):
+        if trace_by_query.group_key_of.get(qid) != group_info["key"]:
+            raise RuntimeError(f"{qid}'s group changed after its GroupedTrace was built")
+        in_group: Iterable[str] = trace_by_query.group_members.get(group_info["key"], ())
+    else:
+        in_group = (
+            mqid
+            for mqid, mpayload in trace_by_query.items()
+            if (mg := mpayload.get("group")) and mg["key"] == group_info["key"]
+        )
     return sorted(
-        mqid
-        for mqid, mpayload in trace_by_query.items()
-        if (mg := mpayload.get("group")) and mg["key"] == group_info["key"]
-        if mqid not in staying_query_ids and mqid in held_query_ids
+        mqid for mqid in in_group if mqid not in staying_query_ids and mqid in held_query_ids
     )
 
 

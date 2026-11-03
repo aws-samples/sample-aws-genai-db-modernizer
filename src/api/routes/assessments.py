@@ -38,7 +38,6 @@ from src.api.services.local_s3 import LocalS3Service
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.ranking import fit_text, main_engine
 from src.shared.report_facts import analysis_overview_facts
-from src.tools.validation.ingestion_limits import IngestionLimitError, check_file_size
 
 logger = logging.getLogger(__name__)
 
@@ -134,16 +133,8 @@ async def confirm_upload(
             detail=f"Upload not found at {upload_key}. Did the presigned URL upload complete?",
         ) from e
 
-    # Reject an oversized upload before the pipeline ever reads it (#142).
-    try:
-        check_file_size(head["ContentLength"], source=upload_key)
-    except IngestionLimitError as exc:
-        try:
-            s3_svc.client.delete_object(Bucket=s3_svc.bucket, Key=upload_key)
-        except Exception:
-            logger.warning("confirm_upload: failed to delete oversized upload %s", upload_key)
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-
+    # An upload of any size is accepted (#384, "it takes what it takes"); its table
+    # and query counts are checked when the collector parses it (#142).
     return {
         "job_id": job_id,
         "status": "confirmed",

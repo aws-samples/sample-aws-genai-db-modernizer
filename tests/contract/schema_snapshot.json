@@ -4604,6 +4604,31 @@
                 "type": "boolean"
               }
             },
+            "min_executions": {
+              "required": false,
+              "schema": {
+                "kind": "scalar",
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "query_limit": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "scalar",
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
             "query_log_days": {
               "required": false,
               "schema": {
@@ -4783,8 +4808,8 @@
         }
       }
     },
-    "schema_hash": "d760124d61e809f3940b163a028c1604b5931b39338af770981d78287786e2c2",
-    "version": "4.0"
+    "schema_hash": "1fa576746408d49607ce66f1ccd01f450112bfa67727034b732db16bf29fdc7a",
+    "version": "4.1"
   },
   "collector_output.CollectorOutputContract": {
     "fields": {
@@ -6113,6 +6138,124 @@
                   "type": "string"
                 },
                 "kind": "array"
+              }
+            },
+            "query_capture": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "available": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "captured": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "error": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "min_executions": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "query_limit": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "truncated": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "boolean"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "writes_dropped_by_table": {
+                        "required": false,
+                        "schema": {
+                          "additional": {
+                            "kind": "scalar",
+                            "type": "integer"
+                          },
+                          "kind": "object"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
               }
             },
             "source_database": {
@@ -8757,8 +8900,8 @@
         }
       }
     },
-    "schema_hash": "fe0c7125bcafe8e7a51dc8aa2b4b9476cc68eedab784bb711d89f34b4f2a31ff",
-    "version": "5.2"
+    "schema_hash": "64d49fb2f3ec7edc26e175fbf7d5c700ec01c1fe0b6c2b869f1607e8df0cfcfe",
+    "version": "5.3"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
