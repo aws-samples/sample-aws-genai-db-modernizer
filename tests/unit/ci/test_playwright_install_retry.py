@@ -54,6 +54,9 @@ def _run(tmp_path: Path, fails: int, **env: str):
         capture_output=True,
         text=True,
         cwd=REPO,
+        # Bounded (#1835): this run is also the hang limit's reference, and a stalled
+        # one used to scale that limit up to 20 minutes instead of failing here.
+        timeout=60,
     )
     hosts = (tmp_path / "hosts").read_text().split() if (tmp_path / "hosts").exists() else []
     return proc, hosts
@@ -210,7 +213,7 @@ def _uv_calls_for_shard(tmp_path: Path, shard: str) -> list[str]:
         "HOME": str(tmp_path),
     }
     proc = subprocess.run(
-        [str(REPO / "ci/e2e.sh")], env=env, capture_output=True, text=True, cwd=REPO
+        [str(REPO / "ci/e2e.sh")], env=env, capture_output=True, text=True, cwd=REPO, timeout=120
     )
     assert proc.returncode == 0, proc.stderr
     return (tmp_path / "calls").read_text().splitlines()
@@ -264,6 +267,59 @@ def test_a_command_ignoring_term_is_killed_after_the_grace_period(tmp_path):
                 pass
 
 
+# The command run under the limit kills its sibling, the watchdog subshell, with
+# KILL (no trap can run) once the watchdog is napping, and records the nap's pid.
+KILL_THE_WATCHDOG = """
+sleep 0.5
+for p in $(pgrep -P "$PPID"); do
+  [ "$p" = "$$" ] && continue
+  pgrep -P "$p" >> "$1"
+  kill -KILL "$p"
+done
+"""
+
+
+def test_a_watchdog_that_dies_leaves_nothing_holding_the_callers_output(tmp_path):
+    """#1835: the watchdog's nap must not hold the caller's stdout or stderr.
+
+    When the watchdog went before it could kill its `sleep` (a TERM landing between
+    the fork of the nap and `nap=$!` leaves its trap nothing to kill), that sleep held
+    the caller's pipes open for the whole limit. The test's no-op reference run waited
+    out the 300 s default, scaled the hang limit to 20 minutes and stalled a CI shard
+    until the job limit. KILL is the worst case: no trap runs at all.
+    """
+    import os
+    import signal
+
+    naps = tmp_path / "naps"
+    naps.touch()
+    try:
+        # Without the fix this times out: the orphaned nap keeps both pipes open.
+        proc = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; _run_with_limit 300 sh -c "$2" sh "$3"',
+                "x",
+                str(REPO / "ci/lib.sh"),
+                KILL_THE_WATCHDOG,
+                str(naps),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=REPO,
+            timeout=20,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert naps.read_text().split(), "the watchdog was not napping when it was killed"
+    finally:
+        for pid in naps.read_text().split():
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def _run_e2e_ci(tmp_path: Path, launch_ok: bool, shard: str = "wordpress") -> list[str]:
     """Run ci/e2e.sh with CI=true and a fake uv whose browser-launch check passes or fails."""
     bindir = tmp_path / "bin"
@@ -287,7 +343,7 @@ def _run_e2e_ci(tmp_path: Path, launch_ok: bool, shard: str = "wordpress") -> li
         "HOME": str(tmp_path),
     }
     proc = subprocess.run(
-        [str(REPO / "ci/e2e.sh")], env=env, capture_output=True, text=True, cwd=REPO
+        [str(REPO / "ci/e2e.sh")], env=env, capture_output=True, text=True, cwd=REPO, timeout=120
     )
     assert proc.returncode == 0, proc.stderr
     return [
@@ -313,6 +369,9 @@ def test_the_determinism_shards_run_no_launch_check_either(tmp_path):
     assert not any("playwright" in c or "run python -c" in c for c in calls)
 
 
+@pytest.mark.passes_on_main(
+    reason="only bounded with a timeout here (#1835); the behaviour is main's"
+)
 def test_the_apt_fallback_uses_the_archive_mirror_from_the_second_attempt(tmp_path):
     """A runner whose mirror stalls gets apt timeouts, then archive.ubuntu.com (#1360)."""
     bindir = tmp_path / "bin"
@@ -347,6 +406,7 @@ def test_the_apt_fallback_uses_the_archive_mirror_from_the_second_attempt(tmp_pa
         capture_output=True,
         text=True,
         cwd=REPO,
+        timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
     deps = [c for c in (tmp_path / "calls").read_text().splitlines() if "install-deps" in c]
