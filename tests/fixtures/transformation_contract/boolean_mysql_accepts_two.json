@@ -1,0 +1,107 @@
+{
+  "dialect": "mysql",
+  "engine": "aurora_mysql",
+  "seed": 1,
+  "tables": [
+    {
+      "table_id": "shop.flags",
+      "table_name": "flags",
+      "schema_name": "shop",
+      "row_count": 4,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "is_active",
+          "ordinal_position": 2,
+          "data_type": "tinyint(1)",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "shop.flags",
+      "target_table": "flags",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "int",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.flags",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "is_active",
+          "target_column": "is_active",
+          "target_type": "boolean",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "shop.flags",
+              "column": "is_active"
+            },
+            "function": "cast",
+            "from_type": "tinyint(1)",
+            "to_type": "boolean"
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "cb206c975a0cc6950cde2f505879ce871940da0943d22dafa00ce6d17236041a",
+  "expected": {
+    "shop.flags": {
+      "rows": [
+        {
+          "id": "1",
+          "is_active": "2"
+        },
+        {
+          "id": "2",
+          "is_active": "1"
+        },
+        {
+          "id": "3",
+          "is_active": "0"
+        },
+        {
+          "id": "4",
+          "is_active": "1"
+        }
+      ],
+      "cast_failures": []
+    }
+  }
+}

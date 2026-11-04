@@ -59,6 +59,8 @@ dependencies = [
     # releases, patch ones included, can change parse results, so a bump is its
     # own PR that regenerates tests/unit/tools/sql/baselines/table_refs_snapshot.json.
     "sqlglot==30.22.0",
+    # Embedded SQL engine that runs a transformation contract rule on synthetic rows (#1763)
+    "duckdb>=2.0,<3",
 ]
 
 [project.optional-dependencies]

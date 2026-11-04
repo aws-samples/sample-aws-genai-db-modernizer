@@ -1,0 +1,145 @@
+{
+  "dialect": "postgresql",
+  "engine": "aurora_postgresql",
+  "seed": 7,
+  "tables": [
+    {
+      "table_id": "public.items",
+      "table_name": "items",
+      "schema_name": "public",
+      "row_count": 4,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "integer",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "price",
+          "ordinal_position": 2,
+          "data_type": "numeric(5,2)",
+          "normalized_data_type": "decimal",
+          "max_length": null,
+          "numeric_precision": 5,
+          "numeric_scale": 2,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "qty",
+          "ordinal_position": 3,
+          "data_type": "integer",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "public.items",
+      "target_table": "items",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "integer",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "public.items",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "price",
+          "target_column": "price",
+          "target_type": "numeric(4,2)",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "public.items",
+              "column": "price"
+            },
+            "function": "cast",
+            "from_type": "numeric(5,2)",
+            "to_type": "numeric(4,2)"
+          }
+        },
+        {
+          "source_column": "qty",
+          "target_column": "qty",
+          "target_type": "integer",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "public.items",
+              "column": "qty"
+            },
+            "function": "cast",
+            "from_type": "integer",
+            "to_type": "integer"
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "c98674fa70150703e84fc17a61842157df848efb1e795b5d769788d90a7aa726",
+  "expected": {
+    "public.items": {
+      "rows": [
+        {
+          "id": "1",
+          "price": null,
+          "qty": "502895"
+        },
+        {
+          "id": "2",
+          "price": "90.91",
+          "qty": "396150"
+        },
+        {
+          "id": "3",
+          "price": "66.51",
+          "qty": "791475"
+        },
+        {
+          "id": "4",
+          "price": "89.87",
+          "qty": "522731"
+        }
+      ],
+      "cast_failures": [
+        [
+          "price",
+          "999.99",
+          "numeric(4,2)"
+        ]
+      ]
+    }
+  }
+}
