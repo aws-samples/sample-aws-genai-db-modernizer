@@ -65,6 +65,7 @@ from src.shared.collection_database_name import resolve_database_name  # noqa: E
 from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.gate_facts import cache_candidate_reads  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
+from src.shared.run_limits import RunLimitConfigError, RunLimitExceeded, RunLimits  # noqa: E402
 from src.tools.database.offline_collection_check import (  # noqa: E402
     OfflineCollectionError,
     read_collection_text,
@@ -123,6 +124,8 @@ _CURRENT_PHASE = "init"
 # Set once job/db are known (alongside _attach_log) so _error() and main()'s
 # own exception handler can record a durable failure marker (#517).
 _JOB: dict = {}
+# The run's opt-in ceilings (#145), read by main() before anything runs.
+_LIMITS = RunLimits()
 
 
 def _want_verbose(flag: bool, stdout=None) -> bool:
@@ -130,7 +133,17 @@ def _want_verbose(flag: bool, stdout=None) -> bool:
 
 
 def _output(phase: str, data: dict) -> None:
-    """Print phase progress as JSON to stdout."""
+    """Print phase progress as JSON to stdout.
+
+    The running phase's status line is checked against the per-run ceilings first
+    (#145): over one, the line is printed as the phase's error line instead.
+    """
+    global _BREACH, _LINE_CHECKED
+    if phase == _CURRENT_PHASE and data.get("status") != "error" and _BREACH is None:
+        _LINE_CHECKED = phase
+        _BREACH = _ceiling_breach(phase)
+        if _BREACH is not None:
+            data = _breach_line(_BREACH, data)
     line = json.dumps({"phase": phase, **data})
     if _CONSOLE is not None:
         _CONSOLE.status(line)
@@ -180,11 +193,82 @@ def _set_job_context(store, db: str, job_id: str) -> None:
 
 def _start_phase(phase: str) -> None:
     global _CURRENT_PHASE
+    # The phase that ends here is a clean point to stop at (#145).
+    _stop_if_over_a_ceiling()
     _CURRENT_PHASE = phase
-    # Model calls from here on count under this phase (#1675), as in assess().
+    # Model calls from here on count under this phase (#1675), as in assess(), and
+    # its wall-clock time is the phase's (#145); "init" is the script's own set-up.
     model_usage.LEDGER.set_phase(phase)
+    if phase == "init":
+        model_usage.LEDGER.stop_timing()
+    else:
+        model_usage.LEDGER.start_timing(phase)
     if _JOB:
         _clear_phase_marker(_JOB["store"], _JOB["db"], _JOB["job_id"], phase)
+
+
+def _record_engines(engines) -> None:  # type: ignore[no-untyped-def]
+    """The phase running now processed ``engines`` (#145)."""
+    model_usage.record_engines(engines, phase=_CURRENT_PHASE)
+
+
+# Per-run ceilings (#145; src/shared/run_limits.py). Each phase's one status line is
+# where its ceiling check happens: over a ceiling, that line becomes the phase's error
+# line (one line per phase), the phase finishes its own bookkeeping, and the run stops
+# when the next phase would start, or when the script would end.
+_BREACH: RunLimitExceeded | None = None
+# The phase whose status line was already checked against the ceilings.
+_LINE_CHECKED: str | None = None
+
+
+def _ceiling_breach(phase: str) -> RunLimitExceeded | None:
+    try:
+        _LIMITS.check(model_usage.LEDGER, phase)
+    except RunLimitExceeded as exc:
+        return exc
+    return None
+
+
+def _breach_line(exc: RunLimitExceeded, line: dict) -> dict:
+    """The phase's status line as a failure: its own fields, its own status kept as
+    ``phase_result`` (the phase's output was written), and the ceiling's figures."""
+    return {
+        **line,
+        "status": "error",
+        "message": str(exc),
+        "ceiling": exc.ceiling,
+        "limit": exc.limit,
+        "observed": exc.observed,
+        **({"phase_result": line["status"]} if "status" in line else {}),
+    }
+
+
+def _stop_if_over_a_ceiling() -> None:
+    """End the run when the phase that is ending went over a per-run ceiling: its
+    error line is already out, or (a phase that printed no line) is printed now. The
+    job's ``_status.json`` and ``.modernizer-state.json`` both say the phase failed."""
+    global _BREACH
+    exc = _BREACH
+    if exc is None and _CURRENT_PHASE not in ("init", _LINE_CHECKED):
+        exc = _ceiling_breach(_CURRENT_PHASE)
+        if exc is not None:
+            _output(exc.phase, _breach_line(exc, {}))
+    if exc is None:
+        return
+    _BREACH = None
+    model_usage.LEDGER.stop_timing()
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"], _JOB["db"], _JOB["job_id"], exc.phase, "RunLimitExceeded", str(exc)
+        )
+        state = _read_state()
+        if state.get("job_id") == _JOB["job_id"]:
+            state.setdefault("phase_status", {})[exc.phase] = "failed"
+            state["current_phase"] = exc.phase
+            _write_state(state)
+    sys.exit(1)
 
 
 def _error(phase: str, message: str) -> None:
@@ -268,7 +352,8 @@ def _write_model_usage() -> None:
     """Write the run's model token usage as ``_logs/model_usage.json`` (#1675).
 
     The same recorder and file as ``assess()`` (``src/shared/model_usage.py``): totals
-    by phase and model id, written only when the run called a model, so
+    by phase and model id, and each phase's timings (#145), written for every run (zero
+    counts when it called no model, as in ``--llm-mode none`` and external mode), so
     ``scripts/usage_cost.py`` prices a CLI run too. A later run of the job (``--job-id``)
     is added as one more run and the totals are summed, never overwritten. A failed
     run still records what it spent; a write error never hides the run's own.
@@ -276,7 +361,7 @@ def _write_model_usage() -> None:
     if not _JOB:
         return
     try:
-        record = model_usage.write_usage(_JOB["store"], _JOB["db"], _JOB["job_id"])
+        record = model_usage.write_usage(_JOB["store"], _JOB["db"], _JOB["job_id"], always=True)
     except Exception as exc:  # the run's own outcome matters more than its usage record
         print(f"[usage] Model usage not recorded: {type(exc).__name__}", flush=True)
         return
@@ -1274,13 +1359,23 @@ def main() -> None:
         parser.error(str(exc))
     if args.llm_mode == "bedrock":
         exit_on_invalid_guardrail_config()
+    global _LIMITS, _CURRENT_PHASE, _BREACH, _LINE_CHECKED
+    try:
+        _LIMITS = RunLimits.from_env()
+    except RunLimitConfigError as exc:
+        # Before anything runs, as a bad guardrail setting (#145).
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     model_usage.LEDGER.reset()
+    _CURRENT_PHASE = "init"  # a new run: no phase has ended yet
+    _BREACH, _LINE_CHECKED = None, None
     if _want_verbose(args.verbose):
         sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
         try:
             with _reasks_to_run_log():
                 _run(args)
+                _stop_if_over_a_ceiling()  # the last phase ends here
         except SystemExit:
             raise  # _error() already recorded the failure, if any (#517)
         except BaseException as exc:  # incl. KeyboardInterrupt: still mark the phase
@@ -1301,6 +1396,7 @@ def main() -> None:
         print(f"### run_assessment.py {' '.join(sys.argv[1:])}  [{ts}]", flush=True)
         with _reasks_to_run_log():
             _run(args)
+            _stop_if_over_a_ceiling()  # the last phase ends here
     except SystemExit:
         raise  # _error() already printed the phase's error line
     except BaseException as exc:  # incl. KeyboardInterrupt: still report the phase
@@ -1370,6 +1466,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         state["selected_engines"] = _surviving_engines(
             store, args.job_id, args.db, state.get("selected_engines", [])
         )
+        _record_engines(state["selected_engines"])
         state["phase_status"]["reality_check"] = "complete"
         state["current_phase"] = "schema_design"
         _write_state(state)
@@ -1464,6 +1561,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     # Phase: Triage
     _start_phase("triage")
     selected_engines = phase_triage(store, job_id, db_name)
+    _record_engines(selected_engines)
     state["selected_engines"] = selected_engines
     state["phase_status"]["triage"] = "complete"
     state["current_phase"] = "analysis"
@@ -1475,6 +1573,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     # if you explicitly want richer recommendation text (at ~9min cost).
     _start_phase("analysis")
     phase_analysis(store, job_id, db_name, selected_engines, llm_mode="none")
+    _record_engines(selected_engines)
     state["phase_status"]["analysis"] = "complete"
     state["current_phase"] = "assignment"
     _write_state(state)
@@ -1482,6 +1581,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     # Phase: Assignment
     _start_phase("assignment")
     phase_assignment(store, job_id, db_name)
+    _record_engines(selected_engines)
     state["phase_status"]["assignment"] = "complete"
     state["current_phase"] = "reality_check"
     _write_state(state)
@@ -1496,6 +1596,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     state["selected_engines"] = _surviving_engines(
         store, job_id, db_name, state["selected_engines"]
     )
+    _record_engines(state["selected_engines"])
     state["phase_status"]["reality_check"] = "complete"
     state["current_phase"] = "schema_design"
     _write_state(state)
@@ -1516,10 +1617,14 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
             state["selected_engines"] = _surviving_engines(
                 store, job_id, db_name, state["selected_engines"]
             )
+            _record_engines(state["selected_engines"])
             _write_state(state)
 
         _start_phase("schema_design")
         schema_status = phase_schema_design(store, job_id, db_name, args.llm_mode)
+        if schema_status["status"] != "skipped":
+            # The engines the reality check kept, as assess() records them.
+            _record_engines(state["selected_engines"])
         if schema_status["status"] == "skipped":
             # Same status and reason as the status line and the SKIPPED phase (#281).
             state["phase_status"]["schema_design"] = "skipped"
@@ -1531,6 +1636,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
 
         _start_phase("synthesis")
         phase_synthesis(store, job_id, db_name, args.llm_mode)
+        # The engines the effective assignment keeps after any post-schema reroute.
+        _record_engines(_surviving_engines(store, job_id, db_name, state["selected_engines"]))
         state["phase_status"]["synthesis"] = "complete"
         _write_state(state)
 
