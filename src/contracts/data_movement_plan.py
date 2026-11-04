@@ -4,12 +4,13 @@
 """
 Data Movement Plan — Contract Model
 
-One plan per migration wave (#1413, part of #1412): what the wave moves, from which
+One plan per migration step (#1413, part of #1412; per wave before #1797): what the step moves, from which
 source, through which change-data-capture tool and hub topics, into which targets,
 with which gates and stacks. Written by ``src.tools.data_movement.plan`` from a
 finished job (the synthesis report's ``migration_waves`` and ``table_sources``, the
 assignment, the collector schema and the schema designs) at
-``<db>/<job>/data-movement/wave-<n>/plan.json``. The stacks and the runtime read it;
+``<db>/<job>/data-movement/step-<k>/plan.json`` (per migration wave at ``wave-<n>``
+before #1797), plus one hub plan per job at ``data-movement/hub/plan.json``. The stacks and the runtime read it;
 it is also what a customer reviews before anything is deployed. No AWS call builds it.
 
 Wave 1 (the move to the source-compatible Aurora engine) is a DMS move; every later
@@ -21,6 +22,8 @@ Version History:
 - 1.0 (2026-10-23, #1413): Initial version: source, cdc (with topic_prefix and
   signal_table, #1422), hub, initial_load, targets, gates, stacks, monthly_cost_usd with
   its assumptions, and unsupported.
+- 1.1 (2026-11-04, #1797): Plan per step: step, contract reference, hub_topics. The new
+  HubPlan model starts at its own 1.0.
 """
 
 from typing import Literal
@@ -267,11 +270,24 @@ class UnsupportedItem(BaseModel):
     reason: str = Field(..., description="Why it is unsupported, in one sentence")
 
 
+class ContractRef(BaseModel):
+    """The step's transformation contract (#1764), by path under the job and its hash."""
+
+    artifact: str = Field(
+        ..., description="Path under the job, e.g. transformation-contract/v2/step-1.json"
+    )
+    sha256: str | None = Field(None, description="The contract file's SHA-256, when written")
+
+
 class DataMovementPlan(BaseModel):
-    """One migration wave's data movement plan (#1413)."""
+    """One migration step's data movement plan (#1797). Files written before #1797 are one
+    wave's plan (``step`` is None, ``hub`` holds the wave's own topics).
+
+    ``source`` is the step's logical source (the engine it moves from or fronts) and
+    ``cdc`` the physical capture it reads: after step 1 that is the hub plan's."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The job the plan is built from")
     database_name: str = Field(..., description="The job's database name")
@@ -281,18 +297,45 @@ class DataMovementPlan(BaseModel):
     wave: int = Field(..., ge=1, description="The wave, as migration_waves numbers it")
     wave_count: int = Field(..., ge=1, description="How many waves the job's roadmap has")
     title: str = Field(..., description="The wave's title, as migration_waves states it")
-    source: SourceSpec
-    cdc: CdcSpec
+    step: int | None = Field(
+        None,
+        ge=1,
+        description="The migration step (#1797); None in a plan written per wave before it",
+    )
+    contract: ContractRef | None = Field(
+        None, description="The step's transformation contract, when it exists"
+    )
+    hub_topics: list[str] = Field(
+        default_factory=list,
+        description="The hub topics this step reads (steps after step 1), sorted",
+    )
+    source: SourceSpec = Field(
+        ...,
+        description=(
+            "The step's logical source: the engine it moves from or fronts. The capture it "
+            "reads is in cdc"
+        ),
+    )
+    cdc: CdcSpec = Field(
+        ...,
+        description=(
+            "The physical capture the step reads: DMS for step 1, the hub plan's Debezium "
+            "capture for every later step"
+        ),
+    )
     hub: list[HubTopic] = Field(
         default_factory=list,
         description=(
-            "One compacted topic per source table the wave's targets read, sorted by "
-            "table; empty for a DMS wave, which writes the target directly"
+            "Empty in a step plan (the topics are in the hub plan, named by hub_topics); "
+            "filled only in an older per-wave plan, one compacted topic per source table "
+            "the wave's targets read"
         ),
     )
-    initial_load: InitialLoad
+    initial_load: InitialLoad = Field(
+        ..., description="How existing rows reach the targets: DMS full load, or the hub's snapshot"
+    )
     targets: list[Target] = Field(default_factory=list, description="By engine, then role")
-    gates: Gates
+    gates: Gates = Field(..., description="What must hold before the step cuts over")
     stacks: list[Stack] = Field(default_factory=list, description="In deploy order")
     monthly_cost_usd: float | None = Field(
         None,
@@ -310,4 +353,38 @@ class DataMovementPlan(BaseModel):
     )
     notes: list[str] = Field(
         default_factory=list, description="The defaults the plan chose (partitions, lag gate)"
+    )
+
+
+class HubPlan(BaseModel):
+    """The job's one change-data capture into the hub (#1797, ADR-033 Decision 10):
+    one Debezium connector and one compacted topic per table, shared by every step after step 1."""
+
+    contract_version: str = Field(
+        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+    )
+    job_id: str = Field(..., description="The job the plan is built from")
+    database_name: str = Field(..., description="The job's database name")
+    assignment_version: int = Field(..., ge=1, description="The assignment version the plan reads")
+    source: SourceSpec = Field(
+        ..., description="The engine the hub captures: Aurora after step 1, else the source"
+    )
+    cdc: CdcSpec = Field(..., description="The Debezium capture")
+    initial_load: InitialLoad = Field(..., description="Debezium's own snapshot")
+    topics: list[HubTopic] = Field(
+        default_factory=list, description="One compacted topic per table, sorted"
+    )
+    stacks: list[Stack] = Field(default_factory=list, description="In deploy order")
+    monthly_cost_usd: float | None = Field(
+        None, ge=0, description="The hub's monthly cost; None when unpriced"
+    )
+    cost_assumptions: list[str] = Field(
+        default_factory=list, description="What the hub's cost figure assumes, or would assume"
+    )
+    unsupported: list[UnsupportedItem] = Field(
+        default_factory=list,
+        description="What the hub needs that no connector or price provides yet, sorted",
+    )
+    notes: list[str] = Field(
+        default_factory=list, description="The defaults the hub plan chose (partitions)"
     )

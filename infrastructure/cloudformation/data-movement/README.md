@@ -5,7 +5,7 @@ The data movement decided on #1412 (to become ADR-033) reads each source table's
 | File | What it is |
 |---|---|
 | `debezium-plugin-bucket.yaml` | Static stack: a versioned, encrypted, private S3 bucket for the plugin ZIP, plus its access-log bucket |
-| `examples/*.input.json` | Connector inputs shaped like a wordpress wave (the `source`, `cdc` and `hub` sections of a data movement plan) |
+| `examples/*.input.json` | Connector inputs shaped like a wordpress wave (the `source`, `cdc` and `hub` sections of a data movement plan). A hub plan's `source`, `cdc` and `topics` (as `hub`) feed the connector from #1802 on |
 | `examples/*.yaml` | The connector stacks rendered from them (the snapshot tests compare against these files) |
 
 The connector stack is rendered per wave by `scripts/render_debezium_connector.py` from `src/tools/data_movement/debezium_connector.py`. It creates the custom plugin, the worker configuration (JSON converters, Secrets Manager config provider), a least-privilege service execution role, a KMS key and CloudWatch Logs group for worker logs, and the connector. Every resource is tagged `modernizer:job-id` and `modernizer:wave`. Account, region, endpoints, network and credentials are stack parameters with no defaults. Names two waves of one job must not share (PostgreSQL slot and publication, heartbeat and schema history topics, the schema history consumer group) carry the wave number.

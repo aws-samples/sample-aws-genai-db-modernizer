@@ -1,10 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Data movement plans for the sample jobs (#1413).
+"""Data movement plans for the sample jobs (#1413, #1797).
 
 ``scripts/run_data_movement_plan.py`` runs on a copy of each finished job (wordpress,
-discourse, trailgear, and the designed wordpress job) and writes one plan per wave.
+discourse, trailgear, and the designed wordpress job) and writes one plan per step plus
+the job's hub plan.
 Each plan must be the registered contract, follow the job's ``migration_waves`` (same
 count and order), move wave 1 with DMS and every later wave with Debezium, give every
 table a wave's targets read a hub topic or an unsupported entry, and make the cache
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from src.contracts.data_movement_plan import DataMovementPlan
+from src.contracts.data_movement_plan import DataMovementPlan, HubPlan
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_table
 from src.shared.contract_versioning import load_contract
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES
@@ -50,14 +51,23 @@ def _copy_job(run: PipelineResult, dest: Path) -> Path:
     return root
 
 
-def _plan_job(root: Path, db: str, job: str, seed: str | None = None) -> list[DataMovementPlan]:
+def _plan_job(
+    root: Path, db: str, job: str, seed: str | None = None
+) -> tuple[list[DataMovementPlan], HubPlan | None]:
     out = _script(SCRIPT, "--job-id", job, "--db", db, "--artifact-root", str(root), seed=seed)
     assert out["status"] == "complete", out
     plans = []
+    assert out["step_count"] == len(out["plans"])
     for rel in out["plans"]:
         payload = json.loads((root / rel).read_text())
         plans.append(load_contract(DataMovementPlan, payload, artifact=rel))
-    return plans
+    assert out["hub"] == f"{db}/{job}/data-movement/hub/plan.json" or out["hub"] is None
+    hub = None
+    if out["hub"]:
+        hub = load_contract(
+            HubPlan, json.loads((root / out["hub"]).read_text()), artifact=out["hub"]
+        )
+    return plans, hub
 
 
 def _report(root: Path, db: str, job: str) -> dict:
@@ -73,9 +83,17 @@ def _assignment(root: Path, db: str, job: str, report: dict) -> dict:
     return data
 
 
-def _check_plans(plans: list[DataMovementPlan], report: dict, assignment: dict) -> None:
+def _check_plans(
+    plans: list[DataMovementPlan], hub: HubPlan | None, report: dict, assignment: dict
+) -> None:
     waves = report["migration_waves"]
     assert [p.wave for p in plans] == [w["wave"] for w in waves]
+    assert [p.step for p in plans] == [w["wave"] for w in waves]
+    # Wordpress and the other samples have later waves, so the job has a hub plan.
+    assert hub is not None and len(waves) > 1
+    assert hub.topics and hub.cdc.tool == "debezium"
+    assert all(t.key_columns and t.cleanup_policy == "compact" for t in hub.topics)
+    assert all(t.topic.startswith(f"{hub.cdc.topic_prefix}.") for t in hub.topics)
     assert [p.title for p in plans] == [w["title"] for w in waves]
     assert {p.wave_count for p in plans} == {len(waves)}
     assert {p.assignment_version for p in plans} == {report["assignment_summary"]["version"]}
@@ -87,14 +105,15 @@ def _check_plans(plans: list[DataMovementPlan], report: dict, assignment: dict) 
 
     for plan, wave in zip(later, waves[1:], strict=True):
         assert plan.cdc.tool == "debezium"
-        assert plan.cdc.connector_class, plan.wave
+        assert plan.cdc == hub.cdc and plan.hub == []
         read = {t for target in plan.targets for t in target.tables}
         assert read, plan.wave
-        covered = {h.table for h in plan.hub} | {
+        by_topic = {t.topic: t.table for t in hub.topics}
+        assert set(plan.hub_topics) <= set(by_topic), plan.wave
+        covered = {by_topic[t] for t in plan.hub_topics} | {
             u.table for u in plan.unsupported if u.kind in {"no_key", "view", "unknown_table"}
         }
         assert read <= covered, (plan.wave, sorted(read - covered))
-        assert all(h.key_columns and h.cleanup_policy == "compact" for h in plan.hub)
         cache = [t for t in plan.targets if t.engine in CACHE_ENGINES]
         if cache:
             assert {t.role for t in cache} == {"cache"}
@@ -139,21 +158,24 @@ def _check_plans(plans: list[DataMovementPlan], report: dict, assignment: dict) 
         + dms["storage_price_per_gb_month"] * DMS_STORAGE_GB,
         2,
     )
+    hub_gaps = [u for u in hub.unsupported if u.kind == "cost"]
+    assert (hub.monthly_cost_usd is not None) != bool(hub_gaps)
+    assert all(u.item == "hub_storage" for u in hub_gaps)
     for plan in plans:
         gaps = [u for u in plan.unsupported if u.kind == "cost"]
         if plan.cdc.tool == "dms":
             assert plan.monthly_cost_usd == dms_month, plan.wave
             assert not gaps, plan.wave
         else:
-            assert (plan.monthly_cost_usd is not None) != bool(gaps), plan.wave
-            assert all(u.item == "hub_storage" for u in gaps), plan.wave
+            # A step's cost is its writers; the hub plan carries the cluster.
+            assert plan.monthly_cost_usd is not None and not gaps, plan.wave
 
 
 def test_each_sample_job_gets_one_valid_plan_per_wave(run: PipelineResult, tmp_path: Path) -> None:
     root = _copy_job(run, tmp_path)
-    plans = _plan_job(root, run.db, run.job_id)
+    plans, hub = _plan_job(root, run.db, run.job_id)
     report = _report(root, run.db, run.job_id)
-    _check_plans(plans, report, _assignment(root, run.db, run.job_id, report))
+    _check_plans(plans, hub, report, _assignment(root, run.db, run.job_id, report))
 
 
 def test_the_plans_ignore_the_hash_seed(run: PipelineResult, tmp_path: Path) -> None:
@@ -177,7 +199,7 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
 
     from src.shared.catalog.prices import PriceTable
     from src.storage.local_store import LocalArtifactStore
-    from src.tools.data_movement.plan import build_plans, load_inputs
+    from src.tools.data_movement.plan import build_step_plans, load_inputs
 
     root = _copy_job(run, tmp_path)
     table = PriceTable(
@@ -201,13 +223,14 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
         },
     )
     inputs = load_inputs(LocalArtifactStore(base_dir=str(root)), run.db, run.job_id)
-    plans = build_plans(inputs, prices=table)
+    plans, hub = build_step_plans(inputs, prices=table)
     assert plans[0].monthly_cost_usd == 375.0
+    assert hub is not None and hub.monthly_cost_usd is not None, hub.unsupported
     for plan in plans:
         costs = [u for u in plan.unsupported if u.kind == "cost"]
         assert plan.monthly_cost_usd is not None, (plan.wave, costs)
         assert not costs
-    # Only the first Debezium wave carries the brokers (0.2 x 3 x 730 = 438).
+    # Only the hub plan carries the brokers (0.2 x 3 x 730 = 438); a step is its writers.
     free = table.model_copy(
         update={
             "sections": {
@@ -221,9 +244,10 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
             }
         }
     )
-    unbrokered = build_plans(inputs, prices=free)
-    assert round(plans[1].monthly_cost_usd - unbrokered[1].monthly_cost_usd, 2) == 438.0
-    assert [p.monthly_cost_usd for p in plans[2:]] == [p.monthly_cost_usd for p in unbrokered[2:]]
+    unbrokered, free_hub = build_step_plans(inputs, prices=free)
+    assert free_hub is not None and free_hub.monthly_cost_usd is not None
+    assert round(hub.monthly_cost_usd - free_hub.monthly_cost_usd, 2) == 438.0
+    assert [p.monthly_cost_usd for p in plans] == [p.monthly_cost_usd for p in unbrokered]
 
 
 @pytest.mark.deterministic
@@ -231,9 +255,11 @@ def test_the_designed_wordpress_job_points_each_writer_at_its_design(
     designed_run: PipelineResult, tmp_path: Path
 ) -> None:
     root = _copy_job(designed_run, tmp_path)
-    plans = _plan_job(root, designed_run.db, designed_run.job_id)
+    plans, hub = _plan_job(root, designed_run.db, designed_run.job_id)
     report = _report(root, designed_run.db, designed_run.job_id)
-    _check_plans(plans, report, _assignment(root, designed_run.db, designed_run.job_id, report))
+    _check_plans(
+        plans, hub, report, _assignment(root, designed_run.db, designed_run.job_id, report)
+    )
     later_targets = [t for p in plans[1:] for t in p.targets]
     assert later_targets
     for target in later_targets:
@@ -266,6 +292,6 @@ def test_a_wordpress_job_with_no_cache_wave_plans_its_waves(tmp_path: Path) -> N
 
     report = _report(root, db, job)
     assert not any(set(w["engines"]) & CACHE_ENGINES for w in report["migration_waves"])
-    plans = _plan_job(root, db, job)
+    plans, hub = _plan_job(root, db, job)
     assert len(plans) >= 2
-    _check_plans(plans, report, _assignment(root, db, job, report))
+    _check_plans(plans, hub, report, _assignment(root, db, job, report))

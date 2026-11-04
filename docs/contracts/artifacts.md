@@ -35,8 +35,10 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | `DesignTrace` (`src.contracts.schema_design_trace`) |
 | `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
 | `decisions/engine_scope\.json` | `EngineScopeDecision` (`src.contracts.engine_scope_decision`) |
-| `data-movement/wave-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`) |
 | `transformation-contract/v\d+/step-\d+\.json` | `StepContract` (`src.contracts.transformation_contract`) |
+| `data-movement/step-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`), one per migration step (#1797) |
+| `data-movement/hub/plan\.json` | `HubPlan` (`src.contracts.data_movement_plan`), one per job (#1797) |
+| `data-movement/wave-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`) (the layout written before #1797) |
 | `[^/]+/questions\.json` | `AgentQuestions` (`src.contracts.agent_interaction_models`) |
 | `[^/]+/answers\.json` | `AgentAnswers` (`src.contracts.agent_interaction_models`) |
 | `\.meta/[^_/][^/]*\.json` | `PhaseProgression` (`src.contracts.phase_models`) |

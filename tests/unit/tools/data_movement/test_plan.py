@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from src.contracts.data_movement_plan import DataMovementPlan
+from src.contracts.data_movement_plan import DataMovementPlan, HubPlan
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable, price_table
 from src.shared.contract_versioning import contract_for_artifact, current_version, load_contract
 from src.storage.local_store import LocalArtifactStore
@@ -32,6 +32,7 @@ from src.tools.data_movement.plan import (
     DMS_STORAGE_GB,
     JobInputs,
     build_plans,
+    build_step_plans,
     write_plans,
 )
 
@@ -129,9 +130,15 @@ def _job(
     source_engine: str = "mysql",
     deployment_type: str | None = None,
     designs: dict[str, tuple[str, dict[str, Any]]] | None = None,
+    aurora: bool = True,
 ) -> JobInputs:
+    if waves is None:
+        waves = _waves()
+        if not aurora:
+            # A source already on Aurora: wave 1 moves nothing and names no engine.
+            waves[0] = {**waves[0], "homogeneity": "no_move", "engines": []}
     report = {
-        "migration_waves": _waves() if waves is None else waves,
+        "migration_waves": waves,
         "assignment_summary": {"version": 2},
         "table_sources": [
             {
@@ -185,6 +192,22 @@ def _job(
     )
 
 
+def _write_job(store: LocalArtifactStore, inputs: JobInputs | None = None) -> None:
+    """The finished job's report, assignment and collector, where ``load_inputs`` reads them."""
+    job = inputs or _job()
+    store.write_json(
+        "shop/job-1/synthesis/v2/report.json", {"contract_version": "1.0", **job.report}
+    )
+    store.write_json("shop/job-1/assignment/v2/assignment.json", dict(job.assignment))
+    store.write_json("shop/job-1/collector/output.json", dict(job.collector))
+
+
+def _aurora_tables(inputs: JobInputs) -> list[str]:
+    """The base tables of the Aurora wave (wave 1), views left out."""
+    views = {v["view_id"] for v in inputs.collector["database_schema"]["views"]}
+    return sorted(t for t in inputs.report["migration_waves"][0]["tables"] if t not in views)
+
+
 def _ec_design(key_pattern: str, fields: list[str] | None = None) -> tuple[str, dict[str, Any]]:
     return (
         "schema-elasticache/v2/schema_output.json",
@@ -235,34 +258,37 @@ def test_later_waves_are_debezium_from_the_aurora_engine() -> None:
         assert plan.cdc.tool == "debezium"
         assert plan.source.engine == "aurora_mysql"
         assert plan.cdc.connector_class == "io.debezium.connector.mysql.MySqlConnector"
-        assert plan.cdc.snapshot_mode == "no_data"
-        assert plan.initial_load.position_capture == "binlog_position"
+        # The hub's own snapshot starts the capture: no bulk load to hand off from.
+        assert plan.cdc.snapshot_mode == "initial"
+        assert plan.initial_load.position_capture == "connector_offsets"
         settings = {s.name: s.value for s in plan.cdc.required_source_settings}
         assert {"binlog_format", "binlog_row_image"} <= set(settings)
-        # The handoff resumes from the GTID set, so the plan asks for GTIDs (#1427).
-        assert settings["gtid_mode"] == "ON"
-        assert settings["enforce_gtid_consistency"] == "ON"
+        assert "gtid_mode" not in settings
 
 
 def test_hub_keys_come_from_the_primary_key_or_a_not_null_unique_index() -> None:
-    wave3 = _plans()[2]
-    keys = {h.table: (h.key_columns, h.key_source) for h in wave3.hub}
-    assert keys == {
-        "shop.orders": (["id"], "primary_key"),
-        "shop.order_tags": (["order_id", "tag"], "unique_index"),
-    }
-    assert all(h.cleanup_policy == "compact" for h in wave3.hub)
-    assert wave3.cdc.topic_prefix == "dm-job-1-w3"
-    assert all(h.topic == f"dm-job-1-w3.{h.table}" for h in wave3.hub)
+    steps, hub = build_step_plans(_job(), prices=None)
+    wave3 = steps[2]
+    assert hub is not None
+    keys = {h.table: (h.key_columns, h.key_source) for h in hub.topics}
+    assert keys["shop.orders"] == (["id"], "primary_key")
+    assert keys["shop.order_tags"] == (["order_id", "tag"], "unique_index")
+    assert all(h.cleanup_policy == "compact" for h in hub.topics)
+    assert wave3.cdc.topic_prefix == "dm-job-1"
+    assert all(h.topic == f"dm-job-1.{h.table}" for h in hub.topics)
+    assert wave3.hub_topics == ["dm-job-1.shop.order_tags", "dm-job-1.shop.orders"]
     # The nullable unique index is no key, and a view has no change stream.
     assert _kinds(wave3, "no_key") == [("shop.audit", None)]
     assert _kinds(wave3, "view") == [("shop.order_view", None)]
 
 
 def test_every_table_a_target_reads_has_a_topic_or_an_unsupported_entry() -> None:
-    for plan in _plans()[1:]:
+    steps, hub = build_step_plans(_job(), prices=None)
+    assert hub is not None
+    topics = {t.topic: t.table for t in hub.topics}
+    for plan in steps[1:]:
         read = {t for target in plan.targets for t in target.tables}
-        covered = {h.table for h in plan.hub} | {
+        covered = {topics[t] for t in plan.hub_topics} | {
             u.table for u in plan.unsupported if u.kind in {"no_key", "view", "unknown_table"}
         }
         assert read <= covered, plan.wave
@@ -361,13 +387,24 @@ def test_a_wave_one_with_no_aurora_engine_names_no_target() -> None:
     assert {s.name for s in wave1.cdc.required_source_settings} >= {"change data capture"}
 
 
-def test_a_source_with_no_debezium_connector_is_unsupported() -> None:
+def test_a_step_on_the_hubs_capture_reports_no_dialect_gap_of_its_own() -> None:
+    # The step's source is its logical source; the capture it reads is the hub's.
     waves = _waves()
-    waves[2]["moves_from"] = ["informix"]
-    wave3 = _plans(waves=waves)[2]
-    assert wave3.cdc.connector_class is None
-    assert wave3.source.dialect is None
-    assert [u.engine for u in wave3.unsupported if u.kind == "source_dialect"] == ["informix"]
+    waves[2]["moves_from"] = []
+    waves[2]["serves_from"] = ["dynamodb"]
+    steps, hub = build_step_plans(_job(waves=waves), prices=None)
+    assert hub is not None and hub.cdc.connector_class
+    assert steps[2].source.engine == "dynamodb" and steps[2].cdc == hub.cdc
+    assert not [u for u in steps[2].unsupported if u.kind == "source_dialect"]
+    # Its key and view gaps are still the step's own.
+    assert [u.table for u in steps[2].unsupported if u.kind == "view"] == ["shop.order_view"]
+
+
+def test_a_hub_on_a_source_with_no_debezium_connector_is_unsupported() -> None:
+    _, hub = build_step_plans(_job(aurora=False, source_engine="informix"), prices=None)
+    assert hub is not None
+    assert hub.cdc.connector_class is None and hub.source.dialect is None
+    assert [u.engine for u in hub.unsupported if u.kind == "source_dialect"] == ["informix"]
 
 
 def test_a_job_with_no_cache_wave_plans_its_waves() -> None:
@@ -435,34 +472,34 @@ def test_the_dms_wave_costs_one_instance_month_and_its_storage() -> None:
     assert "dms.r6i.large" in text and "retrieved on 2026-11-02" in text
 
 
-def test_the_first_debezium_wave_carries_the_brokers_and_later_waves_do_not() -> None:
+def test_a_step_costs_its_writers_and_the_hub_carries_the_cluster() -> None:
     # 100 MiB per table: 1 GiB per broker.
-    plans = build_plans(_sized(100.0), prices=PRICES)
-    first, later = plans[1], plans[2]
-    for plan in (first, later):
-        connectors = 1 + len(plan.targets)
-        storage = 0.1 * 3 * math.ceil(sum(100.0 for _ in plan.hub) / 1024)
-        connect = 0.1 * connectors * 730
-        brokers = 0.2 * 3 * 730 if plan is first else 0.0
-        assert plan.monthly_cost_usd == pytest.approx(round(brokers + storage + connect, 2))
+    steps, hub = build_step_plans(_sized(100.0), prices=PRICES)
+    assert hub is not None
+    storage = 0.1 * 3 * math.ceil(100.0 * len(hub.topics) / 1024)
+    # The source connector and the brokers (0.2 x 3 x 730) are the hub's.
+    assert hub.monthly_cost_usd == pytest.approx(round(0.2 * 3 * 730 + storage + 0.1 * 730, 2))
+    for plan in steps[1:]:
+        assert plan.monthly_cost_usd == pytest.approx(round(0.1 * len(plan.targets) * 730, 2))
         assert not [u for u in plan.unsupported if u.kind == "cost"]
-    assert later.monthly_cost_usd < first.monthly_cost_usd
+    assert not [u for u in hub.unsupported if u.kind == "cost"]
 
 
 def test_topic_storage_is_each_brokers_copy_rounded_up_to_a_gib() -> None:
-    small = build_plans(_sized(1.0), prices=PRICES)[2]
-    big = build_plans(_sized(2048.0), prices=PRICES)[2]
-    hub = len(small.hub)
-    assert hub and len(big.hub) == hub
+    small = build_step_plans(_sized(1.0), prices=PRICES)[1]
+    big = build_step_plans(_sized(2048.0), prices=PRICES)[1]
+    assert small is not None and big is not None
+    hub = len(small.topics)
+    assert hub and len(big.topics) == hub
     difference = big.monthly_cost_usd - small.monthly_cost_usd
     # small: 1 GiB per broker; big: ceil(hub x 2 GiB) per broker.
     assert difference == pytest.approx(0.1 * 3 * (2 * hub - 1), abs=0.01)
 
 
-def test_an_unmeasured_table_leaves_the_debezium_cost_null_with_a_reason() -> None:
-    plan = build_plans(_sized(None), prices=PRICES)[2]
-    assert plan.monthly_cost_usd is None
-    cost = [u for u in plan.unsupported if u.kind == "cost"]
+def test_an_unmeasured_table_leaves_the_hub_cost_null_with_a_reason() -> None:
+    hub = build_step_plans(_sized(None), prices=PRICES)[1]
+    assert hub is not None and hub.monthly_cost_usd is None
+    cost = [u for u in hub.unsupported if u.kind == "cost"]
     assert [u.item for u in cost] == ["hub_storage"]
     assert "size_mb" in cost[0].reason
 
@@ -501,20 +538,17 @@ def test_without_a_price_table_no_wave_states_a_cost() -> None:
 
 
 def test_written_plans_are_the_registered_contract_and_read_back(tmp_path: Path) -> None:
-    job = _job()
     store = LocalArtifactStore(base_dir=str(tmp_path))
-    store.write_json(
-        "shop/job-1/synthesis/v2/report.json", {"contract_version": "1.0", **job.report}
-    )
-    store.write_json("shop/job-1/assignment/v2/assignment.json", dict(job.assignment))
-    store.write_json("shop/job-1/collector/output.json", dict(job.collector))
+    _write_job(store)
     written = write_plans(store, "shop", "job-1")
-    assert written == [f"shop/job-1/data-movement/wave-{n}/plan.json" for n in (1, 2, 3)]
+    assert written == [f"shop/job-1/data-movement/step-{n}/plan.json" for n in (1, 2, 3)] + [
+        "shop/job-1/data-movement/hub/plan.json"
+    ]
     for path in written:
-        assert contract_for_artifact(path) is DataMovementPlan
-        payload = store.read_json(path)
-        plan = load_contract(DataMovementPlan, payload, artifact=path)
-        assert plan.contract_version == current_version(DataMovementPlan)
+        model = contract_for_artifact(path)
+        assert model is (HubPlan if path.endswith("/hub/plan.json") else DataMovementPlan)
+        plan = load_contract(model, store.read_json(path), artifact=path)
+        assert plan.contract_version == current_version(model)
     # Writing again gives the same bytes.
     first = [(tmp_path / p).read_bytes() for p in written]
     write_plans(store, "shop", "job-1")
@@ -522,15 +556,17 @@ def test_written_plans_are_the_registered_contract_and_read_back(tmp_path: Path)
     assert json.loads(first[0])["wave"] == 1
 
 
-def test_each_debezium_wave_has_its_own_topic_prefix_and_names_a_signal_table() -> None:
-    wave1, wave2, wave3 = _plans()
+def test_the_job_has_one_topic_prefix_and_names_a_signal_table() -> None:
+    steps, hub = build_step_plans(_job(), prices=None)
+    assert hub is not None
+    wave1, *later = steps
     assert wave1.cdc.topic_prefix is None and wave1.cdc.signal_table is None
-    assert [p.cdc.topic_prefix for p in (wave2, wave3)] == ["dm-job-1-w2", "dm-job-1-w3"]
-    for plan in (wave2, wave3):
+    assert {p.cdc.topic_prefix for p in later} == {"dm-job-1"}
+    for plan in later:
         assert plan.cdc.signal_table == "shop.debezium_signal"
         signal = [s for s in plan.cdc.required_source_settings if s.name == "signal table"]
         assert len(signal) == 1 and signal[0].value.startswith("shop.debezium_signal (")
-        assert all(h.topic.startswith(f"{plan.cdc.topic_prefix}.") for h in plan.hub)
+        assert all(t.startswith("dm-job-1.") for t in plan.hub_topics)
 
 
 @pytest.mark.parametrize(
@@ -551,24 +587,27 @@ def test_wave_one_settings_follow_the_source_deployment(
     assert expected in names and absent not in names
 
 
-def test_only_the_mysql_handoff_waves_ask_for_gtids() -> None:
+def test_the_hub_starts_from_its_own_snapshot_so_no_gtids_are_asked() -> None:
     wave1, *later = _plans()
     assert wave1.cdc.tool == "dms"
     assert "gtid_mode" not in {s.name for s in wave1.cdc.required_source_settings}
     for plan in later:
-        assert "gtid_mode" in {s.name for s in plan.cdc.required_source_settings}
+        assert plan.cdc.snapshot_mode == "initial"
+        assert "gtid_mode" not in {s.name for s in plan.cdc.required_source_settings}
 
 
-@pytest.mark.passes_on_main  # guards the negative case: GTIDs only on MySQL handoff waves
-def test_a_postgresql_handoff_wave_does_not_ask_for_gtids() -> None:
+def test_a_postgresql_hub_does_not_ask_for_gtids() -> None:
     waves = _waves(first_engines=["aurora_postgresql"])
     waves[0]["moves_from"] = ["postgresql"]
     waves[1]["fronts"] = "aurora_postgresql"
     waves[2]["moves_from"] = ["aurora_postgresql"]
     later = build_plans(_job(waves=waves, source_engine="postgresql"), prices=None)[1:]
-    assert later and all(p.source.dialect == "postgresql" for p in later)
+    assert later
     for plan in later:
-        assert plan.initial_load.position_capture == "replication_slot_lsn"
+        assert plan.source.dialect == "postgresql"
+        assert plan.cdc.connector_class == "io.debezium.connector.postgresql.PostgresConnector"
+    for plan in later:
+        assert plan.initial_load.position_capture == "connector_offsets"
         names = {s.name for s in plan.cdc.required_source_settings}
         assert "gtid_mode" not in names and "enforce_gtid_consistency" not in names
 
@@ -799,3 +838,13 @@ def test_the_committed_price_table_prices_the_dms_wave_from_its_entries() -> Non
         gaps = [u for u in plan.unsupported if u.kind == "cost"]
         assert (plan.monthly_cost_usd is not None) != bool(gaps), plan.wave
         assert all(u.item == "hub_storage" for u in gaps), plan.wave
+
+
+def test_the_storage_price_gap_belongs_to_the_hub_only() -> None:
+    sections = {k: v for k, v in PRICES.sections.items() if k != "msk"}
+    steps, hub = build_step_plans(_sized(1.0), prices=_table_of(sections))
+    assert hub is not None and hub.monthly_cost_usd is None
+    assert [u.item for u in hub.unsupported if u.kind == "cost"] == ["msk", "msk_storage"]
+    for step in steps[1:]:
+        assert step.monthly_cost_usd == round(0.1 * len(step.targets) * 730, 2)
+        assert not [u for u in step.unsupported if u.kind == "cost"]

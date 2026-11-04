@@ -1,12 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Build one ``DataMovementPlan`` per migration wave from a finished job (#1413).
+"""Build one ``DataMovementPlan`` per migration step from a finished job (#1413, #1797).
 
 Pure and deterministic: :func:`build_plans` reads only the dicts it is given (the
 synthesis report, the assignment, the collector output and the schema designs) and
 the local price table; :func:`write_plans` loads them from the artifact store and
-writes ``<db>/<job>/data-movement/wave-<n>/plan.json``. No AWS call, no clock.
+writes ``<db>/<job>/data-movement/step-<k>/plan.json`` per step and ``<db>/<job>/data-movement/hub/plan.json``. No AWS call, no clock.
 
 Rules, per wave of the report's ``migration_waves`` (same count, same order):
 
@@ -56,8 +56,10 @@ from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design.dynamodb_key_reconcile import _TOKEN_RE, unresolved_tokens
 from src.contracts.data_movement_plan import (
     CdcSpec,
+    ContractRef,
     DataMovementPlan,
     Gates,
+    HubPlan,
     HubTopic,
     InitialLoad,
     LaggingRead,
@@ -300,10 +302,10 @@ def _hub_key(table: Mapping[str, Any]) -> tuple[list[str], str] | None:
     return [str(c) for c in candidates[0][2]], "unique_index"
 
 
-def topic_prefix(job_id: str, wave: int) -> str:
-    """Debezium ``topic.prefix`` for a wave: unique per job and wave, so replication slots,
-    publications and schema-history topics never collide across waves."""
-    return _TOPIC_UNSAFE.sub("-", f"dm-{job_id}-w{wave}")
+def topic_prefix(job_id: str, wave: int | None = None) -> str:
+    """Debezium ``topic.prefix``: ``dm-<job>`` for the job's one hub (#1797); ``dm-<job>-w<n>``
+    is kept for callers that still pass a wave."""
+    return _TOPIC_UNSAFE.sub("-", f"dm-{job_id}" if wave is None else f"dm-{job_id}-w{wave}")
 
 
 def _topic(prefix: str, table_id: str) -> str:
@@ -615,7 +617,8 @@ def _debezium_cost(
     targets: list[Target],
     carries_cluster: bool,
 ) -> tuple[float | None, list[UnsupportedItem]]:
-    """Broker hours (the first Debezium wave only), topic storage and MSK Connect workers."""
+    """Broker hours, topic storage and the source connector (the hub plan, which
+    ``carries_cluster``), plus one MSK Connect writer per target."""
     msk = _section(sections, MSK_PRICE_SECTION)
     connect = _section(sections, MSK_CONNECT_PRICE_SECTION)
     gaps: list[UnsupportedItem] = []
@@ -624,7 +627,7 @@ def _debezium_cost(
     mcu = connect.get("mcu_price_per_hour")
     if carries_cluster and hourly is None:
         gaps.append(_cost_gap("msk", _no_price(f"MSK brokers of type {MSK_BROKER_TYPE}")))
-    if storage is None:
+    if carries_cluster and storage is None:
         gaps.append(_cost_gap("msk_storage", _no_price("MSK broker storage")))
     if mcu is None:
         gaps.append(_cost_gap("msk_connect", _no_price("MSK Connect workers (per MCU-hour)")))
@@ -644,7 +647,8 @@ def _debezium_cost(
     # provisions the topics' size, rounded up to a whole GiB (at least 1 GiB with a topic).
     per_broker = math.ceil(gigabytes or 0) if hub else 0
     total = float(storage or 0) * per_broker * MSK_BROKERS
-    total += float(mcu or 0) * MSK_CONNECT_MCU_PER_CONNECTOR * (1 + len(targets)) * HOURS_PER_MONTH
+    connectors = len(targets) + (1 if carries_cluster else 0)
+    total += float(mcu or 0) * MSK_CONNECT_MCU_PER_CONNECTOR * connectors * HOURS_PER_MONTH
     if carries_cluster:
         total += float(hourly or 0) * MSK_BROKERS * HOURS_PER_MONTH
     return total, []
@@ -671,16 +675,24 @@ def _monthly_cost(
         ]
         cost, gaps = _dms_cost(sections)
     else:
-        assumptions = [
-            f"One provisioned MSK cluster of {MSK_BROKERS} {MSK_BROKER_TYPE} brokers, one per "
-            "Availability Zone, holds the hub topics; later waves reuse it, so its broker "
-            "hours are charged to the first Debezium wave only",
-            "Topic storage is each hub table's collected size (a compacted topic keeps each "
-            f"key's latest row), provisioned on each of the {MSK_BROKERS} brokers and rounded "
-            "up to a whole GiB",
-            f"MSK Connect runs one Debezium source connector and one writer per target, each "
-            f"at {MSK_CONNECT_MCU_PER_CONNECTOR} MCU for {HOURS_PER_MONTH} hours",
-        ]
+        if carries_cluster:
+            assumptions = [
+                f"One provisioned MSK cluster of {MSK_BROKERS} {MSK_BROKER_TYPE} brokers, one "
+                "per Availability Zone, holds the hub topics for every step; the hub plan "
+                "carries the cluster's broker hours and the step plans do not repeat them",
+                "Topic storage is each hub table's collected size (a compacted topic keeps "
+                f"each key's latest row), provisioned on each of the {MSK_BROKERS} brokers and "
+                "rounded up to a whole GiB",
+                f"MSK Connect runs the one Debezium source connector at "
+                f"{MSK_CONNECT_MCU_PER_CONNECTOR} MCU for {HOURS_PER_MONTH} hours",
+            ]
+        else:
+            assumptions = [
+                "The hub plan carries the brokers, the topic storage and the source "
+                "connector; this step adds only its writers",
+                f"MSK Connect runs one writer per target, each at {MSK_CONNECT_MCU_PER_CONNECTOR} "
+                f"MCU for {HOURS_PER_MONTH} hours",
+            ]
         cost, gaps = _debezium_cost(sections, job, hub, targets, carries_cluster)
     assumptions.append("The targets' own cost is in the total cost of ownership, not repeated here")
     if prices is not None:
@@ -864,46 +876,53 @@ def _dms_capture(
 
 def _debezium_capture(
     job: _JobView,
-    wave_number: int,
+    wave_number: int | None,
     source_engine: str,
     dialect: str | None,
     base_tables: list[str],
     views: list[str],
+    *,
+    handoff: bool = True,
+    signal: bool = True,
 ) -> tuple[CdcSpec, InitialLoad, list[HubTopic], list[UnsupportedItem], list[str]]:
     connector = DEBEZIUM_CONNECTORS.get(dialect or "")
-    handoff = POSITION_HANDOFF.get(dialect or "")
+    handoff_capture = POSITION_HANDOFF.get(dialect or "") if handoff else None
     prefix = topic_prefix(job.inputs.job_id, wave_number)
-    signal = f"{job.database}.{SIGNAL_TABLE}"
+    signal_id = f"{job.database}.{SIGNAL_TABLE}"
     settings = _settings(source_engine, dialect, _deployment(job, source_engine))
-    if dialect == "mysql" and handoff:
+    if dialect == "mysql" and handoff_capture:
         # The initial-load handoff resumes from the GTID set (#1427): without GTIDs a
         # transaction written to the binlog but not yet visible to the load could be lost.
         settings.extend(
             SourceSetting(name=name, value="ON", note=note)
             for name, note in _MYSQL_HANDOFF_SETTINGS
         )
-    settings.append(
-        SourceSetting(
-            name="signal table",
-            value=f"{signal} (id VARCHAR(42) PRIMARY KEY, type VARCHAR(32) NOT NULL, data TEXT)",
-            note=(
-                "Created before the connector starts; Debezium reads incremental-snapshot "
-                "signals from it, and the connector's user may insert into it"
-            ),
+    if signal:
+        settings.append(
+            SourceSetting(
+                name="signal table",
+                value=(
+                    f"{signal_id} (id VARCHAR(42) PRIMARY KEY, type VARCHAR(32) NOT NULL, "
+                    "data TEXT)"
+                ),
+                note=(
+                    "Created before the connector starts; Debezium reads incremental-snapshot "
+                    "signals from it, and the connector's user may insert into it"
+                ),
+            )
         )
-    )
     cdc = CdcSpec(
         tool="debezium",
         connector_class=connector,
         topic_prefix=prefix,
-        signal_table=signal,
-        snapshot_mode="no_data" if handoff else "initial",
+        signal_table=signal_id if signal else None,
+        snapshot_mode="no_data" if handoff_capture else "initial",
         heartbeat_interval_ms=HEARTBEAT_INTERVAL_MS,
         required_source_settings=settings,
     )
-    if handoff:
+    if handoff_capture:
         initial_load = InitialLoad.model_validate(
-            {"strategy": "bulk_load_with_position_handoff", "position_capture": handoff}
+            {"strategy": "bulk_load_with_position_handoff", "position_capture": handoff_capture}
         )
     else:
         initial_load = InitialLoad(
@@ -1129,7 +1148,10 @@ def _plan_wave(
     wave: Mapping[str, Any],
     is_first: bool,
     wave_count: int,
-    carries_cluster: bool,
+    *,
+    step: int,
+    hub_plan: HubPlan | None,
+    contract: ContractRef | None,
 ) -> DataMovementPlan:
     engines = _wave_engines(wave)
     tool = "dms" if is_first else "debezium"
@@ -1153,13 +1175,40 @@ def _plan_wave(
         views=views,
     )
     hub: list[HubTopic] = []
+    hub_topics: list[str] = []
     if is_first:
         cdc, initial_load, gaps, notes = _dms_capture(
             job, wave, source_engine, dialect, base_tables
         )
     else:
-        cdc, initial_load, hub, gaps, notes = _debezium_capture(
-            job, int(wave["wave"]), source_engine, dialect, base_tables, views
+        # The capture is the hub plan's; this step only reads its topics. Its source is its
+        # logical source, so the key and view gaps are collected against the hub's own source,
+        # and a dialect gap is the hub plan's to report.
+        if hub_plan is None:  # unreachable: a later step always has a hub
+            raise ValueError(f"step {step} has no hub plan")
+        _, _, _, gaps, notes = _debezium_capture(
+            job,
+            None,
+            hub_plan.source.engine,
+            hub_plan.source.dialect,
+            base_tables,
+            views,
+            handoff=False,
+            signal=False,
+        )
+        gaps = [g for g in gaps if g.kind != "source_dialect"]
+        cdc, initial_load = hub_plan.cdc, hub_plan.initial_load
+        wanted = set(base_tables)
+        hub_topics = sorted(t.topic for t in hub_plan.topics if t.table in wanted)
+        carried = {t.table for t in hub_plan.topics}
+        gaps.extend(
+            UnsupportedItem(
+                kind="unknown_table",
+                table=t,
+                reason="the hub plan carries no topic for it",
+            )
+            for t in base_tables
+            if t not in carried and _hub_key(job.schema.tables[t]) is not None
         )
     unsupported.extend(gaps)
     targets, gaps = _targets(job, wave, per_engine, source_engine, is_first)
@@ -1170,13 +1219,16 @@ def _plan_wave(
         f"The lag gate is {MAX_LAG_SECONDS} seconds of capture lag, a default to tune against "
         "the lagging reads' tolerance"
     )
-    cost, assumptions, gaps = _monthly_cost(job.prices, job, tool, hub, targets, carries_cluster)
+    cost, assumptions, gaps = _monthly_cost(job.prices, job, tool, hub, targets, False)
     unsupported.extend(gaps)
     unique = {_unsupported_key(u): u for u in unsupported}
     return DataMovementPlan(
         job_id=job.inputs.job_id,
         database_name=job.inputs.database_name,
         assignment_version=job.assignment_version,
+        step=step,
+        contract=contract,
+        hub_topics=hub_topics,
         wave=int(wave["wave"]),
         wave_count=wave_count,
         title=str(wave.get("title") or ""),
@@ -1194,13 +1246,23 @@ def _plan_wave(
     )
 
 
-def build_plans(
-    inputs: JobInputs, *, prices: PriceTable | None | _Default = _DEFAULT
-) -> list[DataMovementPlan]:
-    """One plan per wave of the report's ``migration_waves``, in wave order.
+def _steps(waves: list[Mapping[str, Any]]) -> list[tuple[int, Mapping[str, Any]]]:
+    """The job's migration steps, in order: one per migration wave until the slice plan
+    (#1698) exists, which replaces this function."""
+    return [(int(w["wave"]), w) for w in waves]
+
+
+def build_step_plans(
+    inputs: JobInputs,
+    *,
+    prices: PriceTable | None | _Default = _DEFAULT,
+    contracts: Mapping[int, ContractRef] | None = None,
+) -> tuple[list[DataMovementPlan], HubPlan | None]:
+    """One plan per step and the job's hub plan (#1797).
 
     ``prices`` is the dated price table (the committed one by default); ``None`` prices
-    nothing, so every wave's cost is null with a reason."""
+    nothing, so every cost is null with a reason. ``contracts`` maps a step number to
+    its transformation contract."""
     if isinstance(prices, _Default):
         from src.shared.catalog.prices import price_table
 
@@ -1210,11 +1272,74 @@ def build_plans(
         key=lambda w: int(w["wave"]),
     )
     if not waves:
-        return []
+        return [], None
     job = _JobView.build(inputs, prices)
     aurora = _aurora_wave(waves)
-    first_hub = next((w for w in waves if w is not aurora), None)
-    return [_plan_wave(job, w, w is aurora, len(waves), w is first_hub) for w in waves]
+    hub = _hub_plan(job, waves)
+    plans = [
+        _plan_wave(
+            job, w, w is aurora, len(waves), step=k, hub_plan=hub, contract=(contracts or {}).get(k)
+        )
+        for k, w in _steps(waves)
+    ]
+    return plans, hub
+
+
+def build_plans(
+    inputs: JobInputs, *, prices: PriceTable | None | _Default = _DEFAULT
+) -> list[DataMovementPlan]:
+    """Kept for callers of the per-wave API: the step plans."""
+    return build_step_plans(inputs, prices=prices)[0]
+
+
+def _hub_plan(job: _JobView, waves: list[Mapping[str, Any]]) -> HubPlan | None:
+    """The job's one capture into the hub (#1797), or None when no step follows step 1."""
+    aurora = _aurora_wave(waves)
+    later = [w for w in waves if w is not aurora]
+    if not later:
+        return None
+    if aurora is not None and _wave_engines(aurora):
+        source_engine = _wave_engines(aurora)[0]
+        read = set(_wave_tables(job, aurora, _wave_engines(aurora), True)[1])
+    else:
+        source_engine = job.legacy
+        read = {t for w in later for t in _wave_tables(job, w, _wave_engines(w), False)[1]}
+    base_tables = sorted(t for t in read if t in job.schema.tables)
+    views = sorted(t for t in read if t not in job.schema.tables)
+    dialect = dialect_of(source_engine)
+    on_aurora = source_engine.startswith("aurora_")
+    cdc, initial_load, topics, gaps, notes = _debezium_capture(
+        job, None, source_engine, dialect, base_tables, views, handoff=False, signal=on_aurora
+    )
+    cost, assumptions, cost_gaps = _monthly_cost(job.prices, job, "debezium", topics, [], True)
+    unique = {_unsupported_key(u): u for u in [*gaps, *cost_gaps]}
+    return HubPlan(
+        job_id=job.inputs.job_id,
+        database_name=job.inputs.database_name,
+        assignment_version=job.assignment_version,
+        source=SourceSpec(
+            engine=source_engine,
+            dialect=dialect,
+            database=job.database,
+            tables=[
+                SourceTable(
+                    table=t,
+                    primary_key=[str(c) for c in job.schema.tables[t].get("primary_key") or []],
+                    estimated_rows=job.schema.tables[t].get("row_count"),
+                )
+                for t in base_tables
+            ],
+            views=views,
+        ),
+        cdc=cdc,
+        initial_load=initial_load,
+        topics=topics,
+        stacks=_stacks("debezium", []),
+        monthly_cost_usd=cost,
+        cost_assumptions=assumptions,
+        unsupported=[unique[k] for k in sorted(unique)],
+        notes=notes,
+    )
 
 
 def _aurora_wave(waves: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
@@ -1277,13 +1402,47 @@ def load_inputs(store: Any, db: str, job_id: str) -> JobInputs:
 
 
 def _write_plan(store: Any, db: str, job_id: str, plan: DataMovementPlan) -> str:
-    path = f"{db}/{job_id}/data-movement/wave-{plan.wave}/plan.json"
+    path = f"{db}/{job_id}/data-movement/step-{plan.step}/plan.json"
     store.write_json(path, plan.model_dump(mode="json"))
     return path
 
 
+def _write_hub_plan(store: Any, db: str, job_id: str, hub: HubPlan) -> str:
+    path = f"{db}/{job_id}/data-movement/hub/plan.json"
+    store.write_json(path, hub.model_dump(mode="json"))
+    return path
+
+
+def _contract_refs(store: Any, inputs: JobInputs) -> dict[int, ContractRef]:
+    """Step 1's transformation contract and its pinned hash (#1764 writes the hash beside the
+    contract as ``step-1.sha256``, one hex line), when the store has both."""
+    version = int(
+        (inputs.report.get("assignment_summary") or {}).get("version")
+        or inputs.assignment.get("version")
+        or 0
+    )
+    artifact = f"transformation-contract/v{version}/step-1.json"
+    prefix = f"{inputs.database_name}/{inputs.job_id}/transformation-contract/v{version}"
+    hash_file = f"{prefix}/step-1.sha256"
+    if not version or not store.exists(f"{prefix}/step-1.json") or not store.exists(hash_file):
+        return {}
+    digest = store.read_bytes(hash_file).decode("utf-8").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError(f"{hash_file} is not one line of 64 lowercase hex characters")
+    return {1: ContractRef(artifact=artifact, sha256=digest)}
+
+
 def write_plans(store: Any, db: str, job_id: str) -> list[str]:
-    """Build and write every wave's plan; the paths written, in wave order."""
-    return [
-        _write_plan(store, db, job_id, plan) for plan in build_plans(load_inputs(store, db, job_id))
-    ]
+    """Build and write every step's plan, then the hub plan; the paths written.
+
+    When no hub is built, a stale ``hub/plan.json`` from an earlier run is removed. The
+    ``wave-<n>`` files written before #1797 are left alone."""
+    inputs = load_inputs(store, db, job_id)
+    plans, hub = build_step_plans(inputs, contracts=_contract_refs(store, inputs))
+    written = [_write_plan(store, db, job_id, plan) for plan in plans]
+    if hub is not None:
+        written.append(_write_hub_plan(store, db, job_id, hub))
+    else:
+        # A hub plan from an earlier run no longer describes the job.
+        store.delete(f"{db}/{job_id}/data-movement/hub/plan.json")
+    return written
