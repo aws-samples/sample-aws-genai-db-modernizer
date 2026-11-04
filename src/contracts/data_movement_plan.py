@@ -313,7 +313,9 @@ class DmsSizing(BaseModel):
 
 
 class LobTable(BaseModel):
-    """A step 1 table with LOB columns, and the LOB mode DMS moves it in (#1798)."""
+    """A step 1 table with LOB columns, and the LOB mode it needs (#1798).
+
+    The reason each table needs full LOB mode; the task runs in full LOB mode when any does."""
 
     table: str = Field(..., description="Source table id (schema.table)")
     mode: Literal["limited", "full"] = Field(
@@ -373,7 +375,7 @@ class DmsReplication(BaseModel):
     )
     lob_tables: list[LobTable] = Field(
         default_factory=list,
-        description="The tables with LOB columns and their LOB mode, sorted by table",
+        description="The tables with LOB columns and their LOB mode, sorted by table; the task runs in full LOB mode when any is full",
     )
     unbounded_varchar: UnboundedVarchar = Field(
         default_factory=UnboundedVarchar,
