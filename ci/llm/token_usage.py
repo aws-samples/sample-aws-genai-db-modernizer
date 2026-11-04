@@ -59,7 +59,9 @@ Attribution is deterministic and uses only what the transcript shows:
 ``agents`` is one row per agent (the orchestrator, each subagent in the order
 it first appears, then the ``/explore`` session): its label (the dispatch's
 description), phases, the counters above, ``largest_context`` (the largest
-single turn's input + cache read + cache write) and ``input_cost_usd``.
+single turn's input + cache read + cache write), ``models`` (every model its turns
+name, in first-seen order: a subagent definition's ``model:`` shows here) and
+``input_cost_usd``.
 
 Cost has two figures, kept apart on purpose:
 
@@ -396,6 +398,7 @@ class _Table:
                 "label": label,
                 "kind": kind,
                 "phases": [],
+                "models": [],
                 **empty_usage(),
                 "largest_context": 0,
                 "input_cost_usd": 0.0,
@@ -428,6 +431,14 @@ class _Table:
             target["input_cost_usd"] = None if prior is None or cost is None else prior + cost
         if phase not in row["phases"]:
             row["phases"].append(phase)
+        model = turn.get("model")
+        if (
+            isinstance(model, str)
+            and model
+            and model != "<synthetic>"
+            and model not in row["models"]
+        ):
+            row["models"].append(model)
         row["largest_context"] = max(row["largest_context"], context)
 
 
