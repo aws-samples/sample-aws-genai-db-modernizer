@@ -962,7 +962,7 @@ def render_aurora_template(inputs: Step1Inputs) -> dict[str, Any]:
                              "the cluster; allow the DMS replication instance on the database port"},
         "EngineVersion": {"Type": "String", "Description": f"{display_engine(engine)} engine version on the "
                           f"{line or 'chosen'} line (aws rds describe-db-engine-versions --engine {family})",
-                          "AllowedPattern": rf"^{re.escape(line)}\." if line else r"^[0-9]"},
+                          "AllowedPattern": rf"^{re.escape(line)}\..+$" if line else r"^[0-9].*$"},
         "ParameterGroupFamily": family_param,
         "InstanceClass": {"Type": "String", "Description": "Writer instance class", "Default": "db.r6g.large",
                           "AllowedPattern": r"^db\.[a-z0-9]+\.[a-z0-9]+$"},

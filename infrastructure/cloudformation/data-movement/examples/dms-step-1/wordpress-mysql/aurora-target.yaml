@@ -116,7 +116,7 @@ Parameters:
     Type: String
     Description: Aurora MySQL engine version on the 8.0 line (aws rds describe-db-engine-versions --engine
       aurora-mysql)
-    AllowedPattern: ^8\.0\.
+    AllowedPattern: ^8\.0\..+$
   ParameterGroupFamily:
     Type: String
     Description: 'Parameter group family: the engine version''s line'
