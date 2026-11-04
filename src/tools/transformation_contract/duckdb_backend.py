@@ -210,7 +210,7 @@ def run_rule(
     unchecked = unchecked_columns(plan, engine, table.unchecked_source_columns)
     con = duckdb.connect(":memory:")
     try:
-        con.execute(
+        con.execute(  # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query -- constant table name, every column through quote_ident, in-memory DuckDB
             f"CREATE TABLE src ({', '.join(f'{quote_ident(c)} VARCHAR' for c in source_columns)})"
         )
         values = [[_as_text(r.get(c)) for c in source_columns] for r in table.rows]
