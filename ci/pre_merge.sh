@@ -9,8 +9,8 @@
 # fetch main, check the commit hooks are installed, count commits behind, check commit authors and merge conflicts
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
-# lint, the zero-token replay of the saved real-model run, tests (skipped by
-# --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on missing commit hooks, a refused author, a
+# lint, the zero-token replay of the saved real-model run, the version-pin check
+# (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on missing commit hooks, a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
 # ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
@@ -289,15 +289,29 @@ else
 fi
 rm -rf "$replay_out"
 
-# i. Tests, and the version-pin check (a test that compares with a literal
-# contract version fails once the resolver moves it; about a minute).
+# i. The version-pin check (a test that compares with a literal contract version fails
+# once the resolver moves it), then the tests. --quick passes --base (#1845): the test
+# files the branch changed and those naming a contract module it changed or an importer
+# of one, or every file for a change it cannot place; the full run checks every test
+# file that mentions a version (about a minute).
+pins_args=()  # empty in a full run; the +-form keeps bash 3.2 under set -u happy
+pins_scope="every test file that mentions a contract version"
 if [ "$quick" -eq 1 ]; then
-  note "skip version-pins: --quick"
-elif uv run python scripts/check_version_pins.py >"$tmp" 2>&1; then
-  note "ok   version-pins: $(tail -n 1 "$tmp")"
+  pins_args=(--base "$base")
+  pins_scope="--base: the tests the branch changed or that name a changed contract or an importer, or every file when a change cannot be placed"
+fi
+pins_rc=0
+uv run python scripts/check_version_pins.py ${pins_args[@]+"${pins_args[@]}"} >"$tmp" 2>&1 || pins_rc=$?
+if [ "$pins_rc" -eq 0 ]; then
+  pins_last="$(tail -n 1 "$tmp")"
+  note "ok   version-pins: ${pins_last#ok: } ($pins_scope)"
 else
-  sed -n '/^error/,$p' "$tmp" | head -n 20
-  fail "version-pins: a test pins a contract version (list above)"
+  grep -v '^bumped ' "$tmp" | head -n 30
+  if [ "$pins_rc" -eq 1 ]; then
+    fail "version-pins: a test fails only under a simulated bump: it pins a contract version (list above)"
+  else
+    fail "version-pins: the check could not run or decide, e.g. a test fails without the bump too (list above)"
+  fi
 fi
 if [ "$quick" -eq 1 ]; then
   note "skip tests: --quick"
