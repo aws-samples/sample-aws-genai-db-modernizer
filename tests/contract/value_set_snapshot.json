@@ -289,6 +289,15 @@
     ],
     "version": "5.3"
   },
+  "dms_gate.GateStatus": {
+    "module": "dms_gate",
+    "values": [
+      "fail",
+      "pass",
+      "pending"
+    ],
+    "version": "1.0"
+  },
   "documentdb_decision_trace.EmbeddingRelationshipType": {
     "module": "documentdb_decision_trace",
     "values": [

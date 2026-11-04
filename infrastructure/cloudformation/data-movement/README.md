@@ -58,6 +58,24 @@ aws dms start-replication-task --replication-task-arn <ReplicationTaskArn output
 
 Removing the stack removes everything of ours. It never touches your cluster.
 
+### Gate and cutover
+
+Once the stack is deployed and the task started, run the gate. It only makes these read calls (DMS `DescribeReplicationTasks`, `DescribeTableStatistics`, `DescribeReplicationInstances`, `ListTagsForResource`; CloudWatch `ListMetrics`, `GetMetricData`; CloudFormation `DescribeStacks`; `tests/unit/tools/data_movement/test_dms_gate_read_only.py::test_the_gate_only_reads`), so run it with read-only credentials, for example through `AWS_PROFILE`, and it writes `data-movement/step-1/gate.json`:
+
+```bash
+uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> --stack-name <job-id>-dms-step-1
+```
+
+- **Load**: the task runs in CDC, the full load is at 100%, every table of the step's contract is "Table completed" without errors, no other table is loaded, and the task was rendered from this step's contract.
+- **Lag**: every `CDCLatencySource` and `CDCLatencyTarget` datapoint of the last 15 minutes (`--window-minutes`) is under the plan's `max_lag_seconds`, and the newest datapoint of each metric is at most 5 minutes old (`--stale-seconds`); the age is in the evidence.
+- **Parity**: every table with a primary or unique key DMS can validate is `Validated`. Tables without a key, tables whose key DMS cannot validate, and views are named as exceptions ("not validated") with their row counts; pending validation records are totalled in the evidence.
+
+The result is `pass`, `pending` or `fail`, in the JSON status line and in `gate.json`; the status line also lists `reasons` (each prefixed with its check) and the named `exceptions`. The script exits 0 whenever the gate ran, whatever the result (`test_the_status_line_carries_the_decision_and_the_message` for `pending`, `test_a_fail_result_still_exits_zero` for `fail`), and 1 when it could not (for example, no `ReplicationTaskArn` output on the stack: `test_a_stack_without_the_task_output_is_an_error`).
+
+The status line carries `cutover_decision: "customer"` and this message (`gate.json` carries the decision and the message's id):
+
+> When to cut over is your decision. The data movement for this step keeps your Aurora copy in sync with your source and reports the evidence below: replication lag, rows loaded, and validation per table (with the tables DMS could not validate, and why). These figures help you decide; they are not a recommendation to switch. Choosing the moment to cut over, and preparing your applications for it, remains entirely your responsibility.
+
 ## Debezium connector stack
 
 The connector stack is rendered per wave by `scripts/render_debezium_connector.py` from `src/tools/data_movement/debezium_connector.py`. It creates the custom plugin, the worker configuration (JSON converters, Secrets Manager config provider), a least-privilege service execution role, a KMS key and CloudWatch Logs group for worker logs, and the connector. Every resource is tagged `modernizer:job-id` and `modernizer:wave`. Account, region, endpoints, network and credentials are stack parameters with no defaults. Names two waves of one job must not share (PostgreSQL slot and publication, heartbeat and schema history topics, the schema history consumer group) carry the wave number.

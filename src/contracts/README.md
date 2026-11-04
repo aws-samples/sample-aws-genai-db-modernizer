@@ -30,6 +30,7 @@ Pydantic model definitions for all agent contracts in the Database Modernizer As
 | `schema_design_output.py` | Base class for schema design output (`SchemaDesignOutputBase`) |
 | `synthesis_output.py` | Final synthesis report with weighted rankings |
 | `data_movement_plan.py` | One migration wave's data movement plan: source, capture, hub topics, targets, gates, stacks, cost, unsupported (#1413) |
+| `dms_gate.py` | Step 1's DMS gate: load, lag and parity evidence, named exceptions, the customer's cutover decision (#1800) |
 | `lineage_ops.py` | The lineage operations of the transformation contract: copy, transform (cast), unsupported, and the own-row check (ADR-033, #1762) |
 | `transformation_contract.py` | The transformation contract of one migration step: rules per source table, fields with their lineage operation (`lineage_ops.py`), findings, depends_on (ADR-033, #1762) |
 | `referee_output.py` | Legacy referee output (pre-split into triage/synthesis) |
