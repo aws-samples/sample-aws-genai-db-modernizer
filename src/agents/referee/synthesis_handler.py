@@ -107,6 +107,7 @@ from src.shared.report_facts import (
     wave_retained_engine,
 )
 from src.shared.source_cache import cost_basis_fields
+from src.shared.trade_off_topics import predates_topics, trade_off_note_kind, trade_off_topic
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from src.tools.schema.dynamodb_cost_check import keys_only_fetch_load
@@ -1940,12 +1941,23 @@ def _collect_trade_offs(data):
     seen: set[str] = set()
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
+        # #1221: only a design saved before trade-offs carried a topic is read by the
+        # markers its pipeline notes start with.
+        legacy = predates_topics(f"{engine}_model_output", schema.get("contract_version"))
         for t in field_list(schema, "trade_offs"):
             if isinstance(t, dict):
                 # Structured TradeOff — ensure engine is set
                 # A null list field reads as empty (#757), the contract's own default.
                 nulls = {k: [] for k in _TRADE_OFF_LISTS if k in t and t[k] is None}
-                entry = {**t, **nulls, "engine": t.get("engine") or engine}
+                # #1221: the topic it is filed under (other for a design saved before
+                # the field) and what the pipeline appended it as, if anything.
+                entry = {
+                    **t,
+                    **nulls,
+                    "engine": t.get("engine") or engine,
+                    "topic": trade_off_topic(t),
+                    "note_kind": trade_off_note_kind(t, legacy),
+                }
                 dedup_key = entry.get("description", str(entry))
             else:
                 # Legacy string format — wrap into structured form
@@ -1956,6 +1968,8 @@ def _collect_trade_offs(data):
                     "target_tables": [],
                     "query_ids": [],
                     "engine": engine,
+                    "topic": trade_off_topic({}),
+                    "note_kind": trade_off_note_kind({"description": str(t)}, legacy),
                 }
                 dedup_key = str(t)
             if dedup_key not in seen:

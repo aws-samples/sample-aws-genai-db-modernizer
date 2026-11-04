@@ -13,6 +13,7 @@ Tests verify:
 
 from __future__ import annotations
 
+import copy
 import inspect
 from unittest.mock import MagicMock, patch
 
@@ -371,6 +372,44 @@ class TestFinalizeSchemaDesign:
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
         result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
         assert "v1" in result["output_path"]
+
+    # --- #1221: trade-off topics in an external-mode response -----------------------
+
+    def _with_trade_off(self, **fields) -> dict:
+        response = copy.deepcopy(_VALID_DYNAMODB_OUTPUT)
+        response["trade_offs"][0].update(fields)
+        return response
+
+    def _written_trade_offs(self, store) -> list[dict]:
+        [key] = [k for k in store._written if k.endswith("schema_output.json")]
+        return store._written[key]["trade_offs"]
+
+    def test_a_trade_off_without_a_topic_is_saved_as_other(self):
+        """A design saved since the field always carries its topic, so nothing reads
+        it out of the text later."""
+        store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
+        assert finalize_schema_design("job-001", "mydb", "dynamodb", store)["status"] == "complete"
+        assert [t["topic"] for t in self._written_trade_offs(store)] == ["other"]
+
+    @pytest.mark.passes_on_main  # main writes the response as is; guards that the stamp keeps it
+    def test_a_designers_own_topic_is_saved(self):
+        store = self._store_with_llm_response(self._with_trade_off(topic="key_design"))
+        finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        assert [t["topic"] for t in self._written_trade_offs(store)] == ["key_design"]
+
+    @pytest.mark.parametrize("topic", ["review_note", "warning"])
+    def test_a_designer_cannot_file_a_trade_off_as_a_pipeline_note(self, topic):
+        store = self._store_with_llm_response(self._with_trade_off(topic=topic))
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        assert result["status"] == "validation_failed"
+        assert not any(k.endswith("schema_output.json") for k in store._written)
+
+    def test_a_designer_cannot_mark_a_trade_off_as_the_pipelines_note(self):
+        store = self._store_with_llm_response(self._with_trade_off(note_kind="review"))
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        assert result["status"] == "validation_failed"
+        assert any("note_kind" in e for e in result["errors"])
+        assert not any(k.endswith("schema_output.json") for k in store._written)
 
     def test_invalid_output_returns_validation_failed(self):
         store = self._store_with_llm_response({"bad": "data"})

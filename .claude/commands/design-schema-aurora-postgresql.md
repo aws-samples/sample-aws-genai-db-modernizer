@@ -92,8 +92,8 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
      recommendations you do not express as DDL
    - `app_layer_notes`: each source feature that cannot be expressed as
      Aurora DDL, with a concrete recommendation; never fabricate DDL for it
-   - `trade_offs`: the significant decisions, each with a `description` and
-     an `impact` written for a CTO
+   - `trade_offs`: the significant decisions, each with a `description`, an
+     `impact` written for a CTO and a `topic` (the skill's Trade-offs step lists them)
    - No pattern-ID prefix — this contract is table-shaped, not access-pattern-shaped
 
    Example:
@@ -111,7 +111,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
      ],
      "optimizations": [],
      "app_layer_notes": [],
-     "trade_offs": [{"description": "...", "impact": "..."}]
+     "trade_offs": [{"description": "...", "impact": "...", "topic": "indexing"}]
    }
    ```
 

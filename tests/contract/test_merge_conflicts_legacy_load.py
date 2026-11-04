@@ -27,6 +27,7 @@ from src.agents.schema_design.group_merger import merge_group_drafts
 from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
+from src.shared.report_facts import trade_off_topic_facts
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
 OLD_REPORT = (
@@ -84,4 +85,10 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     SynthesisOutputContract.model_validate(old)
 
     assert "dynamodb_merge_conflicts" not in stored
-    assert report_facts(old) == stored
+    # Unchanged, but for the trade-off topic groups a block written before #1221 gains.
+    facts = report_facts(old)
+    assert "trade_off_topics" not in stored
+    assert facts["trade_off_topics"] == trade_off_topic_facts(
+        old, stored["reality_check_trade_offs"]
+    )
+    assert {k: v for k, v in facts.items() if k != "trade_off_topics"} == stored

@@ -215,9 +215,12 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
   "source_tables": ["affected source table_ids"],
   "target_tables": ["affected DocumentDB collections"],
   "query_ids": ["query IDs that drove this decision"],
-  "engine": "documentdb"
+  "engine": "documentdb",
+  "topic": "one of the topics below"
 }
 ```
+
+`topic` files the trade-off under the one subject it is about, so the report lists repeated ones together: `item_size` (item, document or value size limits, large columns inline or offloaded), `id_generation` (ids the database generated that the application now generates), `indexing` (secondary indexes added, dropped or not created, their projections and write cost), `key_design` (keys, item collections, embedding, denormalization, table or index layout), `query_translation` (a source query served another way: joins, counts, IN lists, ordering or filters done by the application or by several requests), `consistency` (eventual consistency, staleness, TTLs, cache invalidation, transactions), `uniqueness` (unique constraints, conditional writes, sentinel items), `data_types` (type mappings and value formats), `capacity` (hot partitions or keys, throughput limits, shards, memory), `cost` (billed units and their price), `operational` (engine versions, monitoring, sync pipelines, index builds, replica routing) or `other`. Trade-offs on the same subject in different design parts take the same topic.
 
 Every trade-off must trace back to specific tables and queries. Common trade-offs: embed vs reference decisions, unbounded array growth, denormalization of lookup tables, multi-document transactions (supported on 4.0+ instance-based clusters, each limited to one minute; not on elastic clusters), aggregation pipeline limitations, stored procedures needing app-layer replacement.
 

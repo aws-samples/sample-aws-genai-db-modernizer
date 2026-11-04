@@ -953,6 +953,9 @@ class TestRunOpensearchSchemaAgent:
         trade_off_descriptions = [t.description for t in output.trade_offs]
         assert "[PE note] consider warmers" in trade_off_descriptions
         assert "[PE note] tune replicas" in trade_off_descriptions
+        # #1221: the review's notes are filed under their own topic.
+        notes = [t for t in output.trade_offs if t.description.startswith("[PE note]")]
+        assert {t.note_kind for t in notes} == {"review"}
 
     @patch("src.tools.schema.opensearch_schema_agent._invoke_pe_reviewer")
     @patch("src.tools.schema.opensearch_schema_agent._invoke_designer")
@@ -1010,6 +1013,8 @@ class TestRunOpensearchSchemaAgent:
         # PE notes appended on final iteration
         trade_off_descriptions = [t.description for t in output.trade_offs]
         assert "[PE note] remember replication factor" in trade_off_descriptions
+        notes = [t for t in output.trade_offs if t.description.startswith("[PE note]")]
+        assert {t.note_kind for t in notes} == {"review"}
 
     @patch("src.tools.schema.opensearch_schema_agent._invoke_pe_reviewer")
     @patch("src.tools.schema.opensearch_schema_agent._invoke_designer")

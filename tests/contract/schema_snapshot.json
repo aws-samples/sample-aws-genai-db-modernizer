@@ -3917,6 +3917,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -3942,8 +3963,8 @@
         }
       }
     },
-    "schema_hash": "ab6b7149cb88ace6ab65e716db33716b553fb1e22660be665ecee9f6769a2bbb",
-    "version": "1.0"
+    "schema_hash": "57ab030972f1e85dc3738009ae9c8d6275148f938a7b3de22a2c72094d6a83fa",
+    "version": "1.1"
   },
   "aurora_postgresql_model_output.AuroraPostgresqlModelOutputContract": {
     "fields": {
@@ -4428,6 +4449,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -4453,8 +4495,8 @@
         }
       }
     },
-    "schema_hash": "ab6b7149cb88ace6ab65e716db33716b553fb1e22660be665ecee9f6769a2bbb",
-    "version": "1.0"
+    "schema_hash": "57ab030972f1e85dc3738009ae9c8d6275148f938a7b3de22a2c72094d6a83fa",
+    "version": "1.1"
   },
   "collector_input.CollectorInput": {
     "fields": {
@@ -11927,6 +11969,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -11997,8 +12060,8 @@
         }
       }
     },
-    "schema_hash": "1f352802915299b66bac5dc4e5c8052bd81e39ff9f4057bd2b982ba003155558",
-    "version": "1.1"
+    "schema_hash": "20d9662111936b6b69528ed08717d60fa8560f08fd6dedc67bc7e3ab418f4299",
+    "version": "1.2"
   },
   "dynamodb_decision_trace.DynamoDBDecisionTrace": {
     "fields": {
@@ -15520,6 +15583,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -15650,8 +15734,8 @@
         }
       }
     },
-    "schema_hash": "13798ea8218380ad26340bfd675b4b92a462ed326d99bb9f7fa4aac3ad74d96f",
-    "version": "1.5"
+    "schema_hash": "35d22e182bc9e7cdbe1a36ca97b4cf4c489700885d5481b0951e491e7fbdbf24",
+    "version": "1.6"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {
@@ -16559,6 +16643,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -16629,8 +16734,8 @@
         }
       }
     },
-    "schema_hash": "0e2b68a5e49e0951cec7fb172f9761bfe5cf10b9788672f97cfd54d266faf557",
-    "version": "1.1"
+    "schema_hash": "128271ecf5d714dfbfc90d94511a1b7b1225de61948a6b8c47aeb6710d56709c",
+    "version": "1.2"
   },
   "engine_scope_decision.EngineScopeDecision": {
     "fields": {
@@ -18673,6 +18778,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -18739,8 +18865,8 @@
         }
       }
     },
-    "schema_hash": "d860ad38aa4f25c14d314e375e124388f53298de1533b78098ada6e41e46f2f2",
-    "version": "1.1"
+    "schema_hash": "b67c17572baf472c7b9da27f7635f617d980ab32f5483dd45ebf45925bee1c57",
+    "version": "1.2"
   },
   "phase_models.PhaseProgression": {
     "fields": {
@@ -27009,6 +27135,71 @@
                     "type": "integer"
                   }
                 },
+                "trade_off_topics": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "indexes": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "integer"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "label": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "topic": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "capacity",
+                              "consistency",
+                              "cost",
+                              "data_types",
+                              "id_generation",
+                              "indexing",
+                              "item_size",
+                              "key_design",
+                              "operational",
+                              "other",
+                              "query_translation",
+                              "review_note",
+                              "uniqueness",
+                              "warning"
+                            ]
+                          }
+                        },
+                        "trade_off_count": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
                 "unreviewed_move_count": {
                   "required": false,
                   "schema": {
@@ -31795,6 +31986,27 @@
                   },
                   "kind": "array"
                 }
+              },
+              "topic": {
+                "required": false,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "capacity",
+                    "consistency",
+                    "cost",
+                    "data_types",
+                    "id_generation",
+                    "indexing",
+                    "item_size",
+                    "key_design",
+                    "operational",
+                    "other",
+                    "query_translation",
+                    "uniqueness",
+                    null
+                  ]
+                }
               }
             }
           },
@@ -31837,8 +32049,8 @@
         }
       }
     },
-    "schema_hash": "cf81bcdd8ed34124b0a8766ba5745ba1391ebcca2ed53af64e3f231edafc684a",
-    "version": "1.73"
+    "schema_hash": "6356c11d9d35024d5163bf62cff267b1448e64915906fb13488715a4df687494",
+    "version": "1.74"
   },
   "transformation_contract.StepContract": {
     "fields": {

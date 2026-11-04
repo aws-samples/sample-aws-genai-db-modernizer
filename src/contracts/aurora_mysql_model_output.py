@@ -8,6 +8,14 @@ provenance), the full generated DDL, application-layer notes for features that
 cannot be translated mechanically, and LLM-authored Aurora optimizations.
 Mirrors the envelope of the other per-engine contracts (see
 ``documentdb_model_output.py``).
+
+Version History:
+- 1.0: Initial version.
+- 1.1 (2026-11-04, #1221): Added optional ``trade_offs[].topic`` (a closed set the
+  designer picks, default ``other``) and the pipeline-only ``trade_offs[].note_kind``
+  (``review`` for the design review notes, ``warning`` for the schema agents' warnings;
+  left out of the JSON schema), so repeated trade-offs group by topic and the pipeline's
+  notes are listed apart.
 """
 
 from __future__ import annotations
@@ -72,7 +80,7 @@ class Optimization(BaseModel):
 class AuroraMySQLModelOutputContract(BaseModel):
     """Output contract for the Aurora MySQL schema-design agent."""
 
-    contract_version: str = Field(default="1.0", pattern=r"^\d+\.\d+$")
+    contract_version: str = Field(default="1.1", pattern=r"^\d+\.\d+$")
     job_id: str = Field(..., description="job_id from collector output")
     source_database: str = Field(..., description="database_name from collector metadata")
     target_engine: str = Field(default="aurora_mysql", description="Target engine identifier")

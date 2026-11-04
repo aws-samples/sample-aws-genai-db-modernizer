@@ -44,10 +44,11 @@ from pydantic import BaseModel
 from strands import Agent
 
 from src.agents.prompt_framing import frame_untrusted
-from src.contracts.schema_design_output import TradeOff
+from src.contracts.schema_design_output import TradeOff, TradeOffNoteKind
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
+from src.shared.trade_off_topics import REVIEW_NOTE, WARNING_NOTE, without_designer_note_kinds
 from src.tools.schema.dynamodb_attribute_columns import ATTRIBUTE_COLUMNS_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -536,14 +537,14 @@ class SchemaDesignRunner:
                 output = getattr(result, "structured_output", None)
                 if isinstance(output, self.output_model):
                     say(f"{prefix} Valid structured output")
-                    return output  # type: ignore[return-value]
+                    return without_designer_note_kinds(output)  # type: ignore[return-value]
 
                 raw_text = str(result)
                 last_partial_text = raw_text
                 parsed = json.loads(raw_text)
                 validated = self.output_model.model_validate(parsed)
                 say(f"{prefix} Parsed from text")
-                return validated  # type: ignore[return-value]
+                return without_designer_note_kinds(validated)  # type: ignore[return-value]
 
             except (GuardrailIntervened, GuardrailConfigError):
                 raise  # a guardrail block is final: the same prompt is blocked again
@@ -579,16 +580,19 @@ class SchemaDesignRunner:
                         f"Returning last valid design."
                     )
                 ],
+                WARNING_NOTE,
             )
             return previous_output  # type: ignore[return-value]
 
         if last_partial_text:
             try:
                 partial = json.loads(last_partial_text)
-                salvaged = self.output_model.model_validate(partial)
+                salvaged = without_designer_note_kinds(self.output_model.model_validate(partial))
                 say(f"{prefix} ⚠️ Salvaged partial output")
                 self._append_trade_offs(
-                    salvaged, ["[WARNING] Schema design produced from partial LLM output."]
+                    salvaged,
+                    ["[WARNING] Schema design produced from partial LLM output."],
+                    WARNING_NOTE,
                 )
                 return salvaged  # type: ignore[return-value]
             except (json.JSONDecodeError, ValueError, TypeError):
@@ -603,10 +607,18 @@ class SchemaDesignRunner:
         logger.debug("%s Designer failed after %d attempts: %s", prefix, attempt, last_error)
         raise RuntimeError(f"Designer failed after {attempt} attempts: {type(last_error).__name__}")
 
-    def _append_trade_offs(self, output: BaseModel, notes: list[str]) -> None:
+    def _append_trade_offs(
+        self,
+        output: BaseModel,
+        notes: list[str],
+        note_kind: TradeOffNoteKind = REVIEW_NOTE,
+    ) -> None:
         """Append trade-off notes to the output if it has a trade_offs field.
 
-        Converts plain strings (PE notes, warnings) into TradeOff objects.
+        Converts plain-string notes into TradeOff objects marked as the pipeline's
+        own (#1221): the design review's notes (``review``, the default) or this
+        agent's warnings (``warning``), which the deliverables list apart from the
+        design's own trade-offs.
         """
         if hasattr(output, "trade_offs") and isinstance(output.trade_offs, list):
             output.trade_offs.extend(
@@ -614,6 +626,7 @@ class SchemaDesignRunner:
                     description=note,
                     impact=note,
                     engine=self.target_type,
+                    note_kind=note_kind,
                 )
                 for note in notes
             )

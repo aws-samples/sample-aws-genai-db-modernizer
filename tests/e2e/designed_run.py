@@ -275,6 +275,7 @@ def write_dynamodb_design(
             "target_tables": tables[:1],
             "query_ids": [designed[0][0]["query_id"]] if designed else [],
             "engine": "",
+            "note_kind": "review",  # #1221: the pipeline's own review note
         },
     ]
     if designed:
@@ -289,6 +290,7 @@ def write_dynamodb_design(
                 "target_tables": tables[:1],
                 "query_ids": [cited],
                 "engine": "",
+                "topic": "query_translation",  # #1221: grouped under its topic
             }
         )
     base = f"{db}/{job_id}/schema-dynamodb/v{version}"
@@ -364,6 +366,7 @@ def write_elasticache_design(store: LocalArtifactStore, db: str, job_id: str, ve
                 {
                     "description": "Cache-aside with a short TTL",
                     "impact": "A changed option is stale for up to five minutes.",
+                    "topic": "consistency",
                 }
             ],
             "unsupported_patterns": [
@@ -449,6 +452,7 @@ def write_aurora_mysql_design(
                 {
                     "description": "Carry the schema over 1:1",
                     "impact": "No application change for the queries that stay.",
+                    "topic": "key_design",
                     # Three cited queries on the FIRST tab of the trade-offs panel render
                     # three query-id chips (#1353), the state a model run reached.
                     "query_ids": [

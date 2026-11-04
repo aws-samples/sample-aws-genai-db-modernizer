@@ -572,6 +572,11 @@ Version History:
   table's authoritative home and derived copies with its design-conflict risk, their
   totals and the sentences every deliverable states. Backward compatible: None in an
   older report.
+- 1.74 (2026-11-04, #1221): Added optional ``trade_offs[].topic`` and the pipeline-only
+  ``trade_offs[].note_kind`` (``review``, ``warning``), and ``facts.trade_off_topics``:
+  the design trade-offs grouped by engine and topic, then the ``warning`` and
+  ``review_note`` groups, each with its label, ``trade_off_count`` and positions, so the
+  engineering report and the results page list repeated trade-offs together.
 """
 
 from datetime import datetime
@@ -588,6 +593,7 @@ from src.contracts.assignment_models import (  # re-exported, see docstring belo
     UnservableQueryAssignment,
 )
 
+from . import schema_design_output
 from .analysis_output import CarriedWrite
 from .query_trace import QueryTraceDigest, QueryTraceListing
 from .schema_design_output import TradeOff
@@ -1465,6 +1471,20 @@ class RealityCheckDecision(BaseModel):
     query_ids: list[str] = Field(default_factory=list)
     with_removed_engine: bool = Field(
         False, description="A consolidation removed_engines already lists as its reason"
+    )
+
+
+class TradeOffTopicGroup(BaseModel):
+    """One engine's design trade-offs on one topic, as every deliverable lists them (#1221)."""
+
+    engine: str = Field(..., description="The engine whose design wrote them ('' when none)")
+    topic: schema_design_output.TradeOffGroupTopic = Field(
+        ..., description="The topic the trade-offs are filed under, or the pipeline's notes"
+    )
+    label: str = Field(..., description="The topic's heading, e.g. 'Item and value size'")
+    trade_off_count: int = Field(..., ge=0, description="How many trade-offs the group lists")
+    indexes: list[int] = Field(
+        default_factory=list, description="Their positions in the report's trade_offs, in order"
     )
 
 
@@ -2494,6 +2514,13 @@ class ReportFacts(BaseModel):
     )
     reality_check_trade_offs: list[RealityCheckTradeOff] = Field(default_factory=list)
     reality_check_decisions: list[RealityCheckDecision] = Field(default_factory=list)
+    trade_off_topics: list[TradeOffTopicGroup] = Field(
+        default_factory=list,
+        description=(
+            "The schema designs' trade-offs grouped by engine and topic (#1221), in the "
+            "order the deliverables list them; the reality check's own lines are not here"
+        ),
+    )
     trade_off_count: int = Field(
         0, ge=0, description="Trade-offs that still apply (reversed reality-check lines excluded)"
     )
@@ -2747,7 +2774,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.73",
+        default="1.74",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

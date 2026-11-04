@@ -34,7 +34,11 @@ from src.report.merge_conflicts import (
     NOT_RECORDED_TEXT,
 )
 from src.report.renderers import render_engineering_report_md
-from src.shared.report_facts import compute_report_facts, dynamodb_merge_conflict_facts
+from src.shared.report_facts import (
+    compute_report_facts,
+    dynamodb_merge_conflict_facts,
+    trade_off_topic_facts,
+)
 from tests.executive_pdf import executive_text
 from tests.unit.agents.schema_design.valid_designs import (
     ddb_design,
@@ -300,7 +304,13 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     facts = report_facts(old)
 
     assert facts.get("dynamodb_merge_conflicts") is None
-    assert facts == old["facts"]  # read back unchanged
+    # Read back unchanged, but for the trade-off topic groups a block written before
+    # #1221 gains from the same function.
+    rest = {k: v for k, v in facts.items() if k != "trade_off_topics"}
+    assert rest == old["facts"]
+    assert facts["trade_off_topics"] == trade_off_topic_facts(
+        old, old["facts"]["reality_check_trade_offs"]
+    )
     assert MD_HEADING not in render_engineering_report_md(old)
 
 

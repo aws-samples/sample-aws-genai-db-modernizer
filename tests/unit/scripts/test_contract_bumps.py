@@ -386,22 +386,26 @@ def test_check_accepts_pending_files_and_require_resolved_refuses_them(monkeypat
     assert rcv.main(["--require-resolved"]) == 0
 
 
+@pytest.mark.passes_on_main  # #1221 moves the example off the Aurora outputs
 def test_bump_contract_refuses_a_contract_it_cannot_resolve(tmp_path, monkeypatch, capsys) -> None:
-    """Reviewer case (#1209): the Aurora design outputs have no Version History, so the
-    pending file is refused when it is declared, not after review."""
+    """Reviewer case (#1209): a contract whose Version History the resolver cannot edit
+    (``ValidationResult``'s module history is not its own; the Aurora design outputs
+    were the case until #1221 gave them one) is refused when it is declared, not after
+    review."""
     monkeypatch.setattr(bump_contract, "PENDING_DIR", tmp_path / "pending")
     code = bump_contract.main(
-        ["aurora_mysql_model_output", "minor", "--reason", "x", "--slug", "s"]
+        ["assignment_models.ValidationResult", "minor", "--reason", "x", "--slug", "s"]
     )
     assert code == 1
     assert not (tmp_path / "pending").exists()
     assert "bump this contract by hand" in capsys.readouterr().err
 
 
+@pytest.mark.passes_on_main  # #1221 moves the example off the Aurora outputs
 def test_check_refuses_a_pending_file_it_could_not_resolve(monkeypatch, capsys) -> None:
     bad = PendingBump(
-        "aurora_mysql_model_output.AuroraMySQLModelOutputContract.x.toml",
-        "aurora_mysql_model_output.AuroraMySQLModelOutputContract",
+        "assignment_models.ValidationResult.x.toml",
+        "assignment_models.ValidationResult",
         "minor",
         "r",
     )

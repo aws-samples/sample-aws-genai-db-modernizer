@@ -719,6 +719,7 @@ def reconcile_tables(
                     "target_tables": [final],
                     "query_ids": list(dict.fromkeys(ap_queries[m.pos].get(m.name, []))),
                     "engine": "dynamodb",
+                    "topic": "key_design",
                 }
             )
     # #802: the dropped design's access patterns now point at the kept table, which
@@ -1054,6 +1055,7 @@ def independent_homes(homes: list[_Home], access_patterns: list[dict]) -> list[d
                 # a later step (``complete_pattern_members``) changes the patterns.
                 "authoritative_home": kept,
                 "derived_copies": copies,
+                "topic": "consistency",
             }
         )
     return notes

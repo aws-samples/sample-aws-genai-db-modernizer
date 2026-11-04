@@ -28,6 +28,11 @@ Version History:
   review records optional ``authoritative_home`` and ``derived_copies`` (#1780), the
   choice it made, so readers never rank the tables again. Backward compatible: None on a
   review merged before.
+- 1.6 (2026-11-04, #1221): Added optional ``trade_offs[].topic`` (a closed set the
+  designer picks, default ``other``) and the pipeline-only ``trade_offs[].note_kind``
+  (``review`` for the design review notes, ``warning`` for the schema agents' warnings;
+  left out of the JSON schema), so repeated trade-offs group by topic and the pipeline's
+  notes are listed apart.
 """
 
 from typing import Annotated, Literal
@@ -731,7 +736,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.5",
+        default="1.6",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

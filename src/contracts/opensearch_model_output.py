@@ -11,6 +11,11 @@ Version History:
 - 1.0: Initial version.
 - 1.1 (2026-10-17, #1006): ``contract_version`` declares the MAJOR.MINOR pattern
   every published version already matched (ADR-008 Decision 1).
+- 1.2 (2026-11-04, #1221): Added optional ``trade_offs[].topic`` (a closed set the
+  designer picks, default ``other``) and the pipeline-only ``trade_offs[].note_kind``
+  (``review`` for the design review notes, ``warning`` for the schema agents' warnings;
+  left out of the JSON schema), so repeated trade-offs group by topic and the pipeline's
+  notes are listed apart.
 """
 
 from __future__ import annotations
@@ -314,7 +319,7 @@ class OpenSearchModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.1",
+        default="1.2",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

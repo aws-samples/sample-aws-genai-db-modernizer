@@ -852,6 +852,7 @@ def _align_pk_types(drafts: _Drafts, column_types: ColumnTypes) -> None:
                 "target_tables": names,
                 "query_ids": [],
                 "engine": "dynamodb",
+                "topic": "key_design",
             }
         )
 
@@ -1618,6 +1619,7 @@ def _record_rekeys(
                 )
             ),
             "engine": "dynamodb",
+            "topic": "key_design",
         }
     )
 
@@ -1766,6 +1768,7 @@ def _record_folded_writes(drafts: _Drafts, folded_writes: FoldedWrites) -> None:
                     )
                 ),
                 "engine": "dynamodb",
+                "topic": "key_design",
             }
         )
 

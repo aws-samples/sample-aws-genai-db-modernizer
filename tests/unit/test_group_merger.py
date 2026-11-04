@@ -375,6 +375,8 @@ class TestDynamoDBOverlappingDesigns:
         assert merged[0]["query_ids"] == ["q-DDB-AP-4-wp_terms_taxonomy"]
         assert merged[0]["engine"] == "dynamodb"
         assert "group 0" in merged[0]["description"] and "group 1" in merged[0]["description"]
+        # #1221: the merge files its own trade-off under a topic.
+        assert merged[0]["topic"] == "key_design"
 
     def test_item_count_adds_only_new_entity_types(self):
         g0, g1 = self._run3_terms()
@@ -466,6 +468,8 @@ class TestDynamoDBOverlappingDesigns:
         assert sorted(note["target_tables"]) == ["WpPosts", "wp_posts"]
         assert note["source_tables"] == ["wp_posts"]
         assert note["engine"] == "dynamodb"
+        # #1221: a derived copy is read eventually consistent.
+        assert note["topic"] == "consistency"
 
     def test_trade_off_naming_every_target_does_not_hide_the_review(self):
         """#333: the trade-off names the conflict without resolving it; the merge

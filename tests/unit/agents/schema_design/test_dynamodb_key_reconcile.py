@@ -239,6 +239,7 @@ class TestDifferentKeySchemas:
         assert "group 0" in notes[0]["description"] and "group 1" in notes[0]["description"]
         assert notes[0]["target_tables"] == ["Orders"]
         assert notes[0]["query_ids"] == ["q-DDB-AP-1"]
+        assert notes[0]["topic"] == "key_design"  # #1221
 
     def test_three_groups_three_sort_keys(self):
         """The WpWcTaxRateClasses shape: groups 0, 1 and 3 each pick their own sort key."""
@@ -1826,6 +1827,7 @@ class TestPartitionKeyTypeFromTheSource:
         assert merge_failures(merged) == []
         [note] = [t for t in merged["trade_offs"] if "topic_id" in t["description"]]
         assert "discourse_topics" in note["description"]
+        assert note["topic"] == "key_design"  # #1221
         assert "S" in note["description"] and "N" in note["description"]
         assert (
             "partition key type only affects hashing; matches the source column" in note["impact"]

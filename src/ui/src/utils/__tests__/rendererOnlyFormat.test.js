@@ -139,6 +139,7 @@ const GUARDED_UI_FILES = [
   'utils/nodeIcons.js',
   'components/QueryRoutingTable.js',
   'components/CloseCallCallout.js',
+  'components/TradeOffTopicGroups.js',
   'components/UnservableQueriesCallout.js',
   'utils/queryRouting.js',
   'utils/migrationWaves.js',

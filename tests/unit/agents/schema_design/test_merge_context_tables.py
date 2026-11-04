@@ -669,6 +669,7 @@ def test_a_folded_placeholder_write_keeps_its_attributes_and_warns_of_overwrites
     trade_offs = _overwrite_trade_offs(merged)
     assert len(trade_offs) == 1 and trade_offs[0]["query_ids"] == ["w1"]
     assert trade_offs[0]["target_tables"] == ["Content"]
+    assert trade_offs[0]["topic"] == "key_design"  # #1221
 
 
 def test_the_owner_fold_and_rule_4_carry_the_same_attributes_and_trade_off() -> None:
