@@ -378,6 +378,10 @@ NOT_PRODUCED_HERE: dict[str, str] = {
         "scripts/run_assessment.py (src/shared/model_usage.py); no run here calls a "
         "model through it"
     ),
+    r"data-movement/wave-\d+/plan\.json": (
+        "the per-wave plan layout written before #1797: nothing writes it now, and the entry "
+        "stays so a saved job's old plans still load"
+    ),
     r"load-test-[^/]+/v\d+/results/(?!summary\.json)[^/]+\.json": (
         "a load test's per-pattern result, written by the load test runner (no load test "
         "runs here; its path is a caller's parameter the scan cannot render)"
