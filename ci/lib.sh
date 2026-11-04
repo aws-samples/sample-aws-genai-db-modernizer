@@ -56,18 +56,22 @@ _run_with_limit() {
   "$@" &
   local pid=$! rc=0 stamp
   stamp="$(mktemp)"; rm -f "$stamp"
+  # The watchdog's naps get none of our stdio (#1835): a nap can outlive the
+  # watchdog (a TERM landing between its fork and `nap=$!` leaves the trap
+  # nothing to kill), and it must not hold the caller's stdout or stderr open
+  # for the whole limit. Callers that read our output wait for those to close.
   ( nap=""
     trap '[ -z "$nap" ] || kill "$nap" 2>/dev/null; exit 0' TERM
-    sleep "$limit" & nap=$!; wait "$nap" || exit 0
+    sleep "$limit" </dev/null >/dev/null 2>&1 & nap=$!; wait "$nap" || exit 0
     echo "error: '$*' still running after ${limit}s, stopping it" >&2
     { echo "$pid"; _descendants "$pid"; } > "$stamp.pids"
     : > "$stamp"
     _kill_listed "$stamp.pids" TERM
-    sleep 10 & nap=$!; wait "$nap"
+    sleep 10 </dev/null >/dev/null 2>&1 & nap=$!; wait "$nap"
     _kill_listed "$stamp.pids" KILL ) &
   local dog=$!
   wait "$pid" || rc=$?
-  kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null || true
+  kill "$dog" 2>/dev/null || true; wait "$dog" 2>/dev/null || true
   if [ -e "$stamp" ]; then
     # The parent is gone but its orphaned children (apt-get) may not be: KILL them.
     _kill_listed "$stamp.pids" KILL

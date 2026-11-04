@@ -81,6 +81,8 @@ dev = [
     "moto>=5.2.2",
     "defusedxml>=0.7",
     "pytest-split>=0.10",
+    # per-test time limit in ci/test.sh: a hang names its test (#1835)
+    "pytest-timeout>=2.3",
     # the executive report tests read its text back (tests/executive_pdf.py)
     "pypdf>=5.0",
 ]
