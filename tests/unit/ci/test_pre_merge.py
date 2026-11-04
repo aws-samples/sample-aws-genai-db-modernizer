@@ -610,3 +610,16 @@ def test_setup_dev_leaves_a_system_hooks_path_in_place():
     assert "git config --get core.hooksPath >/dev/null" in sh
     contributing = (root / "CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "sudo git config" not in contributing
+
+
+# ---- Version pins with --quick (#1845) ----
+
+
+def test_quick_runs_the_version_pin_check_on_what_the_branch_touched():
+    sh = (Path(__file__).resolve().parents[3] / "ci" / "pre_merge.sh").read_text(encoding="utf-8")
+    assert "skip version-pins" not in sh
+    step = sh.split("# i. ")[1].split("# j. ")[0]
+    assert 'pins_args=(--base "$base")' in step
+    assert 'scripts/check_version_pins.py ${pins_args[@]+"${pins_args[@]}"}' in step
+    # The full run keeps every candidate test: --base is set only under --quick.
+    assert step.index('if [ "$quick" -eq 1 ]') < step.index("pins_args=(--base")
