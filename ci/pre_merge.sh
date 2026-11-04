@@ -10,7 +10,8 @@
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
 # lint, the zero-token replay of the saved real-model run, the version-pin check
-# (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on missing commit hooks, a refused author, a
+# (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict, the PR body's Evidence check (#1153) and, when the PR's last CI run
+# was red, the command that re-runs its failed tests (#1849). Exits non-zero on missing commit hooks, a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
 # ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
@@ -340,6 +341,18 @@ else
   printf '%s\n' "$ev_out" | sed 's/^/       /'
 fi
 rm -f "$pr_body_file"
+
+# j3. The last CI run (#1849): when it was red, the command that re-runs its failed tests
+# locally, so the same failures are not pushed again. Informational; needs gh.
+ci_status="$(python3 ci/rerun_failed.py status 2>/dev/null)" || true
+read -r ci_kind ci_pr ci_rest <<<"${ci_status:-unknown}" || true
+case "$ci_kind" in
+  red) note "warn ci-rerun: PR #$ci_pr's last CI run failed ($ci_rest); before pushing again, re-run its failed tests: ./ci/rerun_failed.sh $ci_pr" ;;
+  green) note "ok   ci-rerun: PR #$ci_pr's last CI run ended $ci_rest" ;;
+  other) note "info ci-rerun: PR #$ci_pr's last CI run ended $ci_rest; nothing to re-run" ;;
+  none) note "skip ci-rerun: ${ci_status#none }" ;;
+  *) note "skip ci-rerun: cannot read the last CI run (${ci_status#unknown })" ;;
+esac
 
 log "pre_merge summary"
 for line in "${summary[@]}"; do echo "$line"; done
