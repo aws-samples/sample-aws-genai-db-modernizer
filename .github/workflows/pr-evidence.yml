@@ -1,14 +1,20 @@
 name: PR Evidence
 
 # Compares the PR body's needs_llm_run verdict with ci/needs_llm_run.sh for the PR's diff,
-# and asks for a result line on every required real-model run (#1153). Not a required
-# check (a maintainer decision). The logic and its tests: ci/pr_evidence.py,
+# and asks for a result line on every required real-model run (#1153). A required run
+# with no result line yet is pending (a warning), never a red check (#1850); a
+# contradiction, a placeholder or negative result text still fails. Not a required
+# check (a maintainer decision). The second job, "PR Evidence results", is the one to
+# make required. On a pull request it passes; in the merge queue it runs the whole check
+# with --require-results (verdict lines, contradictions, result lines, and a missing
+# result line) and fails on any problem or API error, so a merge never skips a result. The logic and its tests: ci/pr_evidence.py,
 # tests/unit/ci/test_pr_evidence.py. Runs on fork PRs: no secrets, read-only token.
 # The PR body is untrusted: it reaches the script only through an env var, never a shell line.
 on:
   pull_request:
     types: [opened, reopened, synchronize, edited]
-  # No-op pass, so making this check required later can never stall the merge queue.
+  # PR Evidence: no-op pass, so making it required can never stall the merge queue.
+  # PR Evidence results: the gate that requires the result lines.
   merge_group:
 
 permissions:
@@ -24,7 +30,7 @@ jobs:
     steps:
       - name: Nothing to check in the merge queue
         if: github.event_name == 'merge_group'
-        run: echo "The PR body was checked when the PR entered the queue."
+        run: echo "PR Evidence is advisory and was reported on the pull request. Required result lines are enforced by the PR Evidence results job."
       - if: github.event_name == 'pull_request'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -36,4 +42,50 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 ci/pr_evidence.py check --body-env PR_BODY --author-env PR_AUTHOR --base HEAD^1
+
+  # Makes the result lines a hard requirement only where merging happens: on a pull
+  # request it reports pending in "PR Evidence" and passes here; in the merge queue it
+  # fails (and the queue drops the PR) while a required run has no passing result line.
+  # A neutral or pending status would let a PR merge without its result, so this is a
+  # separate job (a maintainer adds it to the ruleset's required checks).
+  # The scripts come from the merge group's base, not from the PR being checked, so a PR
+  # cannot rewrite its own gate. Its diff base..HEAD is only this entry's commits when
+  # the ruleset groups with ALLGREEN (each entry stacks on the previous one).
+  pr-evidence-results:
+    name: PR Evidence results
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Results are enforced in the merge queue
+        if: github.event_name == 'pull_request'
+        run: echo "Result lines are required when the PR enters the merge queue; PR Evidence reports a missing one as pending."
+      - if: github.event_name == 'merge_group'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The diff against the group's base decides which runs are required.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a passing result line for every required run
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          gate="$(mktemp -d)"
+          # Bootstrap: only while the base's own workflow has no results job (the change
+          # that adds the gate) may the branch's scripts run. Any other case uses the
+          # base's scripts, and a missing one fails the step (bash -e): fail closed.
+          if git show "$MERGE_GROUP_BASE:.github/workflows/pr-evidence.yml" 2>/dev/null \
+            | grep -q '^  pr-evidence-results:'; then
+            git show "$MERGE_GROUP_BASE:ci/pr_evidence.py" > "$gate/pr_evidence.py"
+            git show "$MERGE_GROUP_BASE:ci/needs_llm_run.py" > "$gate/needs_llm_run.py"
+          else
+            echo "::warning::The base has no PR Evidence results job yet (this change adds it): using this branch's scripts."
+            cp ci/pr_evidence.py ci/needs_llm_run.py "$gate/"
+          fi
+          python3 "$gate/pr_evidence.py" check --queue-ref-env MERGE_GROUP_REF --base "$MERGE_GROUP_BASE" --require-results
