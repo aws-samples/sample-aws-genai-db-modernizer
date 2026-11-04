@@ -97,7 +97,7 @@ Content-Type: application/json
 
 - `GET .../graph/catalog` lists every entry: `id`, `ref`, `section`, `title`, `question`, `note`, `max_rows`, `needs`, and `params`, each with its `kind`, `description`, `example` and `choices`, the values it takes on this job's graph (at most 1,000; `choices_truncated` is true when the graph holds more).
 - `POST .../graph/catalog/{entry_id}` runs one entry. The response has `columns`, `rows`, `row_count`, `truncated` (more rows matched than `max_rows`), `max_rows`, a `projection` of the rows as `nodes` and `edges`, and, when no rows came back, `unmet_needs` and an `explanation` naming the stages the job has not run. An entry without parameters takes `{}` or an empty body.
-- Both are always on, like the curated endpoints below, and use the same read-only handle, freshness check and limits: a 10-second timeout on each statement (`504`) and the shared read slots (`503` with `Retry-After: 1`). A request runs its statements one after another. A list runs one choice query per distinct parameter (7 today), and a run at most 3 (a one-row lookup per parameter, the entry, and on an empty result one probe per need), plus the freshness check every graph read does. So a list spends at most 7 × 10 s running statements and a run 3 × 10 s; any wait for a read slot (at most 30 s per statement) comes on top.
+- Both are always on, like the curated endpoints below, and use the same read-only handle, freshness check and limits: a 10-second timeout on each statement (`504`) and the shared read slots (`503` with `Retry-After: 1`). A request runs its statements one after another. A list runs one choice query per distinct parameter (10 today), and a run at most 3 (a one-row lookup per parameter, the entry, and on an empty result one probe per need), plus the freshness check every graph read does. So a list spends at most 10 × 10 s running statements and a run 3 × 10 s; any wait for a read slot (at most 30 s per statement) comes on top.
 - At most half the read slots' worth of catalog requests run at once (2 with the default of 4 `MODERNIZER_GRAPH_MAX_CONCURRENT_READS`; more get `429`). Each holds one read slot at a time, so the curated views always keep the other half.
 - A run needs `Content-Type: application/json` (`415`) and a body of at most 64 KiB (`413`). An unknown entry is `404`. A missing, unknown, non-string or over-1,024-character parameter is `422`, and so is a body that is not a JSON object (nesting too deep included) or a value that is not among the parameter's choices on the job's graph. The value is checked with a one-row lookup, so a value past the 1,000 listed choices is still checked. All of this, except the value lookup, is answered before a catalog slot is taken or the graph is opened. Errors never repeat the names or values sent.
 - Row values come back as stored. Customer text (descriptions, table and query ids) is data: escape it when you render it.
@@ -135,6 +135,7 @@ Node types: `Query`, `SourceTable`, `Destination`, `Engine`, `Signal`,
 `CoDependencyGroup`, `Decision`, `LoadTestRun`, `AntiPattern`, `Risk`,
 `AccessPattern`, `AssignmentVersion` (one per version of the effective assignment lineage),
 `TargetObject` (a design's table, index, collection or key pattern at one schema version, or a labelled fallback),
+`Wave` (a wave of one version's wave plan), `MoveUnit` (queries routing places as one),
 `Agent` (the producing agent and phase), `GraphMeta` (the schema revision
 and assignment version the graph was built from).
 
@@ -143,6 +144,12 @@ Relationships:
 ```text
 (Query)-[:READS_FROM]->(SourceTable)
 (Query)-[:WRITES {locking}]->(SourceTable)
+(Query)-[:MOVES_IN|CUTS_OVER_IN|CACHED_IN {effective}]->(Wave)
+(Wave)-[:INCLUDES]->(Engine)
+(Query)-[:MEMBER_OF]->(MoveUnit)
+(SourceTable)-[:SOURCE_OF_TRUTH {version, effective}]->(Engine)
+(Query)-[:READS_REPLICA {version, effective, engine}]->(SourceTable)
+(Query)-[:CACHED_BY {version, effective, pattern, reason, dropped}]->(Engine)
 (Query)-[:MIGRATES_TO {confidence, assignment_reason}]->(Destination)
 (Query)-[:EMITS_SIGNAL {strength}]->(Signal)
 (Query)-[:MEMBER_OF]->(CoDependencyGroup)
@@ -169,6 +176,8 @@ Relationships:
 ```
 
 An `AssignmentVersion` (`id` `assignment-v<N>`) has `version`, `kind` (the pass that made it: `first_assignment`, `reality_check`, `customer_pick`, `customer_scope`, `post_schema_reroute`, `rollback`, `source_of_truth_reroute` or `auto_decided`), `source`, `status`, `effective`, `created_at`, `move_count`, `passes_json` and `actors_json` (its Moves' distinct passes and actors). It `SUPERSEDES` the version before it, and a rollback `RESTORES` the version it restates. It `AFFECTS` the queries its Moves changed (role `moved`, or `tie` when they changed only a tie) and the engines those Moves left (`from`) or landed on (`to`). A consolidation Decision is `INFORMED_BY` the queries whose net move in the reality-check version is its from and to engine (its `query_count`), and a consolidation or reroute Decision `AFFECTS` the engines it moves queries from and to.
+
+Waves, move units, sources of truth, the cache layer and engine cost come from each assignment version's report and assignment, built with the graph explorer's own overlay code, so the two agree. A `Wave` (`v<version>:wave-<n>`) has the wave plan's title, rationale, gate, engines, table groups and query count; a query `MOVES_IN` the wave of its engine and is `CACHED_IN` its cache wave, and when the plan's first wave has a single engine and its cutover count equals the queries that move, a query that moves on later `CUTS_OVER_IN` it first. A `MoveUnit` is a placement unit of two or more queries. A table's `SOURCE_OF_TRUTH` and its `READS_REPLICA` reads are the report's table sources; `CACHED_BY` is a query's cache layer with its pattern, reason and whether the safety net dropped it. An `Engine`'s `monthly_cost_usd`, `role`, `rationale` and `workload_percent` are the effective report's figures (`cost_version` the assignment version that report was built from), and a `Query`'s `access_pattern_class` and `access_pattern_reason` the effective access-pattern record. Each carries its assignment version (on the node, or on the edge for sources of truth, replica reads and the cache layer); filter on `effective: true` for the current plan. `AssignmentVersion.has_report` says whether a version had its own report. Catalog questions O to S ask them.
 
 `READS_FROM` is every table a query accesses; `WRITES` the tables it writes or locks, as routing's one-writer rule reads them (`locking` for a locking read). A table a query only reads has `READS_FROM` and no `WRITES`: `MATCH (q:Query)-[:READS_FROM]->(st:SourceTable) WHERE NOT (q)-[:WRITES]->(st) RETURN q.id, st.id`. A `SourceTable` named by a collector placeholder (`unknown`, or a dummy table such as `DUAL`, in any case) has `placeholder` true and a `placeholder_reason`; it has `WRITES` when routing counts it as written. `locking` is on a table a locking read locks and the statement does not write.
 
@@ -560,6 +569,92 @@ The ladder comes from `ladder_version`'s Move (`pass`); a rollback's ladder is c
 {"cypher": "MATCH (q:Query {id: $query_id})-[s:SCORED {current: true}]->(e:Engine) RETURN q.id AS query_id, e.id AS engine, s.score AS score, s.gate AS gate, s.assigned AS assigned, s.ladder_version AS ladder_version, s.pass AS pass, s.ladder_copied_from AS ladder_copied_from ORDER BY engine", "params": {"query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"}}
 ```
 
+### O. What one wave moves or caches
+
+Which queries move in this wave, and which reads does it put a cache in front of?
+
+Catalog id `wave_queries`; at most 1,000 rows. Needs: Referee synthesis (the wave plan) (`Wave` nodes).
+
+Graph view: nodes `Query` (`query_id`), `Wave` (`moves_in`), `Wave` (`cached_in`); edges `Query` → `Wave` (MOVES_IN), `Query` → `Wave` (CACHED_IN).
+
+Parameters:
+
+- `wave_id` (wave): A wave of the effective version's wave plan: 'v<version>:wave-<n>'. Example `v2:wave-1`. Choices: `MATCH (w:Wave {effective: true}) RETURN w.id AS value ORDER BY w.wave, value`
+
+The explorer's wave list: the queries that reach their engine in the wave (`MOVES_IN`, first) and the reads a cache in the wave fronts (`CACHED_IN`). The queries that only cut over in the wave are question P.
+
+```json
+{"cypher": "MATCH (w:Wave {id: $wave_id}) MATCH (q:Query)-[r:MOVES_IN|CACHED_IN]->(w) WITH w, q, label(r) AS relation RETURN w.id AS wave_id, w.title AS title, relation, q.id AS query_id, q.calls_per_second AS calls_per_second, CASE WHEN relation = 'MOVES_IN' THEN w.id ELSE NULL END AS moves_in, CASE WHEN relation = 'CACHED_IN' THEN w.id ELSE NULL END AS cached_in, CASE WHEN relation = 'MOVES_IN' THEN 0 ELSE 1 END AS rank ORDER BY rank, query_id", "params": {"wave_id": "v2:wave-1"}}
+```
+
+### P. What cuts over in one wave
+
+Which queries run on this wave's engine from it, before they move on later?
+
+Catalog id `wave_cutover`; at most 1,000 rows. Needs: Referee synthesis (the wave plan) (`Wave` nodes); Referee synthesis, when the plan's first wave is a cutover wave (`CUTS_OVER_IN` edges).
+
+Graph view: nodes `Wave` (`wave_id`), `Query` (`query_id`), `Wave` (`moves_later_in`); edges `Query` → `Wave` (CUTS_OVER_IN), `Query` → `Wave` (MOVES_IN).
+
+Parameters:
+
+- `wave_id` (wave): A wave of the effective version's wave plan: 'v<version>:wave-<n>'. Example `v2:wave-1`. Choices: `MATCH (w:Wave {effective: true}) RETURN w.id AS value ORDER BY w.wave, value`
+
+A plan has cutover passengers only when its first wave has a single engine and its `cutover_query_count` equals the number of queries that move.
+
+```json
+{"cypher": "MATCH (w:Wave {id: $wave_id})<-[:CUTS_OVER_IN]-(q:Query)-[:MOVES_IN]->(later:Wave) WHERE later.version = w.version RETURN w.id AS wave_id, q.id AS query_id, later.id AS moves_later_in, q.calls_per_second AS calls_per_second ORDER BY query_id", "params": {"wave_id": "v2:wave-1"}}
+```
+
+### Q. Who writes one table
+
+Which queries write or lock this table, and which engine is its source of truth?
+
+Catalog id `table_writers`; at most 1,000 rows. Needs: Assignment (`Destination` nodes and `MIGRATES_TO` edges).
+
+Graph view: nodes `SourceTable` (`table_id`), `Query` (`query_id`), `Engine` (`source_of_truth`); edges `Query` → `SourceTable` (WRITES), `SourceTable` → `Engine` (SOURCE_OF_TRUTH).
+
+Parameters:
+
+- `table_id` (table): A source table some query writes or locks. Example `wordpress.wp_posts`. Choices: `MATCH (:Query)-[:WRITES]->(st:SourceTable) RETURN DISTINCT st.id AS value ORDER BY value`
+
+`source_of_truth` is null without a synthesis report; the reads served from a replica are `READS_REPLICA` edges.
+
+```json
+{"cypher": "MATCH (q:Query)-[w:WRITES]->(st:SourceTable {id: $table_id}) OPTIONAL MATCH (st)-[:SOURCE_OF_TRUTH {effective: true}]->(e:Engine) RETURN st.id AS table_id, q.id AS query_id, w.locking AS locking, e.id AS source_of_truth ORDER BY query_id", "params": {"table_id": "wordpress.wp_posts"}}
+```
+
+### R. What moves together with one query
+
+Which queries does routing place together with this one, in one unit?
+
+Catalog id `query_moves_with`; at most 1,000 rows. Needs: Assignment, when queries are placed together (`MoveUnit` nodes).
+
+Graph view: nodes `MoveUnit` (`unit_id`), `Query` (`query_id`); edges `Query` → `MoveUnit` (MEMBER_OF).
+
+Parameters:
+
+- `query_id` (query): A query that moves together with others in the effective version. Example `119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e`. Choices: `MATCH (q:Query)-[:MEMBER_OF]->(:MoveUnit {effective: true}) RETURN DISTINCT q.id AS value ORDER BY value`
+
+The query itself is one of the rows.
+
+```json
+{"cypher": "MATCH (q:Query {id: $query_id})-[:MEMBER_OF]->(u:MoveUnit {effective: true})<-[:MEMBER_OF]-(o:Query) RETURN u.id AS unit_id, u.size AS size, o.id AS query_id, o.calls_per_second AS calls_per_second ORDER BY calls_per_second DESC, query_id", "params": {"query_id": "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e"}}
+```
+
+### S. The queries the cache layer serves
+
+Which queries does a cache front, with which pattern, and which did it drop?
+
+Catalog id `cache_queries`; at most 1,000 rows. Needs: Assignment, when a cache fronts a query (`CACHED_BY` edges).
+
+Graph view: nodes `Engine` (`engine`), `Query` (`query_id`); edges `Query` → `Engine` (CACHED_BY).
+
+`dropped`: the safety net took the cache off the query after schema design.
+
+```json
+{"cypher": "MATCH (q:Query)-[c:CACHED_BY {effective: true}]->(e:Engine) RETURN e.id AS engine, q.id AS query_id, c.pattern AS pattern, c.dropped AS dropped, c.reason AS reason ORDER BY engine, query_id"}
+```
+
 ## Empty results
 
 A query that returns `row_count: 0` usually means the pipeline stage that
@@ -571,7 +666,7 @@ names the stages it needs.
 |---------|--------------------------|---------|
 | `Signal` nodes | Referee triage | 7 |
 | `AntiPattern` nodes | Analysis, per engine | 5, D |
-| `Destination` nodes and `MIGRATES_TO` edges | Assignment | 2, 3, B, E, L |
+| `Destination` nodes and `MIGRATES_TO` edges | Assignment | 2, 3, B, E, L, Q |
 | `MOVED` edges | Assignment move ledger | G |
 | `AssignmentVersion` nodes | Assignment version chain | J, K |
 | `Decision` nodes | Reality check or schema design | 8 |
@@ -582,6 +677,10 @@ names the stages it needs.
 | resolved `Risk` nodes | Referee synthesis, when the assignment resolved a risk | 6b |
 | `TargetObject` nodes from a design (not a fallback) | Schema design, per engine | M |
 | `SCORED` edges | Assignment move ledger, with candidate ladders | N |
+| `Wave` nodes | Referee synthesis (the wave plan) | O, P |
+| `MoveUnit` nodes | Assignment, when queries are placed together | R |
+| `CUTS_OVER_IN` edges | Referee synthesis, when the plan's first wave is a cutover wave | P |
+| `CACHED_BY` edges | Assignment, when a cache fronts a query | S |
 
 <!-- END GENERATED by scripts/render_graph_catalog.py -->
 

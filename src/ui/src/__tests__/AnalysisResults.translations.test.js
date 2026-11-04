@@ -39,7 +39,7 @@ const PAGES = [
     name: 'GraphExplorer.js',
     file: '../pages/GraphExplorer.js',
     canaryKey: 'graph-explorer.notice.header',
-    canaryValue: 'Experimental, data incomplete',
+    canaryValue: 'Experimental',
   },
 ];
 

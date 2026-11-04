@@ -41,7 +41,13 @@ from src.graph.store import GraphStore
 #   first source table.
 # - 10 (#306): WRITES edges (the tables a query writes or locks, as routing's
 #   one-writer rule reads them) and SourceTable.placeholder / placeholder_reason.
-GRAPH_SCHEMA_REVISION = 10
+# - 11 (#306): Wave and MoveUnit nodes; MOVES_IN, CACHED_IN, CUTS_OVER_IN,
+#   INCLUDES, SOURCE_OF_TRUTH, READS_REPLICA and CACHED_BY edges; Engine
+#   monthly_cost_usd and cost_version; all per assignment version, built by the
+#   explorer's overlay code; Wave.table_groups_json, Engine role, rationale and
+#   workload_percent, Query access_pattern_class and access_pattern_reason,
+#   AssignmentVersion.has_report.
+GRAPH_SCHEMA_REVISION = 11
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -56,6 +62,7 @@ NODE_TABLES = [
         operation_type STRING, in_scope BOOLEAN,
         frequency_per_hour DOUBLE, performance_json STRING, characteristics_json STRING,
         key_candidates_json STRING,
+        access_pattern_class STRING, access_pattern_reason STRING,
         PRIMARY KEY (id)
     )""",
     # placeholder: a collector's name for "no table" (report_facts.
@@ -83,8 +90,27 @@ NODE_TABLES = [
         id STRING, engine STRING, artifact_type STRING, artifact_name STRING,
         PRIMARY KEY (id)
     )""",
+    # monthly_cost_usd, role, rationale, workload_percent: the effective report's
+    # facts.engines figures (cost_version: the assignment version that report was
+    # built from), never recomputed; null without a report.
     """CREATE NODE TABLE IF NOT EXISTS Engine (
-        id STRING, display_name STRING,
+        id STRING, display_name STRING, monthly_cost_usd DOUBLE, cost_version INT64,
+        role STRING, rationale STRING, workload_percent DOUBLE,
+        PRIMARY KEY (id)
+    )""",
+    # The wave plan of one assignment version's report (#306): id 'v<N>:wave-<n>',
+    # its title, rationale, gate, engines (JSON), whether it migrates (facts.waves),
+    # its query count, and whether it is the homogeneous cutover wave.
+    """CREATE NODE TABLE IF NOT EXISTS Wave (
+        id STRING, version INT64, effective BOOLEAN, wave INT64, title STRING,
+        rationale STRING, gate STRING, engines_json STRING, migrating BOOLEAN,
+        query_count INT64, cutover BOOLEAN, table_groups_json STRING,
+        PRIMARY KEY (id)
+    )""",
+    # A placement unit of one assignment version (ADR-031 Amendment 9): the
+    # queries every routing pass places as one; id 'v<N>:unit-<i>'.
+    """CREATE NODE TABLE IF NOT EXISTS MoveUnit (
+        id STRING, version INT64, effective BOOLEAN, unit STRING, size INT64,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS Signal (
@@ -112,7 +138,7 @@ NODE_TABLES = [
         id STRING, version INT64, kind STRING, source STRING, status STRING,
         effective BOOLEAN, created_at STRING, move_count INT64,
         passes_json STRING, actors_json STRING,
-        previous_version INT64, rolled_back_version INT64,
+        previous_version INT64, rolled_back_version INT64, has_report BOOLEAN,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS LoadTestRun (
@@ -168,7 +194,23 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS WRITES (FROM Query TO SourceTable, locking BOOLEAN)",
     "CREATE REL TABLE IF NOT EXISTS MIGRATES_TO (FROM Query TO Destination, confidence DOUBLE, pinned STRING, assignment_reason STRING)",
     "CREATE REL TABLE IF NOT EXISTS EMITS_SIGNAL (FROM Query TO Signal, strength DOUBLE)",
-    "CREATE REL TABLE IF NOT EXISTS MEMBER_OF (FROM Query TO CoDependencyGroup)",
+    """CREATE REL TABLE IF NOT EXISTS MEMBER_OF (
+        FROM Query TO CoDependencyGroup,
+        FROM Query TO MoveUnit
+    )""",
+    # The wave plan (#306): the wave a query moves in, the cache wave in front of
+    # it, the homogeneous first wave it cuts over in before moving on, the engines
+    # of a wave.
+    "CREATE REL TABLE IF NOT EXISTS MOVES_IN (FROM Query TO Wave, effective BOOLEAN)",
+    "CREATE REL TABLE IF NOT EXISTS CACHED_IN (FROM Query TO Wave, effective BOOLEAN)",
+    "CREATE REL TABLE IF NOT EXISTS CUTS_OVER_IN (FROM Query TO Wave, effective BOOLEAN)",
+    "CREATE REL TABLE IF NOT EXISTS INCLUDES (FROM Wave TO Engine)",
+    # A table's source of truth and the reads served from a replica of it, per
+    # version (ADR-031 Amendment 9, the report's table_sources).
+    "CREATE REL TABLE IF NOT EXISTS SOURCE_OF_TRUTH (FROM SourceTable TO Engine, version INT64, effective BOOLEAN)",
+    "CREATE REL TABLE IF NOT EXISTS READS_REPLICA (FROM Query TO SourceTable, version INT64, effective BOOLEAN, engine STRING)",
+    # The cache layer in front of a query, per version (#296, #384).
+    "CREATE REL TABLE IF NOT EXISTS CACHED_BY (FROM Query TO Engine, version INT64, effective BOOLEAN, pattern STRING, reason STRING, dropped BOOLEAN)",
     "CREATE REL TABLE IF NOT EXISTS TESTED_IN (FROM Query TO LoadTestRun)",
     "CREATE REL TABLE IF NOT EXISTS VALIDATES (FROM LoadTestRun TO Destination)",
     """CREATE REL TABLE IF NOT EXISTS HOSTED_ON (

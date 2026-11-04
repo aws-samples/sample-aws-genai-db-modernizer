@@ -529,7 +529,7 @@ def test_a_request_runs_the_statement_count_the_docs_state(populated_store):
     client = _client(counting)
     entries = client.get(BASE).json()["entries"]
     distinct = {p for e in catalog.entries() for p in e.params}
-    assert counting.statements == len(distinct) == 7, "update the docs' '7 today'"
+    assert counting.statements == len(distinct) == 10, "update the docs' '10 today'"
     for entry in entries:
         params = {p["name"]: (p["choices"] or [p["example"]])[0] for p in entry["params"]}
         counting.statements = 0

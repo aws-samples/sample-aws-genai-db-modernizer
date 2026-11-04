@@ -78,6 +78,9 @@ class Overlays:
     engine_costs: dict[str, float] = field(default_factory=dict)
     # query -> (access-pattern class, its reason)
     query_classes: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    # query -> its cache layer as the assignment records it (#296, #384):
+    # {"engine", "pattern", "reason", "dropped"}.
+    query_cache: dict[str, dict] = field(default_factory=dict)
     # The assignment version the report was built from (``assignment_summary.version``).
     report_version: int | None = None
 
@@ -129,6 +132,7 @@ def build_overlays(
     query_move_wave: dict[str, int] = {}
     query_cached_in: dict[str, int] = {}
     query_engine: dict[str, str] = {}
+    query_cache: dict[str, dict] = {}
     for qa in _list(assignment.get("query_assignments")):
         if not isinstance(qa, Mapping) or not qa.get("query_id"):
             continue
@@ -138,6 +142,13 @@ def build_overlays(
             query_move_wave[qid] = move
             query_engine[qid] = str(qa.get("assigned_engine"))
         cache = qa.get("cache_engine")
+        if cache:
+            query_cache[qid] = {
+                "engine": str(cache),
+                "pattern": qa.get("cache_pattern"),
+                "reason": qa.get("cache_reason"),
+                "dropped": bool(qa.get("cache_dropped")),
+            }
         cached = engine_wave.get(str(cache)) if cache and not qa.get("cache_dropped") else None
         if cached is not None and cached != move:
             query_cached_in[qid] = cached
@@ -149,6 +160,7 @@ def build_overlays(
             "rationale": w.get("rationale"),
             "gate": w.get("gate"),
             "engines": [e for e in _list(w.get("engines")) if isinstance(e, str)],
+            "query_count": w.get("query_count") if isinstance(w.get("query_count"), int) else None,
             "table_groups": [
                 {
                     "tables": [t for t in _list(g.get("tables")) if isinstance(t, str)],
@@ -191,6 +203,11 @@ def build_overlays(
             "writers": {str(q) for q in _list(ts.get("write_query_ids"))},
             "replica_reads": {str(q) for r in replicas for q in _list(r.get("read_query_ids"))},
             "replica_engines": sorted({str(r["engine"]) for r in replicas if r.get("engine")}),
+            "replica_reads_by_engine": {
+                str(r["engine"]): {str(q) for q in _list(r.get("read_query_ids"))}
+                for r in replicas
+                if r.get("engine")
+            },
         }
 
     engine_costs = {
@@ -214,6 +231,7 @@ def build_overlays(
         table_sources=table_sources,
         engine_costs=engine_costs,
         query_classes=query_classes,
+        query_cache=query_cache,
         report_version=(
             summary.get("version")
             if isinstance(summary := report.get("assignment_summary"), Mapping)
