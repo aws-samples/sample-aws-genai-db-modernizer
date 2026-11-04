@@ -33,12 +33,12 @@ Closes #
 
 <!-- For each behavior claim above, paste the command and its output (trimmed) or a rendered excerpt. Do not assert behavior in prose. -->
 
-<!-- Verdict lines, one per run, exactly as `./ci/needs_llm_run.sh` prints them (run `uv run python ci/pr_evidence.py render` to write this section from your head commit). The `PR Evidence` check fails when a line is missing or contradicts the script for this PR's diff:
+<!-- Verdict lines, one per run, exactly as `./ci/needs_llm_run.sh` prints them (run `uv run python ci/pr_evidence.py render` to write this section from your head commit). The `PR Evidence` check fails when a verdict line is missing or contradicts the script for this PR's diff:
 
 e2e-llm: required | not required
 bedrock-smoke: required | not required
 
-For each run that is required, add a result line with the excerpt or outcome, outside this comment:
+For each run that is required, add a result line with the excerpt or outcome, outside this comment, once the run has finished. Until then leave the line out: a required run with no result line is reported as pending (a warning), but the `PR Evidence results` job fails in the merge queue while it is missing. An empty, placeholder or negative result line fails the check:
 
 e2e-llm result: pass (judge 3.9, $3.74)   (or a MODERNIZE_RESULT: complete line)
 bedrock-smoke result: pass
