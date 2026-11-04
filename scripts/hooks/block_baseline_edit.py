@@ -60,6 +60,10 @@ PROTECTED: dict[str, str] = {
     "tests/contract/value_set_snapshot.json": (
         "uv run python scripts/contract_value_snapshot.py --write"
     ),
+    # The DynamoDB group-draft subagent, rendered from its command, skill and contract (#763).
+    ".claude/agents/dynamodb-group-draft.md": (
+        "uv run python scripts/render_group_draft_agent.py --write"
+    ),
 }
 
 

@@ -1208,3 +1208,96 @@ def test_the_waiting_rule_names_the_stop_hook_that_holds_it() -> None:
     assert "`scripts/hooks/require_modernize_result.py`" in waiting
     assert "`Blocked: nothing is running ...`" in waiting
     assert (REPO_ROOT / "scripts" / "hooks" / "require_modernize_result.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# #355 item 2 / #763 lever 1: a shared cached prefix for the DynamoDB group drafts
+# ---------------------------------------------------------------------------
+
+GROUP_AGENT = "dynamodb-group-draft"
+_GROUP_PLACEHOLDERS = ("{G}", "{INPUT_FILE}", "{INPUT_PAGES}", "{OTHER_GROUPS}", "{DRAFT}")
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "design-schema-dynamodb.md"])
+def test_the_group_task_text_puts_the_shared_part_first_and_the_group_last(name: str) -> None:
+    """Every group's task text is word for word the same up to its own part: no
+    group-specific placeholder comes before the tool-use rule's end."""
+    (template,) = _group_templates((COMMANDS_DIR / name).read_text())
+    shared, _, own = template.partition("Your part, last: ")
+    assert TOOL_USE_RULE in shared  # the whole shared part, the tool-use rule included
+    assert shared.rstrip().endswith(
+        "Use a search's output as is: never pipe, chain or post-process it."
+    )
+    for placeholder in _GROUP_PLACEHOLDERS:
+        assert placeholder not in shared and placeholder in own, placeholder
+    assert own.startswith("group={G}.")
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "design-schema-dynamodb.md", "design-schema.md"])
+def test_group_drafts_are_dispatched_as_the_shared_prefix_agent(name: str) -> None:
+    text = " ".join((COMMANDS_DIR / name).read_text().split())
+    assert (
+        f"`subagent_type` set to `{GROUP_AGENT}`" in text
+        or f"`subagent_type` `{GROUP_AGENT}`" in text
+    )
+    agent = REPO_ROOT / ".claude" / "agents" / f"{GROUP_AGENT}.md"
+    assert f"name: {GROUP_AGENT}" in agent.read_text()
+
+
+def test_phase_6_starts_part_1_first_and_the_other_parts_in_the_next_message() -> None:
+    """The first group writes the shared prompt cache; the others start a few seconds
+    later and read it. The turn goes on between the two messages (Waiting Rule)."""
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    assert "**6b. Launch every schema subagent in two messages, back to back:**" in phase_6
+    assert "plus DynamoDB part 1" in phase_6
+    assert "as your very next message, with no text and no other tool call between" in phase_6
+    assert "Do not wait for part 1's report before the second message" in phase_6
+    assert (
+        "SINGLE message:** one per non-DynamoDB engine, plus one per DynamoDB group" not in phase_6
+    )
+    standalone = " ".join((COMMANDS_DIR / "design-schema-dynamodb.md").read_text().split())
+    assert (
+        "the first group in one message, then every other group in your very next message"
+        in standalone
+    )
+    dispatcher = " ".join((COMMANDS_DIR / "design-schema.md").read_text().split())
+    assert "All launches MUST be in a single message" not in dispatcher
+    assert "All non-DynamoDB launches MUST be in a single message" in dispatcher
+    assert "part 1 in that same message, every other part in your very next message" in dispatcher
+
+
+def test_message_2_is_sent_before_any_status_and_a_never_dispatched_part_is_not_running() -> None:
+    """Review of #1828: a part never dispatched also has no report, so read as
+    "still running" it would stall the run. Message 2 comes before any Done signal,
+    and a missing part with no Agent call is dispatched, not waited for."""
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    assert "Message 2 always comes right after message 1, before any Done signal" in phase_6
+    assert "run no `--status` command until both messages are sent" in phase_6
+    assert "that part is still running if you dispatched it" in phase_6
+    assert (
+        "A part you never dispatched (no Agent call for it in 6b's two messages) is not running"
+        in phase_6
+    )
+    assert "dispatch it now with the 6b task text" in phase_6
+    waiting = " ".join(
+        _modernize_text().split("## Waiting Rule", 1)[1].split("\n## ", 1)[0].split()
+    )
+    assert "you dispatched it and it has not reported" in waiting
+    assert "a missing part that was never dispatched is not running: dispatch it first" in waiting
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "design-schema-dynamodb.md"])
+def test_a_missing_group_agent_type_falls_back_to_general_purpose(name: str) -> None:
+    text = " ".join((COMMANDS_DIR / name).read_text().split())
+    assert "If that agent type is not available" in text
+    assert "dispatch the same task text as a general-purpose subagent" in text
+
+
+def test_the_group_task_skips_the_reads_the_agent_prompt_already_carries() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    task = text[text.index("## Group draft task") : text.index("## Merge fix task")]
+    assert "skip this Read when your instructions already carry the skill" in task
+    assert "skip this Read when your instructions already carry the contract" in task
+    # Run any other way (standalone, a general-purpose subagent), the Reads stay.
+    assert "2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`" in task
+    assert "3. Read the output contract: `src/contracts/dynamodb_model_output.py`" in task

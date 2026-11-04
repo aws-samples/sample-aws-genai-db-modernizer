@@ -305,6 +305,16 @@ repos:
         files: '(src/graph/catalog\.py|src/graph/store\.py|src/shared/catalog/.*\.py|src/catalog/engines/.*\.toml|scripts/render_graph_catalog\.py|docs/guides/context-graph-query-cookbook\.md)'
         pass_filenames: false
 
+  # The DynamoDB group-draft subagent is generated from its command, skill and contract (#763)
+  - repo: local
+    hooks:
+      - id: render-group-draft-agent
+        name: DynamoDB group-draft agent definition is fresh
+        entry: uv run python scripts/render_group_draft_agent.py --check
+        language: system
+        files: '(\.claude/commands/design-schema-dynamodb\.md|src/skills/dynamodb-data-modeling\.md|src/contracts/dynamodb_model_output\.py|scripts/render_group_draft_agent\.py|\.claude/agents/dynamodb-group-draft\.md)'
+        pass_filenames: false
+
   # The assess() request and result JSON Schemas are generated from the public models (#1183)
   - repo: local
     hooks:

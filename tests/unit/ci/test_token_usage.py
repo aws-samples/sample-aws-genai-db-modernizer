@@ -398,6 +398,7 @@ def test_the_agent_table_has_one_row_per_agent_with_its_largest_context(tmp_path
     assert rows["toolu_a"]["largest_context"] == 4102  # input + cache read + cache write
     assert rows["toolu_a"]["phases"] == ["synthesis"]
     assert rows["toolu_a"]["outputTokens"] is None  # first-chunk counts only
+    assert rows["toolu_a"]["models"] == [SONNET]  # each agent records the model it ran on
     assert rows["orchestrator"]["kind"] == "orchestrator"
     assert rows["orchestrator"]["calls"] == 2
     _assert_sums_match(result)
@@ -767,3 +768,19 @@ def test_e2e_llm_counts_tokens_after_the_explore_session() -> None:
     assert script.index("step explore run_before_deadline") < script.index("step token-usage")
     assert script.index("step token-usage") < script.index("step results")
     assert '--explore "$OUT/explore-transcript.jsonl"' in script
+
+
+def test_each_agent_row_records_the_models_its_turns_ran_on(tmp_path: Path) -> None:
+    """A subagent on another model (a `model:` line in its definition) shows in its
+    row, so a later model change is visible in results.json (#763)."""
+    haiku = _turn("h1", _u(10, 1), agent="toolu_h")
+    haiku["message"]["model"] = "claude-haiku-5-5"
+    synthetic = _turn("s1", {}, agent="toolu_h")
+    synthetic["message"]["model"] = "<synthetic>"
+    transcript = _write(
+        tmp_path / "t.jsonl",
+        [_dispatch("o1", "toolu_h", "Check", "Run /reality-check"), haiku, synthetic],
+    )
+    rows = {row["agent"]: row for row in token_usage.summarize(transcript)["agents"]}
+    assert rows["toolu_h"]["models"] == ["claude-haiku-5-5"]
+    assert rows["orchestrator"]["models"] == [SONNET]
