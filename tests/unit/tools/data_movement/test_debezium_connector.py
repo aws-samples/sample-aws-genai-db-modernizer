@@ -668,3 +668,15 @@ def test_bucket_stack_exports_what_the_connector_stack_imports(mysql_raw):
     outputs = yaml.safe_load(_strip_tags(BUCKET_STACK.read_text()))["Outputs"]
     assert outputs["PluginBucketArn"]["Export"] == {"Name": "${AWS::StackName}-PluginBucketArn"}
     assert "PluginBucketArn" not in _template(mysql_raw)["Parameters"]
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("fixture", ["mysql_raw", "pg_raw"])
+def test_secret_arn_pattern_full_matches_a_real_secret_arn(fixture, request):
+    """CloudFormation matches the whole value (#1861)."""
+    pattern = _template(request.getfixturevalue(fixture))["Parameters"]["DatabaseSecretArn"][
+        "AllowedPattern"
+    ]
+    assert re.fullmatch(
+        pattern, "arn:aws:secretsmanager:us-east-1:123456789012:secret:dbz/replication-AbCdEf"
+    )

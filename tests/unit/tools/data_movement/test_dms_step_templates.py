@@ -85,7 +85,7 @@ def _eca(props: dict, override: bool) -> str | None:
         value = value["Fn::Sub"].replace("${SecretsManagerEndpointOverride}", OVERRIDE)
     if value == {"Ref": "AWS::NoValue"}:
         value = None
-    return value
+    return value  # type: ignore[no-any-return]
 
 
 def _with_database(inputs: Step1Inputs, database: str) -> Step1Inputs:
@@ -278,7 +278,7 @@ def _strings(value) -> list[str]:
 def test_the_stack_is_exactly_the_six_resources_and_no_iam_wildcard(engine):
     resources = render_dms_template(make_step1_inputs(engine))["Resources"]
     assert {n: r["Type"] for n, r in resources.items()} == {
-        "SecretsAccessRole": "AWS::IAM::Role",
+        "SecretsAccessRole": "AWS::IAM::Role",  # pragma: allowlist secret
         "SubnetGroup": "AWS::DMS::ReplicationSubnetGroup",
         "ReplicationInstance": "AWS::DMS::ReplicationInstance",
         "SourceEndpoint": "AWS::DMS::Endpoint",
@@ -499,8 +499,8 @@ def test_no_account_region_or_endpoint_defaults_in_the_aurora_template(engine):
 @pytest.mark.parametrize(
     ("engine", "pattern", "family"),
     [
-        ("aurora_postgresql", r"^16\.", "aurora-postgresql16"),
-        ("aurora_mysql", r"^8\.0\.", "aurora-mysql8.0"),
+        ("aurora_postgresql", r"^16\..+$", "aurora-postgresql16"),
+        ("aurora_mysql", r"^8\.0\..+$", "aurora-mysql8.0"),
     ],
 )
 def test_the_engine_version_must_be_on_the_design_line(engine, pattern, family):
@@ -804,3 +804,87 @@ def test_the_settings_say_what_the_review_asked(engine):
     assert "ADR-033" not in text and "Decision 10" not in text
     assert "later steps (change capture)" in text.lower()
     assert "ADR-033" not in render_ddl(make_step1_inputs(engine))
+
+
+# ---------------------------------------------------------------------------
+# AllowedPattern is matched against the whole value (#1861)
+# ---------------------------------------------------------------------------
+
+_ACCOUNT = "123456789012"
+_REPRESENTATIVE = {
+    "SecretsManagerEndpointOverride": "vpce-0a1b2c3d-abcd1234.secretsmanager.us-east-1.vpce.amazonaws.com",  # pragma: allowlist secret
+    "SourceSecretArn": f"arn:aws:secretsmanager:us-east-1:{_ACCOUNT}:secret:dms/source-AbCdEf",
+    "TargetSecretArn": f"arn:aws:secretsmanager:us-east-1:{_ACCOUNT}:secret:dms/target-AbCdEf",
+    "SourceSecretKmsKeyArn": f"arn:aws:kms:us-east-1:{_ACCOUNT}:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+    "TargetSecretKmsKeyArn": f"arn:aws:kms:us-east-1:{_ACCOUNT}:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+    "ReplicationKmsKeyArn": f"arn:aws:kms:us-east-1:{_ACCOUNT}:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+    "KmsKeyArn": f"arn:aws:kms:us-east-1:{_ACCOUNT}:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+    "SourceCertificateArn": f"arn:aws:dms:us-east-1:{_ACCOUNT}:cert:ABCDEFGHIJKLMNOP",
+    "TargetCertificateArn": f"arn:aws:dms:us-east-1:{_ACCOUNT}:cert:ABCDEFGHIJKLMNOP",
+    "SourceDatabaseName": "shop",
+    "TargetDatabaseName": "shop",
+    "DatabaseName": "shop",
+    "TaskIdentifier": "dm-job1-step-1",
+    "MasterUsername": "dbadmin",
+}
+_REAL_ENGINE_VERSION = {"aurora_mysql": "8.0.mysql_aurora.3.14.0", "aurora_postgresql": "16.4"}
+_OTHER_ENGINE_VERSION = {"aurora_mysql": ["8.4.mysql_aurora.4.0.0", "5.7.mysql_aurora.2.12.0"], "aurora_postgresql": ["15.6", "17.1"]}  # fmt: skip
+
+
+def _aurora_engine_version_pattern(engine: str) -> str:
+    parameters = render_aurora_template(make_step1_inputs(engine))["Parameters"]
+    return str(parameters["EngineVersion"]["AllowedPattern"])
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_aurora_engine_version_pattern_accepts_a_real_version(engine):
+    pattern = _aurora_engine_version_pattern(engine)
+    assert re.fullmatch(pattern, _REAL_ENGINE_VERSION[engine]), pattern
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("engine", ENGINES)
+def test_aurora_engine_version_pattern_refuses_another_line(engine):
+    pattern = _aurora_engine_version_pattern(engine)
+    for other in _OTHER_ENGINE_VERSION[engine]:
+        assert not re.fullmatch(pattern, other), (pattern, other)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_aurora_engine_version_fallback_pattern_accepts_a_version(engine):
+    inputs = make_step1_inputs(engine)
+    replication = inputs.plan.replication.model_copy(update={"target_engine_line": None})
+    inputs = dataclasses.replace(
+        inputs, plan=inputs.plan.model_copy(update={"replication": replication})
+    )
+    pattern = render_aurora_template(inputs)["Parameters"]["EngineVersion"]["AllowedPattern"]
+    assert re.fullmatch(pattern, _REAL_ENGINE_VERSION[engine]), pattern
+    assert not re.fullmatch(pattern, "latest")
+
+
+def _every_pattern(engine: str):
+    inputs = make_step1_inputs(engine)
+    for label, template in (
+        ("dms", render_dms_template(inputs)),
+        ("aurora", render_aurora_template(inputs)),
+    ):
+        for name, param in template["Parameters"].items():
+            if "AllowedPattern" in param:
+                yield label, name, param["AllowedPattern"]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_every_rendered_allowed_pattern_full_matches_a_valid_value(engine):
+    """CloudFormation matches the whole value; ``re.match`` would accept a prefix."""
+    unmatched = []
+    for label, name, pattern in _every_pattern(engine):
+        if name == "EngineVersion":
+            value = _REAL_ENGINE_VERSION[engine]
+        elif name == "InstanceClass":
+            value = "dms.r5.large" if label == "dms" else "db.r6g.large"
+        else:
+            value = _REPRESENTATIVE.get(name)
+        assert value is not None, f"{label}.{name} needs a representative value in this test"
+        if not re.fullmatch(pattern, value):
+            unmatched.append((label, name, pattern, value))
+    assert not unmatched

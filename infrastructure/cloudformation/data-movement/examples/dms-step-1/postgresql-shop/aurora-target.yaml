@@ -73,7 +73,7 @@ Parameters:
     Type: String
     Description: Aurora PostgreSQL engine version on the 16 line (aws rds describe-db-engine-versions
       --engine aurora-postgresql)
-    AllowedPattern: ^16\.
+    AllowedPattern: ^16\..+$
   ParameterGroupFamily:
     Type: String
     Description: 'Parameter group family: the engine version''s line'
