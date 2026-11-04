@@ -243,7 +243,7 @@ def test_mappings_select_exactly_the_contract_tables(engine):
         (r["object-locator"]["schema-name"], r["object-locator"]["table-name"]) for r in selections
     ] == [(schema, "audit_log"), (schema, "customers"), (schema, "orders")]
     assert all(r["rule-action"] == "include" for r in selections)
-    assert {r["rule-type"] for r in rules} <= {"selection", "table-settings"}
+    assert {r["rule-type"] for r in rules} == {"selection"}
     assert not [r for r in rules if r["rule-type"] == "transformation"]
     assert "%" not in json.dumps(rules) and "v_orders" not in json.dumps(rules)
     assert len({r["rule-id"] for r in rules}) == len(rules)
@@ -251,28 +251,46 @@ def test_mappings_select_exactly_the_contract_tables(engine):
     assert all(r["rule-id"].isdigit() for r in rules)
 
 
-def test_a_full_lob_table_gets_its_table_settings_rule():
-    rules = table_mappings(make_step1_inputs())["rules"]
-    settings = [r for r in rules if r["rule-type"] == "table-settings"]
-    # Standard full LOB mode: on MySQL and PostgreSQL endpoints a nonzero bulk-max-size
-    # (combination full LOB mode) is not available.
-    assert [(r["object-locator"]["table-name"], r["lob-settings"]) for r in settings] == [
-        ("customers", {"mode": "unlimited", "bulk-max-size": "0"})
+def test_no_mapping_rule_carries_lob_settings():
+    # DMS rejects the per-table full LOB rule (bulk-max-size 0) when the task is created, and
+    # the nonzero form is combination full LOB mode, which MySQL and PostgreSQL lack (#1863).
+    for engine in ("aurora_mysql", "aurora_postgresql"):
+        rules = table_mappings(make_step1_inputs(engine))["rules"]
+        assert not [r for r in rules if r["rule-type"] == "table-settings"]
+        assert "lob-settings" not in json.dumps(rules)
+
+
+def test_the_task_runs_in_full_lob_mode_when_a_table_needs_it():
+    t = task_settings(make_step1_inputs())["TargetMetadata"]
+    assert (t["SupportLobs"], t["FullLobMode"], t["LimitedSizeLobMode"]) == (True, True, False)
+    assert t["LobChunkSize"] == FULL_LOB_CHUNK_KB
+
+
+@pytest.mark.passes_on_main  # the limited mode #1863 must keep
+def test_the_task_runs_in_limited_lob_mode_at_the_plans_size_when_no_table_is_full():
+    b = make_bundle()
+    lobs = [
+        t.model_copy(update={"mode": "limited", "max_size_kb": 8})
+        for t in b.plan.replication.lob_tables
     ]
+    rep = b.plan.replication.model_copy(update={"lob_tables": lobs, "lob_max_size_kb": 512})
+    plan = b.plan.model_copy(update={"replication": rep})
+    inputs = bundle_inputs(DmsStepBundle(plan=plan, contract=b.contract, ddl=b.ddl))
+    t = task_settings(inputs)["TargetMetadata"]
+    assert (t["SupportLobs"], t["FullLobMode"], t["LimitedSizeLobMode"]) == (True, False, True)
+    assert (t["LobMaxSize"], t["LobChunkSize"]) == (512, FULL_LOB_CHUNK_KB)
 
 
-def test_a_full_lob_table_that_is_blocked_gets_no_table_settings():
+def test_a_full_lob_table_that_is_blocked_does_not_turn_on_full_lob_mode():
     inputs = bundle_inputs(_blocked(make_bundle(), "customers"))
-    assert not [r for r in table_mappings(inputs)["rules"] if r["rule-type"] == "table-settings"]
+    t = task_settings(inputs)["TargetMetadata"]
+    assert (t["FullLobMode"], t["LimitedSizeLobMode"], t["LobMaxSize"]) == (False, True, 64)
 
 
 def test_task_settings_are_fixed():
     s = task_settings(make_step1_inputs())
     assert s["FullLoadSettings"]["TargetTablePrepMode"] == "DO_NOTHING"
     assert s["TargetMetadata"]["BatchApplyEnabled"] is False
-    assert (s["TargetMetadata"]["SupportLobs"], s["TargetMetadata"]["FullLobMode"],
-            s["TargetMetadata"]["LimitedSizeLobMode"], s["TargetMetadata"]["LobMaxSize"]) == (True, False, True, 64)  # fmt: skip
-    assert s["TargetMetadata"]["LobChunkSize"] == FULL_LOB_CHUNK_KB
     assert s["ValidationSettings"]["EnableValidation"] is True
     assert s["ChangeProcessingDdlHandlingPolicy"] == {
         "HandleSourceTableDropped": False,
@@ -282,9 +300,14 @@ def test_task_settings_are_fixed():
     assert s["Logging"]["EnableLogging"] is True
 
 
+@pytest.mark.passes_on_main  # the limited mode #1863 must keep
 def test_the_lob_size_is_the_plans():
     b = make_bundle()
-    rep = b.plan.replication.model_copy(update={"lob_max_size_kb": 512})
+    lobs = [
+        t.model_copy(update={"mode": "limited", "max_size_kb": 8})
+        for t in b.plan.replication.lob_tables
+    ]
+    rep = b.plan.replication.model_copy(update={"lob_max_size_kb": 512, "lob_tables": lobs})
     plan = b.plan.model_copy(update={"replication": rep})
     s = task_settings(bundle_inputs(DmsStepBundle(plan=plan, contract=b.contract, ddl=b.ddl)))
     assert s["TargetMetadata"]["LobMaxSize"] == 512

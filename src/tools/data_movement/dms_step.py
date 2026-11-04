@@ -371,36 +371,40 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
-    """One explicit selection rule per moved table, then a table-settings rule per full-LOB table.
+    """One explicit selection rule per moved table, and no other rule.
 
-    Full LOB tables use standard full LOB mode (``bulk-max-size`` 0): the combination
-    mode a nonzero size selects is not available on MySQL or PostgreSQL endpoints."""
-    full_lob = {t.table for t in _replication(inputs).lob_tables if t.mode == "full"}
-    tables = contract_tables(inputs.contract)
+    No ``table-settings`` rule carries ``lob-settings``: DMS rejects the per-table full LOB
+    rule (``bulk-max-size`` 0) when the task is created, and a nonzero size is combination
+    full LOB mode, which MySQL and PostgreSQL endpoints lack. Full LOB mode is a task setting
+    (:func:`task_settings`)."""
     rules: list[dict[str, Any]] = []
-    for table in tables:
+    for table in contract_tables(inputs.contract):
         n = str(len(rules) + 1)
         rules.append({"rule-type": "selection", "rule-id": n, "rule-name": n,
                       "object-locator": {"schema-name": table.schema, "table-name": table.name},
                       "rule-action": "include", "filters": []})  # fmt: skip
-    for table in tables:
-        if table.table_id in full_lob:
-            n = str(len(rules) + 1)
-            rules.append({"rule-type": "table-settings", "rule-id": n, "rule-name": n,
-                          "object-locator": {"schema-name": table.schema, "table-name": table.name},
-                          "lob-settings": {"mode": "unlimited", "bulk-max-size": "0"}})  # fmt: skip
     return {"rules": rules}
 
 
+def _any_full_lob_table(inputs: Step1Inputs) -> bool:
+    """True when a moved table is in full LOB mode in the plan's ``replication.lob_tables``."""
+    full_lob = {t.table for t in _replication(inputs).lob_tables if t.mode == "full"}
+    return any(t.table_id in full_lob for t in contract_tables(inputs.contract))
+
+
 def task_settings(inputs: Step1Inputs) -> dict[str, Any]:
-    """The fixed task settings (spec section 5); only the LOB size comes from the plan."""
+    """The fixed task settings (spec section 5); only the LOB mode and size come from the plan.
+
+    Full LOB mode (never truncates) applies to the whole task when any moved table needs it,
+    otherwise limited LOB mode at the plan's size."""
     replication = _replication(inputs)
+    full_lob = _any_full_lob_table(inputs)
     return {
         "TargetMetadata": {
             "SupportLobs": True,
-            "FullLobMode": False,
+            "FullLobMode": full_lob,
             "LobChunkSize": FULL_LOB_CHUNK_KB,
-            "LimitedSizeLobMode": True,
+            "LimitedSizeLobMode": not full_lob,
             "LobMaxSize": replication.lob_max_size_kb,
             # Transactional apply keeps each key's changes in commit order for the connector
             # that later reads Aurora (ADR-033 Decision 10).

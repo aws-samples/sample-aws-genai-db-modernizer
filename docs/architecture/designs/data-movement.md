@@ -38,7 +38,7 @@ No custom resource runs inside a customer's cluster.
 
 ### 3.2 DMS settings and sizing
 
-- Task: `TargetTablePrepMode: DO_NOTHING` (the customer's DDL created the tables); transactional apply, batch apply off, to keep per-key order for the connector that later reads Aurora; data validation on; limited LOB mode sized from the largest value the collector saw, full LOB mode per table when unknown.
+- Task: `TargetTablePrepMode: DO_NOTHING` (the customer's DDL created the tables); transactional apply, batch apply off, to keep per-key order for the connector that later reads Aurora; data validation on; limited LOB mode sized from the largest value the collector saw; full LOB mode for the whole task when any table's LOB size is unknown. It is a task setting because DMS rejects the per-table full LOB rule (`test_the_task_runs_in_full_lob_mode_when_a_table_needs_it`, `test_no_mapping_rule_carries_lob_settings`).
 - Table mappings: one explicit selection rule per contract table, no wildcard. No transformation rules: with existing tables, Aurora converts each value into the declared column type on insert, and DMS's transformation rules have per-column limits (one action per column, none on column names with special characters, only a drop for BLOB and CLOB columns). A conversion Aurora cannot do is an `unsupported` field in the contract.
 - Sizing, from a rule-catalog file with a reason per row, keyed on the collector's database size and write rate (AWS's guidance: CDC uses three memory buffers, and memory-optimized classes prevent memory pressure under high transaction rates):
 

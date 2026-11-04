@@ -381,19 +381,6 @@ Resources:
               },
               "rule-action": "include",
               "filters": []
-            },
-            {
-              "rule-type": "table-settings",
-              "rule-id": "4",
-              "rule-name": "4",
-              "object-locator": {
-                "schema-name": "public",
-                "table-name": "customers"
-              },
-              "lob-settings": {
-                "mode": "unlimited",
-                "bulk-max-size": "0"
-              }
             }
           ]
         }
@@ -401,9 +388,9 @@ Resources:
         {
           "TargetMetadata": {
             "SupportLobs": true,
-            "FullLobMode": false,
+            "FullLobMode": true,
             "LobChunkSize": 64,
-            "LimitedSizeLobMode": true,
+            "LimitedSizeLobMode": false,
             "LobMaxSize": 64,
             "BatchApplyEnabled": false
           },
