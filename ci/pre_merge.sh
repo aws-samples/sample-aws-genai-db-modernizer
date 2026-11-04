@@ -6,11 +6,11 @@
 #
 #   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]
 #
-# fetch main, count commits behind, check commit authors and merge conflicts
+# fetch main, check the commit hooks are installed, count commits behind, check commit authors and merge conflicts
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
 # lint, the zero-token replay of the saved real-model run, tests (skipped by
-# --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on a refused author, a
+# --quick), the needs_llm_run verdict and the PR body's Evidence check (#1153). Exits non-zero on missing commit hooks, a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
 # ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
@@ -47,6 +47,17 @@ else
   fail "fetch: could not fetch $remote main and there is no local $base"
   echo "pre_merge: cannot continue without $base" >&2
   exit 1
+fi
+
+# a2. Commit hooks (#1843): a clone without the repository's hooks skips the commit-message,
+# secret and scan hooks, and only CI notices. Cheap, so it runs with --quick too.
+if hooks_out="$(helper hooks)"; then
+  case "$hooks_out" in
+    warn:*) note "warn hooks: ${hooks_out#warn: }" ;;
+    *) note "ok   hooks: ${hooks_out#ok: }" ;;
+  esac
+else
+  fail "hooks: ${hooks_out#error: }"
 fi
 
 # b. Behind count.
