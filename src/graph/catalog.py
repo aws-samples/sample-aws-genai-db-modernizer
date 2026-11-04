@@ -51,6 +51,7 @@ class ParamKind(str, Enum):
     ACCESS_PATTERN = "access_pattern"
     VERSION = "version"
     TARGET = "target"
+    WAVE = "wave"
 
 
 @dataclass(frozen=True)
@@ -216,6 +217,31 @@ SCORED_LADDERS = Need(
     "MATCH ()-[s:SCORED]->() RETURN count(s) AS n",
 )
 
+WAVES = Need(
+    "waves",
+    "Referee synthesis (the wave plan)",
+    "`Wave` nodes",
+    "MATCH (n:Wave {effective: true}) RETURN count(n) AS n",
+)
+MOVE_UNITS = Need(
+    "move_units",
+    "Assignment, when queries are placed together",
+    "`MoveUnit` nodes",
+    "MATCH (n:MoveUnit {effective: true}) RETURN count(n) AS n",
+)
+CUTOVER = Need(
+    "cutover",
+    "Referee synthesis, when the plan's first wave is a cutover wave",
+    "`CUTS_OVER_IN` edges",
+    "MATCH ()-[c:CUTS_OVER_IN {effective: true}]->() RETURN count(c) AS n",
+)
+CACHE_LAYER = Need(
+    "cache_layer",
+    "Assignment, when a cache fronts a query",
+    "`CACHED_BY` edges",
+    "MATCH ()-[c:CACHED_BY {effective: true}]->() RETURN count(c) AS n",
+)
+
 NEEDS: tuple[Need, ...] = (
     TRIAGE,
     ANALYSIS,
@@ -230,6 +256,10 @@ NEEDS: tuple[Need, ...] = (
     RESOLVED_RISKS,
     DESIGN_TARGETS,
     SCORED_LADDERS,
+    WAVES,
+    MOVE_UNITS,
+    CUTOVER,
+    CACHE_LAYER,
 )
 
 # ---------------------------------------------------------------------------
@@ -259,6 +289,32 @@ TARGET_PARAM = Param(
     "MATCH (o:TargetObject {fallback: false}) RETURN o.id AS value ORDER BY value",
     "aurora_mysql:table:wp_posts@v2",
     "MATCH (o:TargetObject {id: $value, fallback: false}) RETURN o.id AS value",
+)
+WRITTEN_TABLE_PARAM = Param(
+    "table_id",
+    ParamKind.TABLE,
+    "A source table some query writes or locks.",
+    "MATCH (:Query)-[:WRITES]->(st:SourceTable) RETURN DISTINCT st.id AS value ORDER BY value",
+    "wordpress.wp_posts",
+    "MATCH (:Query)-[:WRITES]->(st:SourceTable {id: $value}) RETURN DISTINCT st.id AS value",
+)
+WAVE_PARAM = Param(
+    "wave_id",
+    ParamKind.WAVE,
+    "A wave of the effective version's wave plan: 'v<version>:wave-<n>'.",
+    "MATCH (w:Wave {effective: true}) RETURN w.id AS value ORDER BY w.wave, value",
+    "v2:wave-1",
+    "MATCH (w:Wave {id: $value, effective: true}) RETURN w.id AS value",
+)
+UNIT_QUERY_PARAM = Param(
+    "query_id",
+    ParamKind.QUERY,
+    "A query that moves together with others in the effective version.",
+    "MATCH (q:Query)-[:MEMBER_OF]->(:MoveUnit {effective: true}) "
+    "RETURN DISTINCT q.id AS value ORDER BY value",
+    "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+    "MATCH (q:Query {id: $value})-[:MEMBER_OF]->(:MoveUnit {effective: true}) "
+    "RETURN q.id AS value",
 )
 QUERY_PARAM = Param(
     "query_id",
@@ -909,6 +965,151 @@ CATALOG: tuple[CatalogEntry, ...] = (
             "The ladder comes from `ladder_version`'s Move (`pass`); a rollback's ladder is "
             "copied from the abandoned reroute `ladder_copied_from`."
         ),
+    ),
+    CatalogEntry(
+        id="wave_queries",
+        ref="O",
+        section="impact",
+        title="What one wave moves or caches",
+        question="Which queries move in this wave, and which reads does it put a cache in front of?",
+        cypher=(
+            "MATCH (w:Wave {id: $wave_id}) "
+            "MATCH (q:Query)-[r:MOVES_IN|CACHED_IN]->(w) "
+            "WITH w, q, label(r) AS relation "
+            "RETURN w.id AS wave_id, w.title AS title, relation, q.id AS query_id, "
+            "q.calls_per_second AS calls_per_second, "
+            "CASE WHEN relation = 'MOVES_IN' THEN w.id ELSE NULL END AS moves_in, "
+            "CASE WHEN relation = 'CACHED_IN' THEN w.id ELSE NULL END AS cached_in, "
+            "CASE WHEN relation = 'MOVES_IN' THEN 0 ELSE 1 END AS rank "
+            "ORDER BY rank, query_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(
+                NodeRef("query_id", "Query"),
+                NodeRef("moves_in", "Wave"),
+                NodeRef("cached_in", "Wave"),
+            ),
+            edges=(
+                EdgeRef("query_id", "moves_in", "MOVES_IN"),
+                EdgeRef("query_id", "cached_in", "CACHED_IN"),
+            ),
+        ),
+        params=(WAVE_PARAM,),
+        needs=(WAVES,),
+        row_key=("query_id",),
+        note=(
+            "The explorer's wave list: the queries that reach their engine in the wave "
+            "(`MOVES_IN`, first) and the reads a cache in the wave fronts (`CACHED_IN`). "
+            "The queries that only cut over in the wave are question P."
+        ),
+    ),
+    CatalogEntry(
+        id="wave_cutover",
+        ref="P",
+        section="impact",
+        title="What cuts over in one wave",
+        question="Which queries run on this wave's engine from it, before they move on later?",
+        cypher=(
+            "MATCH (w:Wave {id: $wave_id})<-[:CUTS_OVER_IN]-(q:Query)-[:MOVES_IN]->(later:Wave) "
+            "WHERE later.version = w.version "
+            "RETURN w.id AS wave_id, q.id AS query_id, later.id AS moves_later_in, "
+            "q.calls_per_second AS calls_per_second ORDER BY query_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(
+                NodeRef("wave_id", "Wave"),
+                NodeRef("query_id", "Query"),
+                NodeRef("moves_later_in", "Wave"),
+            ),
+            edges=(
+                EdgeRef("query_id", "wave_id", "CUTS_OVER_IN"),
+                EdgeRef("query_id", "moves_later_in", "MOVES_IN"),
+            ),
+        ),
+        params=(WAVE_PARAM,),
+        needs=(WAVES, CUTOVER),
+        row_key=("query_id",),
+        note=(
+            "A plan has cutover passengers only when its first wave has a single engine "
+            "and its `cutover_query_count` equals the number of queries that move."
+        ),
+    ),
+    CatalogEntry(
+        id="table_writers",
+        ref="Q",
+        section="impact",
+        title="Who writes one table",
+        question="Which queries write or lock this table, and which engine is its source of truth?",
+        cypher=(
+            "MATCH (q:Query)-[w:WRITES]->(st:SourceTable {id: $table_id}) "
+            "OPTIONAL MATCH (st)-[:SOURCE_OF_TRUTH {effective: true}]->(e:Engine) "
+            "RETURN st.id AS table_id, q.id AS query_id, w.locking AS locking, "
+            "e.id AS source_of_truth ORDER BY query_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(
+                NodeRef("table_id", "SourceTable"),
+                NodeRef("query_id", "Query"),
+                NodeRef("source_of_truth", "Engine"),
+            ),
+            edges=(
+                EdgeRef("query_id", "table_id", "WRITES"),
+                EdgeRef("table_id", "source_of_truth", "SOURCE_OF_TRUTH"),
+            ),
+        ),
+        params=(WRITTEN_TABLE_PARAM,),
+        needs=(ASSIGNMENT,),
+        row_key=("query_id",),
+        note=(
+            "`source_of_truth` is null without a synthesis report; the reads served from "
+            "a replica are `READS_REPLICA` edges."
+        ),
+    ),
+    CatalogEntry(
+        id="query_moves_with",
+        ref="R",
+        section="impact",
+        title="What moves together with one query",
+        question="Which queries does routing place together with this one, in one unit?",
+        cypher=(
+            "MATCH (q:Query {id: $query_id})-[:MEMBER_OF]->(u:MoveUnit {effective: true})"
+            "<-[:MEMBER_OF]-(o:Query) "
+            "RETURN u.id AS unit_id, u.size AS size, o.id AS query_id, "
+            "o.calls_per_second AS calls_per_second "
+            "ORDER BY calls_per_second DESC, query_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(NodeRef("unit_id", "MoveUnit"), NodeRef("query_id", "Query")),
+            edges=(EdgeRef("query_id", "unit_id", "MEMBER_OF"),),
+        ),
+        params=(UNIT_QUERY_PARAM,),
+        needs=(MOVE_UNITS,),
+        row_key=("query_id",),
+        note="The query itself is one of the rows.",
+    ),
+    CatalogEntry(
+        id="cache_queries",
+        ref="S",
+        section="impact",
+        title="The queries the cache layer serves",
+        question="Which queries does a cache front, with which pattern, and which did it drop?",
+        cypher=(
+            "MATCH (q:Query)-[c:CACHED_BY {effective: true}]->(e:Engine) "
+            "RETURN e.id AS engine, q.id AS query_id, c.pattern AS pattern, "
+            "c.dropped AS dropped, c.reason AS reason ORDER BY engine, query_id"
+        ),
+        max_rows=MAX_ROWS,
+        projection=Projection(
+            nodes=(NodeRef("engine", "Engine"), NodeRef("query_id", "Query")),
+            edges=(EdgeRef("query_id", "engine", "CACHED_BY"),),
+        ),
+        needs=(CACHE_LAYER,),
+        row_key=("engine", "query_id"),
+        note="`dropped`: the safety net took the cache off the query after schema design.",
     ),
 )
 

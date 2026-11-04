@@ -103,7 +103,25 @@ TargetObject {
 
 Engine {
   id: STRING,                    -- e.g., "dynamodb"
-  display_name: STRING           -- e.g., "Amazon DynamoDB"
+  display_name: STRING,          -- e.g., "Amazon DynamoDB"
+  monthly_cost_usd: DOUBLE,      -- the effective report's facts.engines figure, never recomputed (#306)
+  role: STRING, rationale: STRING, workload_percent: DOUBLE,  -- the same report's facts.engines
+  cost_version: INT64            -- the assignment version that report was built from
+}
+
+Wave {
+  id: STRING,                    -- "v<assignment version>:wave-<n>" (#306)
+  version: INT64, effective: BOOLEAN,
+  wave: INT64, title: STRING, rationale: STRING, gate: STRING,
+  engines_json: STRING, migrating: BOOLEAN, query_count: INT64,
+  cutover: BOOLEAN,              -- the plan's cutover wave: a first wave with a single engine whose cutover count is every moving query
+  table_groups_json: STRING      -- the wave plan's table groups
+}
+
+MoveUnit {
+  id: STRING,                    -- "v<assignment version>:unit-<i>" (#306)
+  version: INT64, effective: BOOLEAN,
+  unit: STRING, size: INT64      -- a placement unit routing places as one (ADR-031 Amendment 9)
 }
 
 Signal {
@@ -147,6 +165,20 @@ LoadTestRun {
 
 (Query)-[WRITES {locking}]->(SourceTable)
   -- Which source tables does this query write or lock? (#306)
+
+(Query)-[MOVES_IN | CUTS_OVER_IN | CACHED_IN {effective}]->(Wave)
+(Wave)-[INCLUDES]->(Engine)
+  -- Which wave does this query move in, cut over in first, or get a cache in front in? (#306)
+
+(Query)-[MEMBER_OF]->(MoveUnit)
+  -- Which queries does routing place together? (#306)
+
+(SourceTable)-[SOURCE_OF_TRUTH {version, effective}]->(Engine)
+(Query)-[READS_REPLICA {version, effective, engine}]->(SourceTable)
+  -- Which engine holds this table's writes, and which reads use a replica? (#306)
+
+(Query)-[CACHED_BY {version, effective, pattern, reason, dropped}]->(Engine)
+  -- Which cache fronts this query, for which pattern? (#306)
 
 (Query)-[MIGRATES_TO {
   confidence: FLOAT,
@@ -204,6 +236,8 @@ LoadTestRun {
 
 **Traffic representation.** Traffic (`calls_per_second`) is a property on the `Query` node. Table-level traffic is computed on read by aggregating across all queries that `READS_FROM` a given `SourceTable`. At this scale (hundreds to low-thousands of queries), that aggregation is sub-millisecond and does not need materialization.
 
+**Waves, units, sources of truth, cache layer and cost (#306).** These come from each lineage version's assignment, access-pattern record and synthesis report, built by the graph explorer's own overlay code (`explorer_overlays.build_overlays`, on the inputs `read_overlays` reads), so the graph and the explorer cannot disagree. The effective version uses the report `read_overlays` reads (the versioned report, then the legacy keys); an older version only its own `synthesis/v<N>/report.json`, so a version without a report has no waves or sources of truth, while its cache layer and units, which come from its assignment, are there; `AssignmentVersion.has_report` says which. `Wave` and `MoveUnit` nodes carry their assignment version (in their id and `version`) and `effective`; `SOURCE_OF_TRUTH`, `READS_REPLICA` and `CACHED_BY` edges carry `version` and `effective`; `MOVES_IN`, `CUTS_OVER_IN` and `CACHED_IN` carry `effective` and take their version from their wave; `INCLUDES` and the `MoveUnit` `MEMBER_OF` take it from their node. A wave is the wave plan's (`migration_waves`, with its table groups) with `migrating` from `facts.waves`; a query `MOVES_IN` the wave of its engine and is `CACHED_IN` its cache wave. When the plan's first wave has a single engine and its `cutover_query_count` equals the number of queries that move (`explorer_overlays._cutover`, #1756's path rule; all three samples' plans qualify), every query that moves on later also `CUTS_OVER_IN` it first. A `MoveUnit` is a placement unit of two or more queries (`assignment_placement_groups`); `CoDependencyGroup` stays the assignment's co-dependency groups. `SOURCE_OF_TRUTH` and `READS_REPLICA` are the report's `table_sources`; the writers are `WRITES`, which `tests/e2e/test_graph_explorer_figures.py` holds equal to the report's writers. `CACHED_BY` is each query's `cache_engine` with its `cache_pattern`, `cache_reason` and `cache_dropped`. An engine's `monthly_cost_usd`, `role`, `rationale` and `workload_percent` are the effective report's `facts.engines` figures, and `cost_version` is the assignment version that report was built from (older than the effective version when synthesis has not run since a reroute). A query's `access_pattern_class` and `access_pattern_reason` are the effective version's access-pattern record. The explorer still reads these through its overlays (switching every explorer read onto the graph is its own change); `tests/graph/test_overlays_graph.py` holds the graph equal to `read_overlays` on real fixtures, and `tests/e2e/test_graph_complete.py` checks every node and edge type and how they relate on every sample.
+
 **Read/write split (#306).** `READS_FROM` links a query to every table it accesses (`tables_accessed`): an UPDATE or DELETE reads the rows it changes and a locking read reads what it locks, so a table a query only reads is one with `READS_FROM` and no `WRITES`. Keeping `READS_FROM` on every accessed table also keeps the readers that count a table's queries through it (the blast radius, the hotspots, the explorer's bundles) unchanged. `WRITES` links a query to every table it writes or locks, computed by routing's own one-writer rule (`write_groups.written_tables`, ADR-031 Amendment 9) in the collection's source dialect, so the graph never disagrees with routing; `locking` marks a table the statement locks by a locking read and does not write (an `INSERT ... SELECT ... FOR UPDATE` target is a write, the tables its read locks are locking). It is named like the `WRITES` edge planned from procedures and triggers to tables (#1677), which can add its pair to the same relationship. A source table named by a collector placeholder (`report_facts.PLACEHOLDER_TABLE_NAMES`: `unknown` when no table resolved, or a dummy table of a statement with no `FROM`) stays in the graph, flagged `placeholder` with its reason (matched in any case, an empty name included). The graph copies routing here too: `written_tables` skips only the lowercase `unknown`, so a write whose only collected table is another placeholder (`UNKNOWN`, `DUAL`, `None`) gets `WRITES` to it.
 
 **Destination abstraction.** A query's `Destination` is the engine it migrates to in the effective assignment (`artifact_type` `engine`). The design's own objects (DynamoDB tables and GSIs, DocumentDB collections, OpenSearch indexes and data streams, ElastiCache key patterns, Aurora tables) are `TargetObject` nodes told apart by `kind`, which avoids engine-specific node types while preserving semantic clarity; see the next paragraph.
@@ -247,6 +281,7 @@ The graph is populated on the API node after each pipeline stage completes. The 
 | SCHEMA_DESIGN | Decision | AFFECTS, INFORMED_BY |
 | LOAD_TEST | LoadTestRun | TESTED_IN, VALIDATES |
 | ASSIGNMENT_REVIEW | Decision (overrides) | SUPERSEDES |
+| SYNTHESIS (overlays) | Wave, MoveUnit, Engine cost and facts, Query access-pattern class (#306) | MOVES_IN, CUTS_OVER_IN, CACHED_IN, INCLUDES, MEMBER_OF, SOURCE_OF_TRUTH, READS_REPLICA, CACHED_BY (per assignment version) |
 | SYNTHESIS | Risk: the report's open risks (`status = 'active'`) and the risks the assignment resolved (`status = 'resolved'`, #306) | IMPACTS (to its tables), EVIDENCED_BY (to each query it names that has a Query node) |
 
 Analysis, schema design and load test are read for every active engine in the rule catalog (Aurora included). Schema design and load test are read at the effective assignment version only: `schema-<engine>/v<N>` and `load-test-<engine>/v<N>`, where N is the version the assignment resolver picks (v1 when there is no assignment yet). A design of an older or abandoned version is never read (#306). A rollback restates the designs of the version it restores on its own version; a design that fails its output contract is not restated, so that engine has no design in the graph, as in synthesis. A rollback does not restate load tests: the load test runs after post-schema routing, so the restored version has none in a normal run, and a load test run on it earlier is not read after the rollback.
@@ -257,7 +292,7 @@ The version chain follows the move ledger and assignment versioning (ADR-028, #3
 
 Each populator is idempotent. Re-running it with the same artifact data produces the same graph state. You can rebuild the graph from scratch by replaying all artifacts in order.
 
-Measured on a developer laptop, a full rebuild of the discourse sample (1,654 queries, two assignment versions) takes about 1.2 s without SCORED edges and about 1.9 s with them (16,540 SCORED edges, #306). Rebuild time grows with the number of queries times the number of lineage versions, so a 3,500-query assessment with a few versions takes a few seconds. The earlier "< 2 seconds for 3,500 queries" is not met even without SCORED edges on that machine. This is fast enough to run on demand when an assessment completes; a saved graph is reused until its inputs change.
+Measured on a developer laptop, a full rebuild of the discourse sample (1,654 queries, two assignment versions) takes about 1.2 s without SCORED edges and about 1.9 s with them (16,540 SCORED edges, #306). The waves, units, sources of truth, cache layer, cost and engine facts add about 0.3 s (5 to 15%): rebuilding the same discourse files four times each, alternating, took 2.54 to 3.00 s without them and 2.81 to 3.18 s with them (load average 4 to 7), and the graph grew from 11.6 MB to 13.1 MB. Rebuild time grows with the number of queries times the number of lineage versions, so a 3,500-query assessment with a few versions takes a few seconds. The earlier "< 2 seconds for 3,500 queries" is not met even without SCORED edges on that machine. This is fast enough to run on demand when an assessment completes; a saved graph is reused until its inputs change.
 
 ### Storage
 

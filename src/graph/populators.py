@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 from pydantic import ValidationError
@@ -959,6 +960,189 @@ def populate_targets(
     return len(rows)
 
 
+def populate_overlays(
+    overlays_by_version: Mapping[int, object],
+    effective_version: int,
+    store: GraphStore,
+    reported: set[int] | None = None,
+) -> None:
+    """Waves, move units, sources of truth, the cache layer and engine cost (#306),
+    from each lineage version's explorer overlays (``explorer_overlays.build_overlays``,
+    the code the graph explorer reads them with), so the graph and the explorer
+    cannot disagree. Every node and edge carries its assignment version; the
+    effective version's are ``effective``. Engine cost is the effective report's."""
+    from src.graph.explorer_overlays import Overlays, query_path
+
+    waves: list[dict] = []
+    includes: list[dict] = []
+    wave_edges: dict[str, list[dict]] = {"MOVES_IN": [], "CACHED_IN": [], "CUTS_OVER_IN": []}
+    units: dict[str, dict] = {}
+    members: list[dict] = []
+    sources: list[dict] = []
+    replicas: list[dict] = []
+    cache: list[dict] = []
+    engines: set[str] = set()
+    for version, ov in sorted(overlays_by_version.items()):
+        if not isinstance(ov, Overlays):
+            continue
+        eff = version == effective_version
+        migrating = {w["wave"]: bool(w.get("migrating")) for w in ov.waves}
+        wid = {}
+        for w in ov.plan:
+            wid[w["wave"]] = f"v{version}:wave-{w['wave']}"
+            waves.append(
+                {
+                    "id": wid[w["wave"]],
+                    "ver": version,
+                    "eff": eff,
+                    "wave": w["wave"],
+                    "title": w.get("title"),
+                    "rationale": w.get("rationale"),
+                    "gate": w.get("gate"),
+                    "engines": json.dumps(w["engines"]),
+                    "migrating": migrating.get(w["wave"]),
+                    "qc": w.get("query_count"),
+                    "cutover": bool(ov.cutover and ov.cutover["wave"] == w["wave"]),
+                    "groups": json.dumps(w.get("table_groups") or []),
+                }
+            )
+            includes.extend({"w": wid[w["wave"]], "e": e} for e in w["engines"])
+            engines.update(w["engines"])
+        for qid, wave in ov.query_move_wave.items():
+            if wave in wid:
+                wave_edges["MOVES_IN"].append({"q": qid, "w": wid[wave], "eff": eff})
+            for step in query_path(ov, qid):
+                if step["kind"] == "cutover" and step["wave"] in wid:
+                    wave_edges["CUTS_OVER_IN"].append(
+                        {"q": qid, "w": wid[step["wave"]], "eff": eff}
+                    )
+        for qid, wave in ov.query_cached_in.items():
+            if wave in wid:
+                wave_edges["CACHED_IN"].append({"q": qid, "w": wid[wave], "eff": eff})
+        for qid, (unit, size) in ov.query_units.items():
+            uid = f"v{version}:{unit}"
+            units[uid] = {"id": uid, "ver": version, "eff": eff, "unit": unit, "size": size}
+            members.append({"q": qid, "u": uid})
+        for table, ts in ov.table_sources.items():
+            if ts.get("source_of_truth"):
+                sources.append({"t": table, "e": ts["source_of_truth"], "ver": version, "eff": eff})
+                engines.add(str(ts["source_of_truth"]))
+            for engine, reads in (ts.get("replica_reads_by_engine") or {}).items():
+                replicas.extend(
+                    {"q": q, "t": table, "e": engine, "ver": version, "eff": eff} for q in reads
+                )
+        for qid, c in ov.query_cache.items():
+            cache.append({"q": qid, "e": c["engine"], "ver": version, "eff": eff, **c})
+            engines.add(c["engine"])
+    _merge_engines(store, engines)
+    if waves:
+        store.execute(
+            "UNWIND $rows AS r MERGE (w:Wave {id: r.id}) SET w.version = r.ver, "
+            "w.effective = r.eff, w.wave = r.wave, w.title = r.title, w.rationale = r.rationale, "
+            "w.gate = r.gate, w.engines_json = r.engines, w.migrating = r.migrating, "
+            "w.query_count = CAST(r.qc AS INT64), w.cutover = r.cutover, "
+            "w.table_groups_json = r.groups",
+            {"rows": waves},
+        )
+    if includes:
+        store.execute(
+            "UNWIND $rows AS r MATCH (w:Wave {id: r.w}), (e:Engine {id: r.e}) "
+            "MERGE (w)-[:INCLUDES]->(e)",
+            {"rows": includes},
+        )
+    for rel, rows in wave_edges.items():
+        if rows:
+            store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query -- Cypher text from internal rel names; values are bound parameters
+                f"UNWIND $rows AS r MATCH (q:Query {{id: r.q}}), (w:Wave {{id: r.w}}) "
+                f"MERGE (q)-[x:{rel}]->(w) SET x.effective = r.eff",
+                {"rows": rows},
+            )
+    if units:
+        store.execute(
+            "UNWIND $rows AS r MERGE (u:MoveUnit {id: r.id}) SET u.version = r.ver, "
+            "u.effective = r.eff, u.unit = r.unit, u.size = r.size",
+            {"rows": list(units.values())},
+        )
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.q}), (u:MoveUnit {id: r.u}) "
+            "MERGE (q)-[:MEMBER_OF]->(u)",
+            {"rows": members},
+        )
+    if sources:
+        store.execute(
+            "UNWIND $rows AS r MATCH (st:SourceTable {id: r.t}), (e:Engine {id: r.e}) "
+            "MERGE (st)-[s:SOURCE_OF_TRUTH {version: r.ver}]->(e) SET s.effective = r.eff",
+            {"rows": sources},
+        )
+    if replicas:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.q}), (st:SourceTable {id: r.t}) "
+            "MERGE (q)-[x:READS_REPLICA {version: r.ver, engine: r.e}]->(st) "
+            "SET x.effective = r.eff",
+            {"rows": replicas},
+        )
+    if cache:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.q}), (e:Engine {id: r.e}) "
+            "MERGE (q)-[c:CACHED_BY {version: r.ver}]->(e) SET c.effective = r.eff, "
+            "c.pattern = r.pattern, c.reason = r.reason, c.dropped = r.dropped",
+            {"rows": cache},
+        )
+    if overlays_by_version:
+        store.execute(
+            "UNWIND $rows AS r MATCH (v:AssignmentVersion {version: r.v}) "
+            "SET v.has_report = r.has",
+            {
+                "rows": [
+                    {"v": v, "has": v in (reported or set())} for v in sorted(overlays_by_version)
+                ]
+            },
+        )
+    effective = overlays_by_version.get(effective_version)
+    if not isinstance(effective, Overlays):
+        return
+    # The effective report's engine facts, stamped with the version that report was
+    # built from (it can be older than the effective version, before a re-synthesis).
+    facts = effective.engine_facts
+    if facts:
+        _merge_engines(store, set(facts))
+        store.execute(
+            "UNWIND $rows AS r MATCH (e:Engine {id: r.e}) "
+            "SET e.monthly_cost_usd = CAST(r.c AS DOUBLE), e.cost_version = CAST(r.v AS INT64), "
+            "e.role = r.role, e.rationale = r.rationale, "
+            "e.workload_percent = CAST(r.share AS DOUBLE)",
+            {
+                "rows": [
+                    {
+                        "e": e,
+                        "c": effective.engine_costs.get(e),
+                        "v": effective.report_version,
+                        "role": f.get("role"),
+                        "rationale": f.get("rationale"),
+                        "share": (
+                            f["workload_percent"]
+                            if isinstance(f.get("workload_percent"), (int, float))
+                            else None
+                        ),
+                    }
+                    for e, f in facts.items()
+                ]
+            },
+        )
+    # Each query's access-pattern class and the reason routing gave, from the
+    # effective version's access-pattern record.
+    if effective.query_classes:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.q}) "
+            "SET q.access_pattern_class = r.c, q.access_pattern_reason = r.why",
+            {
+                "rows": [
+                    {"q": q, "c": c, "why": why} for q, (c, why) in effective.query_classes.items()
+                ]
+            },
+        )
+
+
 def link_consolidations(reality_check_output: dict, lineage: list[dict], store: GraphStore) -> None:
     """Link each ``consolidation-{i}`` Decision to its queries (INFORMED_BY) through the
     move ledger, and to the engines it moves from and to (AFFECTS) (#306).
@@ -1551,11 +1735,45 @@ def rebuild_graph(
     # The effective version's report first, then the legacy keys (#1520).
     from src.storage.assignment_versioning import synthesis_report_candidates
 
+    synthesis = None
     for synthesis_key in synthesis_report_candidates(artifact_store, db_name, job_id):
         synthesis = _read_safe(synthesis_key)
         if synthesis:
             populate_from_synthesis(synthesis, graph_store)
             break
+
+    # 9b. Waves, move units, sources of truth, the cache layer and engine cost, per
+    # lineage version (#306), by the explorer's overlay code on the inputs
+    # ``explorer_overlays.read_overlays`` reads: the version's assignment and
+    # access-pattern record, and its report (the effective version's is the one
+    # read above, legacy keys included; an older version's only its own
+    # ``synthesis/v<N>/report.json``).
+    from src.graph.explorer_overlays import build_overlays
+
+    overlays_by_version = {}
+    reported: set[int] = set()
+    for version_doc in lineage:
+        v = int(version_doc.get("version") or 0)
+        if v < 1:
+            continue
+        report = (
+            synthesis
+            if v == assignment_version
+            else _read_safe(f"{prefix}/synthesis/v{v}/report.json")
+        )
+        if report:
+            reported.add(v)
+        overlays_by_version[v] = build_overlays(
+            version_doc,
+            report,
+            _read_safe(f"{prefix}/assignment/v{v}/access_patterns.json"),
+        )
+    populate_overlays(
+        overlays_by_version,
+        assignment_version,
+        graph_store,
+        reported=reported,
+    )
 
     # 10. The schema revision this graph was built with (a saved graph with
     # another revision is rebuilt before it is read) and its assignment version.
