@@ -25,6 +25,7 @@ from src.shared.report_facts import (
     same_label_places,
 )
 from src.shared.target_databases import engine_scope_statement
+from src.shared.trade_off_topics import DEFAULT_TOPIC, REVIEW_NOTE_TOPIC
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -569,6 +570,24 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
     return out
 
 
+def _trade_off_lines(t: dict[str, Any], said: _SaidOnce) -> list[str]:
+    """One trade-off's bullet and, when it names source tables, its "Affects" line."""
+    desc = str(t.get("description", "")).strip()
+    impact = str(t.get("impact", "")).strip()
+    aff = list(t.get("source_tables") or [])
+    line = f"- **{escaping.md_text(desc)}**"
+    if impact and impact != desc:  # reality-check items repeat their title
+        names = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:3])
+        where = f"in the trade-off for {names}" if names else "above"
+        line += ": " + said.line(escaping.md_text(impact), where)
+    out = [line]
+    if aff:
+        shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
+        more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
+        out.append(f"  - Affects: {shown}{more}")
+    return out
+
+
 def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     """Engineering Report "Migration trade-offs" section.
 
@@ -581,6 +600,10 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     without claiming the removal. A line an edit undid only in part is listed
     as the facts layer restates it (``description_now``), for what stayed
     moved.
+
+    #1221: each engine's design trade-offs are listed by topic, under the label and
+    count ``facts.trade_off_topics`` gives each group; the reality check's own lines
+    keep their heading.
     """
     all_trade_offs = report.get("trade_offs") or []
     reversed_at = {
@@ -591,8 +614,9 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
         for t in facts.get("reality_check_trade_offs") or []
         if t.get("description_now") and not t.get("reversed")
     }
+    # Each current trade-off with its position in report.json's trade_offs.
     current = [
-        {**t, "description": restated[i], "impact": restated[i]} if i in restated else t
+        (i, {**t, "description": restated[i], "impact": restated[i]} if i in restated else t)
         for i, t in enumerate(all_trade_offs)
         if isinstance(t, dict) and i not in reversed_at
     ]
@@ -603,9 +627,14 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     # trade-off keeps the sentence and a later one points back to it (#1563).
     said = _SaidOnce()
     if current:
-        by_engine: dict[str, list] = {}
-        for t in current:
-            by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
+        by_engine: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+        for i, t in current:
+            by_engine.setdefault(t.get("engine") or "(general)", []).append((i, t))
+        # #1221: each engine's design trade-offs by topic, as the facts layer groups them.
+        rows = dict(current)
+        topic_groups: dict[str, list[dict[str, Any]]] = {}
+        for g in facts.get("trade_off_topics") or []:
+            topic_groups.setdefault(str(g.get("engine") or "") or "(general)", []).append(g)
         for eng, items in by_engine.items():
             # #572: eng is a raw engine id, or "(general)"/"reality-check", neither a
             # known engine; display_engine's title-case fallback would read oddly for
@@ -614,21 +643,31 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
                 eng, display_engine(eng)
             )
             out += [f"### {escaping.md_text(heading)}", ""]
-            for t in items:
-                desc = str(t.get("description", "")).strip()
-                impact = str(t.get("impact", "")).strip()
-                aff = list(t.get("source_tables") or [])
-                line = f"- **{escaping.md_text(desc)}**"
-                if impact and impact != desc:  # reality-check items repeat their title
-                    names = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:3])
-                    where = f"in the trade-off for {names}" if names else "above"
-                    line += ": " + said.line(escaping.md_text(impact), where)
-                out.append(line)
-                if aff:
-                    shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
-                    more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
-                    out.append(f"  - Affects: {shown}{more}")
-            out.append("")
+            groups = topic_groups.get(eng) if eng != "reality-check" else None
+            # What no group lists comes first, ungrouped: a report written before
+            # trade-offs carried an engine files the reality check's lines here too.
+            grouped = {i for g in groups or [] for i in g.get("indexes") or []}
+            loose = [t for i, t in items if i not in grouped]
+            if loose or not groups:
+                out += [line for t in loose for line in _trade_off_lines(t, said)]
+                out.append("")
+            if not groups:
+                continue
+            # A design saved before the topics has every trade-off under "other": no
+            # heading for it (the design review notes keep theirs), as on the results page.
+            topics = [g.get("topic") for g in groups if g.get("topic") != REVIEW_NOTE_TOPIC]
+            titled = topics != [DEFAULT_TOPIC]
+            for g in groups:
+                if titled or g.get("topic") == REVIEW_NOTE_TOPIC:
+                    label = escaping.md_text(str(g.get("label") or ""))
+                    out += [f"#### {label} ({g.get('trade_off_count', 0)})", ""]
+                out += [
+                    line
+                    for i in g.get("indexes") or []
+                    if isinstance(rows.get(i), dict)
+                    for line in _trade_off_lines(rows[i], said)
+                ]
+                out.append("")
     if reversed_at:
         out += ["### Reversed by a later assignment edit", ""]
         for t in reversed_at.values():

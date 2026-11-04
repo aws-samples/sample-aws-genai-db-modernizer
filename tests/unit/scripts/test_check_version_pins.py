@@ -33,7 +33,9 @@ def test_every_resolvable_contract_moves_one_minor_with_its_history(tmp_path: Pa
     assert history_newest(after_text) == want
     assert reason in after_text
     # The contracts the resolver cannot edit are left alone, not half-edited.
-    assert "aurora_mysql_model_output.AuroraMySQLModelOutputContract" not in bumped
+    assert "assignment_models.ValidationResult" not in bumped
+    # #1221: the Aurora design outputs have a Version History the resolver edits.
+    assert "aurora_mysql_model_output.AuroraMySQLModelOutputContract" in bumped
 
 
 def test_the_tests_it_runs_mention_a_version_and_skip_the_heavy_suites(tmp_path: Path) -> None:

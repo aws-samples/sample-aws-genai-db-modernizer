@@ -40,6 +40,7 @@ from src.shared.report_facts import (
     retired_in_use_engine_facts,
     shares_replica_risk,
     table_ownership_facts,
+    trade_off_topic_facts,
     unservable_query_facts,
     wave_one_moved_by_later_waves,
 )
@@ -104,6 +105,12 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             reviews = dynamodb_merge_review_facts(report)
             if reviews is not None:
                 missing["dynamodb_merge_reviews"] = reviews
+        if "trade_off_topics" not in facts:
+            # A block written before #1221: the design trade-offs by topic, each saved
+            # without one read as other, from the same function.
+            missing["trade_off_topics"] = trade_off_topic_facts(
+                report, facts.get("reality_check_trade_offs")
+            )
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:

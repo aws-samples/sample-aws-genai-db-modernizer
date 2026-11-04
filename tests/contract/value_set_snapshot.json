@@ -4,28 +4,28 @@
     "values": [
       "DOC"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "access_pattern_id_prefixes.dynamodb": {
     "module": "dynamodb_model_output",
     "values": [
       "DDB"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "access_pattern_id_prefixes.elasticache": {
     "module": "elasticache_model_output",
     "values": [
       "EC"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "access_pattern_id_prefixes.opensearch": {
     "module": "opensearch_model_output",
     "values": [
       "OS"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "analysis_output.Confidence": {
     "module": "analysis_output",
@@ -330,7 +330,7 @@
       "updateMany",
       "updateOne"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "documentdb_model_output.EMBED_STRATEGY": {
     "module": "documentdb_model_output",
@@ -339,7 +339,7 @@
       "hybrid",
       "reference"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "documentdb_model_output.INDEX_TYPE": {
     "module": "documentdb_model_output",
@@ -350,7 +350,7 @@
       "text",
       "unique"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_decision_trace.DenormSubtype": {
     "module": "dynamodb_decision_trace",
@@ -379,7 +379,7 @@
       "item_collection",
       "separate"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.DYNAMODB_ATTRIBUTE_TYPES": {
     "module": "dynamodb_model_output",
@@ -395,7 +395,7 @@
       "S",
       "SS"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.DYNAMODB_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -410,7 +410,7 @@
       "TransactWriteItems",
       "UpdateItem"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.PARTITION_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -418,7 +418,7 @@
       "read",
       "write"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.PROJECTION_TYPES": {
     "module": "dynamodb_model_output",
@@ -427,7 +427,7 @@
       "INCLUDE",
       "KEYS_ONLY"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.STORED_OBJECT_TYPES": {
     "module": "dynamodb_model_output",
@@ -436,7 +436,7 @@
       "trigger",
       "view"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_model_output.UNSUPPORTED_PATTERN_TYPES": {
     "module": "dynamodb_model_output",
@@ -444,7 +444,7 @@
       "aggregation",
       "text_search"
     ],
-    "version": "1.5"
+    "version": "1.6"
   },
   "dynamodb_pe_review.ChangeCategory": {
     "module": "dynamodb_pe_review",
@@ -496,7 +496,7 @@
       "stream",
       "string"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "elasticache_model_output.REDIS_OPERATION": {
     "module": "elasticache_model_output",
@@ -572,7 +572,7 @@
       "ZREVRANK",
       "ZSCORE"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "elasticache_model_output.USE_CASE_TYPE": {
     "module": "elasticache_model_output",
@@ -590,7 +590,7 @@
       "session_store",
       "time_series"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "engine_ids": {
     "module": "assignment_models",
@@ -771,7 +771,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.73"
+    "version": "1.74"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -779,7 +779,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.73"
+    "version": "1.74"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -917,6 +917,52 @@
     ],
     "version": "1.6"
   },
+  "schema_design_output.TradeOffGroupTopic": {
+    "module": "schema_design_output",
+    "values": [
+      "capacity",
+      "consistency",
+      "cost",
+      "data_types",
+      "id_generation",
+      "indexing",
+      "item_size",
+      "key_design",
+      "operational",
+      "other",
+      "query_translation",
+      "review_note",
+      "uniqueness",
+      "warning"
+    ],
+    "version": "1.1"
+  },
+  "schema_design_output.TradeOffNoteKind": {
+    "module": "schema_design_output",
+    "values": [
+      "review",
+      "warning"
+    ],
+    "version": "1.1"
+  },
+  "schema_design_output.TradeOffTopic": {
+    "module": "schema_design_output",
+    "values": [
+      "capacity",
+      "consistency",
+      "cost",
+      "data_types",
+      "id_generation",
+      "indexing",
+      "item_size",
+      "key_design",
+      "operational",
+      "other",
+      "query_translation",
+      "uniqueness"
+    ],
+    "version": "1.1"
+  },
   "schema_revision_models.PatternAction": {
     "module": "schema_revision_models",
     "values": [
@@ -934,7 +980,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.73"
+    "version": "1.74"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",

@@ -1,0 +1,168 @@
+{
+  "contract_version": "1.74",
+  "trade_offs": [
+    {
+      "description": "Post content stays inline: wp_posts averages 711 bytes per item against the 400 KB item limit.",
+      "impact": "No S3 offload is needed for posts.",
+      "source_tables": [
+        "wp_posts"
+      ],
+      "target_tables": [
+        "WpPosts"
+      ],
+      "query_ids": [
+        "3440484f"
+      ],
+      "engine": "dynamodb",
+      "topic": "item_size"
+    },
+    {
+      "description": "No GSI is created on autoload, because no in-scope query filters on it.",
+      "impact": "The source's autoload index is dropped.",
+      "source_tables": [
+        "wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [],
+      "engine": "dynamodb",
+      "topic": "indexing"
+    },
+    {
+      "description": "Option values stay inline: the measured average row is 360 bytes against the 400 KB item limit.",
+      "impact": "Writes larger than 400 KB are rejected; the application checks the size first.",
+      "source_tables": [
+        "wp_options"
+      ],
+      "target_tables": [
+        "WpOptions"
+      ],
+      "query_ids": [],
+      "engine": "dynamodb",
+      "topic": "item_size"
+    },
+    {
+      "description": "[PE note] Cache option reads that return no item; each miss still costs 0.5 read unit.",
+      "impact": "Cache option reads that return no item; each miss still costs 0.5 read unit.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb",
+      "topic": "other",
+      "note_kind": "review"
+    },
+    {
+      "description": "[WARNING] Schema design produced from partial LLM output.",
+      "impact": "[WARNING] Schema design produced from partial LLM output.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "dynamodb",
+      "topic": "other",
+      "note_kind": "warning"
+    },
+    {
+      "description": "Options are cached as one hash per option name with a one-hour TTL.",
+      "impact": "A changed option is stale until the owner write deletes its key, and for at most the one-hour TTL.",
+      "source_tables": [
+        "wp_options"
+      ],
+      "target_tables": [
+        "wp_options:{name}"
+      ],
+      "query_ids": [],
+      "engine": "elasticache",
+      "topic": "other"
+    },
+    {
+      "description": "[PE note] Pin the engine version in the infrastructure code.",
+      "impact": "Pin the engine version in the infrastructure code.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "elasticache",
+      "topic": "other",
+      "note_kind": "review"
+    },
+    {
+      "description": "Recommended pattern: Event-Driven Sync. Use change streams to propagate changes between databases.",
+      "impact": "Recommended pattern: Event-Driven Sync. Use change streams to propagate changes between databases.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    }
+  ],
+  "facts": {
+    "trade_off_count": 8,
+    "reality_check_trade_offs": [
+      {
+        "index": 7,
+        "from_engine": null,
+        "to_engine": null,
+        "queries_moved_back": 0,
+        "queries_still_moved": null,
+        "description_now": null,
+        "reversed": false
+      }
+    ],
+    "trade_off_topics": [
+      {
+        "engine": "dynamodb",
+        "topic": "item_size",
+        "label": "Item and value size",
+        "trade_off_count": 2,
+        "indexes": [
+          0,
+          2
+        ]
+      },
+      {
+        "engine": "dynamodb",
+        "topic": "indexing",
+        "label": "Indexes",
+        "trade_off_count": 1,
+        "indexes": [
+          1
+        ]
+      },
+      {
+        "engine": "dynamodb",
+        "topic": "warning",
+        "label": "Design warnings",
+        "trade_off_count": 1,
+        "indexes": [
+          4
+        ]
+      },
+      {
+        "engine": "dynamodb",
+        "topic": "review_note",
+        "label": "Design review notes",
+        "trade_off_count": 1,
+        "indexes": [
+          3
+        ]
+      },
+      {
+        "engine": "elasticache",
+        "topic": "other",
+        "label": "Other",
+        "trade_off_count": 1,
+        "indexes": [
+          5
+        ]
+      },
+      {
+        "engine": "elasticache",
+        "topic": "review_note",
+        "label": "Design review notes",
+        "trade_off_count": 1,
+        "indexes": [
+          6
+        ]
+      }
+    ]
+  }
+}

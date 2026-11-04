@@ -61,6 +61,7 @@ from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.progress import in_context, say
+from src.shared.trade_off_topics import designer_note_kind_errors
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 from src.storage.collector_for_models import read_collector_for_models
@@ -531,6 +532,10 @@ def finalize_schema_design(
     validation = validate_schema_design_output(output, target_type)
     if not validation["valid"]:
         return {"status": "validation_failed", "errors": validation["errors"]}
+    # #1221: only the pipeline marks a trade-off as its own note.
+    note_errors = designer_note_kind_errors(output)
+    if note_errors:
+        return {"status": "validation_failed", "errors": note_errors}
 
     number_warnings: list[str] = []
     if target_type in METRIC_ENGINES:

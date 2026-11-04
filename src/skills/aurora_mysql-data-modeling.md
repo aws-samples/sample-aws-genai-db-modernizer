@@ -90,7 +90,10 @@ regenerates the DDL and validates the full contract.
    translation. Map residual source types back to themselves and add
    optimizations/trade-offs.
 6. **Trade-offs:** record the significant decisions (at least one) in
-   `trade_offs`, each with a `description` and an `impact` written for a CTO.
+   `trade_offs`, each with a `description`, an `impact` written for a CTO and
+   a `topic`.
+
+`topic` files the trade-off under the one subject it is about, so the report lists repeated ones together: `item_size` (item, document or value size limits, large columns inline or offloaded), `id_generation` (ids the database generated that the application now generates), `indexing` (secondary indexes added, dropped or not created, their projections and write cost), `key_design` (keys, item collections, embedding, denormalization, table or index layout), `query_translation` (a source query served another way: joins, counts, IN lists, ordering or filters done by the application or by several requests), `consistency` (eventual consistency, staleness, TTLs, cache invalidation, transactions), `uniqueness` (unique constraints, conditional writes, sentinel items), `data_types` (type mappings and value formats), `capacity` (hot partitions or keys, throughput limits, shards, memory), `cost` (billed units and their price), `operational` (engine versions, monitoring, sync pipelines, index builds, replica routing) or `other`. Trade-offs on the same subject in different design parts take the same topic.
 
 ## Output
 

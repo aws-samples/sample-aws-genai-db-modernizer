@@ -124,6 +124,32 @@ export function tradeOffsByTab(designTradeOffs, synthesis) {
   return map;
 }
 
+// #1221: an engine tab's design trade-offs by topic (facts.trade_off_topics), each
+// group's label, count and trade-offs (report.json's own, by position), the design
+// review notes apart with their label and count (the schema agents' warnings stay a
+// topic group, listed with the design decisions). null when the facts list no group for the
+// engine (the reality-check tab, a report before the groups): the tab lists its
+// trade-offs as before.
+export const REVIEW_NOTE_TOPIC = 'review_note';
+
+export function tradeOffTopicGroupsOf(synthesis, engine) {
+  const groups = factsOf(synthesis) && factsOf(synthesis).trade_off_topics;
+  if (!Array.isArray(groups)) return null;
+  const mine = groups.filter(g => g && g.engine === engine);
+  if (mine.length === 0) return null;
+  const rows = (synthesis && synthesis.trade_offs) || [];
+  const entries = g => (g.indexes || []).map(i => rows[i]).filter(t => t && typeof t === 'object');
+  const notes = mine.find(g => g.topic === REVIEW_NOTE_TOPIC);
+  return {
+    topics: mine
+      .filter(g => g.topic !== REVIEW_NOTE_TOPIC)
+      .map(g => ({ topic: g.topic, label: g.label, count: g.trade_off_count, tradeOffs: entries(g) })),
+    reviewNotes: notes ? entries(notes) : [],
+    reviewNoteCount: notes ? notes.trade_off_count : 0,
+    reviewNoteLabel: notes ? notes.label : '',
+  };
+}
+
 export function tradeOffTabLabel(tab, count, t, engineLabels) {
   const name = tab === REALITY_CHECK_TAB
     ? t('analysis-results.tradeoffs.reality-check')

@@ -192,6 +192,7 @@ ID_FIELD_PATHS = frozenset(
         ("aurora_engine_choice", "engine"),  # AuroraEngineChoice.engine (assignment_models.py:276)
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
+        ("trade_off_topics", "engine"),  # TradeOffTopicGroup.engine (#1221)
         ("table_owners", "owner"),  # TableOwner.owner (synthesis_output.py:429)
         # #212: each table's owner line, engine ids and a basis code, never prose; the
         # deliverables name the engines through display_engine.

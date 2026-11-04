@@ -87,6 +87,9 @@ E2E_LLM: tuple[str, ...] = (
     "src/storage/assignment_versioning.py",
     "src/contracts/*_model_output.py",
     "src/contracts/aurora_design_delta.py",
+    # Which saved trade-offs are the pipeline's notes, and the topic every saved design
+    # carries (write_schema_output, finalize_schema_design, #1221).
+    "src/shared/trade_off_topics.py",
     "scripts/run_analysis.py",
     "scripts/run_assessment.py",
     "scripts/run_reality_check.py",

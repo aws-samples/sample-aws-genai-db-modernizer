@@ -42,6 +42,7 @@ from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
+from src.shared.trade_off_topics import REVIEW_NOTE, without_designer_note_kinds
 from src.tools.schema.base_schema_agent import (
     AgentInputPaths,
     enforce_design_numbers,
@@ -286,9 +287,10 @@ def _invoke_designer(
     result = designer(prompt)
     output = getattr(result, "structured_output", None)
     if isinstance(output, OpenSearchModelOutputContract):
-        return output
+        return without_designer_note_kinds(output)
     parsed = json.loads(str(result))
-    return OpenSearchModelOutputContract.model_validate(parsed)
+    # #1221: only the pipeline marks its own notes; a model's mark is cleared.
+    return without_designer_note_kinds(OpenSearchModelOutputContract.model_validate(parsed))
 
 
 def _invoke_pe_reviewer(
@@ -494,6 +496,7 @@ def run_opensearch_schema_agent(
                         description=f"[PE note] {note}",
                         impact=note,
                         engine="opensearch",
+                        note_kind=REVIEW_NOTE,
                     )
                     for note in review.pe_notes
                 )
@@ -507,6 +510,7 @@ def run_opensearch_schema_agent(
                         description=f"[PE note] {note}",
                         impact=note,
                         engine="opensearch",
+                        note_kind=REVIEW_NOTE,
                     )
                     for note in review.pe_notes
                 )

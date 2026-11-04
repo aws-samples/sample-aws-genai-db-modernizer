@@ -291,6 +291,7 @@ _BACKFILLED = {
 }
 
 
+@pytest.mark.passes_on_main  # #1221 only lets the recorded run lack the newer facts
 @pytest.mark.parametrize("figure", sorted(_BACKFILLED))
 def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str) -> None:
     report = _committed_report()
@@ -300,8 +301,17 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     # The recorded run was written by the release the sample README names, so it stores
     # every figure: reading it changes nothing, and an older report with one figure
     # removed is read back to the same block (ADR-032 Decision 4).
-    assert report_facts(report) == report["facts"]
+    assert _recorded(report_facts(report)) == report["facts"]
     assert report_facts(older) == report_facts(report)
+
+
+# Facts added after the recorded run's release, which the reader fills in for it until
+# the next release re-records the sample (CONTRIBUTING's Releases, step 1).
+_NEWER_THAN_THE_RECORDING = ("trade_off_topics",)  # #1221
+
+
+def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in facts.items() if k not in _NEWER_THAN_THE_RECORDING}
 
 
 def test_committed_run_is_only_what_the_renderers_read() -> None:

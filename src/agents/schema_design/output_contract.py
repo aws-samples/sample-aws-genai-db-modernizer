@@ -32,6 +32,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
+from src.shared.trade_off_topics import with_default_topics
 from src.storage.artifact_store import ArtifactStore
 from src.storage.collector_for_models import read_collector_for_models
 
@@ -274,9 +275,12 @@ def write_schema_output(
 
     Every model-written str is passed through :func:`cite_queries` first, so a
     bare query id in a designer's prose is written as the query's report label
-    (#1321), whichever designer and write path produced it.
+    (#1321), whichever designer and write path produced it. A trade-off without a
+    topic is saved as ``other`` (#1221).
     """
-    stamped = stamp_artifact_version(key, cite_queries(store, key, output))
+    # #1221: every trade-off is saved with its topic, so a design saved since the field
+    # is never read by its text.
+    stamped = stamp_artifact_version(key, cite_queries(store, key, with_default_topics(output)))
     if _contract_for(stamped, engine) is not None:
         refused = [i for i in _gate_issues(stamped, engine) if i.key not in set(tolerated)]
         if refused:

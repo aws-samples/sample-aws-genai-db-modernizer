@@ -65,6 +65,12 @@ from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.source_cache import cost_basis_sentence
 from src.shared.table_keys import normalize_table_name
 from src.shared.target_databases import engine_scope_display_order
+from src.shared.trade_off_topics import (
+    TOPIC_LABELS,
+    TRADE_OFF_GROUPS,
+    predates_topics,
+    trade_off_group,
+)
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -1231,6 +1237,43 @@ def reality_check_trade_off_facts(report: dict[str, Any], final: set[str]) -> li
             )
         out.append(row)
     return out
+
+
+def trade_off_topic_facts(
+    report: dict[str, Any], rc_trade_offs: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """The schema designs' trade-offs grouped by engine and topic (#1221).
+
+    One group per engine and group (``src.shared.trade_off_topics``): each designer
+    topic, then the schema agents' warnings and the design review notes. Engines are
+    in the order their first trade-off appears in ``report["trade_offs"]`` and groups
+    in ``TRADE_OFF_GROUPS`` order, each with its label, its count and the positions
+    of its trade-offs. A trade-off saved without a topic reads as ``other``; only in a
+    report synthesized before the field (``predates_topics``) is a pipeline note read
+    by the marker its text starts with. The reality check's own lines are left out:
+    they are ``reality_check_decisions``. The engineering report and the results page
+    list each group under its label and never read a topic out of the text.
+    """
+    legacy = predates_topics("synthesis_output", report.get("contract_version"))
+    rc_indexes = {int(t["index"]) for t in rc_trade_offs or [] if isinstance(t, dict)}
+    by_engine: dict[str, dict[str, list[int]]] = {}
+    for i, t in enumerate(report.get("trade_offs") or []):
+        if not isinstance(t, dict) or i in rc_indexes or t.get("engine") == "reality-check":
+            continue
+        engine = str(t.get("engine") or "")
+        by_engine.setdefault(engine, {}).setdefault(trade_off_group(t, legacy), []).append(i)
+    return [
+        {
+            "engine": engine,
+            "topic": topic,
+            "label": TOPIC_LABELS[topic],
+            "trade_off_count": len(groups[topic]),
+            "indexes": groups[topic],
+        }
+        for engine, groups in by_engine.items()
+        for topic in TRADE_OFF_GROUPS
+        if topic in groups
+    ]
 
 
 _KEPT_RE = re.compile(rf"^({_ENGINE_NAME_ALT}) kept: ")
@@ -3533,6 +3576,7 @@ def compute_report_facts(
         "retired_in_use_engines": (retired := retired_in_use_engine_facts(report, removed)),
         "reality_check_decisions": reality_check_decision_facts(report, rc_trade_offs, removed),
         "reality_check_trade_offs": rc_trade_offs,
+        "trade_off_topics": trade_off_topic_facts(report, rc_trade_offs),
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
         **risks,
         "tied_query_count": len(tied),

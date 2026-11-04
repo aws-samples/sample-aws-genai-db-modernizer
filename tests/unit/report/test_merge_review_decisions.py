@@ -44,6 +44,7 @@ from src.shared.report_facts import (
     RECONSTRUCTED_NOTE,
     compute_report_facts,
     dynamodb_merge_review_facts,
+    trade_off_topic_facts,
 )
 from tests.executive_pdf import executive_text
 from tests.unit.agents.referee.test_synthesis_design_conflict_risk import _data
@@ -393,7 +394,12 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     SynthesisOutputContract.model_validate(old)
     facts = report_facts(old)
 
-    assert facts == stored  # read back unchanged
+    # Read back unchanged, but for the trade-off topic groups a block written before
+    # #1221 gains from the same function.
+    assert {k: v for k, v in facts.items() if k != "trade_off_topics"} == stored
+    assert facts["trade_off_topics"] == trade_off_topic_facts(
+        old, stored["reality_check_trade_offs"]
+    )
     assert MD_HEADING not in render_engineering_report_md(old)
 
 

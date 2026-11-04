@@ -1280,6 +1280,45 @@ def test_the_designed_job_renders_the_schema_design_panels(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 
+def test_the_trade_offs_tabs_list_each_topic_with_the_facts_label_and_count(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1221: each engine tab of "Trade-offs and design decisions" lists its design
+    trade-offs under the topics report.json's facts.trade_off_topics groups them in,
+    with the label and count the engineering report prints; an engine whose
+    trade-offs are all "other" shows no topic heading."""
+    from src.shared.engine_names import display_engine
+
+    checked = 0
+    for r in _designed_runs(all_runs):
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        groups = (report.get("facts") or {}).get("trade_off_topics") or []
+        by_engine: dict[str, list[dict]] = {}
+        for g in groups:
+            if g["topic"] != "review_note":
+                by_engine.setdefault(g["engine"], []).append(g)
+        ev = _open_results(page, ui, r)
+        for engine, topics in by_engine.items():
+            tab = page.get_by_role(
+                "tab", name=re.compile(rf"^{re.escape(display_engine(engine))} \(")
+            )
+            if tab.count() == 0:
+                continue
+            tab.first.click()
+            for g in topics:
+                section = page.locator(f'[data-trade-off-topic="{g["topic"]}"]')
+                expect(section.first).to_be_visible(timeout=READY_MS)
+                heading = f"{g['label']} ({g['trade_off_count']})"
+                if [t["topic"] for t in topics] == ["other"]:
+                    assert heading not in section.first.inner_text(), (r.job_id, engine)
+                else:
+                    assert heading in section.first.inner_text(), (r.job_id, engine, heading)
+                    checked += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+    if not any(r.external for r in all_runs):
+        assert checked > 0, "no titled trade-off topic group in the designed job"
+
+
 def test_results_page_states_the_pending_engine_choices(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:

@@ -13,11 +13,17 @@ without needing to understand engine-specific internals.
 
 Version History:
 - 1.0 (2026-03-23): Initial version
+- 1.1 (2026-11-04, #1221): Added optional ``TradeOff.topic`` from the closed set
+  ``TradeOffTopic`` (default ``other``), the pipeline-only ``TradeOff.note_kind``
+  (``TradeOffNoteKind``: ``review``, ``warning``; left out of the JSON schema) and
+  ``TradeOffGroupTopic``, the topics plus the ``warning`` and ``review_note`` groups the
+  deliverables list.
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 
 def null_lists_as_empty(model: type[BaseModel], data: Any) -> Any:
@@ -41,6 +47,49 @@ def null_lists_as_empty(model: type[BaseModel], data: Any) -> Any:
         if key in data and data[key] is None
     ]
     return {**data, **dict.fromkeys(nulled, [])} if nulled else data
+
+
+# The topics a schema designer files a design trade-off under (#1221); labels and
+# grouping live in ``src/shared/trade_off_topics.py``.
+TradeOffTopic = Literal[
+    "item_size",
+    "id_generation",
+    "indexing",
+    "key_design",
+    "query_translation",
+    "consistency",
+    "uniqueness",
+    "data_types",
+    "capacity",
+    "cost",
+    "operational",
+    "other",
+]
+
+# What the pipeline itself appended as a trade-off (``TradeOff.note_kind``): the design
+# review's notes and the schema agents' own warnings. Never a designer's.
+TradeOffNoteKind = Literal["review", "warning"]
+
+# The groups the deliverables list (``facts.trade_off_topics[].topic``): each designer
+# topic, then the pipeline's warnings and the design review notes.
+TradeOffGroupTopic = Literal[TradeOffTopic, "warning", "review_note"]
+
+TRADE_OFF_TOPIC_GUIDE = (
+    "The one topic this trade-off is about, so repeated ones are listed together: "
+    "item_size (item, document or value size limits, large columns kept inline or "
+    "offloaded); id_generation (ids the database generated, such as AUTO_INCREMENT, that "
+    "the application now generates); indexing (secondary indexes added, dropped or not "
+    "created, their projections and write cost); key_design (partition and sort keys, "
+    "item collections, embedding, denormalization, table or index layout); "
+    "query_translation (a source query served another way: joins, counts, IN lists, "
+    "ordering or filters done by the application or several requests); consistency "
+    "(eventual consistency, staleness, TTLs, cache invalidation, transactions and "
+    "atomicity); uniqueness (unique constraints, conditional writes, sentinel items); "
+    "data_types (type mappings and value formats); capacity (hot partitions or keys, "
+    "throughput limits, shards, memory); cost (billed units and their price); "
+    "operational (running it: engine versions, monitoring, sync pipelines, index "
+    "builds, routing to replicas); other (none of these)."
+)
 
 
 class TradeOff(BaseModel):
@@ -69,6 +118,15 @@ class TradeOff(BaseModel):
         default_factory=list, description="Query IDs affected (links to assignment query_id)"
     )
     engine: str = Field(default="", description="Target engine (dynamodb, opensearch, etc.)")
+    # Null among the values, read as other, so the Bedrock tool schema lists null in the
+    # enum instead of a nullable-typed enum, which Bedrock refuses (#1281).
+    topic: Literal[TradeOffTopic, None] = Field(default="other", description=TRADE_OFF_TOPIC_GUIDE)
+    # Set only by the pipeline when it appends a note of its own (a design review note,
+    # a schema agent's warning). Left out of the JSON schema, so no designer is offered
+    # it; ``finalize_schema_design`` refuses a designer's response that sets it.
+    note_kind: SkipJsonSchema[TradeOffNoteKind | None] = Field(
+        default=None, description="What the pipeline appended this as; None for a design's own"
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -76,6 +134,12 @@ class TradeOff(BaseModel):
     @classmethod
     def _null_lists(cls, data: Any) -> Any:
         return null_lists_as_empty(cls, data)
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def _null_topic_is_other(cls, v: object) -> object:
+        # A null topic reads as the default, like an absent one (#1221).
+        return "other" if v is None else v
 
 
 class SchemaDesignOutputBase(BaseModel):

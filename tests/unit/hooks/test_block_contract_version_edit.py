@@ -174,13 +174,12 @@ def _bump_default(module: str, cls: str) -> dict:
     return _edit(_real(module), old, new)
 
 
+@pytest.mark.passes_on_main  # #1221 only drops the Aurora rows; the hook is unchanged
 @pytest.mark.parametrize(
     ("module", "cls"),
-    [
-        ("aurora_mysql_model_output", "AuroraMySQLModelOutputContract"),
-        ("aurora_postgresql_model_output", "AuroraPostgresqlModelOutputContract"),
-        ("assignment_models", "ValidationResult"),
-    ],
+    # The Aurora design outputs left this list in #1221, when they gained a Version
+    # History the resolver edits.
+    [("assignment_models", "ValidationResult")],
 )
 def test_a_contract_bumped_by_hand_is_editable(module: str, cls: str, run_hook) -> None:
     """bump_contract.py sends these to a hand bump (the resolver cannot edit them)."""
@@ -275,11 +274,15 @@ def test_hand_bumped_set_matches_bump_contract() -> None:
                 refused.add(contract)
         found |= hand_bumped_contracts(module, text)
     assert found == refused
-    assert {
-        "aurora_mysql_model_output.AuroraMySQLModelOutputContract",
-        "aurora_postgresql_model_output.AuroraPostgresqlModelOutputContract",
-        "assignment_models.ValidationResult",
-    } <= found
+    assert "assignment_models.ValidationResult" in found
+    # #1221: the Aurora design outputs have a Version History, so the resolver bumps them.
+    assert (
+        not {
+            "aurora_mysql_model_output.AuroraMySQLModelOutputContract",
+            "aurora_postgresql_model_output.AuroraPostgresqlModelOutputContract",
+        }
+        & found
+    )
 
 
 def test_an_old_string_that_is_not_there_is_allowed(contract: Path, run_hook) -> None:
