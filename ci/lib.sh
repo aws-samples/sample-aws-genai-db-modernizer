@@ -9,6 +9,17 @@ cd "$REPO_ROOT"
 
 log() { printf '\n==> %s\n' "$*"; }
 
+# The per-test time limit (#1835) that ci/test.sh and ci/rerun_failed.sh pass to pytest:
+# a test that hangs fails under its own name in five minutes. The thread method also
+# stops a test blocked in native code or a system call and prints every thread's stack.
+# Five times the slowest test in .test_durations; a caller's own --timeout comes later
+# on the command line and wins (--timeout=0 turns it off).
+PYTEST_TIME_LIMIT=(--timeout=300 --timeout-method=thread)
+
+# The Hypothesis profile a pull request's run uses (`ci`: fewer examples, see
+# tests/conftest.py). An explicit HYPOTHESIS_PROFILE always wins.
+use_pull_request_hypothesis_profile() { export HYPOTHESIS_PROFILE="${HYPOTHESIS_PROFILE:-ci}"; }
+
 require_env() {  # require_env VAR [VAR...]
   local missing=()
   for v in "$@"; do [ -n "${!v:-}" ] || missing+=("$v"); done

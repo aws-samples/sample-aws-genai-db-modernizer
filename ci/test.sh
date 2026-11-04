@@ -23,7 +23,7 @@ source "$(dirname "$0")/lib.sh"
 # tests/conftest.py); main, nightly and local runs keep the full `default`
 # profile. An explicit HYPOTHESIS_PROFILE always wins.
 if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
-  export HYPOTHESIS_PROFILE="${HYPOTHESIS_PROFILE:-ci}"
+  use_pull_request_hypothesis_profile
 fi
 # Coverage (--cov) uses Python's sys.monitoring tracer (PEP 669) unless
 # COVERAGE_CORE says otherwise: the same line coverage at about 1.1x the
@@ -62,14 +62,10 @@ if [ -n "${TEST_SHARD:-}" ]; then
   esac
   shard_args=(--splits "${TEST_SHARD#*/}" --group "${TEST_SHARD%/*}" --splitting-algorithm least_duration)
 fi
-# A per-test time limit (#1835): a test that hangs fails under its own name in
-# five minutes instead of stalling its shard until the CI job limit. The thread
-# method also stops a test blocked in native code or a system call, where a
-# SIGALRM handler would never run, and prints every thread's stack; under xdist
-# the worker exits and is replaced, and the run reports the test it was running.
-# Five times the slowest test in .test_durations; a caller's own --timeout comes
-# later on the command line and wins (--timeout=0 turns it off).
-timeout_args=(--timeout=300 --timeout-method=thread)
+# A per-test time limit (#1835), shared with ci/rerun_failed.sh: PYTEST_TIME_LIMIT in
+# ci/lib.sh. Under xdist a worker that hits it exits and is replaced, and the run
+# reports the test it was running.
+timeout_args=("${PYTEST_TIME_LIMIT[@]}")
 log "pytest (not integration, not e2e; Hypothesis profile: ${HYPOTHESIS_PROFILE:-default}${TEST_SHARD:+; shard $TEST_SHARD})"
 uv run pytest tests/ --ignore=tests/e2e -m "not integration and not e2e" --fail-on-skip -n auto \
   "${timeout_args[@]}" ${shard_args[@]+"${shard_args[@]}"} "$@"

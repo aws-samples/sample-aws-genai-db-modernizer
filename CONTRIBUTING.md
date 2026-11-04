@@ -652,6 +652,7 @@ Many pull requests land on `main` every day, so a branch that was green yesterda
 
 - Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version problems (a hand-written version that collides with main's, a contract change with no bump or pending bump), checks the docs-impact map (above), runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
 - Rebase onto the latest main and re-test right before merging, not only when you opened the PR.
+- After a red CI run, re-run its failed tests locally before you push again: `./ci/rerun_failed.sh` (the current branch's PR, or give the PR number). `./ci/pre_merge.sh` prints that command when the last run was red.
 - Do not take a contract version number yourself: declare the bump kind with `uv run python scripts/bump_contract.py` and run `uv run python scripts/resolve_contract_versions.py` after your last rebase (see Contract Changes, ADR-008 Decision 8).
 - Never hand-merge a generated snapshot (the routing snapshot, `tests/contract/schema_snapshot.json`, `tests/contract/value_set_snapshot.json`, rendered catalog docs). Take main's copy and regenerate it on top of it.
 - Run `./ci/needs_llm_run.sh` early. If it says `e2e-llm: required`, start that run before the review rounds, not after.
