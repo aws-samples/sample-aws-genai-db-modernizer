@@ -285,6 +285,29 @@ repos:
         files: '(\.claude/commands/.*\.md|\.claude/skills/.*\.md|scripts/run_.*\.py|src/contracts/.*\.py|src/skills/.*\.md)'
         pass_filenames: false
 
+  # Every claim marker in the docs names a test that exists (#1851). Runs over every
+  # tracked page on every commit (about a second): renaming or deleting a test, or a UI
+  # test file, breaks a marker on a page the commit did not touch, and pre-commit's file
+  # filter never sees a deleted file.
+  - repo: local
+    hooks:
+      - id: claim-markers
+        name: Claim markers name existing tests
+        entry: uv run python ci/claims.py check
+        language: system
+        always_run: true
+        pass_filenames: false
+
+  # ci/README.md stays within its section length budget (#1851)
+  - repo: local
+    hooks:
+      - id: ci-readme-budget
+        name: ci/README.md sections stay within budget
+        entry: uv run python ci/readme_budget.py
+        language: system
+        files: '^ci/(README\.md|readme_budget\.(py|toml))$'
+        pass_filenames: false
+
   # The UI's engine tables and the rule-catalog doc are generated from the catalog (#492)
   - repo: local
     hooks:

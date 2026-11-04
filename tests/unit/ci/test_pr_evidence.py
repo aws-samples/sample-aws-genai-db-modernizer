@@ -236,6 +236,7 @@ def test_cli_checks_the_body_from_an_env_var_against_the_diff(repo: Path):
                 "e2e-llm: required",
                 "e2e-llm result: MODERNIZE_RESULT: complete job_id=1",
                 "bedrock-smoke: not required",
+                "No claims: the scratch AGENTS.md states no behaviour",
             )
         },
     )
@@ -243,7 +244,13 @@ def test_cli_checks_the_body_from_an_env_var_against_the_diff(repo: Path):
 
 
 def test_cli_missing_result_warns_and_exits_0_unless_results_are_required(repo: Path):
-    env = {"B": body("e2e-llm: required", "bedrock-smoke: not required")}
+    env = {
+        "B": body(
+            "e2e-llm: required",
+            "bedrock-smoke: not required",
+            "No claims: the scratch AGENTS.md states none",
+        )
+    }
     soft = _run(repo, "check", "--body-env", "B", env=env)
     assert soft.returncode == 0, soft.stdout
     assert "::warning::" in soft.stdout and "e2e-llm" in soft.stdout
@@ -345,7 +352,14 @@ def test_cli_queue_gate_blocks_a_pr_without_its_result(repo: Path, tmp_path: Pat
     import json
 
     pr = json.dumps(
-        {"body": body("e2e-llm: required", "bedrock-smoke: not required"), "user": {"login": "me"}}
+        {
+            "body": body(
+                "e2e-llm: required",
+                "bedrock-smoke: not required",
+                "No claims: the scratch AGENTS.md states none",
+            ),
+            "user": {"login": "me"},
+        }
     )
     env = _fake_gh(tmp_path, pr, repo)
     res = _queue(repo, "--require-results", env=env)
@@ -358,9 +372,32 @@ def test_cli_queue_gate_blocks_a_pr_without_its_result(repo: Path, tmp_path: Pat
 def test_cli_queue_gate_passes_with_the_result(repo: Path, tmp_path: Path):
     import json
 
-    ok = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required")
+    ok = body(
+        "e2e-llm: required",
+        "e2e-llm result: pass",
+        "bedrock-smoke: not required",
+        "No claims: the scratch AGENTS.md states none",
+    )
     env = _fake_gh(tmp_path, json.dumps({"body": ok, "user": {"login": "me"}}), repo)
     assert _queue(repo, "--require-results", env=env).returncode == 0
+
+
+def test_cli_queue_gate_checks_the_claims_table_of_the_entrys_own_diff(repo: Path, tmp_path: Path):
+    """#1851: the queue gate fails a body with no Claims section when the entry's own
+    commits change a claim page (the scratch repo's head changes AGENTS.md), and a body
+    whose Claims row names a missing test; ``--base`` must be the queue ref's sha, so
+    the diff is the entry's own."""
+    import json
+
+    ok = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required")
+    env = _fake_gh(tmp_path, json.dumps({"body": ok, "user": {"login": "me"}}), repo)
+    res = _queue(repo, "--require-results", env=env)
+    assert res.returncode == 1 and "this PR changes AGENTS.md" in res.stdout
+    bad = ok + "\n## Claims\n\n| Claim | Test |\n|---|---|\n| x | `tests/test_nope.py::test_x` |\n"
+    (tmp_path / "bin2").mkdir()
+    env2 = _fake_gh(tmp_path / "bin2", json.dumps({"body": bad, "user": {"login": "me"}}), repo)
+    res = _queue(repo, "--require-results", env=env2)
+    assert res.returncode == 1 and "Claims row 'x': tests/test_nope.py::test_x" in res.stdout
 
 
 def test_cli_queue_gate_skips_a_dependabot_pr_but_not_one_with_a_human_commit(
@@ -432,6 +469,17 @@ def test_workflow_is_hardened_reads_the_body_from_env_and_reports_in_the_queue()
     assert "github.event" not in run["run"], "the PR body must not be interpolated into the shell"
     assert "github.event.pull_request.body" in run["env"]["PR_BODY"]
     assert "secrets." not in text
+    # The merge queue job (#1850, #1851): read-only tokens, no event text in its shell, the
+    # body read through the API from the queue ref, the gate scripts (claims.py included)
+    # taken from the merge group's base.
+    results = wf["jobs"]["pr-evidence-results"]
+    assert results["permissions"] == {"contents": "read", "pull-requests": "read"}
+    gate = next(s for s in results["steps"] if "--require-results" in s.get("run", ""))
+    assert "github.event" not in gate["run"]
+    assert set(gate["env"]) == {"GH_TOKEN", "MERGE_GROUP_BASE", "MERGE_GROUP_REF"}
+    assert "--queue-ref-env MERGE_GROUP_REF" in gate["run"]
+    assert 'git show "$MERGE_GROUP_BASE:ci/claims.py"' in gate["run"]
+    assert "cp ci/claims.py" in gate["run"]
 
 
 def test_the_template_and_readme_document_the_marker():
@@ -449,7 +497,10 @@ def test_crlf_and_cr_bodies_parse_like_lf():
 
 
 def test_cli_crlf_body_through_the_env_var(repo: Path):
-    crlf = "e2e-llm: required\r\ne2e-llm result: MODERNIZE_RESULT: complete\r\nbedrock-smoke: not required\r\n"
+    crlf = (
+        "e2e-llm: required\r\ne2e-llm result: MODERNIZE_RESULT: complete\r\n"
+        "bedrock-smoke: not required\r\nNo claims: the scratch AGENTS.md states none\r\n"
+    )
     res = _run(repo, "check", "--body-env", "B", env={"B": crlf})
     assert res.returncode == 0, res.stdout
 
@@ -1074,16 +1125,27 @@ def _gate_run() -> str:
 WORKFLOW_WITH_GATE = "jobs:\n  pr-evidence-results:\n    runs-on: x\n"
 WORKFLOW_WITHOUT_GATE = "jobs:\n  pr-evidence:\n    runs-on: x\n"
 STUB = "import pathlib, sys\npathlib.Path('stub-ran').write_text('x')\nsys.exit(0)\n"
+# A permissive claims.py a PR could ship: it accepts every test id and leaves a trace, so a
+# gate that loaded the PR's copy instead of the base's would both pass and show it (#1851).
+CLAIMS_STUB = (
+    "import pathlib\npathlib.Path('stub-ran').write_text('claims')\n"
+    "def resolve(node_id, root=None):\n    return None\n"
+)
 
 
-def _gate_repo(path: Path, base_workflow: str, base_pr_evidence: str) -> str:
-    """A base commit with a gate (or none) and a head commit whose scripts are stubs."""
+def _gate_repo(
+    path: Path, base_workflow: str, base_pr_evidence: str, base_claims: bool = True
+) -> str:
+    """A base commit with a gate (or none) and a head commit whose scripts are stubs. The
+    base carries ``ci/claims.py`` (#1851) unless ``base_claims`` is false."""
     _git(path, "init", "-q", "-b", "main")
     (path / "ci").mkdir()
     (path / ".github" / "workflows").mkdir(parents=True)
     (path / ".github" / "workflows" / "pr-evidence.yml").write_text(base_workflow)
     (path / "ci" / "pr_evidence.py").write_text(base_pr_evidence)
     (path / "ci" / "needs_llm_run.py").write_text((ROOT / "ci" / "needs_llm_run.py").read_text())
+    if base_claims:
+        (path / "ci" / "claims.py").write_text((ROOT / "ci" / "claims.py").read_text())
     (path / "README.md").write_text("x")
     _git(path, "add", ".")
     _commit(path, "base", "human")
@@ -1091,6 +1153,7 @@ def _gate_repo(path: Path, base_workflow: str, base_pr_evidence: str) -> str:
         ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
     ).stdout.strip()
     (path / "ci" / "pr_evidence.py").write_text(STUB)  # the PR replaces the checker
+    (path / "ci" / "claims.py").write_text(CLAIMS_STUB)  # and the claims resolver
     (path / "AGENTS.md").write_text("changed")
     _git(path, "add", ".")
     _commit(path, "head", "human")
@@ -1162,13 +1225,48 @@ def test_the_gate_step_uses_the_base_scripts_when_the_base_has_the_gate(tmp_path
     repo_dir = tmp_path / "r"
     repo_dir.mkdir()
     base = _gate_repo(repo_dir, WORKFLOW_WITH_GATE, (ROOT / "ci" / "pr_evidence.py").read_text())
-    ok = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required")
+    nc = "No claims: the scratch AGENTS.md states none"
+    ok = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required", nc)
     assert _run_gate(repo_dir, base, tmp_path / "t1", ok).returncode == 0
     assert not (repo_dir / "stub-ran").exists()
     missing = _run_gate(
-        repo_dir, base, tmp_path / "t2", body("e2e-llm: required", "bedrock-smoke: not required")
+        repo_dir,
+        base,
+        tmp_path / "t2",
+        body("e2e-llm: required", "bedrock-smoke: not required", nc),
     )
     assert missing.returncode == 1
+    # The base's gate checks the Claims table of the entry's own diff (#1851).
+    no_claims = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required")
+    res = _run_gate(repo_dir, base, tmp_path / "t3", no_claims)
+    assert res.returncode == 1 and "this PR changes AGENTS.md" in res.stdout
+
+
+def test_the_gate_step_fails_when_the_base_commit_cannot_be_read(tmp_path: Path):
+    """A git error reading the base is a failure, never "the base has no gate" (which would
+    run the branch's scripts)."""
+    repo_dir = tmp_path / "r"
+    repo_dir.mkdir()
+    _gate_repo(repo_dir, WORKFLOW_WITH_GATE, (ROOT / "ci" / "pr_evidence.py").read_text())
+    res = _run_gate(repo_dir, "0" * 40, tmp_path / "t", body("e2e-llm: not required"))
+    assert res.returncode != 0
+    assert not (repo_dir / "stub-ran").exists()
+    assert "this change adds it" not in res.stdout
+
+
+def test_the_gate_step_fails_closed_when_the_bases_claims_script_is_missing(tmp_path: Path):
+    """A base whose pr_evidence.py imports ci/claims.py but has no claims.py fails the
+    step on the import; it never falls back to the branch's scripts (#1851)."""
+    repo_dir = tmp_path / "r"
+    repo_dir.mkdir()
+    base = _gate_repo(
+        repo_dir, WORKFLOW_WITH_GATE, (ROOT / "ci" / "pr_evidence.py").read_text(), False
+    )
+    nc = "No claims: the scratch AGENTS.md states none"
+    ok = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required", nc)
+    res = _run_gate(repo_dir, base, tmp_path / "t", ok)
+    assert res.returncode != 0 and "claims" in res.stderr
+    assert not (repo_dir / "stub-ran").exists()
 
 
 def test_the_gate_step_bootstraps_only_while_the_base_has_no_results_job(tmp_path: Path):
@@ -1187,3 +1285,215 @@ def test_a_non_sha_is_never_sent_to_the_api(monkeypatch: pytest.MonkeyPatch):
     for bad in ("", "HEAD", "abc", "a" * 39, "A" * 40, "x; rm", "../../x"):
         assert pr_evidence._commit_is_verified_bot_work(bad) is False, bad
     assert called == []
+
+
+def test_the_gate_copies_run_from_another_folder_and_resolve_against_the_checkout(
+    repo: Path, tmp_path: Path
+):
+    """The queue gate runs pr_evidence.py from a temporary folder with only its siblings
+    (needs_llm_run.py and claims.py): it must import claims from there and resolve Claims
+    rows against the checkout it runs in (#1851)."""
+    import shutil
+
+    gate = tmp_path / "gate"
+    gate.mkdir()
+    for name in ("pr_evidence.py", "needs_llm_run.py", "claims.py"):
+        shutil.copy(ROOT / "ci" / name, gate / name)
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests" / "test_here.py").write_text("def test_here():\n    pass\n", "utf-8")
+    text = (
+        body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: not required")
+        + "\n## Claims\n\n| Claim | Test |\n|---|---|\n| It runs. | `tests/test_here.py::test_here` |\n"
+    )
+    res = subprocess.run(  # nosec B603 -- fixed argv
+        [sys.executable, str(gate / "pr_evidence.py"), "check", "--body-env", "B"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "B": text},
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+# The Claims table (#1851): each behaviour sentence a PR adds or changes names its test.
+CLAIMS_TEST_FILE = """
+def test_real():
+    pass
+
+class TestGroup:
+    def test_member(self):
+        pass
+"""
+
+
+@pytest.fixture()
+def claims_root(tmp_path: Path) -> Path:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_c.py").write_text(CLAIMS_TEST_FILE, encoding="utf-8")
+    pr_evidence.claims._tree.cache_clear()
+    return tmp_path
+
+
+def claims_body(*rows: str, extra: str = "") -> str:
+    table = "\n".join(["| Claim | Test |", "|---|---|", *rows])
+    return f"## Docs\n\nDocs: x\n\n## Claims\n\n{table}\n\n{extra}\n## Evidence\n\nok\n"
+
+
+DOC = ["docs/understand-the-results.md"]
+
+
+def test_a_docs_change_without_a_claims_table_fails(claims_root: Path):
+    errs = pr_evidence.check_claims(claims_body(), DOC, claims_root)
+    assert len(errs) == 1 and "docs/understand-the-results.md" in errs[0]
+    assert "No claims: <reason>" in errs[0]
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        ["docs/architecture/decisions/ADR-031-x.md"],
+        [".claude/commands/modernize.md"],
+        ["ci/README.md"],
+        ["AGENTS.md"],
+        ["CONTRIBUTING.md"],
+        ["README.md", "docs/a.md", "src/x.py"],
+        [".claude/agents/pr-reviewer.md"],
+        ["src/skills/dynamodb-data-modeling.md"],
+        ["benchmarks/README.md"],
+        ["src/api/README.md"],
+        ["contrib/x/README.md"],
+    ],
+)
+def test_every_claim_page_kind_needs_the_table(claims_root: Path, changed: list[str]):
+    assert pr_evidence.check_claims(claims_body(), changed, claims_root)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        [],
+        ["src/x.py"],
+        ["docs/superpowers/plans/p.md"],
+        ["docs/x.json"],
+        ["tests/fixtures/real_runs/x/README.md"],
+    ],
+)
+def test_no_claim_page_changed_needs_no_table(claims_root: Path, changed: list[str]):
+    assert pr_evidence.check_claims(claims_body(), changed, claims_root) == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        "| The check fails. | `tests/test_c.py::test_real` |",
+        "| A grouped claim. | tests/test_c.py::TestGroup::test_member |",
+        "| Two tests. | `tests/test_c.py::test_real`<br>`tests/test_c.py::TestGroup` |",
+        "| Two, by comma. | tests/test_c.py::test_real, tests/test_c.py::TestGroup |",
+        "| The old sentence is gone. | removed |",
+        "| Also gone. | Removed |",
+    ],
+)
+def test_rows_naming_real_tests_or_removed_pass(claims_root: Path, row: str):
+    assert pr_evidence.check_claims(claims_body(row), DOC, claims_root) == []
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        ("| It fails. | `tests/test_c.py::test_gone` |", "defines no 'test_gone'"),
+        ("| It fails. | `tests/test_missing.py::test_real` |", "does not exist"),
+        ("| It fails. | covered by existing tests |", "not a pytest node id"),
+        ("| It fails. | |", "name the test that proves it"),
+        ("| It fails. | removed, tests/test_c.py::test_real |", "not a pytest node id"),
+        ("| It fails. | tests/test_c.py::test_real[x] |", "parametrize id [x] cannot be checked"),
+    ],
+)
+def test_rows_that_name_no_test_fail(claims_root: Path, row: str, why: str):
+    errs = pr_evidence.check_claims(claims_body(row), DOC, claims_root)
+    assert len(errs) == 1 and why in errs[0] and "It fails." in errs[0], errs
+
+
+def test_a_table_with_no_header_row_reads_its_first_row():
+    text = "## Claims\n\n| x | tests/bogus.py::test_x |\n| y | removed |\n"
+    errs = pr_evidence.check_claims(text, DOC, Path("/nonexistent"))
+    assert len(errs) == 1 and "Claims row 'x'" in errs[0] and "does not exist" in errs[0]
+
+
+def test_a_header_without_a_separator_is_a_row(claims_root: Path):
+    text = "## Claims\n\n| Claim | Test |\n| ok | tests/test_c.py::test_real |\n"
+    errs = pr_evidence.check_claims(text, DOC, claims_root)
+    assert len(errs) == 1 and "Claims row 'Claim'" in errs[0]
+
+
+@pytest.mark.parametrize("heading", ["#### Claims", "## Claims (none)", "### claims", "# Claims"])
+def test_every_claims_heading_form_is_read(claims_root: Path, heading: str):
+    text = f"{heading}\n\n| Claim | Test |\n|---|---|\n| x | tests/test_c.py::test_gone |\n"
+    errs = pr_evidence.check_claims(text, [], claims_root)
+    assert len(errs) == 1 and "defines no 'test_gone'" in errs[0], heading
+
+
+def test_rows_of_two_claims_sections_are_both_read(claims_root: Path):
+    one = "## Claims\n\n| Claim | Test |\n|---|---|\n| a | tests/test_c.py::test_real |\n"
+    two = "## Evidence\n\nok\n\n### Claims (more)\n\n| b | tests/test_c.py::test_gone |\n"
+    errs = pr_evidence.check_claims(one + two, DOC, claims_root)
+    assert len(errs) == 1 and "Claims row 'b'" in errs[0]
+
+
+def test_the_cli_resolves_claims_against_the_working_directory(repo: Path):
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests" / "test_here.py").write_text("def test_here():\n    pass\n", "utf-8")
+    text = (
+        body(
+            "e2e-llm: required",
+            "e2e-llm result: MODERNIZE_RESULT: complete job_id=1",
+            "bedrock-smoke: not required",
+        )
+        + "\n## Claims\n\n| Claim | Test |\n|---|---|\n| It runs. | `tests/test_here.py::test_here` |\n"
+    )
+    res = _run(repo, "check", "--body-env", "B", env={"B": text})
+    assert res.returncode == 0, res.stdout
+
+
+def test_a_bad_row_fails_even_when_no_claim_page_changed(claims_root: Path):
+    errs = pr_evidence.check_claims(claims_body("| x | tests/test_c.py::nope |"), [], claims_root)
+    assert len(errs) == 1
+
+
+def test_no_claims_with_a_reason_passes_and_the_placeholder_does_not(claims_root: Path):
+    ok = claims_body(extra="No claims: a typo fix, no behaviour sentence changed")
+    assert pr_evidence.check_claims(ok, DOC, claims_root) == []
+    for extra in ("No claims: <reason>", "No claims:", "<!-- No claims: hidden -->"):
+        assert pr_evidence.check_claims(claims_body(extra=extra), DOC, claims_root), extra
+
+
+def test_a_table_outside_the_claims_section_or_in_a_comment_does_not_count(claims_root: Path):
+    row = "| The check fails. | `tests/test_c.py::test_real` |"
+    elsewhere = f"## Changes\n\n| Claim | Test |\n|---|---|\n{row}\n\n## Claims\n\n## Evidence\n"
+    hidden = f"## Claims\n\n<!--\n| Claim | Test |\n|---|---|\n{row}\n-->\n"
+    fenced = f"## Claims\n\n```\n| Claim | Test |\n|---|---|\n{row}\n```\n"
+    for body_text in (elsewhere, hidden, fenced):
+        assert pr_evidence.check_claims(body_text, DOC, claims_root), body_text
+
+
+def test_the_template_has_a_claims_section_the_check_reads():
+    template = (ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+    assert re.search(r"^## Claims$", template, re.MULTILINE)
+    assert "| Claim | Test |" in template
+    # The unfilled template fails on a docs change: its rows are placeholders.
+    errs = pr_evidence.check_claims(template, DOC)
+    assert errs and "add a Claims table" in errs[0]
+
+
+def test_the_cli_reports_a_claims_row_naming_a_missing_test(repo: Path):
+    text = (
+        body(
+            "e2e-llm: required",
+            "e2e-llm result: MODERNIZE_RESULT: complete job_id=1",
+            "bedrock-smoke: not required",
+        )
+        + "\n## Claims\n\n| Claim | Test |\n|---|---|\n| It fails. | `tests/test_nope.py::test_x` |\n"
+    )
+    res = _run(repo, "check", "--body-env", "B", env={"B": text})
+    assert res.returncode == 1
+    assert "::error::PR Evidence: Claims row 'It fails.': tests/test_nope.py::test_x" in res.stdout

@@ -28,6 +28,12 @@ Usage:
 refresh is a reviewed change, never an automatic one. The scheduled workflow
 ``.github/workflows/refresh-prices.yml`` runs this script every month and opens (or
 updates) one pull request when the table changes; it never merges.
+
+``--check-age`` warns when ``src/catalog/prices.toml`` was retrieved more than 45 days
+ago: the longest gap between two monthly runs (31 days) plus two weeks to merge the
+refresh. The workflow runs on the 1st of every month and on demand, from the branch
+``chore/price-table-refresh``. Its pull request is opened with the workflow's own token,
+which starts no workflows, so close and reopen it to start the required checks.
 """
 
 from __future__ import annotations

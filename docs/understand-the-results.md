@@ -8,7 +8,7 @@ This describes the deliverables the pipeline produces today.
 2. **Triage** looks at workload signals (key-value lookups, text search, time-series, etc.). Every engine that can own a query is analyzed and scored; the signals are evidence for an engine, not a filter. The ElastiCache cache layer, which owns no query, is analyzed only when one of its signals fires.
 3. **Analyze** scores every query against each engine triage selected, deterministically.
 4. **Assign** routes each query to its best-scoring engine. Co-dependent queries (joins across the same tables) move together, and all of a table's writes land on one engine, the table's source of truth; another engine can still serve the table's reads from a copy kept in sync.
-5. **Reality Check** removes an engine once the engines that remain can serve its queries just as well, and moves each of its queries onto its own best-fit remaining engine. A model's flag on a moved query re-routes it only among the engines that remain; it never brings a removed engine back. The source-compatible Aurora engine survives this consolidation unless another engine scores better, or is at least 40% and $100/month cheaper. A model can check that each move still works; the consolidation itself is deterministic and does not need it.
+5. **Reality Check** removes an engine once the engines that remain can serve its queries just as well, and moves each of its queries onto its own best-fit remaining engine. A model's flag on a moved query re-routes it only among the engines that remain; it never brings a removed engine back. <!-- claim: tests/unit/agents/referee/test_reality_check_request.py::TestAFlagOnWordpressNeverBringsBackDocumentDB::test_one_flag_goes_to_the_best_kept_engine, tests/unit/agents/referee/test_reality_check_llm_seam.py::TestApplyLlmOutputHandlesCorrectionsAndSummary::test_a_flag_never_brings_back_the_removed_engine --> The source-compatible Aurora engine survives this consolidation unless another engine scores better, or is at least 40% and $100/month cheaper. <!-- claim: tests/unit/agents/referee/test_source_compatible_tie_survival.py::TestTheIssueRepro, tests/unit/agents/referee/test_source_compatible_tie_survival.py::TestANonTieIsUnaffected, tests/unit/agents/referee/test_source_compatible_tie_survival.py::TestTheCostException --> A model can check that each move still works; the consolidation itself is deterministic and does not need it.
 6. **Schema Design** produces concrete schemas per engine: DynamoDB table definitions, DocumentDB collections, OpenSearch mappings, the relational DDL that stays.
 7. **Synthesis** produces the final report: ranking, TCO, the migration roadmap, risks, and an executive summary.
 
@@ -16,7 +16,7 @@ Collect through Reality Check never needs a model. Schema Design and the Synthes
 
 ## The deliverables
 
-Every run puts its deliverables in one folder, `artifacts/<db>/<job>/deliverables/`, under the same names every time:
+Every run puts its deliverables in one folder, `artifacts/<db>/<job>/deliverables/`, under the same names every time: <!-- claim: tests/unit/scripts/test_run_report.py::test_writes_the_deliverables_folder_with_exactly_the_documented_set, tests/unit/docs/test_deliverables_lists.py::test_the_documented_set_is_the_set_the_code_writes -->
 
 <!-- deliverables-list -->
 | File | What it is | Who it is for |
@@ -27,7 +27,7 @@ Every run puts its deliverables in one folder, `artifacts/<db>/<job>/deliverable
 | `engineering-report-detailed.md` | Detailed engineering report (Markdown): the routing record behind the reports, read from the saved assessment: per table its owner and every query touching it with its score on each engine; per query its scores by dimension (pattern, complexity, performance and cost, with the weights, the base score and the penalty routing applied), its move history with reasons, ties, close calls and the keys the redesign refused; per write group and co-dependency group the group score, the margin and the members that fit poorly, with the target-native guidance | Engineers auditing or debugging the result |
 | `index.md` | This list for the run, with the assignment version the files come from | Anyone opening the folder |
 
-`deliverables/` always holds the latest assignment version. The job's other folders hold the pipeline's working files (per-phase outputs, versioned assignments, model inputs and traces), which you don't need to read the assessment.
+`deliverables/` always holds the latest assignment version. <!-- claim: tests/unit/scripts/test_run_report.py::test_an_older_version_is_refused_and_leaves_the_deliverables_folder_alone --> The job's other folders hold the pipeline's working files (per-phase outputs, versioned assignments, model inputs and traces), which you don't need to read the assessment.
 <!-- /deliverables-list -->
 
 All of them are rendered from one `report.json` by `src/report`, so a changed fact changes in every deliverable at once. The local UI's results page reads the same `report.json` (see [The results page](#the-results-page)).

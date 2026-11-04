@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- builds scratch git repositories with fixed argv
 import sys
 from pathlib import Path
 
@@ -866,3 +866,42 @@ def test_a_plain_hand_bump_is_allowed_against_main_and_against_a_stack_base(comp
         "src/contracts/x.py", module(compare), module(compare), module("1.5")
     )
     assert level == "ok" and "higher than" in message
+
+
+def test_docs_impact_reviews_the_pages_a_changed_claim_test_proves(tmp_path: Path):
+    """#1851: a changed test that a claim marker cites lists the pages that cite it."""
+    from ci.pre_merge import check_docs_impact, docs_impact_entries
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_g.py").write_text("def test_guard():\n    pass\n", "utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "page.md").write_text(
+        "It refuses. <!-- claim: tests/test_g.py::test_guard -->\n", encoding="utf-8"
+    )
+    (tmp_path / "docs" / "other.md").write_text("No markers here.\n", encoding="utf-8")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=tmp_path, check=True)  # nosec B603 B607 -- fixed argv
+    entries = [e for e in docs_impact_entries(tmp_path) if e["name"].startswith("claims:")]
+    assert [(e["paths"], e["docs"]) for e in entries] == [(["tests/test_g.py"], ["docs/page.md"])]
+    level, message = check_docs_impact(["tests/test_g.py"], False, entries)
+    assert level == "error" and "docs/page.md" in message
+    assert check_docs_impact(["tests/test_g.py", "docs/page.md"], False, entries)[0] == "ok"
+    assert check_docs_impact(["tests/test_other.py"], False, entries)[0] == "ok"
+
+
+def test_the_repo_docs_impact_entries_include_the_claim_pages():
+    from ci.pre_merge import docs_impact_entries, load_docs_impact_map
+
+    entries = docs_impact_entries()
+    derived = [e for e in entries if e["name"].startswith("claims:")]
+    assert len(entries) == len(load_docs_impact_map()) + len(derived)
+    assert any("AGENTS.md" in e["docs"] for e in derived)
+
+
+def test_docs_impact_by_default_reads_the_claim_markers_too():
+    """#1851: the step itself (no entries passed) lists the pages a changed claim test proves."""
+    from ci.pre_merge import check_docs_impact
+
+    cited = "tests/unit/agents/referee/test_only_the_ledger_writes_engines.py"
+    level, message = check_docs_impact([cited], False)
+    assert level == "error" and f"claims:{cited}" in message and "AGENTS.md" in message

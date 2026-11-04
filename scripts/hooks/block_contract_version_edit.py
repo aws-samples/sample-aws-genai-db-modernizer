@@ -24,6 +24,16 @@ Allowed:
 - a new contract file, and a file with merge conflict markers (resolve the
   conflict, then re-run the resolver).
 
+Also allowed: an edit whose resulting text does not parse as Python (the hook fails open;
+a contract file that does not parse fails the tests and the contract checks anyway). The
+hook works out the file's text after the call and compares only the version lines. The
+hand-bumped set is module-wide for Version History: in a module that has one, a history
+edit passes even next to a resolvable contract. ``aurora_design_delta`` keeps its version
+only in ``DELTA_VERSION``, which the hook does not watch. A Version History conflict on a
+rebase: take main's side of the version hunks with git (or edit out the markers, which
+the hook allows while they are in the file), keep the branch's pending files, then re-run
+``uv run python scripts/resolve_contract_versions.py`` after the last rebase.
+
 Only a call that moves a version line loads that repo code; every other call
 stays stdlib-only. The patterns are copies of ``scripts/contract_bumps.py``'s;
 ``tests/unit/hooks/test_block_contract_version_edit.py`` asserts they agree.

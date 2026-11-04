@@ -29,6 +29,14 @@ Closes #
 
 <!-- A change to a path in ci/docs_impact_map.toml edits one of its pages (the doc pages, help-site pages and command files that describe it), or says why none needs a change on a line of its own, outside this comment: "Docs: <reason>" (a "- " bullet is fine; a line in a code block or comment does not count). A `Docs:` commit trailer works too. ci/pre_merge.sh warns and lists the pages, and fails without a page edit or this line. -->
 
+## Claims
+
+<!-- One row per behaviour sentence this PR adds or changes in docs/ (ADRs included), a command or subagent file, a skill, a README, AGENTS.md or CONTRIBUTING.md, with the test that proves it: a pytest node id (`tests/unit/x/test_y.py::test_name`, no parametrize id; several separated by <br> or commas), or a UI test file. Keep the header and separator rows. A sentence the PR deletes says "removed". A sentence no test proves is cut or reworded to what the code does; it is not listed as proven. A PR that changes those files but no behaviour sentence writes "No claims: <reason>" on a line of its own, outside this comment. The PR Evidence check and ci/pre_merge.sh fail a row whose test does not exist. Mark the sentence in the page too, with a claim marker naming the same test (CONTRIBUTING.md, "Claims name their test"). -->
+
+| Claim | Test |
+|---|---|
+| | |
+
 ## Evidence
 
 <!-- For each behavior claim above, paste the command and its output (trimmed) or a rendered excerpt. Do not assert behavior in prose. -->

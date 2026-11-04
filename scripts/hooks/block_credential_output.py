@@ -30,6 +30,15 @@ The match is linear in the command's length (a scan into simple commands, then a
 comparison, with no backtracking regex over repeated words), so a pathological command cannot
 run into the hook's timeout, which would fail open.
 
+The helpers are ``_HELPERS``: ``ada credentials print``; ``aws configure
+export-credentials``; ``aws sts get-session-token``, ``assume-role``,
+``assume-role-with-saml``, ``assume-role-with-web-identity`` and ``get-federation-token``;
+``aws ecr get-login-password`` and ``get-authorization-token``; ``aws codeartifact
+get-authorization-token``; ``aws eks get-token``; ``gcloud auth print-access-token``,
+``print-identity-token`` and ``application-default print-access-token``; ``az account
+get-access-token``. Calls that print no secret (``aws sts get-caller-identity``) pass. The
+refusal never suggests writing credentials to a file.
+
 Not a shell parser. Out of reach: a helper reached through ``bash -c "..."``, a variable or a
 script, a word built from pieces (``"a"ws``), and a captured value printed afterwards
 (``echo $TOKEN``). Reading ``~/.aws/credentials`` is a Read-permission matter

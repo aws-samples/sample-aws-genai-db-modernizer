@@ -28,6 +28,13 @@ modules (the check's own machinery included). A test that fails after the bump r
 again on HEAD as committed: one that fails there too is reported apart, as "fails
 without the bump too", since it is broken, not pinned.
 
+A change that is not Python under ``src/`` or ``scripts/`` and is not under ``tests/`` (docs,
+``ci/``, workflows, the UI) is ignored, and a branch with only ignored changes makes no
+worktree. What the narrowed run can still miss: a candidate file that reaches a changed
+contract module only through non-contract code, without naming the module or a contract
+module that imports it; the full run in ``validate-contracts`` catches that. A full run
+takes about a minute.
+
 It reads committed HEAD: commit an edit before checking it. Exit 0 when every such
 test passes after the simulated bump, 1 when a test fails only under the bump (it
 pins a version), 2 when the check could not run or could not decide, including a

@@ -14,6 +14,11 @@
 #
 # tests/unit/docs/test_docs_impact_map.py checks that every page exists and every path matches
 # a tracked file. Rationale and the rule: ci/README.md and CONTRIBUTING.md.
+#
+# Claim-bearing pages are listed without an entry here (#1851): each test file a claim marker
+# (<!-- claim: tests/...::test_name -->) cites is an entry of its own, derived from the markers
+# when the step runs (ci/pre_merge.py docs_impact_entries), whose pages are the pages that cite
+# it. `uv run python ci/claims.py list` prints them.
 
 [[entry]]
 name = "report-and-deliverables"
@@ -109,3 +114,9 @@ name = "bedrock-guardrail"
 paths = ["infrastructure/cloudformation/bedrock-guardrail.yaml"]
 docs = ["docs/other-ways-to-run-it.md", "docs/use-claude-code.md"]
 why = "Both pages describe the guardrail the template creates and how to attach it."
+
+[[entry]]
+name = "claim-checks"
+paths = ["ci/claims.py", "ci/readme_budget.py"]
+docs = ["CONTRIBUTING.md", "ci/README.md", ".github/pull_request_template.md"]
+why = "CONTRIBUTING.md's \"Claims name their test\", ci/README.md and the PR template's Claims field describe the marker format, the Claims table and the length budget these scripts check."

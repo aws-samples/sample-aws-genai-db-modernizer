@@ -12,28 +12,61 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
 * ``pick-remote``: read ``git remote -v`` on stdin, print the remote name that
   points at the public repository (``origin`` when none does).
 * ``merge-tree-files``: read ``git merge-tree --write-tree --name-only``
-  output on stdin, print the conflicting paths one per line.
+  output on stdin, print the conflicting paths one per line. (``pre_merge.sh`` falls back
+  to listing the files both sides changed on a git too old for ``--write-tree``; its
+  author step takes the pull request's author from ``gh pr view`` when it can, else
+  ``check_commit_authors.py``'s well-formed rule applies.)
 * ``contracts BASE_REF FILE...``: compare each changed contract file's
-  ``contract_version`` with the one on BASE_REF (exit 1 on a version problem).
+  ``contract_version`` with the one on BASE_REF (exit 1 on a version problem). A changed
+  ``src/contracts/*.py`` that still has main's version needs a pending bump in
+  ``src/contracts/pending/`` (``scripts/bump_contract.py``); a hand-written version must be
+  higher than main's, and one that collides with main's, or a pending file next to a
+  hand-written version, is an error. ``ci/pre_merge.sh`` then runs
+  ``scripts/resolve_contract_versions.py --check --against <merge base>``, which fails a
+  shape or value change since the merge base with neither a version move nor a pending
+  bump, even when the branch regenerated its own snapshot, and a pending contract whose
+  version the branch also moved by hand.
 * ``pending``: list the pending contract bumps HEAD carries
   (``src/contracts/pending/*.toml``, ADR-008 Decision 8), one ``contract kind`` per line.
 * ``stacked --main-ref REF`` (local) or ``stacked --api-repo OWNER/NAME --head-sha SHA
   --head-ref NAME [--number N] [--main-name main]`` (CI): when the branch carries the commits of
   another open pull request (it is stacked on it), print ``stacked N OID`` for that pull request
   and its head commit, else nothing (#1846). The contract checks then compare with OID, not main.
+  A stacked-on pull request is an open, non-draft pull request from this repository (a fork's
+  does not count) whose head commit is among the branch's commits; the nearest wins, and one
+  whose head has moved on since the branch took it no longer counts. Locally it reads
+  ``git rev-list`` and ``gh pr list`` (with no ``gh``, login or network it finds nothing and
+  the checks compare with main). The comparison enforces what the check enforces against
+  main, no more: a pending file next to a hand-written version fails, a shape or value change
+  with neither a version move nor a pending bump fails, and a plain hand bump is allowed. A
+  problem inherited from the stacked-on pull request is not seen; it shows on that pull
+  request's own check and in the merge queue. The ``validate-contracts`` job does the same for
+  a ``pull_request`` event only (the compare API, ``HEAD^2`` for the pull request's head, a
+  token for that one call; when the stacked-on head cannot be fetched it warns and compares
+  with main); a merge group and a push compare with main, so the merge queue guarantees the
+  final comparison with main and a green stacked check is conditional on the base. CI
+  compares the merge commit (branch plus current main) and ``pre_merge.sh`` the branch tip, so
+  the two can differ; once the base merges, rebase and re-run. The pending-bump hint then
+  names the stacked-on head instead of ``<remote>/main``.
 * ``stack-notice N``: print the "stacked on #N: re-check after #N merges" line;
   ``stack-caveat N`` prints what the stacked comparison does not check.
 * ``adr BASE_REF``: a branch that changes ``src/agents/referee/`` or ``src/shared/`` edits
   an ADR or says ``No ADR change: <reason>`` in a commit message or the pull request
   body (``PR_BODY_FILE``, #1154; exit 1 when it does neither).
-* ``docs-impact BASE_REF``: a branch that changes a path in ``ci/docs_impact_map.toml`` (#1162)
-  edits one of that entry's pages, or says ``Docs: <reason>`` in a commit message or the pull
-  request body (``PR_BODY_FILE``); warns and lists the pages, exit 1 without the line.
+* ``docs-impact BASE_REF``: a branch that changes a path in ``ci/docs_impact_map.toml`` (#1162),
+  or a test file a claim marker cites (``ci/claims.py``, #1851), edits one of that entry's
+  pages, or says ``Docs: <reason>`` in a commit message or the pull request body
+  (``PR_BODY_FILE``); warns and lists the pages, exit 1 without the line.
 * ``hooks``: the hooks git runs on commit are the repository's (#1843): the clone's
   ``pre-commit`` and ``commit-msg`` hooks are pre-commit's, or ``core.hooksPath`` has a hook
   of each type and the local ones it reaches are pre-commit's (exit 1 otherwise, and on a
   hooks path set to an empty value, under which git runs no hooks). ``warn`` (exit 0) when
-  git is too old to read the hooks path's scope (``--show-scope``, git 2.26).
+  git is too old to read the hooks path's scope (``--show-scope``, git 2.26). The hooks are
+  read from the common git dir every worktree shares; a relative hooks path is read from
+  the top level, at any config scope. A missing or foreign hook names ``./scripts/setup_dev.sh``
+  and the install command, prefixed with a one-command ``core.hooksPath`` blank when a hooks
+  path is set, since pre-commit refuses to install under one (``setup_dev.sh`` uses that
+  blank too and never removes a system or global hooks path).
 """
 
 from __future__ import annotations
@@ -49,8 +82,10 @@ from pathlib import Path
 from typing import Any
 
 try:  # as ``ci.pre_merge`` (tests) or as a script run from ci/ (pre_merge.sh)
+    from ci import claims
     from ci.pr_evidence import _BULLET, _visible
 except ImportError:  # pragma: no cover -- the script form
+    import claims  # type: ignore[no-redef]
     from pr_evidence import _BULLET, _visible  # type: ignore[no-redef]
 
 PUBLIC_REPO = "aws-samples/sample-aws-genai-db-modernizer"
@@ -423,6 +458,14 @@ def load_docs_impact_map(path: Path = DOCS_IMPACT_MAP) -> list[dict]:
     return entries
 
 
+def docs_impact_entries(root: Path | None = None) -> list[dict]:
+    """The map's entries plus one per test file a claim marker cites (#1851): a branch that
+    changes the test re-checks the pages whose sentences it proves."""
+    root = Path(__file__).resolve().parents[1] if root is None else root
+    found = claims.scan(claims.tracked_pages(root), root)
+    return load_docs_impact_map() + claims.impact_entries(found)
+
+
 def docs_glob_matches(pattern: str, path: str) -> bool:
     """``*`` matches within one folder, ``**`` across folders; no other wildcard."""
     regex = "".join(
@@ -441,7 +484,7 @@ def check_docs_impact(
     """The docs-impact rule: ``(level, message)`` for a branch's changed files and whether it
     gives a ``Docs:`` reason (``has_docs_line``); ``body_missing`` is for the error text. An entry is *unreviewed* when a changed file matches
     its paths and no changed file is one of its pages."""
-    entries = load_docs_impact_map() if entries is None else entries
+    entries = docs_impact_entries() if entries is None else entries
     touched, unreviewed = [], []
     for entry in entries:
         hits = [f for f in changed if any(docs_glob_matches(g, f) for g in entry["paths"])]

@@ -299,6 +299,51 @@ def test_modernize_dispatch_text_includes_tool_use_rule() -> None:
     assert TOOL_USE_RULE in _modernize_text()
 
 
+@pytest.mark.passes_on_main  # AGENTS.md's claim, now guarded: main already has the rule everywhere
+def test_every_command_carries_the_tool_use_rule() -> None:
+    # AGENTS.md says every command carries the rule word for word (#1851): every file in
+    # .claude/commands/, not only the ones listed above.
+    commands = sorted(COMMANDS_DIR.glob("*.md"))
+    assert len(commands) >= len(COMMANDS_WITH_TOOL_USE_RULE)
+    missing = [p.name for p in commands if TOOL_USE_RULE not in p.read_text()]
+    assert not missing, f"commands without the tool-use rule verbatim: {missing}"
+
+
+# A dispatch's task text: a line of a command file that starts "Run /<command>" or
+# "Follow /<command>" (the text the orchestrator hands a subagent), or one that spells out
+# what "Every task text ends with:".
+_DISPATCH_LINE = re.compile(r"^\s*(?:Run|Follow) /[a-z-]+\b|task text ends with:")
+# Where commands dispatch subagents today, and at least how many task texts each holds, so
+# a site the pattern stops matching fails instead of silently dropping out of the scan.
+_DISPATCH_SITES = {"modernize.md": 6, "design-schema-dynamodb.md": 1, "design-schema.md": 1}
+
+
+def _dispatch_lines(path: Path) -> list[tuple[int, str]]:
+    return [
+        (n, ln)
+        for n, ln in enumerate(path.read_text().splitlines(), 1)
+        if _DISPATCH_LINE.search(ln)
+    ]
+
+
+@pytest.mark.passes_on_main  # AGENTS.md's claim, now guarded: main already has the rule everywhere
+def test_every_dispatch_task_text_carries_the_tool_use_rule() -> None:
+    # AGENTS.md says every dispatch's task text carries the rule word for word (#1851).
+    # Each site is checked on its own line, so a file that also states the rule elsewhere
+    # cannot hide a dispatch that lost it.
+    found = {p.name: _dispatch_lines(p) for p in sorted(COMMANDS_DIR.glob("*.md"))}
+    for name, minimum in _DISPATCH_SITES.items():
+        assert (
+            len(found[name]) >= minimum
+        ), f"{name}: dispatch task texts not found; update _DISPATCH_LINE"
+    unexpected = sorted(n for n, lines in found.items() if lines and n not in _DISPATCH_SITES)
+    assert not unexpected, f"new dispatch sites, add them to _DISPATCH_SITES: {unexpected}"
+    missing = [
+        f"{name}:{n}" for name, lines in found.items() for n, ln in lines if TOOL_USE_RULE not in ln
+    ]
+    assert not missing, f"dispatch task texts without the tool-use rule: {missing}"
+
+
 def test_modernize_state_updates_use_edit_write_tools() -> None:
     # The orchestrator previously tried `sed -i` on .modernizer-state.json in
     # a headless run (also issue #196); state updates must go through the

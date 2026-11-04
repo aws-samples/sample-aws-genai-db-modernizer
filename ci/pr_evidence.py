@@ -34,6 +34,15 @@ a reviewer still checks that the excerpt is real. ``--require-results`` turns pe
 into an error: the workflow's separate "PR Evidence results" job passes it in the merge
 queue, so a neutral PR check never lets a PR merge without its result.
 
+The Claims section (#1851): each row of a table under a heading that starts with
+``Claims`` (any level, any trailing text) names, in its last cell, the tests that prove
+its sentence (pytest node ids or UI test files, accepted by ``ci/claims.py``'s
+``resolve`` against the working directory; code spans are read as their text) or says
+``removed``. A row is the header only when a separator row follows it, so a table with no
+header has every row read. A row whose test ``resolve`` refuses fails. A PR that changes a
+page in ``CLAIM_PAGES`` (and not in ``CLAIM_PAGES_SKIPPED``) needs a row, or a
+``No claims: <reason>`` line saying why none of its sentences is a behaviour claim.
+
 Subcommands (``check`` needs only the standard library)::
 
     uv run python ci/pr_evidence.py render [--base REF] [--main-tests-line TEXT]
@@ -51,7 +60,8 @@ closure plus the routing snapshot and sample fixtures); when the set cannot be c
 it says ``unknown`` whenever anything under ``src/`` or ``docs/examples/`` changed.
 ``check`` exits 1 when the body's verdict is missing or contradicts the diff against REF
 (default ``HEAD^1``, the base of a pull request's merge checkout), or a required run
-has a result line that is not a pass; the message says which lines to add. With
+has a result line that is not a pass, or the Claims section fails; the message says which
+lines to add. With
 ``--require-results`` a required run with no result line fails too. A pull request is
 skipped only when its author is a known dependency bot (``dependabot[bot]``) and every
 commit since REF is that bot's own work as GitHub reports it (author the bot, committer the
@@ -60,6 +70,33 @@ token) with no merge commit among them. A human commit, a merge, or an API failu
 pull request is checked. ``--queue-ref-env`` reads the body of the pull request named by a
 merge queue ref (its ``--base`` must be the sha in that ref). Exit 2 when it could not
 run. The body is read as data, never executed.
+
+The merge queue gate (``.github/workflows/pr-evidence.yml``, job ``PR Evidence results``)
+runs this script, ``needs_llm_run.py`` and ``claims.py`` as they are in the merge group's
+base (``git show <base_sha>:...``). The branch's copies run only while the base's own
+workflow has no ``pr-evidence-results`` job (the change that adds the gate); otherwise a
+missing or incompatible base script fails the step. The diff ``base_sha...HEAD`` is only
+the entry's own commits because each queue entry stacks on the previous one, which relies
+on the ruleset's ``ALLGREEN`` grouping and ``REBASE`` merge method (no code here checks
+them; under ``HEADGREEN`` an earlier entry whose own gate failed could merge behind a
+passing later head). In that diff the Claims check (#1851) runs too, so an earlier entry's
+claim pages never count against a later one. The workflow file itself is read from the
+merge group's ref, so it is protected only by who has write access: no code-owner review
+is enforced, and ``test_only_one_workflow_job_is_named_pr_evidence_results`` lives in the
+same PR-controlled tree (a tripwire for honest mistakes, not a guard). This script and
+``needs_llm_run.py`` are not on the e2e-llm list on purpose: the base copy protects the
+gate, and a model run says nothing about a checker.
+
+Recovery when a gate script on main breaks on real input (this one, ``needs_llm_run.py``
+or ``claims.py``, which is lint code too and changes more often): every later queue entry,
+the fix included, runs main's broken copy, so a plain fix to the script cannot get
+through the queue on its own. Two ways out: a pull request that also changes the gate
+step in ``.github/workflows/pr-evidence.yml`` (the workflow is read from the merge group's
+ref, so its step can run the fixed scripts for that one entry; revert that part in the
+next pull request), or a maintainer merging the fix with a ruleset bypass. Keep the
+script and its tests in the same commit, and run ``tests/unit/ci/test_pr_evidence.py``,
+whose gate-step tests run the real step with this tree's scripts as the base, before
+merging a change to any of the three.
 """
 
 from __future__ import annotations
@@ -73,8 +110,9 @@ import sys
 from pathlib import Path
 
 try:
-    from ci import needs_llm_run
+    from ci import claims, needs_llm_run
 except ImportError:  # run as a script: ci/ is sys.path[0]
+    import claims  # type: ignore[no-redef]
     import needs_llm_run  # type: ignore[no-redef]
 
 RUNS = tuple(needs_llm_run.RUNS)
@@ -404,6 +442,94 @@ def _fetch_pr(pr: int) -> tuple[str, str]:
     return data.get("body") or "", (data.get("user") or {}).get("login") or ""
 
 
+# The pages whose behaviour sentences a PR's Claims table lists (#1851): the docs and ADRs,
+# the command and subagent files, the skills (prompts that state what the pipeline does),
+# every README, and the contributor guides. Planning notes and fixtures are not claims.
+# The quarantined snapshot's README is a page like any other: a change to it states what
+# it changes, or "No claims: <reason>" (product code never names that folder, #1412).
+CLAIM_PAGES: tuple[str, ...] = (
+    "docs/*.md",
+    ".claude/commands/*.md",
+    ".claude/agents/*.md",
+    "src/skills/*.md",
+    "*README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+)
+CLAIM_PAGES_SKIPPED: tuple[str, ...] = ("docs/superpowers/*", "tests/fixtures/*")
+_CLAIMS_HEADING = re.compile(r"^#{1,6}[ \t]+Claims\b[^\n]*$", re.MULTILINE | re.IGNORECASE)
+_NEXT_HEADING = re.compile(r"^#{1,6}[ \t]", re.MULTILINE)
+# "No claims: <reason>" with a real reason; the template's `<reason>` placeholder is not one.
+_NO_CLAIMS = re.compile(_BULLET + r"No claims:[ \t]*(?!<)\S", re.MULTILINE | re.IGNORECASE)
+_SEPARATOR_CELL = re.compile(r"^:?-{3,}:?$")
+
+
+def claim_pages(changed: list[str]) -> list[str]:
+    """The changed files whose sentences the Claims table must cover."""
+    return [
+        p
+        for p in needs_llm_run.matching(changed, CLAIM_PAGES)
+        if not needs_llm_run.matching([p], CLAIM_PAGES_SKIPPED)
+    ]
+
+
+def claim_rows(body: str) -> list[tuple[str, str]]:
+    """``(claim, test cell)`` per data row of the body's Claims tables: under any heading
+    that starts with ``Claims`` (``## Claims``, ``#### Claims``, ``## Claims (none)``), up to
+    the next heading. A row is a header only when a separator row (``|---|---|``) follows it;
+    separator and empty rows are skipped, every other row is a data row. Code spans keep
+    their text."""
+    text = _visible(body, keep_spans=True)
+    pipe_lines: list[str] = []
+    for heading in _CLAIMS_HEADING.finditer(text):
+        rest = text[heading.end() :]
+        nxt = _NEXT_HEADING.search(rest)
+        section = rest[: nxt.start()] if nxt else rest
+        pipe_lines += [ln.strip() for ln in section.split("\n") if ln.strip().startswith("|")]
+    cells_of = [[c.strip() for c in re.split(r"(?<!\\)\|", ln.strip("|"))] for ln in pipe_lines]
+    is_sep = [
+        all(_SEPARATOR_CELL.match(c) for c in cells if c) and any(cells) for cells in cells_of
+    ]
+    rows: list[tuple[str, str]] = []
+    for i, cells in enumerate(cells_of):
+        if is_sep[i] or (i + 1 < len(cells_of) and is_sep[i + 1]):
+            continue
+        if len(cells) < 2 or not any(cells):
+            continue
+        rows.append((cells[0], cells[-1]))
+    return rows
+
+
+def check_claims(body: str, changed: list[str], root: Path = REPO) -> list[str]:
+    """Problems with the body's Claims table: every row names a test that exists (pytest
+    node id) or says ``removed``; a PR that changes a claim page has a row or a
+    ``No claims: <reason>`` line."""
+    errors: list[str] = []
+    rows = claim_rows(body)
+    for claim, cell in rows:
+        short = claim if len(claim) <= 60 else claim[:57] + "..."
+        parts = re.split(r"<br\s*/?>|[\s,]+", cell, flags=re.IGNORECASE)
+        tokens = [t for t in (p.strip("`") for p in parts) if t]
+        if not tokens:
+            errors.append(f"Claims row '{short}': name the test that proves it, or 'removed'")
+            continue
+        if [t.lower() for t in tokens] == ["removed"]:
+            continue
+        bad = [(t, why) for t in tokens if (why := claims.resolve(t, root))]
+        if bad:
+            more = f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""
+            errors.append(f"Claims row '{short}': {bad[0][0]}: {bad[0][1]}{more}")
+    pages = claim_pages(changed)
+    if pages and not rows and not _NO_CLAIMS.search(_visible(body)):
+        more = f" (+{len(pages) - 1} more)" if len(pages) > 1 else ""
+        errors.append(
+            f"this PR changes {pages[0]}{more}: add a Claims table (each behaviour sentence it "
+            "adds or changes, and the test that proves it, or 'removed'), or a line "
+            "'No claims: <reason>' when it adds or changes none"
+        )
+    return errors
+
+
 def render(
     verdict: dict[str, list[str]],
     tests: list[str],
@@ -515,7 +641,11 @@ def main(argv: list[str]) -> int:
             return 0
     else:
         body = os.environ.get(args.body_env, "")
+    # Claims rows name tests in the checkout being checked: the working directory. In the
+    # merge queue (--queue-ref-env) the diff is the entry's own commits (--base must be the
+    # sha in the queue ref), so an earlier entry's claim pages never count against it.
     errors = check(body, verdict, require_results=args.require_results)
+    errors += check_claims(body, changed, Path.cwd())
     for err in errors:
         print(f"::error::PR Evidence: {err}")
     if errors:
@@ -527,7 +657,7 @@ def main(argv: list[str]) -> int:
             f"Add '{run} result: pass ...' when it finishes; the PR Evidence results job fails in the merge queue "
             "until that line exists."
         )
-    print("PR Evidence agrees with ci/needs_llm_run.sh.")
+    print("PR Evidence agrees with ci/needs_llm_run.sh, and the Claims table names real tests.")
     return 0
 
 
