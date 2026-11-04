@@ -258,23 +258,25 @@ fi
 print_header "Step 8: Installing Pre-commit Hooks"
 
 if [ -f ".pre-commit-config.yaml" ]; then
-    # Reset system-level git hooks path (required for pre-commit to work)
-    print_info "Resetting system-level git hooks configuration..."
-    if sudo git config --system --unset-all core.hookspath 2>/dev/null; then
-        print_success "System git hooks path reset"
-    else
-        print_warning "Could not reset system git hooks path (may require sudo password)"
-        print_info "If pre-commit hooks don't work, run manually:"
-        print_info "  sudo git config --system --unset-all core.hookspath"
-    fi
-
     # Migrate config to fix deprecated stages
     print_info "Migrating pre-commit config (fixing deprecated stages)..."
     uv run pre-commit migrate-config || true
 
-    print_info "Installing pre-commit hooks..."
-    uv run pre-commit install
-    uv run pre-commit install --hook-type commit-msg
+    print_info "Installing pre-commit hooks (pre-commit and commit-msg)..."
+    if git config --get core.hooksPath >/dev/null 2>&1; then
+        # A hooks path is set (system, global or local; some tooling chains its hooks to
+        # the clone's own). pre-commit refuses to install while it is set, so blank it for
+        # this one command: the hooks land in the clone's hooks folder, and the hooks path,
+        # with any tooling that relies on it, stays in place.
+        print_info "core.hooksPath is set: installing into the clone's own hooks folder"
+        if [ -z "$(git config --get core.hooksPath)" ]; then
+            print_warning "core.hooksPath is set to an empty value: git runs no hooks until it is removed"
+        fi
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= \
+            uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
+    else
+        uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
+    fi
     print_success "Pre-commit hooks installed"
 
     # Create detect-secrets baseline (only if one doesn't already exist with content)

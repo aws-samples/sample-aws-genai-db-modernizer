@@ -91,9 +91,16 @@ Pre-commit hooks run automatically on every commit to ensure code quality:
 If hooks don't run after cloning, install manually:
 
 ```bash
-uv run pre-commit install
-uv run pre-commit install --hook-type commit-msg
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
+
+If `core.hooksPath` is set (some tooling sets a global one whose hooks chain to the clone's own), pre-commit refuses to install. Blank it for that one command, which writes the hooks to the clone's hooks folder and leaves your config unchanged. `./scripts/setup_dev.sh` does this for you, and never removes a system or global hooks path, so tooling that relies on one keeps working:
+
+```bash
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0= uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
+```
+
+`./ci/pre_merge.sh` (also with `--quick`) fails when the hooks a commit runs are not the repository's (#1843): the clone's `pre-commit` and `commit-msg` hooks must be pre-commit's, or, with `core.hooksPath` set, that folder must have a hook of each type and the clone's pre-commit hooks must be installed for it to chain to. It also fails when `core.hooksPath` is set to an empty value, under which git runs no hooks at all, and warns instead of passing when git is older than 2.26 and cannot report the hooks path's scope. It cannot tell whether a hooks path's hook really chains.
 
 > **Note:** If your PR shows failing CI scans (lint, type check, security), it most likely means you haven't installed the pre-commit hooks locally. Install them with the commands above (or run `./scripts/setup_dev.sh`), fix any issues, and re-push your changes.
 
