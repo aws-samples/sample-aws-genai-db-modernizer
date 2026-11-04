@@ -77,10 +77,10 @@ phase deterministically, whatever `--llm-mode` says.
 ## Setup
 
 ```bash
-./scripts/setup_dev.sh                       # uv sync --extra dev + pre-commit hooks
+./scripts/setup_dev.sh                       # uv sync --extra dev, the AWS Transform SDK, pre-commit hooks
 uv sync --extra dev --extra e2e              # add the e2e extra (Playwright, pypdf)
 uv sync --extra docs                         # add the docs extra (mkdocs, mkdocs-material) to build the help site
-uv pip install "agent-builder-sdk-aws-transform>=1.0.0"   # needed by the atx_orchestrator tests (CI runs them in the full suite)
+uv pip install -r src/atx_orchestrator/requirements-sdk.txt   # the AWS Transform SDK (4 pinned packages) the atx_orchestrator tests need; repeat after any uv sync, which removes it
 ```
 
 The UI needs Node 22 (`npm ci`, then `npm run build`, in `src/ui/`); `ci/e2e.sh`
@@ -88,7 +88,7 @@ and `ci/e2e-llm.sh` build it for you.
 
 ## Parallel worktrees
 
-- Run `uv sync` in each worktree; a worktree's `.venv` is its own.
+- Run `uv sync` in each worktree, then the SDK install from Setup (`uv sync` removes it); a worktree's `.venv` is its own.
 - The main clone's editable install points at its own `src/`, so if you reuse
   it from another worktree, set `PYTHONPATH` and `UV_NO_SYNC=1` instead.
 - Before fanning out, list each issue's files. Issues that share a file are
@@ -105,13 +105,13 @@ and `ci/e2e-llm.sh` build it for you.
 | Tier | Command | Checks | Cost / time |
 |---|---|---|---|
 | Lint | `make lint` (all pre-commit hooks) or `./ci/lint.sh` (ruff, black, isort, mypy, `validate_skills.py`) | style, types, markdownlint, secrets, command references | free: `ci/lint.sh` seconds, `make lint` about 2 minutes |
-| Unit/contract | CI runs the full suites (`make test` / `./ci/test.sh -q`); locally run targeted tests, e.g. `uv run pytest <paths> -n 4` | unit, contract, property, graph; `--fail-on-skip`, no network | free; full suite is slow on a laptop, about 2 minutes on an idle one |
+| Unit/contract | `make test` / `./ci/test.sh -q` (the full suites; needs the AWS Transform SDK, see Setup); while iterating, targeted tests, e.g. `uv run pytest <paths> -n 4` | unit, contract, property, graph; `--fail-on-skip`, no network | free; the full suite takes minutes (15-20 on a laptop with parallel worktrees running; measured 924-1229 s) |
 | Deterministic e2e | `make e2e` (or `./ci/e2e.sh`) | full pipeline on both samples with no model, HTML in Chromium + WebKit, PDF, UI smoke, the built help site | free, minutes (UI build + browsers) |
 | Headless LLM e2e | `make e2e-llm` (both mode by default, `E2E_LLM_FIXTURE=wordpress` by default) | real `/modernize --auto` run, the same deliverable checks, a rubric judge | real tokens, both mode: wordpress about $4 and roughly 6 minutes; discourse about $18-20 and 14-15 minutes (session cap `E2E_LLM_MAX_BUDGET_USD`, default 50) |
 | Real-run replay | `./ci/replay.sh` (also run by `./ci/pre_merge.sh` and the `replay` e2e shard) | the saved real-model run in `tests/fixtures/real_runs/`: its transcript checks and the external-mode e2e checks over its report, re-rendered by the current code; it does not re-run synthesis or the facts layer (refresh the fixture after such a change, see ci/README.md) | free, about 15 seconds, `dev` extra only |
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 
-- Python change in `src/` or `scripts/`: `make lint` (or `./ci/lint.sh`), `./ci/pre_merge.sh --quick` and the targeted tests for what you touched, with at most 4 workers (`-n 4`). The full unit, contract and property suites run on CI only: they take long on a laptop and parallel worktrees compete for CPU, so don't start them locally unless a change is too broad to target.
+- Python change in `src/` or `scripts/`: `make lint` (or `./ci/lint.sh`), `./ci/pre_merge.sh --quick` and the targeted tests for what you touched, with at most 4 workers (`-n 4`). Parallel worktrees compete for CPU, so keep the worker count low while iterating. Before asking for review, run the full `./ci/test.sh -q` (`./ci/pre_merge.sh` without `--quick` does) and make it green: the unit, contract and property suites are not CI-only. Only the e2e and real-model tiers (`make e2e`, `make e2e-llm`) are left to CI unless the change needs them (below). If `ci/test.sh` stops at once with a missing-SDK line, run the `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` it prints (`./scripts/setup_dev.sh` is for first setup; it changes system git config).
 - Before pushing or asking for a merge: `./ci/pre_merge.sh` (fetch, behind count, conflict and contract-version checks, new tests against main, lint, tests, `needs_llm_run` verdict); see CONTRIBUTING.md's "Working with a fast-moving main".
 - A red required check in any CI environment stops merges, even when it fails on code the PR didn't touch: file it and fix it first.
 - A `tests/e2e` test that works only on the deterministic job (it skips when `run.external`) needs `@pytest.mark.deterministic`, or `e2e-llm` fails on `--fail-on-skip`; `tests/unit/ci/test_e2e_deterministic_markers.py` enforces it.

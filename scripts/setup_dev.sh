@@ -56,7 +56,7 @@ print_header "Database Modernizer - Development Setup"
 echo "This script will set up your development environment."
 echo "It will:"
 echo "  1. Check for required tools (Python 3.12+, Ruby 2.7+, uv, AWS CLI)"
-echo "  2. Install Python dependencies with uv sync"
+echo "  2. Install Python dependencies with uv sync, plus the AWS Transform SDK"
 echo "  3. Install cfn-nag (CloudFormation security scanner)"
 echo "  4. Activate virtual environment"
 echo "  5. Set up git commit template"
@@ -225,6 +225,12 @@ if [ -f "pyproject.toml" ]; then
     print_info "Installing all dependencies (production + development)..."
     uv sync --extra dev
     print_success "All dependencies installed"
+
+    # The AWS Transform SDK is not in uv.lock; the atx_orchestrator tests import
+    # it, so ci/test.sh needs it (public PyPI packages, exact pins).
+    print_info "Installing the AWS Transform SDK (needed by the full unit suite)..."
+    uv pip install -r src/atx_orchestrator/requirements-sdk.txt
+    print_success "AWS Transform SDK installed"
 else
     print_error "pyproject.toml not found"
     print_info "This project requires pyproject.toml for dependency management"
@@ -379,8 +385,8 @@ if [ -d "tests" ]; then
     read -p "Run test suite to verify setup? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_info "Running tests..."
-        if uv run pytest tests/ -v; then
+        print_info "Running tests (./ci/test.sh -q, the same command CI gates on)..."
+        if ./ci/test.sh -q; then
             print_success "All tests passed"
         else
             print_warning "Some tests failed (this may be expected if implementation is incomplete)"
@@ -408,7 +414,7 @@ echo "  3. Make changes and commit:"
 echo -e "     ${BLUE}git commit${NC}  (template will open in editor)"
 echo ""
 echo "  4. Run tests:"
-echo -e "     ${BLUE}uv run pytest tests/${NC}"
+echo -e "     ${BLUE}./ci/test.sh -q${NC}  (targeted: uv run pytest <paths> -n 4)"
 echo ""
 echo "  5. Validate contracts:"
 echo -e "     ${BLUE}uv run python scripts/validate_contracts.py src/contracts/*.py${NC}"

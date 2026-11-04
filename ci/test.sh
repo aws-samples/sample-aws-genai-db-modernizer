@@ -34,6 +34,26 @@ for arg in "$@"; do
     --cov|--cov=*) export COVERAGE_CORE="${COVERAGE_CORE:-sysmon}"; break ;;
   esac
 done
+# The atx_orchestrator tests import the AWS Transform SDK packages, which are
+# not in uv.lock. Without them a dev install reports dozens of import failures
+# that bury real ones (#1848), so stop at once with the fix. CI installs them
+# first. The modules checked come from requirements-sdk.txt (package
+# agent-builder-X-aws-transform imports as agent_builder_X), so a new pin is
+# checked without editing this script. `uv sync` removes the packages again.
+sdk_requirements=src/atx_orchestrator/requirements-sdk.txt
+sdk_modules=$(sed -n 's/^\(agent-builder-[a-z-]*\)-aws-transform==.*/\1/p' "$sdk_requirements" | tr - _ | paste -sd, - | sed 's/,/, /g')
+if [ -z "$sdk_modules" ]; then
+  echo "error: no AWS Transform SDK pins found in $sdk_requirements" >&2
+  exit 2
+fi
+if ! uv_out=$(uv run python -c pass 2>&1); then
+  echo "error: uv could not run Python here (not an SDK problem): $(printf '%s\n' "$uv_out" | tail -n 1)" >&2
+  exit 2
+fi
+if ! import_out=$(uv run python -c "import $sdk_modules" 2>&1); then
+  echo "error: the AWS Transform SDK is not fully installed ($(printf '%s\n' "$import_out" | tail -n 1)); run: uv pip install -r $sdk_requirements (repeat it after any uv sync)" >&2
+  exit 2
+fi
 shard_args=()
 if [ -n "${TEST_SHARD:-}" ]; then
   case "$TEST_SHARD" in

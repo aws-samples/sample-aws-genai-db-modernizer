@@ -7,8 +7,9 @@
 #   - For "make test" to pass completely: the AWS Transform SDK, which ships
 #     in the ATX container image but is not a project dependency --
 #     `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` (see
-#     tests/unit/atx_orchestrator/conftest.py). Without it, the two test
-#     modules that import it fail loudly rather than silently skipping.
+#     tests/unit/atx_orchestrator/conftest.py). `make setup` /
+#     scripts/setup_dev.sh installs it; `uv sync` removes it again; without it
+#     ci/test.sh stops before pytest with a one-line message.
 #
 # Quick start:
 #   1. make setup                 # Install dependencies and pre-commit hooks
@@ -53,7 +54,7 @@ JOB             ?=
 explore: ## Start the local API + UI with the experimental graph explorer on (JOB=<job_id> prints its URL)
 	uv run python scripts/start_local_ui.py --experimental-graph-explorer $(if $(JOB),--page explore --job-id $(JOB))
 
-test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Needs agent-builder-sdk-aws-transform (see header above) for full green.
+test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Stops at once if the AWS Transform SDK packages are not installed (see header above).
 	./ci/test.sh --cov=src --cov-report=term
 
 lint: ## Run all linters
