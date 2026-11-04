@@ -23,6 +23,7 @@ import logging
 import tempfile
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,7 @@ from src.assessment.models import AssessmentRequest, AssessmentResult, check_con
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
 from src.shared.progress import in_context, to_logger
+from src.shared.run_limits import RunLimitExceeded, RunLimits
 from src.shared.sql_spans import with_span_settings
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,7 @@ def _ingest_and_analyse(job: _Job) -> None:
         record_engine_scope(job.store, job.database_name, job.job_id, engines, via="library")
     run_triage_core(job.job_id, job.database_name, store=job.store)
     analyses = run_all_analyses(job.job_id, job.database_name, store=job.store)
+    model_usage.record_engines(analyses.get("engines_requested"))
     if analyses.get("engines_failed"):
         # A result missing an engine's scores would place statements differently.
         raise AssessmentRunError(
@@ -101,6 +104,21 @@ def _place_and_reality_check(job: _Job) -> None:
         store=job.store,
         llm_mode="none" if job.request.options.deterministic else "bedrock",
     )
+    _record_kept_engines(job)
+
+
+def _record_kept_engines(job: _Job) -> None:
+    """The phase being timed processed the engines the effective assignment keeps."""
+    from src.storage.assignment_versioning import (
+        resolve_effective_assignment_version,
+        schema_design_engines,
+    )
+
+    version = resolve_effective_assignment_version(job.store, job.database_name, job.job_id)
+    if version:
+        model_usage.record_engines(
+            schema_design_engines(job.store, job.database_name, job.job_id, version)
+        )
 
 
 def _effective_version(job: _Job) -> int:
@@ -133,6 +151,7 @@ def _design_schemas(job: _Job) -> None:
     version = _effective_version(job)
     # Triage's selection already leaves out every engine outside the engine scope.
     engines = schema_design_engines(job.store, job.database_name, job.job_id, version)
+    model_usage.record_engines(engines, phase="schema_design")
 
     def design(engine: str) -> None:
         _design(job, engine, version)
@@ -181,6 +200,7 @@ def _synthesise(job: _Job) -> None:
     run_synthesis_core(
         job.job_id, job.database_name, assignment_version=_effective_version(job), store=job.store
     )
+    _record_kept_engines(job)
 
 
 #: Each ``run_through`` value and the work that phase adds, in order.
@@ -212,6 +232,16 @@ def assess(
     it (they are refused with ``deterministic=True``) and call a model for every
     designed engine and for the report's executive summary.
 
+    Each phase's wall-clock seconds and the engines it processed join the run's
+    usage record (#145). The opt-in per-run ceilings (``MODERNIZER_MAX_RUN_TOKENS``,
+    ``MODERNIZER_MAX_RUN_MODEL_CALLS``, ``MODERNIZER_MAX_RUN_SECONDS``;
+    ``src/shared/run_limits.py``) are read before anything runs (a bad value raises
+    ``RunLimitConfigError``, a ``ValueError``) and checked when each phase ends: a run
+    over one raises ``AssessmentRunError`` naming the ceiling, its limit and the figure,
+    and builds no result. The usage ledger is process-wide: concurrent calls in one
+    process share its counts, and with a ceiling set a second ``assess()`` call while
+    one runs raises ``ConcurrentRunError`` (``src.assessment``).
+
     The run writes nothing to stdout: the phases' progress lines go to the
     :data:`PROGRESS_LOGGER` logger at INFO, each record carrying the run's ``job_id``
     (``record.job_id``). ``sys.stdout`` is never replaced, so
@@ -230,13 +260,23 @@ def assess(
     check_contract_version(req.contract_version)
     job_id = validate_job_id(job_id) if job_id is not None else uuid.uuid4().hex[:8]
     run_through = req.options.run_through
+    # Before anything runs: a bad ceiling value fails fast (#145).
+    limits = RunLimits.from_env()
 
     def run_phases(job: _Job) -> AssessmentResult:
         model_usage.LEDGER.reset()
         try:
             for phase, work in PHASES:
-                with model_usage.phase(phase):
-                    work(job)
+                model_usage.LEDGER.start_timing(phase)
+                try:
+                    with model_usage.phase(phase):
+                        work(job)
+                finally:
+                    model_usage.LEDGER.stop_timing()
+                try:
+                    limits.check(model_usage.LEDGER, phase)
+                except RunLimitExceeded as exc:
+                    raise AssessmentRunError(f"{exc}; no result built") from exc
                 if phase == run_through:
                     break
         finally:
@@ -255,7 +295,10 @@ def assess(
             return run_phases(_Job(target_store, req.database_name, job_id, req))
 
     # The analyses also write text artifacts (diagrams), which need ``write_text``.
-    if store is not None:
-        return run(store if hasattr(store, "write_text") else upgrade_store(store))
-    with tempfile.TemporaryDirectory(prefix="assess-") as root:
-        return run(upgrade_store(LocalArtifactStore(base_dir=root)))
+    # With a ceiling set, one run at a time per process: the ceilings are checked
+    # against the process-wide usage counts. Without one, nothing changes (#145).
+    with model_usage.exclusive_run() if limits.any_set else nullcontext():
+        if store is not None:
+            return run(store if hasattr(store, "write_text") else upgrade_store(store))
+        with tempfile.TemporaryDirectory(prefix="assess-") as root:
+            return run(upgrade_store(LocalArtifactStore(base_dir=root)))

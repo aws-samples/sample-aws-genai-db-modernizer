@@ -373,11 +373,6 @@ def test_the_mocked_model_run_wrote_model_io_and_designs(tmp_path_factory) -> No
 # Entries of the other two lists that neither the scan nor a run here produces, with
 # who writes them. Kept short; an entry here that a scan or run does produce is stale too.
 NOT_PRODUCED_HERE: dict[str, str] = {
-    r"_logs/model_usage\.json": (
-        "the token usage of a run that called a model, written by assess() and "
-        "scripts/run_assessment.py (src/shared/model_usage.py); no run here calls a "
-        "model through it"
-    ),
     r"data-movement/wave-\d+/plan\.json": (
         "the per-wave plan layout written before #1797: nothing writes it now, and the entry "
         "stays so a saved job's old plans still load"

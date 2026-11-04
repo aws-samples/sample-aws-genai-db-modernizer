@@ -1301,3 +1301,13 @@ def test_the_group_task_skips_the_reads_the_agent_prompt_already_carries() -> No
     # Run any other way (standalone, a general-purpose subagent), the Reads stay.
     assert "2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`" in task
     assert "3. Read the output contract: `src/contracts/dynamodb_model_output.py`" in task
+
+
+def test_an_error_engine_choices_line_wins_over_its_decisions() -> None:
+    """A per-run ceiling breach keeps the line's fields (#145): the --decide-for-me step
+    must not report its ``decided`` entries or design its ``schema_design_engines``."""
+    text = _modernize_text()
+    (line,) = [ln for ln in text.splitlines() if "--decide-for-me`. It prints one" in ln]
+    assert 'unless that line is an error (`"status": "error"`' in line
+    assert line.index("unless that line is an error") < line.index("each `decided` entry")
+    assert "wins over its `decided` and `schema_design_engines`" in line

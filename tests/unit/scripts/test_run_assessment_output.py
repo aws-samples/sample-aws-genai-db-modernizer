@@ -161,7 +161,9 @@ def test_verbose_prints_progress_to_stdout_and_writes_no_log(tmp_path):
     assert phases == ASSESSMENT_PHASES
     assert '"log"' not in out.splitlines()[-1]
     assert "Database Modernizer Assessment" in proc.stderr
-    assert not list((tmp_path / "artifacts").glob("*/*/_logs"))
+    # No run log; the usage record (#145, written by every run) is the only _logs file.
+    logs = list((tmp_path / "artifacts").glob("*/*/_logs/*"))
+    assert [p.name for p in logs] == ["model_usage.json"]
 
 
 def test_error_before_the_job_exists_is_reported_inline(tmp_path):

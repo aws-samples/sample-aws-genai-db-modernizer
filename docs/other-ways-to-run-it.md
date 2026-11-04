@@ -55,6 +55,42 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     Schema design runs at effort medium rather than high. In a benchmark of this role on the WordPress sample and a scoped Discourse run, medium showed no measured quality loss (design validation results and agreement with the high-effort designs were within the run-to-run spread of high itself) and cost 31-41% less per design pass. The effort is set in `ROLE_SPECS` in `src/shared/models.py`; it is not an environment variable.
 
+    ### Measure a run and set per-run ceilings (optional)
+
+    `scripts/run_assessment.py` writes a usage record for every run, in every `--llm-mode` (with zero model counts when the run called no model, as in `none` and `external`), to `artifacts/<db>/<job>/_logs/model_usage.json`. `assess()` writes the same record only for a run that called a model (`"deterministic": False`): a deterministic `assess()` result is identical from run to run, so it carries no timings. It is an internal file: its shape can change in any release. Its top level holds:
+
+    | Field | Meaning |
+    |---|---|
+    | `totals`, `by_model`, `by_phase` | Model calls and tokens (input, output, cache read, cache write) over every run of the job, per model ID, and per phase then model ID |
+    | `wall_clock_seconds` | The runs' wall-clock time, in seconds |
+    | `phases` | Per phase, in the order the runs reached them: `seconds` (its wall-clock time) and `engines` (the engines it processed: the engines analysed for triage, analysis and assignment; the engines the reality check kept for the reality check, engine choices and schema design; the engines the final assignment keeps for synthesis) |
+    | `runs` | Each run of the job in order (every `run_assessment.py` call on the job, for example `--resume-reality-check`, or another `assess()` call on the same job and store, adds one); each entry has the fields above for that run alone, plus `run` (its number) and, only when a ceiling stopped it, `ceiling_exceeded`: the `ceiling`, its `env_var`, the `limit`, the `observed` figure and the `phase` it was crossed in |
+
+    Price it with `uv run python scripts/usage_cost.py artifacts/<db>/<job>/_logs/model_usage.json`, which prints the cost per phase and model, per run and in total, at the public Bedrock list prices in `src/catalog/model_prices.toml`. A record written by an older release has no timings; it still loads, and its runs add no time to the totals.
+
+    Each ceiling is off unless you set its environment variable, and there is no default cap:
+
+    | Variable | Ceiling |
+    |---|---|
+    | `MODERNIZER_MAX_RUN_TOKENS` | The model tokens one run may use, counting input, output, cache read and cache write tokens (a positive whole number) |
+    | `MODERNIZER_MAX_RUN_MODEL_CALLS` | The model calls one run may make (a positive whole number) |
+    | `MODERNIZER_MAX_RUN_SECONDS` | The run's wall-clock time, in seconds (a positive number) |
+
+    Only `scripts/run_assessment.py` and `assess()` read them, when a run starts; the other scripts (`run_schema_design.py`, `run_pe_review.py`, `run_post_schema_routing.py`, `run_synthesis.py`, `run_report.py` and the rest) do not. A value that is not a positive number (text, zero, a negative number, or a fraction for a count) stops the run before any phase: `run_assessment.py` prints the error and exits with status 2, and `assess()` raises `RunLimitConfigError` (a `ValueError`). An empty value is the same as unset.
+
+    The ceilings are checked when each phase ends, so a phase that has started finishes and a run can go over by what one phase spends; being exactly at a limit is within it. A run over a ceiling, in any phase including the last, keeps that phase's output and fails:
+
+    - `run_assessment.py` prints that phase's one status line as its failure: `"status": "error"`, its own status kept as `phase_result` (for example `complete` or `awaiting_llm`), the `ceiling`, `limit` and `observed` figure, and a message naming the variable. It marks the phase `failed` in `.modernizer-state.json`, writes the job's `_status.json` as `FAILED` (error type `RunLimitExceeded`), records `ceiling_exceeded` in the run's usage record and exits with status 1. No later phase runs.
+    - `assess()` raises `AssessmentRunError` with the same message and builds no result; the usage record (written when the run called a model) has `ceiling_exceeded`.
+
+    Nothing is cut short or dropped without that failure.
+
+    The usage ledger is process-wide: concurrent `assess()` calls in one process share its counts, as before, so each run's record includes the others' calls. With a ceiling set, a second `assess()` call while one is running in the same process raises `ConcurrentRunError` (import it, and `RunLimitConfigError`, from `src.assessment`) before it runs anything. Run concurrent ceilinged assessments in separate processes.
+
+    `MODERNIZER_MAX_RUN_SECONDS` and `wall_clock_seconds` are the run's wall clock from when the run starts: for `run_assessment.py` that includes the script's own set-up before its first phase, so they can be larger than the sum of the `phases` seconds, and the breach message says "the run's wall-clock time since it started".
+
+    Only model calls `run_assessment.py` or `assess()` makes in its own process count. With `--llm-mode external` (the default for `run_assessment.py`, used by `/modernize`), Claude Code does the model's part outside the script, so the script counts no calls or tokens and those two ceilings never trip; `MODERNIZER_MAX_RUN_SECONDS` applies to each `run_assessment.py` call's own time, not to the Claude Code session or the other scripts. In `run_assessment.py` the wall-clock time includes the pause before schema design when you run `--all` without `-y`.
+
     ### Attach a guardrail (optional)
 
     `--llm-mode bedrock` can attach an [Amazon Bedrock Guardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html) that you own to every model call it makes. It is off by default, and with it off the requests are exactly the ones described above. Set both variables to turn it on:

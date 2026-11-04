@@ -67,6 +67,13 @@ statement's execution statistics (its cost can be overstated, never understated)
 its result row names that statement in ``from_query_id``. A refused cut raises a
 ``CutError`` (a ``ValueError``). See docs/contracts/assess.md.
 
+Per-run ceilings (#145, opt-in, off unless a ``MODERNIZER_MAX_RUN_*`` variable is
+set): a bad value raises ``RunLimitConfigError`` (a ``ValueError``) before anything
+runs; with a ceiling set, a second concurrent call in the same process raises
+``ConcurrentRunError`` (a ``RuntimeError``, not an ``AssessmentRunError``: nothing ran).
+Both are importable from this package. Without a ceiling, concurrent calls behave as
+before and share the process's model usage counts.
+
 This package's models are not the local API's request models
 (``src.api.models.requests``); import them from here.
 """
@@ -121,6 +128,8 @@ from src.assessment.models import (
     WorkloadScope,
 )
 from src.assessment.runner import assess
+from src.shared.model_usage import ConcurrentRunError
+from src.shared.run_limits import RunLimitConfigError
 from src.tools.database.offline_parser import DatabaseNameMismatchError
 
 __all__ = [
@@ -132,6 +141,7 @@ __all__ = [
     "AssessmentResult",
     "CollectionCut",
     "CollectionLoadError",
+    "ConcurrentRunError",
     "Consolidation",
     "CutError",
     "CutSourceError",
@@ -158,6 +168,7 @@ __all__ = [
     "RelationalEngine",
     "ResultLabel",
     "RetiredContractVersionError",
+    "RunLimitConfigError",
     "RunThrough",
     "StatementPart",
     "StatementResult",
