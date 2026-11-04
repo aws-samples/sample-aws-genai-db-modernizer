@@ -268,7 +268,13 @@ def _parse_offline_collection(
         fks_by_table[tbl][name]["referenced_columns"].append(fk["referenced_column_name"])
 
     pks_by_table: dict[str, list[str]] = {}
-    for pk in data.get("primary_keys") or []:
+    # The key's order is its ``ordinal_position``, not the row order: MySQL's
+    # JSON_ARRAYAGG drops the subquery's ORDER BY (#1865). The sort is stable, so rows
+    # without a position keep their order.
+    for pk in sorted(
+        data.get("primary_keys") or [],
+        key=lambda r: (r.get("ordinal_position") is None, r.get("ordinal_position") or 0),
+    ):
         pks_by_table.setdefault(pk["table_name"], []).append(pk["column_name"])
 
     # Assemble tables with nested children. The one qualifier of every table id,
