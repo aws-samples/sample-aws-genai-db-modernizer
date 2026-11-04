@@ -114,7 +114,7 @@ catalog routes above; use raw `POST /graph/query` for anything not covered.
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/provenance` | Why a query migrated where it did, plus the producing agent/phase |
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/trace` | Why a query ended on its engine and not another: its first assignment with each engine's score or gate, each later move with its reason, and the runner-up |
 | `GET /api/v1/assessments/{job_id}/query-journeys` and `.../query-journeys/{query_id}` | The query journeys: one page of queries, or one query's journey, read from the graph |
-| `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | The engine's destination (a query's `Destination` is its engine, #306) with the source tables and access patterns of the queries it gets; its design objects are `TARGETS` (catalog L and M) |
+| `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | The engine's destination (a query's `Destination` is its engine, #306) with the source tables and access patterns of the queries assigned to it (`destinations`, empty for a cache-only engine such as ElastiCache), plus the design objects every effective query lands on in this engine, assigned or cache (`targets`, with `query_count`, `cache_query_count`, and for a GSI `parent` and `parent_id`, its table's name and `target_id`), and the labelled fallbacks `not_designed`, `out_of_scope` and `not_in_design` (`fallbacks`, same counts), never listed as objects. Catalog B reads the same counting rule |
 | `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying open risk and anti-patterns, weighted by traffic |
 | `GET /api/v1/assessments/{job_id}/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
 
@@ -369,16 +369,16 @@ Which queries, source tables and access patterns does this engine get?
 
 Catalog id `engine_destinations`; at most 1,000 rows. Needs: Assignment (`Destination` nodes and `MIGRATES_TO` edges).
 
-Graph view: nodes `Destination` (`destination`), `SourceTable` (`source_tables`), `AccessPattern` (`access_patterns`); edges `SourceTable` → `Destination` (migrates to), `Destination` → `AccessPattern` (serves).
+Graph view: nodes `Engine` (`destination`), `SourceTable` (`source_tables`), `AccessPattern` (`access_patterns`), `TargetObject` (`targets`), `TargetObject` (`fallbacks`); edges `SourceTable` → `Engine` (migrates to), `Engine` → `AccessPattern` (serves), `TargetObject` → `Engine` (HOSTED_ON), `TargetObject` → `Engine` (HOSTED_ON).
 
 Parameters:
 
-- `engine` (engine): An engine id the assignment migrates queries to. Example `dynamodb`. Change `dynamodb` to `aurora_mysql`, `aurora_postgresql`, `documentdb`, `elasticache`, `opensearch`. Choices: `MATCH (d:Destination) RETURN DISTINCT d.engine AS value ORDER BY value`
+- `engine` (engine): An engine id with design objects or fallbacks in the effective version, which includes an engine that is only a cache layer. Example `dynamodb`. Change `dynamodb` to `aurora_mysql`, `aurora_postgresql`, `documentdb`, `elasticache`, `opensearch`. Choices: `MATCH (:Query)-[:TARGETS {effective: true}]->(o:TargetObject) RETURN DISTINCT o.engine AS value ORDER BY value`
 
-A query's `destination` is its engine (#306); where it lands in the design is `TARGETS` (questions L and M).
+One row for the engine, read from `TARGETS` alone: every query of the effective version that lands on one of the engine's objects counts in `queries`, whether the engine is its assigned engine or its cache layer, and `cache_queries` says how many of those are cache. `targets` are the design objects and `fallbacks` the labelled stand-ins (`<engine>:not_designed`, `<engine>:out_of_scope`, `<engine>:not_in_design`), which are no objects. `target_counts` gives each of them, fallbacks included, as `{id, queries, cache_queries}`; a query that lands on several objects counts once under each, so the counts may add up to more than `queries`. An empty list comes back as null. A cache-only engine such as ElastiCache has no `Destination`, so its row is there with `queries` all cache. Questions L and M list one query's or one object's links.
 
 ```json
-{"cypher": "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) RETURN d.id AS destination, collect(DISTINCT st.id) AS source_tables, collect(DISTINCT ap.id) AS access_patterns, count(DISTINCT q) AS queries ORDER BY queries DESC, destination", "params": {"engine": "dynamodb"}}
+{"cypher": "MATCH (q:Query)-[t:TARGETS {effective: true}]->(o:TargetObject {engine: $engine}) WITH o, collect(DISTINCT CASE WHEN t.cache = true THEN 'c' ELSE 'a' END + q.id) AS qids, count(DISTINCT CASE WHEN t.cache = true THEN q.id END) AS cache_queries WITH collect({id: o.id, queries: size(qids), cache_queries: cache_queries}) AS target_counts, collect(CASE WHEN o.fallback = false THEN o.id END) AS targets, collect(CASE WHEN o.fallback = true THEN o.id END) AS fallbacks, collect(qids) AS groups UNWIND groups AS grp UNWIND grp AS tagged MATCH (q:Query) WHERE q.id = substring(tagged, 2, size(tagged)) OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) RETURN $engine AS destination, collect(DISTINCT st.id) AS source_tables, collect(DISTINCT ap.id) AS access_patterns, targets, fallbacks, target_counts, count(DISTINCT q) AS queries, count(DISTINCT CASE WHEN left(tagged, 1) = 'c' THEN q.id END) AS cache_queries ORDER BY queries DESC, destination", "params": {"engine": "dynamodb"}}
 ```
 
 ### C. Full provenance for one query: why did it go where it went

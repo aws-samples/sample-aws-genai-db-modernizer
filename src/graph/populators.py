@@ -881,7 +881,8 @@ def populate_targets(
     pattern for the query gives ``no target in the design``; a design that marks the
     query's patterns out of scope or unsupported gives ``the design does not serve
     it`` (``out_of_scope``). The effective version's
-    edges are ``effective``. Returns the edge count."""
+    edges are ``effective``; an edge is ``cache`` when the engine is the query's cache
+    engine and not its assigned engine. Returns the edge count."""
     active = catalog.engine_ids(status=catalog.ACTIVE)
     objects: dict[str, dict] = {}
     rows: list[dict] = []
@@ -922,6 +923,7 @@ def populate_targets(
                         "fallback": True,
                     }
                     found = {oid: (row, [])}
+                is_cache = engine != qa.get("assigned_engine")
                 for oid, (row, pattern_ids) in found.items():
                     objects[oid] = row
                     rows.append(
@@ -932,6 +934,7 @@ def populate_targets(
                             "sv": row["sv"],
                             "eff": version == effective_version,
                             "ids": json.dumps(pattern_ids),
+                            "cache": is_cache,
                         }
                     )
     if not rows:
@@ -952,7 +955,7 @@ def populate_targets(
     store.execute(
         "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (o:TargetObject {id: r.oid}) "
         "CREATE (q)-[:TARGETS {version: r.ver, schema_version: CAST(r.sv AS INT64), "
-        "effective: r.eff, pattern_ids_json: r.ids}]->(o)",
+        "effective: r.eff, pattern_ids_json: r.ids, cache: r.cache}]->(o)",
         {"rows": rows},
     )
     return len(rows)

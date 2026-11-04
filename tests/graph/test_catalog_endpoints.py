@@ -25,6 +25,7 @@ from src.graph.populators import (
     populate_from_assignment,
     populate_from_collector,
     populate_from_schema_design,
+    populate_targets,
 )
 from src.graph.schema import initialize_schema
 from src.graph.store import GraphStore, ReadLimits
@@ -45,6 +46,9 @@ def populated_store(
     design = json.loads(json.dumps(sample_schema_design_output))
     design["trade_offs"][0]["description"] = MARKUP
     populate_from_schema_design(design, "documentdb", 1, store)
+    # The effective version's TARGETS (no design is on file for it: every query gets
+    # its engine's fallback), which is where catalog B reads its engine choices.
+    populate_targets([{**sample_assignment, "version": 1}], 1, {}, store)
     yield store
     store.close()
 

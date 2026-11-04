@@ -458,12 +458,13 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   # permissions and sandbox as /modernize and a small budget and turn cap of its own.
   # The check compares the answer with the catalog entry's own result, which this
   # script runs itself (no model): the session must have run that entry on the job with
-  # engine=dynamodb, and the answer must tie the top table's count to that table. A dry
+  # engine=dynamodb, and the answer must tie the engine's query count (the entry's one row
+  # for DynamoDB, not a per-design-object count) to that engine. A dry
   # run skips it unless given a saved session (E2E_LLM_EXPLORE_TRANSCRIPT), and so does
   # an engine scope without DynamoDB.
   EXPLORE_ENTRY="engine_destinations"
   EXPLORE_PARAM="engine=dynamodb"
-  EXPLORE_QUESTION="Which source table sends the most queries to DynamoDB, and how many?"
+  EXPLORE_QUESTION="How many queries does DynamoDB serve, and from which source tables?"
   if [ -n "$TARGET_DATABASES" ] && ! [[ ",$TARGET_DATABASES," == *,dynamodb,* ]]; then
     log "the engine scope leaves out DynamoDB: skipping the /explore step"
   elif [ "$DRY_RUN" = "1" ]; then

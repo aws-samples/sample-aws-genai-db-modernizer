@@ -16,6 +16,8 @@ from src.api.models.graph_responses import (
     AffectedQuery,
     EngineDestination,
     EngineDetailResponse,
+    EngineFallback,
+    EngineTarget,
     LatencyPercentilesModel,
     LoadTestPattern,
     LoadTestQuery,
@@ -120,7 +122,9 @@ def query_provenance(store: GraphStore, query_id: str) -> QueryProvenanceRespons
 
 def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
     """The engine's destination (a query's Destination is its engine, #306), with the
-    source tables and access patterns of the queries migrating to it."""
+    source tables and access patterns of the queries migrating to it, and the design
+    objects and labelled fallbacks every effective query lands on, assigned or cache
+    (TARGETS), each count saying how many of those queries are cache."""
     rows = store.query(
         "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) "
         "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
@@ -141,7 +145,47 @@ def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
         )
         for r in rows
     ]
-    return EngineDetailResponse(engine=engine, destinations=dests)
+    # The design's objects the effective version's queries land on (TARGETS, #306).
+    # Fallbacks are labelled, never listed as objects.
+    target_rows = store.query(
+        "MATCH (q:Query)-[t:TARGETS {effective: true}]->(o:TargetObject {engine: $engine}) "
+        "OPTIONAL MATCH (p:TargetObject) WHERE p.engine = o.engine AND p.kind = 'table' "
+        "AND p.name = o.parent AND p.schema_version = o.schema_version "
+        "RETURN o.id AS target_id, o.kind AS kind, o.name AS name, o.parent AS parent, "
+        "p.id AS parent_id, o.schema_version AS schema_version, o.fallback AS fallback, "
+        "COUNT(DISTINCT q) AS query_count, "
+        "COUNT(DISTINCT CASE WHEN t.cache = true THEN q.id END) AS cache_query_count "
+        "ORDER BY query_count DESC, target_id",
+        {"engine": engine},
+    )
+    targets = [
+        EngineTarget(
+            target_id=r["target_id"],
+            kind=r["kind"],
+            name=r["name"],
+            parent=r.get("parent") or None,
+            parent_id=r.get("parent_id") or None,
+            schema_version=r["schema_version"],
+            query_count=r["query_count"],
+            cache_query_count=r["cache_query_count"],
+        )
+        for r in target_rows
+        if not r["fallback"]
+    ]
+    fallbacks = [
+        EngineFallback(
+            target_id=r["target_id"],
+            label=r["kind"],
+            description=r["name"],
+            query_count=r["query_count"],
+            cache_query_count=r["cache_query_count"],
+        )
+        for r in target_rows
+        if r["fallback"]
+    ]
+    return EngineDetailResponse(
+        engine=engine, destinations=dests, targets=targets, fallbacks=fallbacks
+    )
 
 
 def risk_hotspots(store: GraphStore) -> RiskHotspotsResponse:

@@ -308,9 +308,9 @@ def _expected_real(job: Path) -> dict:
     for v in (1, 2):
         assignment = json.loads((job / f"assignment/v{v}/assignment.json").read_text())
         designs = {}
-        for engine in ("dynamodb", "elasticache", "aurora_mysql"):
-            path = job / f"schema-{engine}/v{v}/schema_output.json"
-            if path.exists():
+        for path in sorted(job.glob(f"schema-*/v{v}/schema_output.json")):
+            engine = path.parents[1].name.removeprefix("schema-")
+            if engine in ("dynamodb", "elasticache", "aurora_mysql"):
                 designs[engine] = json.loads(path.read_text())
         objects: dict[tuple[str, str], set[tuple]] = {}
         unserved: dict[str, set[str]] = {}
@@ -684,3 +684,214 @@ def test_catalog_a_tables_queries_include_its_gsi_readers(real_graph):
     ).rows
     assert {(r["query_id"], r["via"]) for r in rows} == expected
     assert any(":gsi:" in via for _, via in expected)
+
+
+def _effective_version() -> int:
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+    store = LocalArtifactStore(str(REAL_WORDPRESS.parents[1]))
+    return resolve_effective_assignment_version(store, REAL_WORDPRESS.parent.name, "job")
+
+
+def _wordpress_effective_counts(engine: str) -> dict[tuple[str, str], tuple[int, int]]:
+    """(queries, cache queries) per (kind, name) the effective version targets on
+    ``engine``, from the independent derivation of the artifacts: a query is cache
+    there when ``engine`` is its cache engine and not its assigned engine."""
+    effective = _effective_version()
+    assignment = json.loads(
+        (REAL_WORDPRESS / f"assignment/v{effective}/assignment.json").read_text()
+    )
+    cache = {
+        qa["query_id"]
+        for qa in assignment["query_assignments"]
+        if qa.get("cache_engine") == engine and qa["assigned_engine"] != engine
+    }
+    counts: dict[tuple[str, str], tuple[int, int]] = {}
+    for (qid, version), objs in _expected_real(REAL_WORDPRESS).items():
+        if version != effective:
+            continue
+        for eng, kind, name in objs:
+            if eng == engine:
+                n, c = counts.get((kind, name), (0, 0))
+                counts[(kind, name)] = (n + 1, c + (qid in cache))
+    return counts
+
+
+@pytest.mark.passes_on_main
+def test_engine_detail_keeps_the_destination_fields(real_graph):
+    from src.graph.queries import engine_detail
+
+    (dest,) = engine_detail(real_graph, "dynamodb").destinations
+    assert dest.destination_id == "dynamodb"
+    assert (
+        dest.query_count
+        == real_graph.query(
+            "MATCH (q:Query)-[:MIGRATES_TO]->(:Destination {engine: 'dynamodb'}) "
+            "RETURN COUNT(DISTINCT q) AS n"
+        )[0]["n"]
+    )
+    assert dest.source_tables and dest.access_patterns
+
+
+def test_engine_detail_reads_only_the_effective_version(lineage):
+    from src.graph.queries import engine_detail
+
+    result = engine_detail(lineage, "dynamodb")
+    # OrdersOld is v1's object; v1 is no longer effective.
+    assert {t.name for t in result.targets} == {"Orders", "ByCustomer", "Customers"}
+    assert {(f.label, f.query_count) for f in result.fallbacks} == set()
+
+
+def test_engine_detail_shows_the_fallback_on_a_deterministic_run(tmp_path, sample_collector_output):
+    from src.graph.queries import engine_detail
+
+    store = _build(
+        tmp_path,
+        {"collector/output.json": sample_collector_output, "assignment/v1/assignment.json": V1},
+    )
+    result = engine_detail(store, "dynamodb")
+    assert result.targets == []
+    assert [(f.target_id, f.label, f.description, f.query_count) for f in result.fallbacks] == [
+        ("dynamodb:not_designed", "not_designed", "not designed yet", 2)
+    ]
+    from src.graph import catalog
+
+    (row,) = catalog.run_entry(
+        store, catalog.get_entry("engine_destinations"), {"engine": "dynamodb"}
+    ).rows
+    assert (row["targets"], row["fallbacks"]) == (None, ["dynamodb:not_designed"])
+    # The old fields are unchanged.
+    assert [(d.destination_id, d.query_count) for d in result.destinations] == [("dynamodb", 2)]
+    store.close()
+
+
+def test_engine_detail_names_not_in_design_as_a_fallback(tmp_path, sample_collector_output):
+    from src.graph.queries import engine_detail
+
+    store = _build(
+        tmp_path,
+        {
+            "collector/output.json": sample_collector_output,
+            "assignment/v1/assignment.json": V1,
+            "schema-dynamodb/v1/schema_output.json": DDB_V1,
+        },
+    )
+    result = engine_detail(store, "dynamodb")
+    assert [(t.name, t.query_count) for t in result.targets] == [("OrdersOld", 1)]
+    assert [(f.label, f.query_count) for f in result.fallbacks] == [("not_in_design", 1)]
+    store.close()
+
+
+def test_engine_detail_endpoint_returns_targets_and_fallbacks(lineage):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes import graph as graph_routes
+
+    app = FastAPI()
+    app.include_router(graph_routes.router)
+    app.dependency_overrides[graph_routes.get_graph_for_job] = lambda: (lineage, "db")
+    body = TestClient(app).get("/api/v1/assessments/job-1/graph/engines/dynamodb").json()
+    assert body["engine"] == "dynamodb"
+    assert {d["destination_id"] for d in body["destinations"]} == {"dynamodb"}
+    by_name = {t["name"]: t for t in body["targets"]}
+    assert by_name["ByCustomer"] == {
+        "target_id": "dynamodb:gsi:Orders.ByCustomer@v2",
+        "kind": "gsi",
+        "name": "ByCustomer",
+        "parent": "Orders",
+        "parent_id": "dynamodb:table:Orders@v2",
+        "schema_version": 2,
+        "query_count": 2,
+        "cache_query_count": 0,
+    }
+    assert body["fallbacks"] == []
+
+
+def test_catalog_engine_destinations_lists_targets_and_fallbacks(real_graph):
+    from src.graph import catalog
+
+    entry = catalog.get_entry("engine_destinations")
+    (row,) = catalog.run_entry(real_graph, entry, {"engine": "dynamodb"}).rows
+    # The ids, read from the edges directly rather than through the entry.
+    ids = {
+        r["id"]
+        for r in real_graph.query(
+            "MATCH (:Query)-[:TARGETS {effective: true}]->(o:TargetObject {engine: 'dynamodb'}) "
+            "RETURN DISTINCT o.id AS id"
+        )
+    }
+    assert ids and set(row["targets"]) == ids
+    assert row["fallbacks"] is None
+    # Per-object counts, against the independent derivation.
+    kinds = {i: (i.split(":")[1], i.split(":", 2)[2].split("@")[0].split(".")[-1]) for i in ids}
+    assert {kinds[c["id"]]: (c["queries"], c["cache_queries"]) for c in row["target_counts"]} == (
+        _wordpress_effective_counts("dynamodb")
+    )
+    assert (row["queries"], row["cache_queries"]) == (39, 0)
+
+
+def test_a_cache_only_engine_counts_every_query_as_cache(real_graph):
+    """ElastiCache on the real wordpress run is nobody's assigned engine: 14 key
+    patterns cover 19 queries, all of them cache, in engine detail and in catalog B."""
+    from src.graph import catalog
+    from src.graph.queries import engine_detail
+
+    result = engine_detail(real_graph, "elasticache")
+    assert result.destinations == []
+    assert len(result.targets) == 14 and result.fallbacks == []
+    assert all(t.kind == "key_pattern" for t in result.targets)
+    assert all(t.cache_query_count == t.query_count for t in result.targets)
+    entry = catalog.get_entry("engine_destinations")
+    assert "elasticache" in catalog.param_choices(real_graph, entry.params[0])
+    (row,) = catalog.run_entry(real_graph, entry, {"engine": "elasticache"}).rows
+    assert (row["destination"], row["queries"], row["cache_queries"]) == ("elasticache", 19, 19)
+    assert sorted(c["id"] for c in row["target_counts"]) == sorted(
+        t.target_id for t in result.targets
+    )
+
+
+def test_the_edge_records_whether_it_is_a_cache_link(lineage):
+    rows = lineage.query(
+        "MATCH (q:Query {id: 'q1'})-[t:TARGETS {effective: true}]->(o:TargetObject) "
+        "RETURN o.engine AS engine, t.cache AS cache"
+    )
+    assert {(r["engine"], r["cache"]) for r in rows} == {("dynamodb", False), ("elasticache", True)}
+
+
+def test_engine_detail_counts_cache_queries_apart(lineage):
+    from src.graph.queries import engine_detail
+
+    cache = engine_detail(lineage, "elasticache")
+    assert cache.destinations == []
+    assert [(t.name, t.query_count, t.cache_query_count) for t in cache.targets] == [
+        ("order:{id}", 1, 1)
+    ]
+    ddb = engine_detail(lineage, "dynamodb")
+    assert {t.cache_query_count for t in ddb.targets} == {0}
+
+
+def test_engine_detail_names_out_of_scope_as_a_fallback(tmp_path, sample_collector_output):
+    from src.graph.queries import engine_detail
+
+    design = {
+        "table_definitions": [{"table_name": "Orders"}],
+        "access_patterns": [
+            {**_ddb("DDB-AP-1", "Orders", ["q1"]), "in_scope": False},
+            _ddb("DDB-AP-2", "Orders", ["q3"]),
+        ],
+    }
+    store = _build(
+        tmp_path,
+        {
+            "collector/output.json": sample_collector_output,
+            "assignment/v1/assignment.json": V1,
+            "schema-dynamodb/v1/schema_output.json": design,
+        },
+    )
+    result = engine_detail(store, "dynamodb")
+    assert [(t.name, t.query_count) for t in result.targets] == [("Orders", 1)]
+    assert [(f.target_id, f.label, f.description, f.query_count) for f in result.fallbacks] == [
+        ("dynamodb:out_of_scope", "out_of_scope", "the design does not serve it", 1)
+    ]
+    store.close()
