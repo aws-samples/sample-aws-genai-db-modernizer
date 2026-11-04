@@ -277,11 +277,16 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
                      # skills, or ci/llm/*.
    ```
 
-   The full unit, contract and property suites (`make test`, or
-   `./ci/test.sh`) run on CI only; they are slow on a laptop, so run targeted
-   tests locally with at most 4 workers. `make test` also runs the
-   `atx_orchestrator` tests, which need the AWS Transform SDK (`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`;
-   see `tests/unit/atx_orchestrator/conftest.py`).
+   While iterating, run targeted tests with at most 4 workers. Before asking
+   for review, run the full unit, contract and property suites (`make test`, or
+   `./ci/test.sh -q`, which `./ci/pre_merge.sh` also runs) and make them green;
+   they are not CI-only. Only the e2e and real-model tiers are left to CI unless
+   your change needs them. The suites include the `atx_orchestrator` tests, which
+   need the AWS Transform SDK: run
+   `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` (see
+   `tests/unit/atx_orchestrator/conftest.py`; first-time `./scripts/setup_dev.sh`
+   does it too). `uv sync` removes it, so repeat the install after any `uv sync`.
+   Without it `ci/test.sh` stops before pytest with a one-line message.
 
 3. **Verify linters pass** (pre-commit runs these automatically on commit, but you can run manually):
 
@@ -313,7 +318,7 @@ Smaller PRs are reviewed faster and merged more easily.
 
 ### Labels
 
-- **`good first issue`**: small, standalone fixes with a suggested fix, good for a first contribution. They are never part of an epic or a feature, never change a contract, and nothing else waits on them. Before opening the PR, run `make lint` (or `./ci/lint.sh`) and the tests for what you touched: CI runs the full suites, and a PR can't merge until they pass.
+- **`good first issue`**: small, standalone fixes with a suggested fix, good for a first contribution. They are never part of an epic or a feature, never change a contract, and nothing else waits on them. Before opening the PR, run `make lint` (or `./ci/lint.sh`) and the full `./ci/test.sh -q`: a PR can't merge until the suites pass on CI.
 - **`help wanted`**: well-scoped issues that need more context in the codebase; contributions welcome.
 - **`Maintainer Decision`**: the issue or PR is waiting for a maintainer to decide. While a PR carries this label, the `maintainer-decision-gate` check fails and the PR can't be merged. A maintainer removes the label once the decision is made, and the check passes on the next run. A PR opened before this check existed has no result for it until it gets a new push, a label change, or is closed and reopened.
 - **`Contract Major Approved`**: a maintainer approved moving the `assess()` contract MAJOR on this PR. The `contract-major-gate` check fails a MAJOR move unless the PR carries it when the check runs; it does not block merging. See [The public `assess()` contract](#the-public-assess-contract).
