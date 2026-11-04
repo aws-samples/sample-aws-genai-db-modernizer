@@ -203,6 +203,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "catalog engine id by test_engine_catalog.TestEveryKnownEngineHasACatalogFile",
     ),
     "src/api/services/local_execution.py": (frozenset({"_ENGINES"}), _PINNED),
+    "src/tools/transformation_contract/duckdb_backend.py": (
+        frozenset({"_ENGINES"}),
+        "the two target dialects the contract check can build a typed table for: "
+        "type-mapping plumbing, no routing rule",
+    ),
     "src/atx_orchestrator/core.py": (
         frozenset(
             {"_ANALYSIS_ENGINES", "_SAME_FAMILY", "IMPLEMENTED_SCHEMA_DESIGNERS", "_DESIGN_SHAPE"}

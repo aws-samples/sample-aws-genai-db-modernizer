@@ -1,0 +1,557 @@
+{
+  "dialect": "mysql",
+  "engine": "aurora_mysql",
+  "seed": 7,
+  "tables": [
+    {
+      "table_id": "wordpress.wp_posts",
+      "table_name": "wp_posts",
+      "schema_name": "wordpress",
+      "row_count": 6,
+      "columns": [
+        {
+          "column_name": "ID",
+          "ordinal_position": 1,
+          "data_type": "bigint unsigned",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": true,
+          "cardinality": null
+        },
+        {
+          "column_name": "post_author",
+          "ordinal_position": 2,
+          "data_type": "bigint unsigned",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "0",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "post_status",
+          "ordinal_position": 8,
+          "data_type": "varchar(20)",
+          "normalized_data_type": "string",
+          "max_length": 20,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "publish",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "menu_order",
+          "ordinal_position": 20,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "0",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "comment_count",
+          "ordinal_position": 23,
+          "data_type": "bigint",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "0",
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ],
+      "primary_key": [
+        "ID"
+      ]
+    },
+    {
+      "table_id": "wordpress.wp_options",
+      "table_name": "wp_options",
+      "schema_name": "wordpress",
+      "row_count": 6,
+      "columns": [
+        {
+          "column_name": "option_id",
+          "ordinal_position": 1,
+          "data_type": "bigint unsigned",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": true,
+          "cardinality": null
+        },
+        {
+          "column_name": "option_name",
+          "ordinal_position": 2,
+          "data_type": "varchar(191)",
+          "normalized_data_type": "string",
+          "max_length": 191,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "option_value",
+          "ordinal_position": 3,
+          "data_type": "longtext",
+          "normalized_data_type": "text",
+          "max_length": 64,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "autoload",
+          "ordinal_position": 4,
+          "data_type": "varchar(20)",
+          "normalized_data_type": "string",
+          "max_length": 20,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "yes",
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ],
+      "primary_key": [
+        "option_id"
+      ]
+    },
+    {
+      "table_id": "wordpress.wp_users",
+      "table_name": "wp_users",
+      "schema_name": "wordpress",
+      "row_count": 6,
+      "columns": [
+        {
+          "column_name": "ID",
+          "ordinal_position": 1,
+          "data_type": "bigint unsigned",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": true,
+          "cardinality": null
+        },
+        {
+          "column_name": "user_login",
+          "ordinal_position": 2,
+          "data_type": "varchar(60)",
+          "normalized_data_type": "string",
+          "max_length": 60,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "user_email",
+          "ordinal_position": 5,
+          "data_type": "varchar(100)",
+          "normalized_data_type": "string",
+          "max_length": 100,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "user_registered",
+          "ordinal_position": 7,
+          "data_type": "datetime",
+          "normalized_data_type": "datetime",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "0000-00-00 00:00:00",
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "user_status",
+          "ordinal_position": 9,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": "0",
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ],
+      "primary_key": [
+        "ID"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "wordpress.wp_posts",
+      "target_table": "posts",
+      "primary_key": [
+        "ID"
+      ],
+      "fields": [
+        {
+          "source_column": "ID",
+          "target_column": "ID",
+          "target_type": "bigint",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "wordpress.wp_posts",
+              "column": "ID"
+            },
+            "function": "cast",
+            "from_type": "bigint unsigned",
+            "to_type": "bigint"
+          }
+        },
+        {
+          "source_column": "post_status",
+          "target_column": "post_status",
+          "target_type": "varchar(20)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_posts",
+              "column": "post_status"
+            }
+          }
+        },
+        {
+          "source_column": "menu_order",
+          "target_column": "menu_order",
+          "target_type": "int",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "wordpress.wp_posts",
+              "column": "menu_order"
+            },
+            "function": "cast",
+            "from_type": "int",
+            "to_type": "int"
+          }
+        }
+      ]
+    },
+    {
+      "input_schema": "collector",
+      "source_table": "wordpress.wp_options",
+      "target_table": "options",
+      "primary_key": [
+        "option_id"
+      ],
+      "fields": [
+        {
+          "source_column": "option_id",
+          "target_column": "option_id",
+          "target_type": "bigint",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "wordpress.wp_options",
+              "column": "option_id"
+            },
+            "function": "cast",
+            "from_type": "bigint unsigned",
+            "to_type": "bigint"
+          }
+        },
+        {
+          "source_column": "option_name",
+          "target_column": "option_name",
+          "target_type": "varchar(191)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_options",
+              "column": "option_name"
+            }
+          }
+        },
+        {
+          "source_column": "option_value",
+          "target_column": "option_value",
+          "target_type": "longtext",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_options",
+              "column": "option_value"
+            }
+          }
+        },
+        {
+          "source_column": "autoload",
+          "target_column": "autoload",
+          "target_type": "varchar(20)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_options",
+              "column": "autoload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "input_schema": "collector",
+      "source_table": "wordpress.wp_users",
+      "target_table": "users",
+      "primary_key": [
+        "ID"
+      ],
+      "fields": [
+        {
+          "source_column": "ID",
+          "target_column": "ID",
+          "target_type": "bigint unsigned",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_users",
+              "column": "ID"
+            }
+          }
+        },
+        {
+          "source_column": "user_login",
+          "target_column": "user_login",
+          "target_type": "varchar(60)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_users",
+              "column": "user_login"
+            }
+          }
+        },
+        {
+          "source_column": "user_email",
+          "target_column": "user_email",
+          "target_type": "varchar(100)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "wordpress.wp_users",
+              "column": "user_email"
+            }
+          }
+        },
+        {
+          "source_column": "user_registered",
+          "target_column": "registered_on",
+          "target_type": "date",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "wordpress.wp_users",
+              "column": "user_registered"
+            },
+            "function": "cast",
+            "from_type": "datetime",
+            "to_type": "date"
+          }
+        },
+        {
+          "source_column": "user_status",
+          "target_column": "user_status",
+          "target_type": "bigint",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "wordpress.wp_users",
+              "column": "user_status"
+            },
+            "function": "cast",
+            "from_type": "int",
+            "to_type": "bigint"
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "5e89205c1ab66ec9af4396ce8a2787ef050e641e7a80a21abc03abcae730eeae",
+  "expected": {
+    "wordpress.wp_posts": {
+      "rows": [
+        {
+          "ID": null,
+          "post_status": "s0-379",
+          "menu_order": "237425"
+        },
+        {
+          "ID": "2",
+          "post_status": "s1-6184",
+          "menu_order": "760764"
+        },
+        {
+          "ID": "3",
+          "post_status": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "menu_order": "95998"
+        },
+        {
+          "ID": "4",
+          "post_status": "s3-8169",
+          "menu_order": "780749"
+        },
+        {
+          "ID": "5",
+          "post_status": "s4-630",
+          "menu_order": "507258"
+        },
+        {
+          "ID": "6",
+          "post_status": "s5-6638",
+          "menu_order": "583652"
+        }
+      ],
+      "cast_failures": [
+        [
+          "ID",
+          "18446744073709551615",
+          "bigint"
+        ]
+      ]
+    },
+    "wordpress.wp_options": {
+      "rows": [
+        {
+          "option_id": null,
+          "option_name": "s0-7217",
+          "option_value": "v0",
+          "autoload": "s0-7256"
+        },
+        {
+          "option_id": "2",
+          "option_name": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "option_value": "v1",
+          "autoload": "s1-8474"
+        },
+        {
+          "option_id": "3",
+          "option_name": "s2-381",
+          "option_value": "v2",
+          "autoload": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞"
+        },
+        {
+          "option_id": "4",
+          "option_name": "s3-5960",
+          "option_value": "v3",
+          "autoload": "s3-557"
+        },
+        {
+          "option_id": "5",
+          "option_name": "s4-2677",
+          "option_value": "v4",
+          "autoload": "s4-4051"
+        },
+        {
+          "option_id": "6",
+          "option_name": "s5-4376",
+          "option_value": "v5",
+          "autoload": "s5-4405"
+        }
+      ],
+      "cast_failures": [
+        [
+          "option_id",
+          "18446744073709551615",
+          "bigint"
+        ]
+      ]
+    },
+    "wordpress.wp_users": {
+      "rows": [
+        {
+          "ID": "18446744073709551615",
+          "user_login": "s0-6763",
+          "user_email": "s0-327",
+          "registered_on": "2024-04-10",
+          "user_status": "271560"
+        },
+        {
+          "ID": "2",
+          "user_login": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "user_email": "s1-7480",
+          "registered_on": "2024-03-04",
+          "user_status": "999610"
+        },
+        {
+          "ID": "3",
+          "user_login": "s2-761",
+          "user_email": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "registered_on": "2024-08-06",
+          "user_status": "749509"
+        },
+        {
+          "ID": "4",
+          "user_login": "s3-4484",
+          "user_email": "s3-3997",
+          "registered_on": null,
+          "user_status": "497753"
+        },
+        {
+          "ID": "5",
+          "user_login": "s4-6221",
+          "user_email": "s4-9782",
+          "registered_on": "2024-10-25",
+          "user_status": "855376"
+        },
+        {
+          "ID": "6",
+          "user_login": "s5-7607",
+          "user_email": "s5-9926",
+          "registered_on": "2024-05-25",
+          "user_status": "871605"
+        }
+      ],
+      "cast_failures": [
+        [
+          "registered_on",
+          "0000-00-00 00:00:00",
+          "date"
+        ]
+      ]
+    }
+  }
+}
