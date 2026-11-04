@@ -1,0 +1,257 @@
+{
+  "plan": {
+    "contract_version": "1.1",
+    "job_id": "job1",
+    "database_name": "shop",
+    "assignment_version": 2,
+    "wave": 1,
+    "wave_count": 2,
+    "title": "Move to Aurora",
+    "step": 1,
+    "contract": {
+      "artifact": "transformation-contract/v2/step-1.json",
+      "sha256": "2a66ca742ae11a71014c56ff5d55da34c77295b05b8e79e63637aaf15304335c"
+    },
+    "hub_topics": [],
+    "source": {
+      "engine": "postgresql",
+      "dialect": "postgresql",
+      "database": "shop",
+      "tables": [
+        {
+          "table": "public.audit_log",
+          "primary_key": [],
+          "estimated_rows": null
+        },
+        {
+          "table": "public.customers",
+          "primary_key": [
+            "id"
+          ],
+          "estimated_rows": null
+        },
+        {
+          "table": "public.orders",
+          "primary_key": [
+            "id"
+          ],
+          "estimated_rows": null
+        }
+      ],
+      "views": [
+        "public.v_orders"
+      ]
+    },
+    "cdc": {
+      "tool": "dms",
+      "connector_class": null,
+      "topic_prefix": null,
+      "signal_table": null,
+      "snapshot_mode": null,
+      "heartbeat_interval_ms": null,
+      "required_source_settings": []
+    },
+    "hub": [],
+    "initial_load": {
+      "strategy": "dms_full_load",
+      "position_capture": "dms_managed"
+    },
+    "replication": {
+      "target_engine": "aurora_postgresql",
+      "target_engine_line": "16",
+      "sizing": {
+        "row": "small",
+        "instance_class": "dms.t3.medium",
+        "allocated_storage_gb": 50,
+        "included_storage_gb": 0,
+        "database_gb": 0.5,
+        "writes_per_second": 3.5,
+        "reason": "0.5 GB and 3.5 writes per second: up to 10 GB and 50 writes per second.",
+        "note": null
+      },
+      "multi_az_default": true,
+      "lob_max_size_kb": 64,
+      "lob_tables": [
+        {
+          "table": "public.customers",
+          "mode": "full",
+          "columns": [
+            "bio"
+          ],
+          "max_size_kb": null,
+          "reason": ""
+        },
+        {
+          "table": "public.orders",
+          "mode": "limited",
+          "columns": [
+            "note"
+          ],
+          "max_size_kb": 64,
+          "reason": ""
+        }
+      ],
+      "unbounded_varchar": {
+        "max_bytes": 10485760,
+        "columns": 1,
+        "column_names": [
+          "public.customers.bio"
+        ],
+        "unsupported": [],
+        "reason": "One step 1 column is a varchar without a length: the UnboundedVarcharMaxSize endpoint setting is raised to 10485760 bytes."
+      }
+    },
+    "targets": [
+      {
+        "engine": "aurora_postgresql",
+        "role": "owner",
+        "tables": [
+          "public.audit_log",
+          "public.customers",
+          "public.orders"
+        ],
+        "source_of_truth": "aurora_postgresql",
+        "transformation": null
+      }
+    ],
+    "gates": {
+      "wave_gate": "Aurora copy in sync",
+      "parity": [],
+      "max_lag_seconds": 5,
+      "lagging_reads": []
+    },
+    "stacks": [],
+    "monthly_cost_usd": null,
+    "cost_assumptions": [],
+    "unsupported": [],
+    "notes": []
+  },
+  "contract": {
+    "contract_version": "1.0",
+    "job_id": "job1",
+    "assignment_version": 2,
+    "step": 1,
+    "wave": 1,
+    "wave_shape": "homogeneous",
+    "target": {
+      "engine": "aurora_postgresql"
+    },
+    "depends_on": [],
+    "status": "valid",
+    "status_reason": null,
+    "blocked_rule_count": 0,
+    "unsupported_count": 0,
+    "views": [
+      "public.v_orders"
+    ],
+    "rules": [
+      {
+        "input_schema": "collector",
+        "source_table": "public.audit_log",
+        "target_table": "audit_log",
+        "table_class": null,
+        "primary_key": [],
+        "fields": [
+          {
+            "source_column": "msg",
+            "target_column": "msg",
+            "target_type": "VARCHAR(200)",
+            "op": {
+              "op": "copy",
+              "column": {
+                "table_id": "public.audit_log",
+                "column": "msg"
+              }
+            }
+          }
+        ],
+        "status": "valid",
+        "findings": [
+          {
+            "code": "no_key",
+            "severity": "warning",
+            "message": "No primary or unique key: DMS cannot validate this table, and Debezium needs declared key columns.",
+            "table_id": "public.audit_log",
+            "column": null
+          }
+        ]
+      },
+      {
+        "input_schema": "collector",
+        "source_table": "public.customers",
+        "target_table": "customers",
+        "table_class": null,
+        "primary_key": [
+          "id"
+        ],
+        "fields": [
+          {
+            "source_column": "id",
+            "target_column": "id",
+            "target_type": "BIGINT",
+            "op": {
+              "op": "copy",
+              "column": {
+                "table_id": "public.customers",
+                "column": "id"
+              }
+            }
+          },
+          {
+            "source_column": "bio",
+            "target_column": "bio",
+            "target_type": "TEXT",
+            "op": {
+              "op": "copy",
+              "column": {
+                "table_id": "public.customers",
+                "column": "bio"
+              }
+            }
+          }
+        ],
+        "status": "valid",
+        "findings": []
+      },
+      {
+        "input_schema": "collector",
+        "source_table": "public.orders",
+        "target_table": "orders",
+        "table_class": null,
+        "primary_key": [
+          "id"
+        ],
+        "fields": [
+          {
+            "source_column": "id",
+            "target_column": "id",
+            "target_type": "BIGINT",
+            "op": {
+              "op": "copy",
+              "column": {
+                "table_id": "public.orders",
+                "column": "id"
+              }
+            }
+          },
+          {
+            "source_column": "note",
+            "target_column": "note",
+            "target_type": "TEXT",
+            "op": {
+              "op": "copy",
+              "column": {
+                "table_id": "public.orders",
+                "column": "note"
+              }
+            }
+          }
+        ],
+        "status": "valid",
+        "findings": []
+      }
+    ]
+  },
+  "ddl": "CREATE TABLE \"audit_log\" (\n  \"msg\" VARCHAR(200)\n);\n\nCREATE TABLE \"customers\" (\n  \"id\" BIGINT,\n  \"bio\" TEXT\n);\n\nCREATE TABLE \"orders\" (\n  \"id\" BIGINT,\n  \"note\" TEXT\n);\n",
+  "zero_date_defaults": []
+}

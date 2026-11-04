@@ -28,8 +28,6 @@ from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable, price_table
 from src.shared.contract_versioning import contract_for_artifact, current_version, load_contract
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.plan import (
-    DMS_INSTANCE_CLASS,
-    DMS_STORAGE_GB,
     JobInputs,
     build_plans,
     build_step_plans,
@@ -436,8 +434,12 @@ PRICES = _table_of(
     {
         "dms": {
             "replication": {
-                "instance_hourly": {"dms.r6i.large": 0.5},
+                "instance_hourly": {"dms.t3.medium": 0.5},
                 "storage_price_per_gb_month": 0.1,
+                # Step 1 is priced Multi-AZ from its sized class (#1798), so these two decide
+                # its cost; the Single-AZ pair only feeds the MultiAZ=false assumption.
+                "multi_az_instance_hourly": {"dms.t3.medium": 1.0},
+                "multi_az_storage_price_per_gb_month": 0.2,
             }
         },
         "msk": {
@@ -466,11 +468,17 @@ def _sized(size_mb: float | None) -> JobInputs:
 
 def test_the_dms_wave_costs_one_instance_month_and_its_storage() -> None:
     wave1 = build_plans(_job(), prices=PRICES)[0]
-    # 0.5 x 730 hours + 0.1 x 100 GB
-    assert wave1.monthly_cost_usd == 375.0
+    assert wave1.replication is not None
+    sizing = wave1.replication.sizing
+    assert (sizing.instance_class, sizing.allocated_storage_gb) == ("dms.t3.medium", 50)
+    # The DMS model changed on purpose (#1798): the sized class, Multi-AZ, the row's storage
+    # less what the instance price includes (t3.medium: 50 of 50 GB, so none is billed).
+    # Was 375.0 for dms.r6i.large Single-AZ with 100 GB; now 1.0 x 730 hours + 0.2 x 0 GB.
+    assert sizing.included_storage_gb == 50
+    assert wave1.monthly_cost_usd == 730.0
     assert not [u for u in wave1.unsupported if u.kind == "cost"]
     text = " ".join(wave1.cost_assumptions)
-    assert "dms.r6i.large" in text and "retrieved on 2026-11-02" in text
+    assert "dms.t3.medium" in text and "Multi-AZ" in text and "retrieved on 2026-11-02" in text
 
 
 def test_a_step_costs_its_writers_and_the_hub_carries_the_cluster() -> None:
@@ -509,8 +517,11 @@ def test_an_unmeasured_table_leaves_the_hub_cost_null_with_a_reason() -> None:
     ("sections", "items"),
     [
         ({}, ["dms", "dms_storage"]),
-        ({"dms": {"replication": {"storage_price_per_gb_month": 0.1}}}, ["dms"]),
-        ({"dms": {"replication": {"instance_hourly": {"dms.r6i.large": 0.5}}}}, ["dms_storage"]),
+        ({"dms": {"replication": {"multi_az_storage_price_per_gb_month": 0.1}}}, ["dms"]),
+        (
+            {"dms": {"replication": {"multi_az_instance_hourly": {"dms.t3.medium": 0.5}}}},
+            ["dms_storage"],
+        ),
     ],
 )
 def test_a_missing_dms_price_leaves_the_cost_null_with_a_reason(
@@ -835,12 +846,15 @@ def test_the_committed_price_table_prices_the_dms_wave_from_its_entries() -> Non
     # states its cost from them; the figure is recomputed here from the table's entries.
     table = price_table()
     dms = table.section("dms.replication")
+    plans = build_plans(_job())
+    assert plans[0].replication is not None
+    sizing = plans[0].replication.sizing
     expected = round(
-        dms["instance_hourly"][DMS_INSTANCE_CLASS] * HOURS_PER_MONTH
-        + dms["storage_price_per_gb_month"] * DMS_STORAGE_GB,
+        dms["multi_az_instance_hourly"][sizing.instance_class] * HOURS_PER_MONTH
+        + dms["multi_az_storage_price_per_gb_month"]
+        * max(0, sizing.allocated_storage_gb - sizing.included_storage_gb),
         2,
     )
-    plans = build_plans(_job())
     assert expected > 0
     assert plans[0].monthly_cost_usd == expected
     assert not [u for u in plans[0].unsupported if u.kind == "cost"]

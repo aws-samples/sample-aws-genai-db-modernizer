@@ -282,21 +282,28 @@ def _data_movement() -> dict[str, dict[str, object]]:
     matches no row (or rows with different figures) stops the refresh with the section named,
     never a guess. Until the table holds the sections, the plan states no data movement
     cost."""
+    from src.shared.catalog.dms_sizing import dms_sizing
+
+    def _dms(cls: str, usage: str) -> Selector:
+        bare = cls.removeprefix("dms.")
+        return Selector(
+            "AWSDatabaseMigrationSvc", {"Instance Type": bare, "usageType": f"{usage}:{cls}"}, "Hrs"
+        )
+
+    classes = sorted({r.instance_class for r in dms_sizing().rows})
+    dms_section = {
+        "instance_hourly": {c: _dms(c, "InstanceUsg") for c in classes},
+        "multi_az_instance_hourly": {c: _dms(c, "Multi-AZUsg") for c in classes},
+        # Replication instance storage per GB-month beyond the included amount.
+        "storage_price_per_gb_month": Selector(
+            "AWSDatabaseMigrationSvc", {"usageType": "DMS:GP2-Storage"}, "GB-Mo"
+        ),
+        "multi_az_storage_price_per_gb_month": Selector(
+            "AWSDatabaseMigrationSvc", {"usageType": "DMS:Multi-AZ-GP2-Storage"}, "GB-Mo"
+        ),
+    }
     return {
-        "dms.replication": {
-            "instance_hourly": {
-                "dms.r6i.large": Selector(
-                    "AWSDatabaseMigrationSvc",
-                    {"Instance Type": "r6i.large", "usageType": "InstanceUsg:dms.r6i.large"},
-                    "Hrs",
-                )
-            },
-            # Single-AZ replication instance storage is billed per GB-month beyond the
-            # included amount; the Multi-AZ row is DMS:Multi-AZ-GP2-Storage.
-            "storage_price_per_gb_month": Selector(
-                "AWSDatabaseMigrationSvc", {"usageType": "DMS:GP2-Storage"}, "GB-Mo"
-            ),
-        },
+        "dms.replication": dms_section,
         "msk.provisioned": {
             "instance_hourly": {
                 "kafka.m5.large": Selector(

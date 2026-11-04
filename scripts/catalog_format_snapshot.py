@@ -93,7 +93,7 @@ DATA_KEYED: dict[str, tuple[str, ...]] = {
     # The instance classes of each offer section and the offer files' dates, generated
     # from the public price list by scripts/refresh_prices.py. The section names
     # (``service.configuration``) are part of the format and stay literal.
-    "prices": ("?.?.instance_hourly.*", "?.?.instance_memory_gib.*", "published.*"),
+    "prices": ("?.?.instance_hourly.*", "?.?.multi_az_instance_hourly.*", "?.?.instance_memory_gib.*", "published.*"),
     # Model name -> inference profile -> per-token prices.
     "model_prices": ("*.*.{input,output,cache_read,cache_write}",),
 }

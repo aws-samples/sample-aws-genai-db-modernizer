@@ -28,7 +28,6 @@ from src.contracts.data_movement_plan import DataMovementPlan, HubPlan
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_table
 from src.shared.contract_versioning import load_contract
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES
-from src.tools.data_movement.plan import DMS_INSTANCE_CLASS, DMS_STORAGE_GB
 from tests.e2e.pipeline import REPO, PipelineResult, _env, unzip_sample
 
 SCRIPT = "scripts/run_data_movement_plan.py"
@@ -153,18 +152,22 @@ def _check_plans(
     # table the collector did not measure.
     table = price_table()
     dms = table.section("dms.replication")
-    dms_month = round(
-        dms["instance_hourly"][DMS_INSTANCE_CLASS] * HOURS_PER_MONTH
-        + dms["storage_price_per_gb_month"] * DMS_STORAGE_GB,
-        2,
-    )
     hub_gaps = [u for u in hub.unsupported if u.kind == "cost"]
     assert (hub.monthly_cost_usd is not None) != bool(hub_gaps)
     assert all(u.item == "hub_storage" for u in hub_gaps)
     for plan in plans:
         gaps = [u for u in plan.unsupported if u.kind == "cost"]
         if plan.cdc.tool == "dms":
-            assert plan.monthly_cost_usd == dms_month, plan.wave
+            # The step's own sizing, Multi-AZ as the stack deploys it (#1798).
+            assert plan.replication is not None, plan.wave
+            s = plan.replication.sizing
+            month = round(
+                dms["multi_az_instance_hourly"][s.instance_class] * HOURS_PER_MONTH
+                + dms["multi_az_storage_price_per_gb_month"]
+                * max(0, s.allocated_storage_gb - s.included_storage_gb),
+                2,
+            )
+            assert plan.monthly_cost_usd == month, plan.wave
             assert not gaps, plan.wave
         else:
             # A step's cost is its writers; the hub plan carries the cluster.
@@ -199,9 +202,12 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
 
     from src.shared.catalog.prices import PriceTable
     from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_sizing import size_from_collector
     from src.tools.data_movement.plan import build_step_plans, load_inputs
 
     root = _copy_job(run, tmp_path)
+    inputs = load_inputs(LocalArtifactStore(base_dir=str(root)), run.db, run.job_id)
+    cls = size_from_collector(inputs.collector).instance_class
     table = PriceTable(
         region="us-east-1",
         retrieved_on=dt.date(2026, 11, 2),
@@ -209,8 +215,11 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
         sections={
             "dms": {
                 "replication": {
-                    "instance_hourly": {"dms.r6i.large": 0.5},
+                    "instance_hourly": {cls: 0.5},
                     "storage_price_per_gb_month": 0.1,
+                    # The DMS model prices the sized class Multi-AZ (#1798).
+                    "multi_az_instance_hourly": {cls: 1.0},
+                    "multi_az_storage_price_per_gb_month": 0.2,
                 }
             },
             "msk": {
@@ -222,9 +231,12 @@ def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_pat
             "msk_connect": {"workers": {"mcu_price_per_hour": 0.1}},
         },
     )
-    inputs = load_inputs(LocalArtifactStore(base_dir=str(root)), run.db, run.job_id)
     plans, hub = build_step_plans(inputs, prices=table)
-    assert plans[0].monthly_cost_usd == 375.0
+    # The sized class, Multi-AZ: 1.0 x 730 hours + 0.2 x the row's storage.
+    assert plans[0].replication is not None
+    sizing = plans[0].replication.sizing
+    storage = max(0, sizing.allocated_storage_gb - sizing.included_storage_gb)
+    assert plans[0].monthly_cost_usd == round(1.0 * HOURS_PER_MONTH + 0.2 * storage, 2)
     assert hub is not None and hub.monthly_cost_usd is not None, hub.unsupported
     for plan in plans:
         costs = [u for u in plan.unsupported if u.kind == "cost"]

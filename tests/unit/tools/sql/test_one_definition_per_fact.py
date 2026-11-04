@@ -96,6 +96,11 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "a live collector's own parsing of its source's output (filter, sort and time-range "
         "columns); its has_text_search is the text_search fact (#929)"
     ),
+    "src/tools/data_movement/dms_step.py": (
+        "no query is read: a regex checks the CREATE TABLE statements this module renders itself, "
+        "and the sql_mode names (NO_ZERO_DATE, NO_ZERO_IN_DATE) are Aurora MySQL parameter values "
+        "(#1798)"
+    ),
     "src/tools/sql/query_type.py": (
         "the one query_type rule: a statement's first verb after its leading comments (#1178)"
     ),
