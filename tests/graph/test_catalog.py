@@ -296,7 +296,9 @@ def test_every_documented_example_is_a_real_choice(graphs):
 def test_the_choices_are_strings_in_a_stable_order(graphs):
     (param,) = catalog.get_entry("engine_destinations").params
     choices = catalog.param_choices(graphs["old_jobs"], param)
-    assert choices == ["aurora_mysql", "dynamodb"]
+    # The effective version's engines, the cache-only ElastiCache included; the
+    # DocumentDB and OpenSearch of assignment v1 are no longer targets.
+    assert choices == ["aurora_mysql", "dynamodb", "elasticache"]
     (table,) = catalog.get_entry("table_blast_radius").params
     tables = catalog.param_choices(graphs["old_jobs"], table)
     assert "wordpress.wp_posts" in tables and tables == sorted(tables)

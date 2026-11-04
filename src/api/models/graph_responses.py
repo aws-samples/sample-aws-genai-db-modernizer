@@ -29,6 +29,8 @@ __all__ = [
     "CatalogRunResponse",
     "EngineDestination",
     "EngineDetailResponse",
+    "EngineFallback",
+    "EngineTarget",
     "LatencyPercentilesModel",
     "LoadTestPattern",
     "LoadTestQuery",
@@ -85,9 +87,47 @@ class EngineDestination(BaseModel):
     query_count: int
 
 
+class EngineTarget(BaseModel):
+    """One real object of the design (a table, GSI, collection, index, stream or key
+    pattern) in the effective assignment version, with the queries that land on it."""
+
+    target_id: str
+    kind: str
+    name: str
+    #: A GSI's table: its name, and its ``target_id`` in ``parent_id`` (the join key).
+    parent: str | None = None
+    parent_id: str | None = None
+    schema_version: int
+    #: Every effective query that lands on the object, assigned or cache.
+    query_count: int
+    #: How many of those queries use the engine as their cache layer only.
+    cache_query_count: int = 0
+
+
+class EngineFallback(BaseModel):
+    """A labelled fallback, never an object: ``label`` is ``not_designed``,
+    ``out_of_scope`` or ``not_in_design``, ``description`` its wording."""
+
+    target_id: str
+    label: str
+    description: str
+    query_count: int
+    cache_query_count: int = 0
+
+
 class EngineDetailResponse(BaseModel):
+    """``destinations`` is the engine itself (a query's Destination is its engine,
+    #306) with the source tables and access patterns of the queries migrating to it.
+    ``targets`` and ``fallbacks`` (#306, TARGETS edges) are what every effective query
+    lands on in this engine's design, assigned or cache; ``cache_query_count`` says how
+    many of a count's queries use the engine only as their cache layer, so a cache-only
+    engine has empty ``destinations`` and all its counts cache. A query that lands on
+    several objects counts once under each."""
+
     engine: str
     destinations: list[EngineDestination]
+    targets: list[EngineTarget] = []
+    fallbacks: list[EngineFallback] = []
 
 
 class RiskHotspot(BaseModel):

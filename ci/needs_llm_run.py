@@ -92,6 +92,11 @@ E2E_LLM: tuple[str, ...] = (
     "scripts/run_reality_check.py",
     "scripts/run_schema_design.py",
     "scripts/run_synthesis.py",
+    # The /explore step (#307) runs a catalog entry on the job and gives its rows to a
+    # model; the check compares the model's answer with the same entry's result, so a
+    # change to an entry's query or to the runner changes what the model is told.
+    "src/graph/catalog.py",
+    "scripts/graph_query.py",
 )
 BEDROCK_SMOKE: tuple[str, ...] = (
     # Files with an external branch and a Bedrock branch are in both lists.

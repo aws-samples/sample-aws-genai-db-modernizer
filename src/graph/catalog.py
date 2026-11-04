@@ -277,10 +277,13 @@ TABLE_PARAM = Param(
 DESTINATION_ENGINE_PARAM = Param(
     "engine",
     ParamKind.ENGINE,
-    "An engine id the assignment migrates queries to.",
-    "MATCH (d:Destination) RETURN DISTINCT d.engine AS value ORDER BY value",
+    "An engine id with design objects or fallbacks in the effective version, which "
+    "includes an engine that is only a cache layer.",
+    "MATCH (:Query)-[:TARGETS {effective: true}]->(o:TargetObject) "
+    "RETURN DISTINCT o.engine AS value ORDER BY value",
     "dynamodb",
-    "MATCH (d:Destination {engine: $value}) RETURN d.engine AS value",
+    "MATCH (:Query)-[:TARGETS {effective: true}]->(o:TargetObject {engine: $value}) "
+    "RETURN DISTINCT o.engine AS value",
 )
 TARGET_PARAM = Param(
     "target_id",
@@ -602,31 +605,56 @@ CATALOG: tuple[CatalogEntry, ...] = (
         title="Everything going to a given engine",
         question="Which queries, source tables and access patterns does this engine get?",
         cypher=(
-            "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) "
+            "MATCH (q:Query)-[t:TARGETS {effective: true}]->(o:TargetObject {engine: $engine}) "
+            "WITH o, collect(DISTINCT CASE WHEN t.cache = true THEN 'c' ELSE 'a' END + q.id) "
+            "AS qids, count(DISTINCT CASE WHEN t.cache = true THEN q.id END) AS cache_queries "
+            "WITH collect({id: o.id, queries: size(qids), cache_queries: cache_queries}) "
+            "AS target_counts, "
+            "collect(CASE WHEN o.fallback = false THEN o.id END) AS targets, "
+            "collect(CASE WHEN o.fallback = true THEN o.id END) AS fallbacks, "
+            "collect(qids) AS groups "
+            "UNWIND groups AS grp UNWIND grp AS tagged "
+            "MATCH (q:Query) WHERE q.id = substring(tagged, 2, size(tagged)) "
             "OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) "
             "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
-            "RETURN d.id AS destination, collect(DISTINCT st.id) AS source_tables, "
-            "collect(DISTINCT ap.id) AS access_patterns, count(DISTINCT q) AS queries "
+            "RETURN $engine AS destination, collect(DISTINCT st.id) AS source_tables, "
+            "collect(DISTINCT ap.id) AS access_patterns, targets, fallbacks, target_counts, "
+            "count(DISTINCT q) AS queries, "
+            "count(DISTINCT CASE WHEN left(tagged, 1) = 'c' THEN q.id END) AS cache_queries "
             "ORDER BY queries DESC, destination"
         ),
         max_rows=MAX_ROWS,
         projection=Projection(
             nodes=(
-                NodeRef("destination", "Destination"),
+                NodeRef("destination", "Engine"),
                 NodeRef("source_tables", "SourceTable"),
                 NodeRef("access_patterns", "AccessPattern"),
+                NodeRef("targets", "TargetObject"),
+                NodeRef("fallbacks", "TargetObject"),
             ),
             edges=(
                 EdgeRef("source_tables", "destination", "migrates to"),
                 EdgeRef("destination", "access_patterns", "serves"),
+                EdgeRef("targets", "destination", "HOSTED_ON"),
+                EdgeRef("fallbacks", "destination", "HOSTED_ON"),
             ),
         ),
         params=(DESTINATION_ENGINE_PARAM,),
         needs=(ASSIGNMENT,),
         row_key=("destination",),
         note=(
-            "A query's `destination` is its engine (#306); where it lands in the design "
-            "is `TARGETS` (questions L and M)."
+            "One row for the engine, read from `TARGETS` alone: every query of the "
+            "effective version that lands on one of the engine's objects counts in "
+            "`queries`, whether the engine is its assigned engine or its cache layer, "
+            "and `cache_queries` says how many of those are cache. `targets` are the "
+            "design objects and `fallbacks` the labelled stand-ins "
+            "(`<engine>:not_designed`, `<engine>:out_of_scope`, `<engine>:not_in_design`), "
+            "which are no objects. `target_counts` gives each of them, fallbacks "
+            "included, as `{id, queries, cache_queries}`; a query that lands on several "
+            "objects counts once under each, so the counts may add up to more than "
+            "`queries`. An empty list comes back as null. A cache-only engine such as "
+            "ElastiCache has no `Destination`, so its row is there with `queries` all "
+            "cache. Questions L and M list one query's or one object's links."
         ),
     ),
     CatalogEntry(

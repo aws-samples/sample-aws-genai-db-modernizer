@@ -47,7 +47,9 @@ from src.graph.store import GraphStore
 #   explorer's overlay code; Wave.table_groups_json, Engine role, rationale and
 #   workload_percent, Query access_pattern_class and access_pattern_reason,
 #   AssignmentVersion.has_report.
-GRAPH_SCHEMA_REVISION = 11
+# - 12 (#306): TARGETS.cache, true when the engine is the query's cache engine in
+#   that version and not its assigned engine.
+GRAPH_SCHEMA_REVISION = 12
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -219,10 +221,12 @@ REL_TABLES = [
     )""",
     # A query's design objects per assignment version (#306), with the schema
     # version they come from (null for a fallback), whether the version is the
-    # effective one, and the access patterns that name the object (JSON list).
+    # effective one, the access patterns that name the object (JSON list) and whether
+    # the engine is the query's cache layer in that version (not its assigned engine).
     """CREATE REL TABLE IF NOT EXISTS TARGETS (
         FROM Query TO TargetObject,
-        version INT64, schema_version INT64, effective BOOLEAN, pattern_ids_json STRING
+        version INT64, schema_version INT64, effective BOOLEAN, pattern_ids_json STRING,
+        cache BOOLEAN
     )""",
     # AFFECTS and SUPERSEDES keep their meaning, made versioned (#306): an
     # assignment version AFFECTS the queries its Moves changed (role 'moved', or

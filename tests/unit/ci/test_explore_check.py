@@ -174,16 +174,26 @@ def test_thousands_separators_are_accepted() -> None:
     assert _check(_records("DynamoDB gets 1,234 queries."), expected)["pass"] is True
 
 
-# The e2e-llm question: a parameter, and only the top row counts.
+# The e2e-llm question: a parameter, answered by the entry's one row for the engine. Its
+# target_counts are per design object (a table, a GSI), not the question's figure.
 DEST_EXPECTED = {
     "status": "ok",
     "entry": "engine_destinations",
     "params": {"engine": "dynamodb"},
     "rows": [
-        {"destination": "wordpress.wp_posts-dynamodb", "source_tables": ["wordpress.wp_posts"],
-         "access_patterns": ["DDB-AP-12"], "queries": 8},
-        {"destination": "wordpress.wp_options-dynamodb", "source_tables": ["wordpress.wp_options"],
-         "access_patterns": ["DDB-AP-30"], "queries": 5},
+        {
+            "destination": "dynamodb",
+            "source_tables": ["wordpress.wp_posts", "wordpress.wp_options"],
+            "access_patterns": ["DDB-AP-12", "DDB-AP-30"],
+            "targets": ["dynamodb:table:wp_posts@v2", "dynamodb:table:wp_options@v2"],
+            "fallbacks": None,
+            "target_counts": [
+                {"id": "dynamodb:table:wp_posts@v2", "queries": 13, "cache_queries": 0},
+                {"id": "dynamodb:table:wp_options@v2", "queries": 5, "cache_queries": 0},
+            ],
+            "queries": 40,
+            "cache_queries": 0,
+        },
     ],
 }  # fmt: skip
 DEST_RUN = f"uv run python scripts/graph_query.py run engine_destinations --job-id {JOB} --param engine=dynamodb"
@@ -206,17 +216,30 @@ def _dest(answer: str, commands: tuple[str, ...] = (DEST_RUN,)) -> dict:
 @pytest.mark.parametrize(
     "answer",
     [
-        "`wp_posts` sends the most queries to DynamoDB: 8, followed by wp_options with 5.",
-        "The top one is ``wordpress.wp_posts-dynamodb`` with 8 queries.",
+        "DynamoDB serves 40 queries, from wp_posts and wp_options among others.",
+        "The `dynamodb` destination gets 40 queries.",
     ],
 )
-def test_the_top_row_with_its_count_passes(answer: str) -> None:
+@pytest.mark.passes_on_main
+def test_the_engines_row_with_its_count_passes(answer: str) -> None:
     assert _dest(answer)["pass"] is True, answer
 
 
-def test_the_top_row_with_another_rows_count_fails() -> None:
-    assert _dest("wp_posts sends 5 queries and wp_options 8.")["pass"] is False
-    assert _dest("wp_options sends the most: 8 queries.")["pass"] is False
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # What a model answered when asked for the most-queried source table: the
+        # per-design-object count, not the engine's.
+        "`wp_posts` sends the most queries to DynamoDB: 13, followed by wp_options with 5.",
+        "DynamoDB serves 13 queries through its wp_posts table.",
+        "DynamoDB serves 39 queries.",
+    ],
+)
+@pytest.mark.passes_on_main
+def test_an_answer_citing_only_per_target_counts_or_a_wrong_total_fails(answer: str) -> None:
+    out = _dest(answer)
+    assert out["pass"] is False, answer
+    assert out["missing_figures"] == ["dynamodb: 40"]
 
 
 def test_the_run_must_bind_the_parameter() -> None:
@@ -273,10 +296,11 @@ def test_an_expected_result_with_no_rows_cannot_be_checked() -> None:
     assert out["pass"] is False and "no job" in out["error"]
 
 
+@pytest.mark.passes_on_main
 def test_the_cli_writes_the_verdict_and_exits_by_it(tmp_path: Path) -> None:
     expected = tmp_path / "expected.json"
     expected.write_text(json.dumps(DEST_EXPECTED))
-    for answer, code in (("wp_posts: 8 queries.", 0), ("Entry B: wp_posts.", 1)):
+    for answer, code in (("DynamoDB serves 40 queries.", 0), ("Entry B: wp_posts.", 1)):
         transcript = tmp_path / "t.jsonl"
         transcript.write_text(
             "\n".join(json.dumps(r) for r in _records(answer, commands=(DEST_RUN,)))
@@ -385,6 +409,15 @@ def test_the_explore_question_needs_a_parameter_and_is_not_the_catalogs_wording(
     assert [p.name for p in known.params] == [param.group(1)]
     assert question != known.question
     assert "--names destination,source_tables --count queries --rows top" in script
+
+
+def test_the_explore_question_asks_for_the_engines_count_the_entry_answers() -> None:
+    """The entry returns one row for the engine (its queries and source tables), so the
+    question asks for that count; a question about the most-queried table was answered
+    from the entry's per-object `target_counts` instead (#1826)."""
+    question = re.search(r'EXPLORE_QUESTION="([^"]+)"', _script()).group(1)
+    assert question == "How many queries does DynamoDB serve, and from which source tables?"
+    assert "most" not in question.lower()
 
 
 def test_the_explore_step_runs_after_the_browser_tests() -> None:

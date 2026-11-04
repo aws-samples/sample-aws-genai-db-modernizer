@@ -61,6 +61,9 @@ def _runs(*paths: str) -> dict[str, list[str]]:
         "src/tools/schema/design_metrics.py",
         "src/agents/referee/table_resolution.py",
         "src/storage/assignment_versioning.py",
+        # The /explore step gives a catalog entry's rows to a model.
+        "src/graph/catalog.py",
+        "scripts/graph_query.py",
     ],
 )
 def test_headless_paths_need_e2e_llm_only(path: str) -> None:
