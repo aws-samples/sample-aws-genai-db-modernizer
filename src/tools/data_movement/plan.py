@@ -245,6 +245,17 @@ class JobInputs:
     collector: Mapping[str, Any]
     # engine -> (path under the job, the design's payload)
     schema_designs: Mapping[str, tuple[str, Mapping[str, Any]]] = field(default_factory=dict)
+    # The assignment version ``load_inputs`` resolved (0: not resolved, read the report's).
+    assignment_version: int = 0
+
+    def resolved_version(self) -> int:
+        """The assignment version: the one ``load_inputs`` resolved (from the report, else
+        the path), else the report's, else the assignment's; 0 when none says."""
+        return self.assignment_version or int(
+            (self.report.get("assignment_summary") or {}).get("version")
+            or self.assignment.get("version")
+            or 0
+        )
 
 
 @dataclass
@@ -794,11 +805,7 @@ class _JobView:
             schema=schema,
             legacy=str(source_db.get("engine") or "").lower(),
             database=str(source_db.get("database_name") or inputs.database_name),
-            assignment_version=int(
-                (inputs.report.get("assignment_summary") or {}).get("version")
-                or inputs.assignment.get("version")
-                or 0
-            ),
+            assignment_version=inputs.resolved_version(),
             read_by=_assigned_tables(query_assignments, schema),
             sources=sources,
             cached_reads={
@@ -1398,6 +1405,7 @@ def load_inputs(store: Any, db: str, job_id: str) -> JobInputs:
         assignment=assignment,
         collector=collector,
         schema_designs=designs,
+        assignment_version=version,
     )
 
 
@@ -1416,11 +1424,7 @@ def _write_hub_plan(store: Any, db: str, job_id: str, hub: HubPlan) -> str:
 def _contract_refs(store: Any, inputs: JobInputs) -> dict[int, ContractRef]:
     """Step 1's transformation contract and its pinned hash (#1764 writes the hash beside the
     contract as ``step-1.sha256``, one hex line), when the store has both."""
-    version = int(
-        (inputs.report.get("assignment_summary") or {}).get("version")
-        or inputs.assignment.get("version")
-        or 0
-    )
+    version = inputs.resolved_version()
     artifact = f"transformation-contract/v{version}/step-1.json"
     prefix = f"{inputs.database_name}/{inputs.job_id}/transformation-contract/v{version}"
     hash_file = f"{prefix}/step-1.sha256"

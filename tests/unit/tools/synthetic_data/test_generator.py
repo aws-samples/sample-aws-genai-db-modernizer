@@ -192,3 +192,21 @@ def test_unrecognised_kinds_are_marked_unchecked():
     t = generate_rows(_table(cols, []), dialect="mysql", seed=1)
     assert t.unchecked_source_columns == ("g",)
     assert all(r["g"] is not None for r in t.rows)
+
+
+def test_decimal_precision_is_parsed_from_data_type_when_the_fields_are_absent():
+    col = _col("avg", "decimal(3,2)", "decimal")
+    assert edge_values(col, dialect="mysql") == [Decimal("9.99")]
+    assert edge_values(_col("n", "numeric(10)", "decimal"), dialect="postgresql") == [
+        Decimal("9" * 10)
+    ]
+    rows = generate_rows(_table([col], []), dialect="mysql", seed=2).rows
+    assert all(Decimal(0) <= r["avg"] <= Decimal("9.99") for r in rows)
+
+
+def test_mysql_text_families_are_modelled_even_with_a_text_normalized_type():
+    for name in ("tinytext", "text", "mediumtext", "longtext"):
+        col = _col("t", name, "text", max_length=4294967295)
+        t = generate_rows(_table([col], []), dialect="mysql", seed=1)
+        assert t.unchecked_source_columns == (), name
+        assert all(isinstance(r["t"], str) for r in t.rows)

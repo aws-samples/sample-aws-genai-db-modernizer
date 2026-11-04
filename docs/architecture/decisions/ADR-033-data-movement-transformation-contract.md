@@ -84,13 +84,13 @@ This release is one-way: data flows from the engine that holds the writes to the
 
 | Decision | Enforced by |
 |---|---|
-| 1. A transformation contract per step | none yet -- #1764 |
+| 1. A transformation contract per step | none yet -- #1768 |
 | 2. The contract's boundary | none yet -- #1766 |
 | 3. The contract is a catalog | none yet -- #1766 |
 | 4. Lineage at design time, in typed operations | none yet -- #1772 |
 | 5. Joins from a precomputed catalog of join paths | none yet -- #1765 |
 | 6. Our code validates and compiles | none yet -- #1763 |
-| 7. Step 1 needs no model | none yet -- #1764 |
+| 7. Step 1 needs no model | `tests/unit/tools/transformation_contract/test_step1.py::test_cross_engine_and_no_anchor_get_no_rules`<br>`tests/unit/tools/transformation_contract/test_write.py::test_two_runs_write_the_same_bytes`<br>`tests/unit/tools/transformation_contract/test_validate_step1.py::test_no_key_is_a_warning_not_an_error` |
 | 8. Later steps build only on proven earlier steps | none yet -- #1768 |
 | 9. The cache step | none yet -- #1770 |
 | 10. Debezium on MSK Connect into compacted topics, DMS for step 1 | `tests/unit/tools/data_movement/test_plan.py::test_wave_one_is_dms_from_the_legacy_source_with_no_hub`<br>`tests/unit/tools/data_movement/test_plan.py::test_later_waves_are_debezium_from_the_aurora_engine`<br>`tests/unit/tools/data_movement/test_debezium_connector.py::test_every_table_topic_is_created_compacted_with_its_partitions` |

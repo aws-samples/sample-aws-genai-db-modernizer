@@ -33,6 +33,7 @@ from src.tools.data_movement.plan import (
     JobInputs,
     build_plans,
     build_step_plans,
+    load_inputs,
     write_plans,
 )
 
@@ -554,6 +555,17 @@ def test_written_plans_are_the_registered_contract_and_read_back(tmp_path: Path)
     write_plans(store, "shop", "job-1")
     assert [(tmp_path / p).read_bytes() for p in written] == first
     assert json.loads(first[0])["wave"] == 1
+
+
+def test_load_inputs_sets_the_resolved_assignment_version(tmp_path: Path) -> None:
+    job = _job()
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    store.write_json(
+        "shop/job-1/synthesis/v2/report.json", {"contract_version": "1.0", **job.report}
+    )
+    store.write_json("shop/job-1/assignment/v2/assignment.json", dict(job.assignment))
+    store.write_json("shop/job-1/collector/output.json", dict(job.collector))
+    assert load_inputs(store, "shop", "job-1").assignment_version == 2
 
 
 def test_the_job_has_one_topic_prefix_and_names_a_signal_table() -> None:
