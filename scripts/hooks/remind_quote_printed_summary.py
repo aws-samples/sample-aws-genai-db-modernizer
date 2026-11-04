@@ -19,8 +19,10 @@ It speaks only for a real top-level call, one simple command
 ``uv run python scripts/print_summary.py ... --gate|--final ...`` whose stdout is the Markdown
 block (it starts ``## ``; a JSON error line or an empty output gets nothing). A call inside a
 subagent (the event carries ``agent_id``: ``/synthesize`` prints the final summary into its own
-report) gets nothing. A reminder only: it never blocks, always exits 0, and any error prints
-nothing. Stdlib only, no repo imports.
+report) gets nothing. The reminder asks for the gate before the approval question and the
+final summary before the ``MODERNIZE_RESULT`` line (in ui mode, the final summary's
+``Results page`` line), never "the block above". A reminder only: it never blocks, always
+exits 0, and any error prints nothing. Stdlib only, no repo imports.
 """
 
 from __future__ import annotations

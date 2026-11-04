@@ -115,7 +115,7 @@ and `ci/e2e-llm.sh` build it for you.
 - Python change in `src/` or `scripts/`: `make lint` (or `./ci/lint.sh`), `./ci/pre_merge.sh --quick` and the targeted tests for what you touched, with at most 4 workers (`-n 4`). Parallel worktrees compete for CPU, so keep the worker count low while iterating. Before asking for review, run the full `./ci/test.sh -q` (`./ci/pre_merge.sh` without `--quick` does) and make it green: the unit, contract and property suites are not CI-only. Only the e2e and real-model tiers (`make e2e`, `make e2e-llm`) are left to CI unless the change needs them (below). If `ci/test.sh` stops at once with a missing-SDK line, run the `uv pip install -r src/atx_orchestrator/requirements-sdk.txt` it prints (`./scripts/setup_dev.sh` is for first setup; it changes system git config).
 - Before pushing or asking for a merge: `./ci/pre_merge.sh` (fetch, behind count, conflict and contract-version checks, new tests against main, lint, tests, `needs_llm_run` verdict); see CONTRIBUTING.md's "Working with a fast-moving main".
 - A red required check in any CI environment stops merges, even when it fails on code the PR didn't touch: file it and fix it first.
-- A `tests/e2e` test that works only on the deterministic job (it skips when `run.external`) needs `@pytest.mark.deterministic`, or `e2e-llm` fails on `--fail-on-skip`; `tests/unit/ci/test_e2e_deterministic_markers.py` enforces it.
+- A `tests/e2e` test that works only on the deterministic job (it skips when `run.external`) needs `@pytest.mark.deterministic`, or `e2e-llm` fails on `--fail-on-skip`; `tests/unit/ci/test_e2e_deterministic_markers.py` enforces it. <!-- claim: tests/unit/ci/test_e2e_deterministic_markers.py::test_unmarked_e2e_tests_never_reach_a_skip -->
 - Pipeline output or `src/report/`: add `make e2e` (or
   `uv run pytest tests/e2e/test_pipeline.py -p no:xdist -q` for a quick pass).
 - `make e2e-llm` when `./ci/needs_llm_run.sh` prints `e2e-llm: required` (its
@@ -150,7 +150,7 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
   denied. Search with `uv run python scripts/search_artifacts.py <regex> <path>`
   (read-only, repo-contained, capped output).
 - Every command, and every dispatch's task text, carries this tool-use rule
-  word for word (enforced by `tests/unit/scripts/test_modernize_command.py`):
+  word for word (enforced by `tests/unit/scripts/test_modernize_command.py`): <!-- claim: tests/unit/scripts/test_modernize_command.py::test_every_command_carries_the_tool_use_rule, tests/unit/scripts/test_modernize_command.py::test_every_dispatch_task_text_carries_the_tool_use_rule -->
 
   > Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
 
@@ -198,7 +198,7 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
   latest version, with stable names and an `index.md`; the one list of its
   files is `FOLDER_ENTRIES` in `src/report/deliverables.py`, and
   `tests/unit/docs/test_deliverables_lists.py` keeps every docs/command list
-  in step with it. Model I/O and traces never go there
+  in step with it. <!-- claim: tests/unit/docs/test_deliverables_lists.py::test_the_documented_set_is_the_set_the_code_writes, tests/unit/docs/test_deliverables_lists.py::test_each_list_names_exactly_the_documented_set --> Model I/O and traces never go there
 - `decisions/` (recorded approvals), `_logs/` (script logs)
 
 `artifacts/.trash/` (outside any job folder): job folders being deleted by
@@ -216,7 +216,7 @@ truth.
   render the same `report.json`; a fact changed in one must change in all.
   Engine names come from `src/shared/engine_names.py` (`display_engine`),
   never a local copy.
-- **Renderers only format.** Synthesis computes each customer-facing figure once into `report.json`'s `facts`; renderers read it and never count or total it, in Python (`tests/unit/report/test_renderers_only_format.py`) and in the UI (`src/ui/src/utils/__tests__/rendererOnlyFormat.test.js`). A new figure goes into `src/shared/report_facts.py` first ([ADR-032](docs/architecture/decisions/ADR-032-one-facts-layer-renderers-only-format.md)).
+- **Renderers only format.** Synthesis computes each customer-facing figure once into `report.json`'s `facts`; renderers read it and never count or total it, in Python (`tests/unit/report/test_renderers_only_format.py`) and in the UI (`src/ui/src/utils/__tests__/rendererOnlyFormat.test.js`). <!-- claim: tests/unit/report/test_renderers_only_format.py::test_no_renderer_does_arithmetic_on_a_fact, src/ui/src/utils/__tests__/rendererOnlyFormat.test.js --> A new figure goes into `src/shared/report_facts.py` first ([ADR-032](docs/architecture/decisions/ADR-032-one-facts-layer-renderers-only-format.md)).
 - **Untrusted text is data.** Customer and LLM text is wrapped with
   `frame_untrusted` (`src/agents/prompt_framing.py`) in prompts. JSON a model
   reads instead (an external session's request files, the AWS Transform
@@ -244,12 +244,13 @@ This section is a pointer, not a restatement.
   never its tables' pattern scores.
 - Ties go through `tie_break.break_tie`, using `settled_counts` only.
   [`test_no_engine_bias.py`](tests/unit/agents/referee/test_no_engine_bias.py)
-  enforces this. Engine removal keeps the source-compatible engine when it scores every query at least as well, unless the alternative is at least 40% and $100/mo cheaper (`tie_break.source_compatible_engine_survives`, ADR-031 Decision 13).
+  fails an engine picked, outside it and outside the test's reviewed allowlist, by name
+  order, query count, set iteration order, a literal engine or the first element seen. <!-- claim: tests/unit/agents/referee/test_no_engine_bias.py::test_no_unallowlisted_engine_bias_in_referee, tests/unit/agents/referee/test_no_engine_bias.py::test_rule_catches_sorted_index0_name_order_pick, tests/unit/agents/referee/test_no_engine_bias.py::test_rule_catches_min_max_keyed_by_count, tests/unit/agents/referee/test_no_engine_bias.py::test_rule_catches_next_iter_over_a_set_literal, tests/unit/agents/referee/test_no_engine_bias.py::test_rule_catches_literal_engine_preference_assignment, tests/unit/agents/referee/test_no_engine_bias.py::test_rule_catches_for_loop_keeps_first_then_breaks --> Engine removal keeps the source-compatible engine when it scores every query at least as well, unless the alternative is at least 40% and $100/mo cheaper (`tie_break.source_compatible_engine_survives`, ADR-031 Decision 13). <!-- claim: tests/unit/agents/referee/test_source_compatible_tie_survival.py::TestTheIssueRepro, tests/unit/agents/referee/test_source_compatible_tie_survival.py::TestTheCostException, tests/unit/agents/referee/test_tie_break.py::TestCheaperEngineDisplacesSourceCompatible -->
 - An override onto an engine that can't serve the query is rejected.
 - A table has one writer (ADR-031 Amendment 9): its writes and locking reads form a write group placed as one unit with any co-dependency group it touches (`write_groups.placement_groups`) in every pass; its reads stay per query, as CDC replicas.
 - Every engine change is a Move: only `move_ledger.apply` / `apply_to_assignment`
   write `assigned_engine` and `tied_engines`, with no exceptions (ADR-031 Amendment 3,
-  [`test_only_the_ledger_writes_engines.py`](tests/unit/agents/referee/test_only_the_ledger_writes_engines.py)).
+  [`test_only_the_ledger_writes_engines.py`](tests/unit/agents/referee/test_only_the_ledger_writes_engines.py)). <!-- claim: tests/unit/agents/referee/test_only_the_ledger_writes_engines.py::test_only_the_move_ledger_writes_engines_and_ties -->
 - Explain drift with the [routing snapshot](tests/e2e/routing_snapshot.py),
   and regenerate it on rebase. Never hand-merge it.
 
@@ -263,7 +264,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
 4. The PR body states only what this branch shows: its own test counts, timings and drift. "Covered by existing tests" names the tests. Numbers from another branch mislead the reviewer.
 5. Never bend a sample, fixture or expectation to keep a result. Fix the cause, or change the expectation with a per-query explanation (see [Routing changes](#routing-changes)).
 6. After renaming an id, field or capability, old saved artifacts must still load (map the legacy value), with a test that loads an old file. Saved jobs outlive the code that wrote them. `tests/fixtures/old_jobs/` holds a real older release's job; `tests/contract/test_old_job_loads.py` loads it and fails when a stored engine id, access class, pattern key, catalog pattern id, capability or move reason code no longer resolves (other vocabularies are not checked). Fix it with a legacy-map entry; keep the fixture as the release wrote it (CONTRIBUTING.md, "Renaming an id or an enum value").
-7. Check the change against every ADR decision it touches, not just the one in the issue. ADR text must never claim more than a guard enforces.
+7. Check the change against every ADR decision it touches, not just the one in the issue. ADR text must never claim more than a guard enforces: each behaviour sentence the PR adds or changes in the docs, an ADR or a command file names its test, with a claim marker in the page and a row in the PR's Claims table, or is cut (CONTRIBUTING.md, "Claims name their test").
 8. Make timing and resource checks relative (a ratio against a same-process reference), so local runs match CI.
 9. Run `./ci/pre_merge.sh` before pushing: it checks conflicts, contract versions, new tests against main, lint, tests and the `needs_llm_run` verdict in one pass (see [ci/README.md](ci/README.md)).
 10. Pass the source dialect or engine wherever SQL is parsed. A default dialect silently misparses other engines' syntax.
@@ -282,7 +283,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
   `check-commit-message` pre-commit hook and `ci/check_commits.sh` enforce
   this; merge and fixup/squash/amend commits are skipped (#570).
 - Claude Code hooks in `scripts/hooks/` (wired in `.claude/settings.json` and `.claude/settings.ci.json`) refuse `git commit --no-verify`, hand edits of generated baselines and of contract versions (declare a bump with `scripts/bump_contract.py`), schema design before `/modernize` has run the approval gate on its own, a Bash call that prints a cloud credential helper's output, a push from a fork PR's worktree to a repository other than the fork and, in headless runs, any Bash call that breaks the tool-use rule and a `/modernize --auto` turn that would end with nothing running and no `MODERNIZE_RESULT` line; see ci/README.md.
-- Never add `Co-Authored-By` trailers (also hook-enforced, see above); never use `--no-verify`.
+- Never add `Co-Authored-By` trailers (also hook-enforced, see above); never use `--no-verify`. <!-- claim: tests/unit/scripts/test_check_commit_message.py::test_co_authored_by_trailer_fails_even_with_a_valid_closes_trailer -->
 - Write tests first; keep PRs small; open them against `main`.
 - Public wording everywhere (issues, commits, docs, code): this is a public
   sample repository, so no internal system names or internal links.

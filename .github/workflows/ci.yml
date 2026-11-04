@@ -61,6 +61,10 @@ jobs:
         # request, checks every non-merge commit ahead of origin/main.
         run: ./ci/check_commits.sh
       - name: Lint
+        # The checkout above has origin/main (fetch-depth: 0), so the ci/README.md budget
+        # must compare its allowances with main's; a missing ref fails here (#1851).
+        env:
+          README_BUDGET_REQUIRE_BASE: "1"
         run: ./ci/lint.sh
 
   test-shard:

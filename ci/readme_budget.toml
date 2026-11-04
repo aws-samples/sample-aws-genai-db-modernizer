@@ -1,0 +1,38 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+# Allowances for the ci/README.md sections that were over the length budget when it
+# landed (#1851): a ceiling at each section's size then, in characters for the section
+# and for its largest block. ci/readme_budget.py fails an allowance that rises against
+# the base ref's copy of this file, or that the base does not have: lower an entry as its
+# section is trimmed, remove it once the section fits the default budget, never add one.
+
+[[allowance]]
+heading = "## `test.sh`"
+chars = 6488
+block = 1200
+
+[[allowance]]
+heading = "## `pre_merge.sh`"
+chars = 8215
+block = 3020
+
+[[allowance]]
+heading = "## `e2e.sh`"
+chars = 9299
+block = 2199
+
+[[allowance]]
+heading = "## `replay.sh`"
+chars = 4916
+block = 3886
+
+[[allowance]]
+heading = "## `e2e-llm.sh`"
+chars = 26617
+block = 4570
+
+[[allowance]]
+heading = "## `../.claude/settings.ci.json`"
+chars = 6267
+block = 1200

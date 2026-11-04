@@ -10,6 +10,8 @@ log "isort"; uv run isort --profile=black --line-length=100 --check-only src/ te
 log "mypy";  uv run mypy src/
 log "license headers"; uv run python scripts/license_headers.py --check
 log "commands"; uv run python scripts/validate_skills.py
+log "claim markers"; uv run python ci/claims.py check
+log "ci/README budget"; uv run python ci/readme_budget.py
 log "catalog"; uv run python scripts/render_catalog.py --check
 log "graph catalog"; uv run python scripts/render_graph_catalog.py --check
 log "contract schemas"; uv run python scripts/render_contract_schemas.py --check

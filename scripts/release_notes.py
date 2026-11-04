@@ -28,6 +28,23 @@ release saying so. This script writes the section the release attaches, for the 
 It reads committed files at two refs and runs no pipeline, so it needs only git and the
 repository's history (the release workflow checks out with full history).
 
+Ordering: engine changes first, then reason-code-only changes, then score-only drift,
+each by sample and query. When ``--until`` is a tag the public contract's released
+snapshot or the catalog format snapshot was not recorded for, a note names the
+``--write-released`` command that records that tag's own shape.
+
+``--body`` writes the release body's copy: at most 50 engine and reason-code rows,
+score-only drift as one summary line (counts per sample and per score change), 40
+changelog lines of at most 400 characters, and under 100,000 characters overall
+(GitHub's limit is 125,000), each cut pointing at the attachment. ``--previous-tag <tag>``
+prints the tag a release is compared with: the highest version tag below it, by exact
+name and PEP 440 order, so a final release follows its own pre-releases and a hotfix
+follows its own line. The release workflow (``.github/workflows/release.yml``, on a
+``v*`` tag) uses it for every range, puts the ``--body`` copy in the release body and
+attaches the full file as ``release-changes.md``; the notes step is non-blocking
+(``continue-on-error``), and a failure leaves a warning line in the body. Tests:
+``tests/unit/scripts/test_release_notes.py``.
+
 Usage:
     uv run python scripts/release_notes.py --since v0.3.0-beta.1 --until v0.4.0 \\
         --output release-changes.md

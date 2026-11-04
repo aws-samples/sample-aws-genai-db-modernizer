@@ -7,7 +7,8 @@ name: PR Evidence
 # check (a maintainer decision). The second job, "PR Evidence results", is the one to
 # make required. On a pull request it passes; in the merge queue it runs the whole check
 # with --require-results (verdict lines, contradictions, result lines, and a missing
-# result line) and fails on any problem or API error, so a merge never skips a result. The logic and its tests: ci/pr_evidence.py,
+# result line, and the Claims table of #1851 against the entry's own diff) and fails on
+# any problem or API error, so a merge never skips a result. The logic and its tests: ci/pr_evidence.py,
 # tests/unit/ci/test_pr_evidence.py. Runs on fork PRs: no secrets, read-only token.
 # The PR body is untrusted: it reaches the script only through an env var, never a shell line.
 on:
@@ -77,15 +78,28 @@ jobs:
           MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
         run: |
           gate="$(mktemp -d)"
+          # An unreadable base commit fails the step (bash -e), never reads as "no gate".
+          git cat-file -e "$MERGE_GROUP_BASE^{commit}"
           # Bootstrap: only while the base's own workflow has no results job (the change
-          # that adds the gate) may the branch's scripts run. Any other case uses the
-          # base's scripts, and a missing one fails the step (bash -e): fail closed.
-          if git show "$MERGE_GROUP_BASE:.github/workflows/pr-evidence.yml" 2>/dev/null \
-            | grep -q '^  pr-evidence-results:'; then
+          # that adds the gate) may the branch's scripts run. A missing workflow file is
+          # read as "no job"; any other git error fails the step. Every other case uses the
+          # base's scripts, and a missing one fails the step: fail closed.
+          base_workflow=""
+          if git cat-file -e "$MERGE_GROUP_BASE:.github/workflows/pr-evidence.yml" 2>/dev/null; then
+            base_workflow="$(git show "$MERGE_GROUP_BASE:.github/workflows/pr-evidence.yml")"
+          fi
+          if grep -q '^  pr-evidence-results:' <<<"$base_workflow"; then
             git show "$MERGE_GROUP_BASE:ci/pr_evidence.py" > "$gate/pr_evidence.py"
             git show "$MERGE_GROUP_BASE:ci/needs_llm_run.py" > "$gate/needs_llm_run.py"
+            # The Claims check (#1851) imports its sibling ci/claims.py. A base without it
+            # has a pr_evidence.py that does not import it; a base whose pr_evidence.py does
+            # import it and lacks it fails on the import: still closed. Never the PR's copy.
+            if git cat-file -e "$MERGE_GROUP_BASE:ci/claims.py" 2>/dev/null; then
+              git show "$MERGE_GROUP_BASE:ci/claims.py" > "$gate/claims.py"
+            fi
           else
             echo "::warning::The base has no PR Evidence results job yet (this change adds it): using this branch's scripts."
             cp ci/pr_evidence.py ci/needs_llm_run.py "$gate/"
+            if [ -f ci/claims.py ]; then cp ci/claims.py "$gate/"; fi
           fi
           python3 "$gate/pr_evidence.py" check --queue-ref-env MERGE_GROUP_REF --base "$MERGE_GROUP_BASE" --require-results

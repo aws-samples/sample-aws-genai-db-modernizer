@@ -35,6 +35,23 @@ A baseline that is already fresh is left alone, so running this on a clean tree 
 nothing (the routing commands append to a history on every write). The contract
 snapshots count as fresh while a pending bump (``scripts/bump_contract.py``) covers the
 change, exactly as their tests do.
+
+``--check`` writes nothing: it prints ``stale: <name> (<files>)`` with that baseline's own
+command for each stale one and exits 1 if any is. Without ``--check`` the stale ones are
+regenerated, in order, by those same documented commands. ``--reason`` is required when
+a routing baseline is stale, and nothing is written without it. A routing baseline is
+stale only when its guard test fails with its drift message; a failure for any other
+reason stops the run with an error, so ``--reason`` never overwrites a baseline over a
+real bug. The routing checks run the deterministic pipeline on every bundled sample (the
+guards of ``tests/e2e/test_routing_*.py``), so a full ``--check`` takes minutes; ``--only
+catalog --only assess-schemas --only contract-schema-snapshot --only value-set-snapshot``
+takes seconds. Also not covered, besides the release snapshots above: the historical
+``assess_released_snapshot.json`` (never re-recorded) and the saved 1.3 ``assess()``
+results in ``tests/fixtures/assess_results_v1_3/`` (never regenerated). The staleness
+failures in the contract and routing tests, and ``ci/pre_merge.sh``'s generated-file
+warning, name this command. Tests: ``tests/unit/scripts/test_regenerate_baselines.py``
+(it also asserts that every file ``scripts/hooks/block_baseline_edit.py`` protects, except
+the released snapshots and the catalog format snapshot, is covered here).
 """
 
 from __future__ import annotations

@@ -37,6 +37,21 @@ message of the gate call with the message of this call (``tool_use_id`` in the e
 in the transcript; the hook re-reads for up to two seconds until that call is recorded). The
 refusal carries the gate block itself, so the model knows exactly what to paste.
 
+After a refusal, in an ``--auto`` (or ``-y``) run, or when no ``/modernize`` prompt is
+recorded, the model makes the call again once it has pasted the block; in a run that asks
+the user (the latest ``/modernize`` prompt has neither flag) the refusal tells it to ask the
+approval question again, end its turn and retry only once the user approves, so nobody
+approves a block they never saw. Messages are told apart by their API message id (else by the
+tool results between them); while the call is not recorded yet (the transcript is re-read
+every quarter second, for up to two seconds), a later assistant message after the gate's
+result stands for it. Replaying the saved e2e-llm transcripts through the hook agrees with
+the transcript check on every run that printed the gate: it refuses the first Phase 6 call of
+each run the check failed on the gate (fixtures in ``tests/unit/hooks/fixtures/``) and allows
+each run that passed. The transcript check counts a page URL as shown only in the
+orchestrator's own text, never in the gate's or the final summary's tool output; it fails a
+gate run in the same message as the first schema-design call, and does not count a Phase 6
+call as that start when its result is this hook's refusal (``PreToolUse:<Tool> hook error:``).
+
 Input, checked against the 2.1.288 CLI e2e-llm installs (the hook input schema in its binary):
 a PreToolUse event carries ``session_id``, ``transcript_path``, ``cwd``, ``hook_event_name``,
 ``tool_name``, ``tool_input`` and ``tool_use_id``, plus ``agent_id`` only when the call runs

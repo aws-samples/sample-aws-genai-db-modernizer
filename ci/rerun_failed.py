@@ -23,6 +23,17 @@ the last run ended other than ``failure`` or ``timed_out``, or it failed with no
 id); 2 when it cannot tell (``gh``
 missing, not authenticated, or an API call failed). ``status`` prints its one line
 and exits 0 unless it cannot tell.
+
+Details. Only the runs of the pull request's own commits count: a branch name such as
+``main`` or ``patch-1`` is not unique across forks, and a commit a force-push dropped no
+longer counts. A ``FAILED``/``ERROR`` line is read after the log's job, step and timestamp
+prefix and xdist's ``[gwN] [ NN%]``; one inside captured output is not read. Each id is
+kept once; a parametrized id keeps nested brackets and spaces, and one whose bracket never
+closes is dropped. ``ci/rerun_failed.sh`` runs the unit, contract and property ids with
+``uv run pytest -q -n 4``, the per-test time limit and the Hypothesis profile (``ci``,
+unless ``HYPOTHESIS_PROFILE`` is set) of a pull request's ``ci/test.sh`` run, both from
+``ci/lib.sh`` (``PYTEST_TIME_LIMIT``, ``use_pull_request_hypothesis_profile``); it exits
+with pytest's code when a re-run test fails.
 """
 
 from __future__ import annotations

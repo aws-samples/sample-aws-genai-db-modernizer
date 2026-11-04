@@ -14,7 +14,10 @@ command substitution, heredocs and every other tool (``cat``, ``jq``,
 ``python3 -c``, ``sed``, ``ls``, ``cd``, ``grep``) are refused. So is any
 redirection to or from a file: the scripts write their own artifacts and file
 writes go through Edit/Write, whose allow rules (``artifacts/**``) bound them;
-only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Stdin: the hook event JSON. Exit 0 allows, exit 2
+only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Replaying 105 saved headless
+transcripts (2679 Bash calls) through it refused 26 calls, all genuine violations (pipes into
+``head``/``tail``/``cut``/``grep``, ``ls``, ``find``, a ``VAR=...;`` chain, ``echo``), and none of
+the documented pipeline commands. Stdin: the hook event JSON. Exit 0 allows, exit 2
 blocks.
 """
 

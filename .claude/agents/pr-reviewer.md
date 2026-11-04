@@ -75,6 +75,12 @@ new finding.
 - **Evidence for behavior claims.** Any claim in the PR description about
   what the code now does needs a rendered excerpt or command output in the
   description backing it, not just the assertion.
+- **Claims name their test.** Read the PR's Claims table against the diff:
+  every behaviour sentence added or changed in `docs/`, an ADR, a command
+  file, `ci/README.md`, AGENTS.md, CONTRIBUTING.md or README.md has a row,
+  and its test asserts what the sentence says (the PR Evidence check only
+  proves the test exists). A sentence with no test, or one that says more
+  than its test, is a finding.
 - **Public wording and no customer data.** Comments, docs and the PR itself
   use public wording (no internal system names/links) and carry no
   real customer data, consistent with AGENTS.md's Conventions.

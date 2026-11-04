@@ -31,6 +31,13 @@ Standard library only (plus ``gh`` on the runner for the API)::
     python3 ci/contract_major_gate.py --base <rev> --head <rev> [--pr N | --merge-group-ref REF]
 
 Exit 0 passes, 1 fails (an unapproved MAJOR move), 2 when the check could not run.
+The failure says "moving the assess() contract MAJOR breaks callers; it needs a
+maintainer's approval (label Contract Major Approved)". The ``contract-major-gate``
+required check (``.github/workflows/contract-major-gate.yml``) runs it with the runner's
+``python3`` on ``pull_request`` opened, reopened, synchronize, labeled and unlabeled, and on
+``merge_group``; on a pull request the base is ``HEAD^1`` of the merge checkout. Locally:
+``uv run python ci/contract_major_gate.py --base origin/main --head HEAD``. Tests:
+``tests/unit/ci/test_contract_major_gate.py``.
 """
 
 from __future__ import annotations

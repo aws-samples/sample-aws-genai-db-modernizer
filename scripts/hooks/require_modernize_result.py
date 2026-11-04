@@ -34,6 +34,10 @@ With no ``background_tasks`` field it blocks only when the job's latest DynamoDB
 readable draft for every group, no merge has run on it and no group review request was written
 after the drafts: every part is done and nothing else can be running.
 
+The reason names the next step: when every DynamoDB part of the latest split has a readable
+draft and neither the group reviews nor the merge have started, the ``--status`` command and
+then steps 6c and 6d.
+
 Read-only, stdlib only, no repo imports. Any error, a missing state file or an unreadable
 transcript allows (fail open); the e2e-llm transcript check stays the backstop.
 """
