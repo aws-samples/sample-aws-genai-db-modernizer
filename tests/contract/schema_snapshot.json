@@ -11044,6 +11044,366 @@
     "schema_hash": "28316eef2e5b98389ccb82e6e746f4cf6ffeb21886830ea07b007980a64b55d4",
     "version": "1.3"
   },
+  "dms_gate.DmsGate": {
+    "fields": {
+      "checked_at": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "checks": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "evidence": {
+                "required": false,
+                "schema": {
+                  "additional": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "object"
+                }
+              },
+              "id": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "lag",
+                    "load",
+                    "parity"
+                  ]
+                }
+              },
+              "reasons": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "status": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "fail",
+                    "pass",
+                    "pending"
+                  ]
+                }
+              },
+              "summary": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "contract_sha256": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "cutover_decision": {
+        "required": false,
+        "schema": {
+          "kind": "const",
+          "value": "customer"
+        }
+      },
+      "cutover_message_id": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "database_name": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "exceptions": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "column": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "kind": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "keyless_lob",
+                    "skipped_rule",
+                    "table",
+                    "unsupported_field",
+                    "view"
+                  ]
+                }
+              },
+              "reason": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "rows_loaded": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "table": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "job_id": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "max_lag_seconds": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "region": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "stack_name": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "status": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "fail",
+            "pass",
+            "pending"
+          ]
+        }
+      },
+      "step": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "tables": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "reason": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "rows_loaded": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "status": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "exception",
+                    "fail",
+                    "pass",
+                    "pending"
+                  ]
+                }
+              },
+              "table": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "table_state": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "validation_failed_records": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "validation_state": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "validation_suspended_records": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "task_arn": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "window_minutes": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "maximum": 1440,
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    "schema_hash": "e2e5826bc20e761a5aa1e55573fb4607a7b0c1e2322867ff123bb7642230c1f1",
+    "version": "1.0"
+  },
   "documentdb_decision_trace.DocumentDBDecisionTrace": {
     "fields": {
       "agent": {
