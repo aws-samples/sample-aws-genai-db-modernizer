@@ -367,6 +367,12 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         r"post-schema-router/external_run\.json",
         "external-mode post-schema routing pass record (depth, engines to design again)",
     ),
+    # Transformation contract
+    (
+        r"transformation-contract/v\d+/findings\.json",
+        "a step's validation and shape-check findings flattened for the report (#1764): "
+        "derived from the step contract beside it; a view for the report, not a pin or an input",
+    ),
     # Load test
     (r"load-test-[^/]+/v\d+/config\.json", "the load test's configuration as run"),
     (r"load-test-[^/]+/v\d+/result\.json", "the load test runner's raw result"),

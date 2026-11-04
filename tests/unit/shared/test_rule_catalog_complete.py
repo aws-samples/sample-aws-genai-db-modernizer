@@ -208,6 +208,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the two target dialects the contract check can build a typed table for: "
         "type-mapping plumbing, no routing rule",
     ),
+    "src/tools/transformation_contract/step1.py": (
+        frozenset({"AURORA_FOR"}),
+        "the Aurora engine a MySQL or PostgreSQL source family keeps on a same-engine move: "
+        "type-mapping plumbing for the contract check, no routing rule (#1764)",
+    ),
     "src/atx_orchestrator/core.py": (
         frozenset(
             {"_ANALYSIS_ENGINES", "_SAME_FAMILY", "IMPLEMENTED_SCHEMA_DESIGNERS", "_DESIGN_SHAPE"}

@@ -387,8 +387,10 @@ NOT_PRODUCED_HERE: dict[str, str] = {
         "runs here; its path is a caller's parameter the scan cannot render)"
     ),
     r"transformation-contract/v\d+/step-\d+\.json": (
-        "a step's transformation contract (ADR-033, #1762); its writer arrives with the "
-        "step 1 builder and script (#1764), so no run writes it yet"
+        "a step's transformation contract (ADR-033, #1762), written by "
+        "scripts/run_transformation_contract.py (#1764) as canonical bytes through "
+        "write_bytes, which the write scan cannot see, and no run here calls the script "
+        "(tests/e2e/test_transformation_contract.py does)"
     ),
 }
 

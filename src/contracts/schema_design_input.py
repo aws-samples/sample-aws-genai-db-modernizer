@@ -595,37 +595,12 @@ def _group_of_entries(group: dict, entries: set[str]) -> bool:
     return bool(ids) and (shown == len(ids) or shown == 1)
 
 
-def project_schema_design_input(
-    collector_output: CollectorOutputContract,
-    analysis_output: AnalysisOutputContract,
-    context: dict | None = None,
-    query_pattern_groups: list[dict] | None = None,
-    effective_architecture: dict | None = None,
-) -> tuple[AgentCollectorInput, AgentAnalysisInput, AgentContextInput]:
-    """Project full contracts into validated schema design agent input.
+def project_schema_design_tables(collector_output: CollectorOutputContract) -> list[AgentTable]:
+    """The collector's tables as the schema design agents read them (tables only).
 
-    This is the gate — if the projection fails validation, the schema
-    design step must abort. The agent cannot produce a correct design
-    from invalid input.
-
-    Args:
-        collector_output: Full CollectorOutputContract from the collector step.
-        analysis_output: Full AnalysisOutputContract from the analysis step.
-        context: Optional dict of human overrides (growth_multiplier, etc.).
-        query_pattern_groups: The input file's ``queries.query_pattern_groups``
-            (#1146), which the collector contract does not carry; kept only for
-            the projected queries.
-        effective_architecture: The input file's ``effective_architecture`` (#213),
-            which the analysis contract does not carry: the engines the effective
-            assignment runs and the eliminated ones.
-
-    Returns:
-        Tuple of (AgentCollectorInput, AgentAnalysisInput, AgentContextInput).
-
-    Raises:
-        pydantic.ValidationError: if projection produces invalid input.
+    The one projection ``project_schema_design_input`` uses, kept apart so a caller that
+    needs the tables alone (the step 1 contract's Aurora draft) cannot drift from it.
     """
-    # --- Collector projection ---
     tables = []
     for t in collector_output.database_schema.tables:
         tables.append(
@@ -687,6 +662,41 @@ def project_schema_design_input(
                 or None,
             )
         )
+    return tables
+
+
+def project_schema_design_input(
+    collector_output: CollectorOutputContract,
+    analysis_output: AnalysisOutputContract,
+    context: dict | None = None,
+    query_pattern_groups: list[dict] | None = None,
+    effective_architecture: dict | None = None,
+) -> tuple[AgentCollectorInput, AgentAnalysisInput, AgentContextInput]:
+    """Project full contracts into validated schema design agent input.
+
+    This is the gate — if the projection fails validation, the schema
+    design step must abort. The agent cannot produce a correct design
+    from invalid input.
+
+    Args:
+        collector_output: Full CollectorOutputContract from the collector step.
+        analysis_output: Full AnalysisOutputContract from the analysis step.
+        context: Optional dict of human overrides (growth_multiplier, etc.).
+        query_pattern_groups: The input file's ``queries.query_pattern_groups``
+            (#1146), which the collector contract does not carry; kept only for
+            the projected queries.
+        effective_architecture: The input file's ``effective_architecture`` (#213),
+            which the analysis contract does not carry: the engines the effective
+            assignment runs and the eliminated ones.
+
+    Returns:
+        Tuple of (AgentCollectorInput, AgentAnalysisInput, AgentContextInput).
+
+    Raises:
+        pydantic.ValidationError: if projection produces invalid input.
+    """
+    # --- Collector projection ---
+    tables = project_schema_design_tables(collector_output)
 
     query_patterns = []
     for q in collector_output.queries.query_patterns:

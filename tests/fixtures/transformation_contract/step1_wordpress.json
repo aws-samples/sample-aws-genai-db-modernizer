@@ -410,7 +410,7 @@
       ]
     }
   ],
-  "input_sha256": "5e89205c1ab66ec9af4396ce8a2787ef050e641e7a80a21abc03abcae730eeae",
+  "input_sha256": "89769390754391dfd15f2c28fd1af4606db74d7f10d047037571c323413ee6f8",
   "expected": {
     "wordpress.wp_posts": {
       "rows": [
@@ -458,38 +458,38 @@
         {
           "option_id": null,
           "option_name": "s0-7217",
-          "option_value": "v0",
-          "autoload": "s0-7256"
+          "option_value": "s0-7256",
+          "autoload": "s0-8474"
         },
         {
           "option_id": "2",
           "option_name": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
-          "option_value": "v1",
-          "autoload": "s1-8474"
+          "option_value": "s1-381",
+          "autoload": "s1-5960"
         },
         {
           "option_id": "3",
-          "option_name": "s2-381",
-          "option_value": "v2",
-          "autoload": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞"
+          "option_name": "s2-557",
+          "option_value": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "autoload": "s2-2677"
         },
         {
           "option_id": "4",
-          "option_name": "s3-5960",
-          "option_value": "v3",
-          "autoload": "s3-557"
+          "option_name": "s3-4051",
+          "option_value": "s3-4376",
+          "autoload": "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞"
         },
         {
           "option_id": "5",
-          "option_name": "s4-2677",
-          "option_value": "v4",
-          "autoload": "s4-4051"
+          "option_name": "s4-4405",
+          "option_value": "s4-595",
+          "autoload": "s4-4803"
         },
         {
           "option_id": "6",
-          "option_name": "s5-4376",
-          "option_value": "v5",
-          "autoload": "s5-4405"
+          "option_name": "s5-9820",
+          "option_value": "s5-5055",
+          "autoload": "s5-9258"
         }
       ],
       "cast_failures": [

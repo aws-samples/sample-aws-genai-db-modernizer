@@ -45,6 +45,9 @@ class SyntheticTable:
     unchecked_source_columns: tuple[str, ...] = ()
 
 
+_TEXT_WORDS = ("varchar", "char", "text", "tinytext", "mediumtext", "longtext")
+
+
 def _kind(column: Mapping[str, Any]) -> str:
     t = str(column.get("data_type") or "").lower().strip()
     norm = str(column.get("normalized_data_type") or "").lower()
@@ -73,7 +76,7 @@ def _kind(column: Mapping[str, Any]) -> str:
         return "year"
     if first == "bit":
         return "bit"
-    if norm == "string" or t.startswith(("varchar", "char", "text", "character")):
+    if norm in ("string", "text") or first in _TEXT_WORDS or t.startswith("character"):
         return "string"
     return "other"
 
@@ -93,16 +96,25 @@ def edge_values(column: Mapping[str, Any], *, dialect: str) -> list[object]:
         return [_UNSIGNED_MAX[_int_word(column)]]
     if kind == "bool1" and dialect == "mysql":
         return [2]
-    if kind == "decimal" and column.get("numeric_precision"):
-        p, s = int(column["numeric_precision"]), int(column.get("numeric_scale") or 0)
+    declared = _declared_precision(column)
+    if kind == "decimal" and declared is not None:
+        p, s = declared
         return [Decimal("9" * (p - s) + ("." + "9" * s if s else ""))]
     if kind == "string" and column.get("max_length"):
         return [_FOUR_BYTE * min(int(column["max_length"]), MAX_EDGE_TEXT)]
     return []
 
 
+def _declared_precision(column: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Precision and scale: the collector's fields, else parsed from ``data_type``."""
+    if column.get("numeric_precision"):
+        return int(column["numeric_precision"]), int(column.get("numeric_scale") or 0)
+    m = re.search(r"\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)", str(column.get("data_type") or ""))
+    return (int(m.group(1)), int(m.group(2) or 0)) if m else None
+
+
 def _precision(column: Mapping[str, Any]) -> tuple[int, int]:
-    return int(column.get("numeric_precision") or 10), int(column.get("numeric_scale") or 0)
+    return _declared_precision(column) or (10, 0)
 
 
 def _random_value(kind: str, column: Mapping[str, Any], rng: random.Random, i: int) -> object:
