@@ -101,6 +101,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "and the sql_mode names (NO_ZERO_DATE, NO_ZERO_IN_DATE) are Aurora MySQL parameter values "
         "(#1798)"
     ),
+    "src/tools/data_movement/dms_preflight.py": (
+        "no query is read: the sql_mode names (NO_ZERO_DATE, NO_ZERO_IN_DATE, TRADITIONAL) are "
+        "Aurora MySQL parameter values the preflight compares (#1799)"
+    ),
     "src/tools/sql/query_type.py": (
         "the one query_type rule: a statement's first verb after its leading comments (#1178)"
     ),

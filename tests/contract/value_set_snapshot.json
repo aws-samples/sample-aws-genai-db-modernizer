@@ -298,6 +298,20 @@
     ],
     "version": "1.0"
   },
+  "dms_preflight.CheckId": {
+    "module": "dms_preflight",
+    "values": [
+      "aurora_cluster",
+      "aurora_parameters",
+      "dms_certificates",
+      "dms_service_roles",
+      "instance_class_offered",
+      "secrets",
+      "secrets_manager_reachable",
+      "source_cdc"
+    ],
+    "version": "1.0"
+  },
   "documentdb_decision_trace.EmbeddingRelationshipType": {
     "module": "documentdb_decision_trace",
     "values": [

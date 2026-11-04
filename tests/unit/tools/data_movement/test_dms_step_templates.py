@@ -12,8 +12,8 @@ import re
 import pytest
 
 from src.contracts.data_movement_plan import UnboundedVarchar
-from src.contracts.lineage_ops import ColumnRef, CopyOp, UnsupportedOp
-from src.contracts.transformation_contract import FieldRule, Finding
+from src.contracts.lineage_ops import UnsupportedOp
+from src.contracts.transformation_contract import Finding
 from src.tools.data_movement.debezium_connector import dump_template
 from src.tools.data_movement.dms_step import (
     AURORA_TEMPLATE,
@@ -29,10 +29,8 @@ from src.tools.data_movement.dms_step import (
     TARGET_ENDPOINTS,
     VERIFY_SSL_MODE,
     ZERO_DATE_SQL_MODE,
-    DmsStepBundle,
     DmsStepError,
     Step1Inputs,
-    bundle_inputs,
     load_step1,
     render_aurora_template,
     render_ddl,
@@ -45,7 +43,14 @@ from src.tools.data_movement.dms_step import (
     zero_date_columns,
 )
 
-from .dms_step_fixtures import make_bundle, make_step1_inputs, write_job
+from .dms_step_fixtures import (
+    edge_field,
+    make_bundle,
+    make_step1_inputs,
+    rebuilt,
+    with_zero_dates,
+    write_job,
+)
 
 ENGINES = ["aurora_mysql", "aurora_postgresql"]
 # Parameters that name an account, a region, an endpoint, the network or a credential.
@@ -406,8 +411,6 @@ def test_task_identifier_is_letters_digits_and_single_hyphens(job_id, expected):
 # --- The suggested Aurora template and the DDL file (Task 7) ---------------------------------
 
 AURORA_DEPLOYMENT_PARAMETERS = {"SubnetIds", "SecurityGroupIds", "EngineVersion"}
-# Any wording: zero dates are read from the contract's field types, not from the message.
-EDGE_MESSAGE = "an edge value in `{column}` is copied as is"
 ZERO_DATE_PHRASE = (
     "{n} date and time columns can hold zero dates (MySQL accepts them unless its sql_mode "
     "forbids them); {m} of them default to `0000-00-00`"
@@ -417,41 +420,6 @@ ZERO_DATE_PHRASE = (
 def _flat(text: str, marker: str) -> str:
     """The comment block's words without their wrap markers."""
     return " ".join(w for w in text.split() if w != marker)
-
-
-def _rebuilt(bundle: DmsStepBundle, rules, zero_date_defaults=(), **update) -> Step1Inputs:
-    contract = bundle.contract.model_copy(update={"rules": rules, **update})
-    plan = bundle.plan.model_copy(update={"contract": None})
-    return bundle_inputs(DmsStepBundle(plan=plan, contract=contract, ddl=bundle.ddl,
-                                       zero_date_defaults=list(zero_date_defaults)))  # fmt: skip
-
-
-def _edge_field(table_id: str, column: str, target_type: str) -> FieldRule:
-    return FieldRule(source_column=column, target_column=column, target_type=target_type,
-                     op=CopyOp(op="copy", column=ColumnRef(table_id=table_id, column=column)))  # fmt: skip
-
-
-def _with_zero_dates(
-    engine: str = "aurora_mysql",
-    tables=("orders", "customers"),
-    columns=(("created", "DATETIME"), ("updated", "TIMESTAMP(6)")),
-    defaults=("orders.created",),
-) -> Step1Inputs:
-    """Copy fields of ``columns`` on ``tables``, each with a copy_edge_value finding; the
-    ``defaults`` (``table.column``) default to a zero date in the collector."""
-    b = make_bundle(engine)
-    schema = b.contract.rules[0].source_table.split(".")[0]
-    rules = []
-    for r in b.contract.rules:
-        if r.target_table in tables:
-            tid = f"{schema}.{r.target_table}"
-            r = r.model_copy(update={
-                "fields": [*r.fields, *(_edge_field(tid, c, t) for c, t in columns)],
-                "findings": [*r.findings, *(Finding(code="copy_edge_value", severity="warning",
-                                                    message=EDGE_MESSAGE.format(column=c), table_id=tid, column=c)
-                                            for c, _ in columns)]})  # fmt: skip
-        rules.append(r)
-    return _rebuilt(b, rules, [f"{schema}.{d}" for d in defaults])
 
 
 @pytest.mark.parametrize("engine", ENGINES)
@@ -656,6 +624,7 @@ def test_postgresql_ddl_recommends_replica_identity_full_per_table():
     assert "REPLICA IDENTITY" not in render_ddl(make_step1_inputs("aurora_mysql"))
 
 
+@pytest.mark.passes_on_main
 def test_the_ddl_lists_the_skipped_tables_and_unsupported_fields_with_their_reasons():
     b = make_bundle()
     hook = UnsupportedOp(op="unsupported", description="no Aurora type for geometry")
@@ -671,7 +640,7 @@ def test_the_ddl_lists_the_skipped_tables_and_unsupported_fields_with_their_reas
         if r.target_table == "audit_log":
             r = r.model_copy(update={"status": "blocked", "findings": [error]})
         rules.append(r)
-    inputs = _rebuilt(
+    inputs = rebuilt(
         b, rules, unsupported_count=1, blocked_rule_count=1, status="has_blocked_rules"
     )
     flat = _flat(render_ddl(inputs), "--")
@@ -681,8 +650,9 @@ def test_the_ddl_lists_the_skipped_tables_and_unsupported_fields_with_their_reas
     assert "Tables left out: none." in none and "Unsupported fields: none." in none
 
 
+@pytest.mark.passes_on_main
 def test_zero_dates_drop_the_no_zero_date_modes_and_say_why():
-    inputs = _with_zero_dates()
+    inputs = with_zero_dates()
     expected = (
         "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
     )
@@ -710,8 +680,9 @@ def test_zero_dates_drop_the_no_zero_date_modes_and_say_why():
     assert "hold zero dates (0000-00-00) in the source" not in ddl
 
 
+@pytest.mark.passes_on_main
 def test_zero_dates_come_from_date_typed_copy_fields_whatever_the_message():
-    one = _with_zero_dates(tables=("orders",), columns=(("shipped", "date"),), defaults=())
+    one = with_zero_dates(tables=("orders",), columns=(("shipped", "date"),), defaults=())
     group = render_aurora_template(one)["Resources"]["InstanceParameterGroup"]["Properties"]
     assert group["Parameters"]["sql_mode"] == ZERO_DATE_SQL_MODE
     reason = next(s.reason for s in required_settings("aurora_mysql", "8.0", zero_dates=(1, 0))
@@ -720,22 +691,24 @@ def test_zero_dates_come_from_date_typed_copy_fields_whatever_the_message():
     assert "0 of them default to `0000-00-00`" in reason
 
 
+@pytest.mark.passes_on_main
 def test_a_zero_date_looking_message_on_a_varchar_field_is_not_a_zero_date():
     b = make_bundle()
     other = Finding(code="copy_edge_value", severity="warning", table_id="shop.orders", column="code",
                     message="`0000-00-00 00:00:00` in `code` is copied as is. Aurora MySQL rejects zero dates")  # fmt: skip
-    rules = [r.model_copy(update={"fields": [*r.fields, _edge_field("shop.orders", "code", "VARCHAR(19)")],
+    rules = [r.model_copy(update={"fields": [*r.fields, edge_field("shop.orders", "code", "VARCHAR(19)")],
                                   "findings": [other]}) if r.target_table == "orders" else r
              for r in b.contract.rules]  # fmt: skip
-    group = render_aurora_template(_rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
+    group = render_aurora_template(rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
     assert "sql_mode" not in group["Properties"]["Parameters"]
 
 
+@pytest.mark.passes_on_main
 def test_a_date_field_without_a_copy_edge_value_finding_is_not_counted():
     b = make_bundle()
-    rules = [r.model_copy(update={"fields": [*r.fields, _edge_field("shop.orders", "made", "DATETIME")]})
+    rules = [r.model_copy(update={"fields": [*r.fields, edge_field("shop.orders", "made", "DATETIME")]})
              if r.target_table == "orders" else r for r in b.contract.rules]  # fmt: skip
-    group = render_aurora_template(_rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
+    group = render_aurora_template(rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
     assert "sql_mode" not in group["Properties"]["Parameters"]
 
 
@@ -763,26 +736,28 @@ def test_without_zero_dates_sql_mode_is_left_at_the_default():
     assert "NO_ZERO_DATE" not in render_ddl(inputs)
 
 
+@pytest.mark.passes_on_main
 def test_zero_dates_of_a_blocked_table_or_a_postgresql_target_change_nothing():
-    blocked = _with_zero_dates(tables=("orders",))
+    blocked = with_zero_dates(tables=("orders",))
     error = Finding(code="unknown_table", severity="error", message="gone")
     b = make_bundle()
     rules = [r.model_copy(update={"status": "blocked", "findings": [*r.findings, error]})
              if r.target_table == "orders" else r for r in blocked.contract.rules]  # fmt: skip
-    inputs = _rebuilt(b, rules, blocked_rule_count=1, status="has_blocked_rules")
+    inputs = rebuilt(b, rules, blocked_rule_count=1, status="has_blocked_rules")
     assert "sql_mode" not in render_aurora_template(inputs)["Resources"]["InstanceParameterGroup"][
         "Properties"]["Parameters"]  # fmt: skip
-    pg = render_aurora_template(_with_zero_dates("aurora_postgresql"))["Resources"]
+    pg = render_aurora_template(with_zero_dates("aurora_postgresql"))["Resources"]
     assert "InstanceParameterGroup" not in pg
 
 
+@pytest.mark.passes_on_main
 def test_a_copy_edge_value_on_a_text_field_is_not_a_zero_date():
     b = make_bundle()
     other = Finding(code="copy_edge_value", severity="warning", table_id="shop.orders", column="note",
                     message="`0000-00-00` in `note` is copied as is.")  # fmt: skip
     rules = [r.model_copy(update={"findings": [other]}) if r.target_table == "orders" else r
              for r in b.contract.rules]  # fmt: skip
-    group = render_aurora_template(_rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
+    group = render_aurora_template(rebuilt(b, rules))["Resources"]["InstanceParameterGroup"]
     assert "sql_mode" not in group["Properties"]["Parameters"]
 
 

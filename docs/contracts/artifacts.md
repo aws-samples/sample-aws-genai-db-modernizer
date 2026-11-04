@@ -38,6 +38,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `transformation-contract/v\d+/step-\d+\.json` | `StepContract` (`src.contracts.transformation_contract`) |
 | `data-movement/step-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`), one per migration step (#1797) |
 | `data-movement/step-\d+/gate\.json` | `DmsGate` (`src.contracts.dms_gate`) |
+| `data-movement/step-\d+/preflight\.json` | `DmsPreflight` (`src.contracts.dms_preflight`), the read-only checks before step 1 deploys (#1799) |
 | `data-movement/hub/plan\.json` | `HubPlan` (`src.contracts.data_movement_plan`), one per job (#1797) |
 | `data-movement/wave-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`) (the layout written before #1797) |
 | `[^/]+/questions\.json` | `AgentQuestions` (`src.contracts.agent_interaction_models`) |

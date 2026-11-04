@@ -34,6 +34,25 @@ The instance class and storage come from `src/catalog/dms_sizing.toml` (the coll
 - TLS. MySQL-family endpoints connect with `verify-ca`, so both certificates are required: the source server must serve TLS with a certificate authority you can import, and for Aurora use the RDS CA bundle. Import each bundle with `aws dms import-certificate --certificate-identifier <name> --certificate-pem file://<bundle>.pem` and pass the ARNs as `SourceCertificateArn` and `TargetCertificateArn`. PostgreSQL endpoints default to `require`.
 - The private subnets reach Secrets Manager, because DMS reads the endpoint secrets from them: a Secrets Manager interface VPC endpoint with private DNS, or a NAT route. The security group needs egress on 443 to it and on the database ports to the source and the cluster, and the databases' security groups must allow the replication instance. If the interface endpoint has no private DNS, pass its DNS name as `SecretsManagerEndpointOverride`.
 
+### Preflight
+
+`scripts/check_dms_step_preflight.py` checks the list above; run it before you deploy. It reads the job's step 1 plan and contract, runs eight checks in a fixed order, stops at the first failure and writes `<db>/<job>/data-movement/step-1/preflight.json`.
+
+The checks are: the Aurora cluster and its version line, its parameter groups (including pending reboots), the two secrets, the replication instance class offered in the region, the DMS service roles, the source's change capture settings, the DMS certificates, and whether the private subnets reach Secrets Manager. The source check reads what RDS can tell it and leaves the rest as a checklist; confirm it with `--confirm source_cdc` once you have checked it yourself (`--confirm` repeats and takes any check id, and an unknown id is refused with one JSON error line and exit 1: `test_confirm_takes_every_check_id`, `test_confirm_repeats`, `test_an_unknown_confirm_id_is_one_error_line`).
+
+It reads metadata only and never a secret's value (`tests/unit/tools/data_movement/test_dms_preflight_read_only.py::test_the_preflight_only_reads`, `tests/unit/tools/data_movement/test_dms_preflight_run.py::test_every_aws_call_is_a_read_and_never_a_secret_value`). Use read-only credentials (`AWS_PROFILE`) with these permissions: `rds:DescribeDBClusters`, `rds:DescribeDBInstances`, `rds:DescribeDBClusterParameters`, `rds:DescribeDBParameters`, `secretsmanager:DescribeSecret`, `secretsmanager:GetResourcePolicy`, `kms:DescribeKey`, `dms:DescribeOrderableReplicationInstances`, `dms:DescribeCertificates`, `iam:GetRole`, `iam:ListAttachedRolePolicies`, `ec2:DescribeSubnets`, `ec2:DescribeVpcEndpoints` and `ec2:DescribeRouteTables`.
+
+```bash
+uv run python scripts/check_dms_step_preflight.py --job-id <id> --db <db> --region <region> \
+  --aurora-cluster-id <cluster> --source-secret-arn <arn> --target-secret-arn <arn> \
+  --source-kind rds_instance --source-id <instance> \
+  --source-certificate-arn <arn> --target-certificate-arn <arn> --subnet-ids <subnet-a>,<subnet-b>
+```
+
+Use `--source-kind aurora_cluster` for an Aurora source; `self_managed`, the default, turns the source check into a checklist only.
+
+It prints one JSON line with `status` `pass`, `fail` or `needs_confirmation`, `first_failure` and `message` for a failure (the check and what to do about it), `to_confirm` for the rows you must check yourself, and `notes` for checklist items to read.
+
 ### Deploy
 
 The role in the stack has no explicit name, so `CAPABILITY_IAM` is enough. Use the parameter names of your rendered template (this example is MySQL; `TargetDatabaseName` defaults to the source database):
