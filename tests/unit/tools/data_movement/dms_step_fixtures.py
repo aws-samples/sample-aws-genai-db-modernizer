@@ -180,3 +180,42 @@ def rewrite_contract(store: LocalArtifactStore, contract: StepContract) -> None:
     store.write_bytes(f"{base}/step-1.json", canonical_json(contract))
     store.write_bytes(f"{base}/step-1.sha256", (contract_sha256(contract) + "\n").encode("ascii"))
     write_plans(store, "shop", "job1")
+
+
+# Any wording: zero dates are read from the contract's field types, not from the message.
+EDGE_MESSAGE = "an edge value in `{column}` is copied as is"
+
+
+def rebuilt(bundle: DmsStepBundle, rules, zero_date_defaults=(), **update) -> Step1Inputs:
+    contract = bundle.contract.model_copy(update={"rules": rules, **update})
+    plan = bundle.plan.model_copy(update={"contract": None})
+    return bundle_inputs(DmsStepBundle(plan=plan, contract=contract, ddl=bundle.ddl,
+                                       zero_date_defaults=list(zero_date_defaults)))  # fmt: skip
+
+
+def edge_field(table_id: str, column: str, target_type: str) -> FieldRule:
+    return FieldRule(source_column=column, target_column=column, target_type=target_type,
+                     op=CopyOp(op="copy", column=ColumnRef(table_id=table_id, column=column)))  # fmt: skip
+
+
+def with_zero_dates(
+    engine: str = "aurora_mysql",
+    tables=("orders", "customers"),
+    columns=(("created", "DATETIME"), ("updated", "TIMESTAMP(6)")),
+    defaults=("orders.created",),
+) -> Step1Inputs:
+    """Copy fields of ``columns`` on ``tables``, each with a copy_edge_value finding; the
+    ``defaults`` (``table.column``) default to a zero date in the collector."""
+    b = make_bundle(engine)
+    schema = b.contract.rules[0].source_table.split(".")[0]
+    rules = []
+    for r in b.contract.rules:
+        if r.target_table in tables:
+            tid = f"{schema}.{r.target_table}"
+            r = r.model_copy(update={
+                "fields": [*r.fields, *(edge_field(tid, c, t) for c, t in columns)],
+                "findings": [*r.findings, *(Finding(code="copy_edge_value", severity="warning",
+                                                    message=EDGE_MESSAGE.format(column=c), table_id=tid, column=c)
+                                            for c, _ in columns)]})  # fmt: skip
+        rules.append(r)
+    return rebuilt(b, rules, [f"{schema}.{d}" for d in defaults])

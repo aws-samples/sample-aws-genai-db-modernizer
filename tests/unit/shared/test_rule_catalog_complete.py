@@ -213,6 +213,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the Aurora engine a MySQL or PostgreSQL source family keeps on a same-engine move: "
         "type-mapping plumbing for the contract check, no routing rule (#1764)",
     ),
+    "src/tools/data_movement/dms_preflight.py": (
+        frozenset({"_VERSION_ENGINE"}),
+        "the source-engine name the version parser takes for each Aurora engine: plumbing "
+        "for the step 1 preflight's version check, no routing rule (#1799)",
+    ),
     "src/tools/data_movement/dms_step.py": (
         frozenset(
             {

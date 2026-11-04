@@ -11404,6 +11404,166 @@
     "schema_hash": "e2e5826bc20e761a5aa1e55573fb4607a7b0c1e2322867ff123bb7642230c1f1",
     "version": "1.0"
   },
+  "dms_preflight.DmsPreflight": {
+    "fields": {
+      "checked_at": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "checks": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "checklist": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "evidence": {
+                "required": false,
+                "schema": {
+                  "additional": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "object"
+                }
+              },
+              "id": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "aurora_cluster",
+                    "aurora_parameters",
+                    "dms_certificates",
+                    "dms_service_roles",
+                    "instance_class_offered",
+                    "secrets",
+                    "secrets_manager_reachable",
+                    "source_cdc"
+                  ]
+                }
+              },
+              "message": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "status": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "confirm",
+                    "fail",
+                    "not_run",
+                    "pass"
+                  ]
+                }
+              },
+              "summary": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "contract_sha256": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "database_name": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "instance_class": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "job_id": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "region": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "status": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "fail",
+            "needs_confirmation",
+            "pass"
+          ]
+        }
+      },
+      "step": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    "schema_hash": "4bf7f2d42a5f63c2a304f5325771f0d39d8917572e29a980968e1a8a21ee555d",
+    "version": "1.0"
+  },
   "documentdb_decision_trace.DocumentDBDecisionTrace": {
     "fields": {
       "agent": {
