@@ -8,7 +8,9 @@ Reads the job's latest synthesis report, its assignment, the collector output an
 the schema designs, and writes ``<db>/<job>/data-movement/step-<k>/plan.json`` per
 migration step (``src.contracts.data_movement_plan.DataMovementPlan``) and, when a
 step follows step 1, ``<db>/<job>/data-movement/hub/plan.json`` (``HubPlan``), the one
-capture into the hub. Deterministic, no AWS call.
+capture into the hub. The step 1 plan carries the replication section (the sized AWS DMS
+replication instance and its cost) that ``scripts/render_dms_step.py`` renders.
+Deterministic, no AWS call.
 Prints one JSON status line.
 """
 

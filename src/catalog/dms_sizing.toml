@@ -1,0 +1,100 @@
+# DMS replication instance sizing for step 1, the whole-database move into Aurora (#1798,
+# ADR-033 Decision 7). Fields: src/shared/catalog/dms_sizing.py.
+#
+# [[rows]] are read in order: the first row whose two bounds both hold (the collector's
+# database size in GB and its write rate, the summed calls_per_second of its INSERT, UPDATE,
+# DELETE and MERGE statements, each bound inclusive) gives the replication instance class and
+# its allocated storage. The last row has no bounds. An unknown size or write rate falls back
+# to the first row, and the plan says so (src/tools/data_movement/dms_sizing.py). The stack's
+# InstanceClass and AllocatedStorage parameters override the choice.
+#
+# included_storage_gb is the storage the instance's hourly price already covers; only the
+# allocated storage above it is billed per GB. AWS DMS pricing (https://aws.amazon.com/dms/pricing/):
+# "each burstable performance (T2 and T3) instance type includes 50GB of GP2 network-attached
+# storage" and each compute-optimized (C4) or memory-optimized (R4 and R5) instance type includes
+# 100GB. The page does not list r6i; this catalog assumes it includes 100 GB like R5.
+#
+# AWS DMS User Guide, Selecting the best size for a replication instance: memory is driven by
+# LOB handling and transactions per second; disk holds task logs and changes that spill from
+# memory. The classes and bounds below, and the storage sizes, are this catalog's choice.
+
+[[rows]]
+id = "small"
+instance_class = "dms.t3.medium"
+max_database_gb = 10
+max_writes_per_second = 50
+allocated_storage_gb = 50
+included_storage_gb = 50
+why = "Burstable class for a demo or a small database: up to 10 GB and 50 writes per second fit its 4 GiB of memory; 50 GB of storage holds task logs and spilled changes (this catalog's choice)."
+
+[[rows]]
+id = "medium"
+instance_class = "dms.r6i.large"
+max_database_gb = 500
+max_writes_per_second = 1000
+allocated_storage_gb = 100
+included_storage_gb = 100
+why = "Memory-optimized (16 GiB) so changes stay in memory up to 1,000 writes per second; 100 GB of storage holds task logs and changes that spill from memory during a full load of up to 500 GB (this catalog's choice)."
+
+[[rows]]
+id = "large"
+instance_class = "dms.r6i.xlarge"
+max_database_gb = 2000
+max_writes_per_second = 5000
+allocated_storage_gb = 200
+included_storage_gb = 100
+why = "Memory-optimized (32 GiB) for up to 2 TB and 5,000 writes per second; 200 GB of storage holds task logs and spilled changes during the longer full load (this catalog's choice)."
+
+[[rows]]
+id = "xlarge"
+instance_class = "dms.r6i.2xlarge"
+allocated_storage_gb = 400
+included_storage_gb = 100
+why = "Memory-optimized (64 GiB), the starting point above 2 TB or 5,000 writes per second."
+note = "Above 2 TB or 5,000 writes per second, size the replication instance with the customer's team: split the tables across tasks or choose a larger class before the full load."
+
+[lob]
+# Limited LOB mode needs the largest LOB value; the collector records each column's declared
+# maximum (max_length), which bounds every stored value, so a table whose LOB columns all
+# declare at most limited_max_kb runs in limited mode at that size and nothing is truncated.
+# A larger or unknown maximum runs that table in full LOB mode.
+limited_max_kb = 1024
+default_max_kb = 32
+# PostgreSQL's source endpoint reads a varchar without a length as at most 8000 bytes unless the
+# endpoint setting UnboundedVarcharMaxSize raises it; 10485760 bytes is the setting's maximum
+# (AWS DMS User Guide, "Endpoint settings when using PostgreSQL as a source").
+unbounded_varchar_max_bytes = 10485760
+why = "Limited LOB mode is the fast path; above 1 MB this catalog runs those tables in full LOB mode (AWS DMS User Guide, Setting LOB support for source databases in an AWS DMS task; the 1 MB threshold is this catalog's choice)."
+scalars_why = "Types the DMS PostgreSQL source maps to non-LOB types (AWS DMS User Guide, Source data types for PostgreSQL); the list is this catalog's reading of that table, and a type not on it is moved in full LOB mode."
+
+[lob.types]
+# The source types DMS reads as BLOB, CLOB or NCLOB (AWS DMS User Guide, "Source data types for
+# MySQL" and "Source data types for PostgreSQL"). MySQL TEXT, TINYTEXT, BLOB and TINYBLOB map to
+# WSTRING or BYTES, not to a LOB. PostgreSQL arrays, composites and hstore map to NCLOB.
+mysql = [
+    "mediumtext", "longtext", "mediumblob", "longblob", "json",
+    "geometry", "point", "linestring", "polygon", "multipoint", "multilinestring",
+    "multipolygon", "geometrycollection",
+]
+postgresql = [
+    "text", "citext", "bytea", "json", "jsonb", "xml", "tsvector", "tsquery", "path",
+    "polygon", "array", "composite", "hstore",
+    # information_schema's name for a type it does not describe further (an enum, an
+    # extension type); the collector records the udt name when it has one.
+    "user-defined",
+]
+
+[lob.scalars]
+# The first word of each type the DMS PostgreSQL source maps to a non-LOB type. Any PostgreSQL
+# type in neither list (a named composite or enum, an extension type such as halfvec) runs its
+# table in full LOB mode: the safe side. Long spellings match through their first word
+# (double precision, character varying, timestamp without time zone, time with time zone,
+# bit varying). Multirange types are left out: DMS reads them as unbounded strings.
+postgresql = [
+    "int2", "int4", "int8", "smallint", "integer", "bigint", "serial", "bigserial",
+    "float4", "float8", "real", "double", "numeric", "decimal", "bool", "boolean",
+    "date", "time", "timetz", "timestamp", "timestamptz", "interval", "uuid",
+    "inet", "cidr", "macaddr", "macaddr8", "bit", "varbit", "char", "bpchar",
+    "character", "varchar", "money", "oid", "point", "line", "lseg", "box", "circle",
+    "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange",
+]

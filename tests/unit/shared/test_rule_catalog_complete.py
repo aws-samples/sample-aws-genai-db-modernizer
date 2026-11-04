@@ -213,6 +213,22 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the Aurora engine a MySQL or PostgreSQL source family keeps on a same-engine move: "
         "type-mapping plumbing for the contract check, no routing rule (#1764)",
     ),
+    "src/tools/data_movement/dms_step.py": (
+        frozenset(
+            {
+                "AURORA_ENGINES",
+                "REQUIRED_CLUSTER_PARAMETERS",
+                "REQUIRED_INSTANCE_PARAMETERS",
+                "TARGET_ENDPOINTS",
+                "_ENGINE_FAMILY",
+                "_LOG_EXPORTS",
+                "_QUOTE",
+            }
+        ),
+        "CloudFormation and DDL rendering plumbing for the two Aurora targets of step 1: "
+        "engine versions, parameter-group settings, DMS endpoint types, identifier quoting "
+        "and log exports as AWS names them; no routing rule (#1798)",
+    ),
     "src/atx_orchestrator/core.py": (
         frozenset(
             {"_ANALYSIS_ENGINES", "_SAME_FAMILY", "IMPLEMENTED_SCHEMA_DESIGNERS", "_DESIGN_SHAPE"}

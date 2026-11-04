@@ -1,0 +1,161 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+"""The DMS sizing catalog (#1798): rows in order, a reason per row, one unbounded last row."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from src.shared.catalog.dms_sizing import DmsSizingTable, dms_sizing, load_dms_sizing
+from src.shared.catalog.engines import CatalogError
+
+
+def test_the_committed_rows_are_the_decided_ones():
+    rows = dms_sizing().rows
+    assert [(r.instance_class, r.max_database_gb, r.max_writes_per_second) for r in rows] == [
+        ("dms.t3.medium", 10, 50),
+        ("dms.r6i.large", 500, 1000),
+        ("dms.r6i.xlarge", 2000, 5000),
+        ("dms.r6i.2xlarge", None, None),
+    ]
+    assert all(r.why for r in rows) and rows[-1].note and "customer" in rows[-1].note
+
+
+def test_lob_rules_name_types_per_dialect():
+    lob = dms_sizing().lob
+    assert {"mysql", "postgresql"} <= set(lob.types) and "longtext" in lob.types["mysql"]
+    assert "bytea" in lob.types["postgresql"] and 1 <= lob.default_max_kb <= lob.limited_max_kb
+
+
+def _write(tmp_path: Path, rows: str) -> Path:
+    path = tmp_path / "dms_sizing.toml"
+    path.write_text(rows + '\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
+                    'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\n'
+                    '[lob.types]\nmysql = ["text"]\npostgresql = ["text"]\n'
+                    '[lob.scalars]\npostgresql = ["int4"]\n')  # fmt: skip
+    return path
+
+
+_ROW = '[[rows]]\nid = "{id}"\ninstance_class = "{cls}"\n{bounds}allocated_storage_gb = 50\nincluded_storage_gb = 50\nwhy = "w"\n'
+
+
+def test_a_bounded_last_row_is_refused(tmp_path):
+    path = _write(tmp_path, _ROW.format(id="a", cls="dms.t3.medium",
+                                        bounds="max_database_gb = 10\nmax_writes_per_second = 50\n"))  # fmt: skip
+    with pytest.raises(CatalogError, match="last row"):
+        load_dms_sizing(path)
+
+
+def test_rows_out_of_order_are_refused(tmp_path):
+    rows = (_ROW.format(id="b", cls="dms.r6i.large", bounds="max_database_gb = 500\nmax_writes_per_second = 1000\n")
+            + _ROW.format(id="a", cls="dms.t3.medium", bounds="max_database_gb = 10\nmax_writes_per_second = 50\n")
+            + _ROW.format(id="c", cls="dms.r6i.2xlarge", bounds=""))  # fmt: skip
+    with pytest.raises(CatalogError, match="increase"):
+        load_dms_sizing(_write(tmp_path, rows))
+
+
+def test_an_unknown_field_is_refused(tmp_path):
+    rows = _ROW.format(id="c", cls="dms.r6i.2xlarge", bounds="memory_gib = 8\n")
+    with pytest.raises(CatalogError):
+        load_dms_sizing(_write(tmp_path, rows))
+
+
+def test_the_table_type_is_frozen():
+    assert DmsSizingTable.model_config["frozen"] is True
+
+
+def test_lob_type_lists_follow_the_guide():
+    types = dms_sizing().lob.types
+    mysql, pg = set(types["mysql"]), set(types["postgresql"])
+    assert {"text", "tinytext", "blob", "tinyblob"}.isdisjoint(mysql)
+    assert {"mediumtext", "longtext", "mediumblob", "longblob", "json"} <= mysql
+    assert {"geometry", "point", "linestring", "polygon", "multipoint", "multilinestring",
+            "multipolygon", "geometrycollection"} <= mysql  # fmt: skip
+    assert {"text", "citext", "bytea", "json", "jsonb", "xml", "array", "composite", "hstore"} <= pg
+
+
+_BOUNDED = "max_database_gb = 10\nmax_writes_per_second = 50\n"
+_LAST = _ROW.format(id="z", cls="dms.r6i.2xlarge", bounds="")
+_FIRST = _ROW.format(id="a", cls="dms.t3.medium", bounds=_BOUNDED)
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        (_FIRST + _ROW.format(id="a", cls="dms.r6i.large", bounds=""), "duplicate"),
+        (_ROW.format(id="a", cls="dms.t3.medium", bounds="max_database_gb = 10\n") + _LAST, "both bounds"),
+        (_ROW.format(id="a", cls="dms.t3.medium", bounds="max_writes_per_second = 10\n") + _LAST, "both bounds"),
+        (_FIRST.replace('why = "w"\n', "") + _LAST, "why"),
+        (_FIRST.replace('why = "w"', 'why = "a\\nb"') + _LAST, "why"),
+    ],
+)  # fmt: skip
+def test_each_row_rule_is_enforced(tmp_path, rows, message):
+    with pytest.raises(CatalogError, match=message):
+        load_dms_sizing(_write(tmp_path, rows))
+
+
+def test_default_above_limited_is_refused(tmp_path):
+    path = _write(tmp_path, _LAST)
+    path.write_text(path.read_text().replace("default_max_kb = 32", "default_max_kb = 2048"))
+    with pytest.raises(CatalogError, match="default_max_kb"):
+        load_dms_sizing(path)
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [('mysql = ["Text"]', "lower-case"), ('mysql = ["text", "text"]', "twice")],
+)
+def test_lob_type_names_are_lower_case_and_unique(tmp_path, line, message):
+    path = _write(tmp_path, _LAST)
+    path.write_text(path.read_text().replace('mysql = ["text"]', line))
+    with pytest.raises(CatalogError, match=message):
+        load_dms_sizing(path)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ('postgresql = ["int4"]', 'postgresql = ["Int4"]', "lower-case"),
+        ('postgresql = ["int4"]', 'postgresql = ["int4", "int4"]', "twice"),
+        ('postgresql = ["int4"]', 'postgresql = ["text"]', "also listed"),
+    ],
+)
+def test_scalar_type_names_are_lower_case_unique_and_not_lobs(tmp_path, old, new, message):
+    path = _write(tmp_path, _LAST)
+    path.write_text(path.read_text().replace(old, new))
+    with pytest.raises(CatalogError, match=message):
+        load_dms_sizing(path)
+
+
+def test_postgresql_scalars_cover_the_plain_types_and_leave_lobs_out():
+    lob = dms_sizing().lob
+    scalars = set(lob.scalars["postgresql"])
+    assert {"int4", "bigint", "integer", "varchar", "character", "timestamp", "uuid", "numeric", "double",
+            "int4range", "point", "money", "oid", "inet"} <= scalars  # fmt: skip
+    assert not [t for t in scalars if "multirange" in t]  # unbounded strings in DMS: full mode
+    assert scalars.isdisjoint(lob.types["postgresql"]) and "user-defined" in lob.types["postgresql"]
+    assert lob.unbounded_varchar_max_bytes == 10485760 and lob.scalars_why
+
+
+def test_included_storage_is_required_and_within_the_allocation(tmp_path):
+    last = _ROW.format(id="z", cls="dms.r6i.2xlarge", bounds="")
+    with pytest.raises(CatalogError):
+        load_dms_sizing(_write(tmp_path, last.replace("included_storage_gb = 50\n", "")))
+    with pytest.raises(CatalogError, match="included_storage_gb"):
+        load_dms_sizing(
+            _write(tmp_path, last.replace("included_storage_gb = 50", "included_storage_gb = 51"))
+        )
+    with pytest.raises(CatalogError):
+        load_dms_sizing(
+            _write(tmp_path, last.replace("included_storage_gb = 50", "included_storage_gb = -1"))
+        )
+
+
+def test_the_committed_rows_include_the_storage_the_pricing_page_lists():
+    # AWS DMS pricing: T3 includes 50 GB; R5 (assumed for r6i) includes 100 GB.
+    included = {r.instance_class: r.included_storage_gb for r in dms_sizing().rows}
+    assert included["dms.t3.medium"] == 50
+    assert {v for k, v in included.items() if "r6i" in k} == {100}

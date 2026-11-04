@@ -74,6 +74,22 @@ def _load_collector(inputs: JobInputs) -> CollectorOutputContract:
     return load_contract(CollectorOutputContract, inputs.collector, artifact="collector output")
 
 
+def design_base(
+    inputs: JobInputs, engine: str, collector: CollectorOutputContract
+) -> AuroraDesignBase:
+    """The Aurora DDL generator's input for every collector table: what the step 1
+    targets are generated from, and what step 1's DDL file is rendered from (#1798)."""
+    source = collector.metadata.source_database
+    return AuroraDesignBase(
+        engine=engine,
+        job_id=inputs.job_id,
+        source_database=source.database_name or "",
+        source_engine=source.engine.value,
+        tables=project_schema_design_tables(collector),
+        source_data_types=source_data_types(dict(inputs.collector)),
+    )
+
+
 def _generated_tables(
     inputs: JobInputs, engine: str, collector: CollectorOutputContract
 ) -> dict[str, TargetTable]:
@@ -83,15 +99,7 @@ def _generated_tables(
     carry and the draft does not use; the base is built from the same table projection
     (``project_schema_design_tables``) it uses.
     """
-    source = collector.metadata.source_database
-    base = AuroraDesignBase(
-        engine=engine,
-        job_id=inputs.job_id,
-        source_database=source.database_name or "",
-        source_engine=source.engine.value,
-        tables=project_schema_design_tables(collector),
-        source_data_types=source_data_types(dict(inputs.collector)),
-    )
+    base = design_base(inputs, engine, collector)
     return {
         t.table_name: TargetTable(
             t.table_name, tuple(TargetColumn(c.name, c.aurora_type) for c in t.columns)

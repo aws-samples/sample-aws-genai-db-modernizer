@@ -9382,6 +9382,287 @@
           "kind": "array"
         }
       },
+      "replication": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "lob_max_size_kb": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "lob_tables": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "columns": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "max_size_kb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "mode": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "full",
+                              "limited"
+                            ]
+                          }
+                        },
+                        "reason": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "table": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "multi_az_default": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "boolean"
+                  }
+                },
+                "sizing": {
+                  "required": true,
+                  "schema": {
+                    "kind": "object",
+                    "properties": {
+                      "allocated_storage_gb": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 5,
+                          "type": "integer"
+                        }
+                      },
+                      "database_gb": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "included_storage_gb": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "instance_class": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "note": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "reason": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "row": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "writes_per_second": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "target_engine": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "target_engine_line": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "unbounded_varchar": {
+                  "required": false,
+                  "schema": {
+                    "kind": "object",
+                    "properties": {
+                      "column_names": {
+                        "required": false,
+                        "schema": {
+                          "items": {
+                            "kind": "scalar",
+                            "type": "string"
+                          },
+                          "kind": "array"
+                        }
+                      },
+                      "columns": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "max_bytes": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "reason": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "unsupported": {
+                        "required": false,
+                        "schema": {
+                          "items": {
+                            "kind": "scalar",
+                            "type": "string"
+                          },
+                          "kind": "array"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "source": {
         "required": true,
         "schema": {
@@ -9738,8 +10019,8 @@
         }
       }
     },
-    "schema_hash": "eb50ae46d9f64461d85fb3a4542625bbbbdf1a0aedb755379dc8f9455f2a0c46",
-    "version": "1.1"
+    "schema_hash": "e10e1628d8265fc4932c0f1f2374bfdbfa53f54da736dc1ad72b8647d7371a9d",
+    "version": "1.2"
   },
   "data_movement_plan.HubPlan": {
     "fields": {

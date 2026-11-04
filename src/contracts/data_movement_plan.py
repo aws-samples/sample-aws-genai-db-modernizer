@@ -16,7 +16,9 @@ it is also what a customer reviews before anything is deployed. No AWS call buil
 Wave 1 (the move to the source-compatible Aurora engine) is a DMS move; every later
 wave reads its source through Debezium into one compacted topic per source table.
 The cache wave's target has the ``cache`` role: a replica of the engine it fronts,
-fed from the same topics.
+fed from the same topics. The DMS step carries its ``replication`` section: the instance
+class from the rule catalog's sizing rows with its reason, the LOB mode per table and the
+Aurora version line the cluster needs (#1798).
 
 Version History:
 - 1.0 (2026-10-23, #1413): Initial version: source, cdc (with topic_prefix and
@@ -24,11 +26,13 @@ Version History:
   its assumptions, and unsupported.
 - 1.1 (2026-11-04, #1797): Plan per step: step, contract reference, hub_topics. The new
   HubPlan model starts at its own 1.0.
+- 1.2 (2026-11-04, #1798): Step 1 replication section: instance sizing, LOB settings,
+  Aurora version line
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SourceTable(BaseModel):
@@ -279,6 +283,111 @@ class ContractRef(BaseModel):
     sha256: str | None = Field(None, description="The contract file's SHA-256, when written")
 
 
+class DmsSizing(BaseModel):
+    """Step 1's replication instance, chosen from the rule catalog (#1798)."""
+
+    row: str = Field(..., description="The src/catalog/dms_sizing.toml row id")
+    instance_class: str = Field(
+        ..., description="The stack's InstanceClass default, e.g. dms.t3.medium"
+    )
+    allocated_storage_gb: int = Field(..., ge=5, description="The stack's AllocatedStorage default")
+    included_storage_gb: int = Field(
+        0,
+        ge=0,
+        description="The storage the instance's hourly price includes; only the rest is billed",
+    )
+    database_gb: float | None = Field(
+        None, ge=0, description="The collector's database size; None if unknown"
+    )
+    writes_per_second: float | None = Field(
+        None,
+        ge=0,
+        description="The summed calls_per_second of the collector's write statements; None if unknown",
+    )
+    reason: str = Field(
+        ..., description="Why this row: the inputs, its bounds and the catalog's reason"
+    )
+    note: str | None = Field(
+        None, description="The row's note (the largest row: size it with the customer)"
+    )
+
+
+class LobTable(BaseModel):
+    """A step 1 table with LOB columns, and the LOB mode DMS moves it in (#1798)."""
+
+    table: str = Field(..., description="Source table id (schema.table)")
+    mode: Literal["limited", "full"] = Field(
+        ...,
+        description="limited: every LOB column declares a maximum within the catalog's limit; full otherwise",
+    )
+    columns: list[str] = Field(default_factory=list, description="Its LOB columns, sorted")
+    max_size_kb: int | None = Field(
+        None, ge=1, description="The largest declared LOB size in KB (limited mode only)"
+    )
+    reason: str = Field("", description="Why this mode: the sizes it was judged on, in bytes")
+
+
+class UnboundedVarchar(BaseModel):
+    """The PostgreSQL source endpoint's UnboundedVarcharMaxSize for step 1 (#1798)."""
+
+    max_bytes: int | None = Field(
+        None, ge=1, description="The setting's value in bytes; None when no step 1 column needs it"
+    )
+    columns: int = Field(
+        0, ge=0, description="How many step 1 columns are a varchar without a length"
+    )
+    column_names: list[str] = Field(
+        default_factory=list, description="Those columns (schema.table.column), sorted"
+    )
+    unsupported: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Step 1 columns that are a bpchar without a length (schema.table.column): the "
+            "setting covers varchar only, so DMS may truncate them; sorted"
+        ),
+    )
+    reason: str = Field(
+        "", description="Why the setting is raised and what it leaves out; empty if neither"
+    )
+
+
+class DmsReplication(BaseModel):
+    """How step 1's DMS task is sized and set (#1798): read by the DMS template and the deliverables."""
+
+    target_engine: str | None = Field(
+        None, description="The Aurora engine step 1 moves into (id); None when wave 1 names none"
+    )
+    target_engine_line: str | None = Field(
+        None,
+        description=(
+            "The oldest Aurora major line at or above the source's (aurora_versions.toml); "
+            "None if unknown"
+        ),
+    )
+    sizing: DmsSizing = Field(..., description="The replication instance chosen from the catalog")
+    multi_az_default: bool = Field(
+        True, description="The stack's MultiAZ default (the cost prices it)"
+    )
+    lob_max_size_kb: int = Field(
+        ..., ge=1, description="The task's LobMaxSize (limited LOB mode), in KB"
+    )
+    lob_tables: list[LobTable] = Field(
+        default_factory=list,
+        description="The tables with LOB columns and their LOB mode, sorted by table",
+    )
+    unbounded_varchar: UnboundedVarchar = Field(
+        default_factory=UnboundedVarchar,
+        description="The PostgreSQL source endpoint's UnboundedVarcharMaxSize for step 1",
+    )
+
+    @model_validator(mode="after")
+    def _limited_tables_have_a_size(self) -> "DmsReplication":
+        for t in self.lob_tables:
+            if t.mode == "limited" and t.max_size_kb is None:
+                raise ValueError(f"{t.table}: a limited LOB table needs max_size_kb")
+        return self
+
+
 class DataMovementPlan(BaseModel):
     """One migration step's data movement plan (#1797). Files written before #1797 are one
     wave's plan (``step`` is None, ``hub`` holds the wave's own topics).
@@ -287,7 +396,7 @@ class DataMovementPlan(BaseModel):
     ``cdc`` the physical capture it reads: after step 1 that is the hub plan's."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The job the plan is built from")
     database_name: str = Field(..., description="The job's database name")
@@ -333,6 +442,13 @@ class DataMovementPlan(BaseModel):
     )
     initial_load: InitialLoad = Field(
         ..., description="How existing rows reach the targets: DMS full load, or the hub's snapshot"
+    )
+    replication: DmsReplication | None = Field(
+        None,
+        description=(
+            "Step 1's DMS instance sizing, LOB settings and Aurora line (#1798); None for a "
+            "Debezium step and in a plan written before it"
+        ),
     )
     targets: list[Target] = Field(default_factory=list, description="By engine, then role")
     gates: Gates = Field(..., description="What must hold before the step cuts over")

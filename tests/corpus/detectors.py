@@ -505,6 +505,7 @@ NOT_CORPUS_MODULES: dict[str, str] = {
     "src/graph/catalog.py": "the graph query catalog's own Cypher, not SQL",
     "src/graph/schema.py": "the graph store's own DDL, not a workload query",
     "src/tools/schema/aurora_common/delta_merge.py": "reads the generated Aurora DDL",
+    "src/tools/data_movement/dms_step.py": "checks the step 1 DDL file it renders, not a workload query",
 }
 
 # The functions of a registered OTHER_SQL_MODULES module that run a regex but are not a

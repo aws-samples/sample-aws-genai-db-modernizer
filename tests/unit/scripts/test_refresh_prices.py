@@ -277,8 +277,20 @@ class TestDataMovementPrices:
     def test_the_selectors_match_the_real_offer_files(self, all_offers) -> None:
         prices = rp.extract_prices(all_offers)
         assert prices["dms.replication"] == {
-            "instance_hourly": {"dms.r6i.large": 0.176},
+            "instance_hourly": {
+                "dms.r6i.2xlarge": 0.706,
+                "dms.r6i.large": 0.176,
+                "dms.r6i.xlarge": 0.353,
+                "dms.t3.medium": 0.0745,
+            },
+            "multi_az_instance_hourly": {
+                "dms.r6i.2xlarge": 1.411,
+                "dms.r6i.large": 0.353,
+                "dms.r6i.xlarge": 0.706,
+                "dms.t3.medium": 0.149,
+            },
             "storage_price_per_gb_month": 0.115,
+            "multi_az_storage_price_per_gb_month": 0.23,
         }
         assert prices["msk.provisioned"] == {
             "instance_hourly": {"kafka.m5.large": 0.21},
@@ -303,7 +315,7 @@ class TestDataMovementPrices:
                 rows = [r for r in all_offers[sel.service].rows if sel.matches(r)]
                 assert len(rows) == 1, (path, dict(sel.match), len(rows))
                 found += 1
-        assert found == 5
+        assert found == 13
 
     def test_the_table_with_the_sections_loads_with_their_dates(self, all_offers, tmp_path) -> None:
         out = tmp_path / "prices.toml"

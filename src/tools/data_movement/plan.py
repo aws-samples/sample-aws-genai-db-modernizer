@@ -36,7 +36,9 @@ Rules, per wave of the report's ``migration_waves`` (same count, same order):
   non-relational owner once the wave cuts over, a dialect with no Debezium connector,
   and the cost when the price table has no price for a component.
 - **Cost** (#1424), computed here once and read by the deliverables through the facts
-  layer (ADR-032). Wave 1: one DMS replication instance and its storage for a month.
+  layer (ADR-032). Step 1: the sized DMS replication instance (``replication.sizing``) and
+  its storage for a month, Multi-AZ as the stack deploys it by default, with the Single-AZ
+  figure stated.
   A Debezium wave: topic storage on each of three MSK brokers (the hub tables' collected
   size), MSK Connect workers (one connector for the source and one per target), and,
   for the first Debezium wave only, the brokers' hours. Each component reads the dated
@@ -58,6 +60,8 @@ from src.contracts.data_movement_plan import (
     CdcSpec,
     ContractRef,
     DataMovementPlan,
+    DmsReplication,
+    DmsSizing,
     Gates,
     HubPlan,
     HubTopic,
@@ -76,11 +80,15 @@ from src.shared import catalog
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
+from src.tools.data_movement.dms_sizing import (
+    lob_plan,
+    size_from_collector,
+    target_engine_line,
+    unbounded_varchar,
+)
 
 # The cost model's components (#1424); each is stated in the plan's cost_assumptions.
 DMS_PRICE_SECTION = "dms.replication"
-DMS_INSTANCE_CLASS = "dms.r6i.large"
-DMS_STORAGE_GB = 100
 MSK_PRICE_SECTION = "msk.provisioned"
 MSK_BROKER_TYPE = "kafka.m5.large"
 MSK_BROKERS = 3
@@ -589,24 +597,55 @@ def _no_price(what: str) -> str:
     return f"The price table (src/catalog/prices.toml) has no price for {what}, so the cost is not stated"
 
 
+def _dms_replication(
+    job: _JobView, wave: Mapping[str, Any], base_tables: list[str]
+) -> DmsReplication:
+    """Step 1's instance size, LOB settings and Aurora line (#1798)."""
+    collector = job.inputs.collector
+    # Wave 1 has one source-compatible Aurora engine (the catalog's relational role), so the
+    # first relational engine it names is the target.
+    target = next((e for e in _wave_engines(wave) if e in RELATIONAL_ENGINES), None)
+    dialect = dialect_of(job.legacy)
+    lob_max, lob_tables = lob_plan(collector, base_tables, dialect)
+    return DmsReplication(
+        target_engine=target,
+        target_engine_line=target_engine_line(collector, target) if target else None,
+        sizing=size_from_collector(collector),
+        multi_az_default=True,
+        lob_max_size_kb=lob_max,
+        lob_tables=lob_tables,
+        unbounded_varchar=unbounded_varchar(collector, base_tables, dialect),
+    )
+
+
 def _dms_cost(
-    sections: Mapping[str, Mapping[str, Mapping[str, Any]]],
-) -> tuple[float | None, list[UnsupportedItem]]:
-    """One replication instance for a month, plus its allocated storage."""
+    sections: Mapping[str, Mapping[str, Mapping[str, Any]]], sizing: DmsSizing
+) -> tuple[float | None, float | None, list[UnsupportedItem]]:
+    """(Multi-AZ month, Single-AZ month or None, gaps): the sized instance and its storage."""
     prices = _section(sections, DMS_PRICE_SECTION)
-    hourly = (prices.get("instance_hourly") or {}).get(DMS_INSTANCE_CLASS)
-    storage = prices.get("storage_price_per_gb_month")
+    cls = sizing.instance_class
+    # The hourly price includes some storage (catalog row); only the rest is billed per GB.
+    gb = max(0, sizing.allocated_storage_gb - sizing.included_storage_gb)
+    multi = (prices.get("multi_az_instance_hourly") or {}).get(cls)
+    multi_storage = prices.get("multi_az_storage_price_per_gb_month")
+    single = (prices.get("instance_hourly") or {}).get(cls)
+    single_storage = prices.get("storage_price_per_gb_month")
+    single_month = (
+        float(single) * HOURS_PER_MONTH + float(single_storage) * gb
+        if single is not None and single_storage is not None else None
+    )  # fmt: skip
     gaps = []
-    if hourly is None:
+    if multi is None:
+        gaps.append(_cost_gap("dms", _no_price(f"the Multi-AZ DMS replication instance {cls}")))
+    if multi_storage is None:
         gaps.append(
-            _cost_gap("dms", _no_price(f"the DMS replication instance {DMS_INSTANCE_CLASS}"))
+            _cost_gap("dms_storage", _no_price("Multi-AZ DMS replication instance storage"))
         )
-    if storage is None:
-        gaps.append(_cost_gap("dms_storage", _no_price("DMS replication instance storage")))
     if gaps:
-        return None, gaps
+        return None, single_month, gaps
     # Both prices exist here: a missing one returned above.
-    return float(hourly or 0) * HOURS_PER_MONTH + float(storage or 0) * DMS_STORAGE_GB, []
+    month = float(multi or 0) * HOURS_PER_MONTH + float(multi_storage or 0) * gb
+    return month, single_month, []
 
 
 def _hub_gigabytes(job: _JobView, hub: list[HubTopic]) -> float | None:
@@ -672,19 +711,30 @@ def _monthly_cost(
     hub: list[HubTopic],
     targets: list[Target],
     carries_cluster: bool,
+    *,
+    replication: DmsReplication | None = None,
 ) -> tuple[float | None, list[str], list[UnsupportedItem]]:
     """The wave's monthly cost, computed once here (ADR-032), its assumptions, and an
     unsupported entry for each component the price table cannot price."""
     sections: Mapping[str, Mapping[str, Mapping[str, Any]]] = prices.sections if prices else {}
     if tool == "dms":
+        if replication is None:
+            raise ValueError("a DMS step is priced from its replication section")
+        s = replication.sizing
         assumptions = [
-            f"One DMS replication instance ({DMS_INSTANCE_CLASS}, Single-AZ) with "
-            f"{DMS_STORAGE_GB} GB of allocated storage runs the full load and ongoing "
-            "replication for the wave",
+            f"One Multi-AZ DMS replication instance ({s.instance_class}, the stack's default MultiAZ=true) "
+            f"with {s.allocated_storage_gb} GB of allocated storage ({s.included_storage_gb} GB "
+            "included in the instance price, the rest billed per GB) runs the full load and "
+            "ongoing replication for step 1",
+            f"Instance size: {s.reason}",
             f"The migration is billed as one month ({HOURS_PER_MONTH} hours); the instance is removed "
-            "once the wave cuts over",
+            "once the step cuts over",
         ]
-        cost, gaps = _dms_cost(sections)
+        cost, single_month, gaps = _dms_cost(sections, s)
+        if single_month is not None:
+            assumptions.append(
+                f"With MultiAZ=false the instance and its storage cost {single_month:.2f} USD per month"
+            )
     else:
         if carries_cluster:
             assumptions = [
@@ -1226,7 +1276,10 @@ def _plan_wave(
         f"The lag gate is {MAX_LAG_SECONDS} seconds of capture lag, a default to tune against "
         "the lagging reads' tolerance"
     )
-    cost, assumptions, gaps = _monthly_cost(job.prices, job, tool, hub, targets, False)
+    replication = _dms_replication(job, wave, base_tables) if tool == "dms" else None
+    cost, assumptions, gaps = _monthly_cost(
+        job.prices, job, tool, hub, targets, False, replication=replication
+    )
     unsupported.extend(gaps)
     unique = {_unsupported_key(u): u for u in unsupported}
     return DataMovementPlan(
@@ -1243,6 +1296,7 @@ def _plan_wave(
         cdc=cdc,
         hub=hub,
         initial_load=initial_load,
+        replication=replication,
         targets=targets,
         gates=gates,
         stacks=_stacks(tool, targets),
