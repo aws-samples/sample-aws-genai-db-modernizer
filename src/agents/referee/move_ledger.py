@@ -67,6 +67,7 @@ from src.contracts.move_ledger import (
     MovePass,
     ReasonCode,
 )
+from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.workload_fit_labels import PINNED_UTILITY, PinKind
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,16 @@ def apply(
     """
     if not to_engine:
         raise ValueError(f"move_ledger.apply: empty to_engine for query {query_id!r}")
+    tied = sorted(tied_engines)
+    # A cache owns no query (#296): as the only writer of engines and ties, the ledger
+    # refuses a Move onto one, or a tie that could resolve to one (#1860). A Move off a
+    # cache (the legacy owner normalisation) is fine.
+    cached = sorted({to_engine, *tied} & CACHE_ENGINES)
+    if cached:
+        raise ValueError(
+            f"move_ledger.apply: query {query_id!r} cannot be owned by the cache "
+            f"{', '.join(cached)} (a cache owns no query)"
+        )
     from_engine = ledger.engine_of(query_id)
     if from_engine is None and score_before is not None:
         raise ValueError(
@@ -176,7 +187,7 @@ def apply(
         reason_code=reason_code,
         evidence=evidence or MoveEvidence(),
         group_key=group_key,
-        tied_engines=sorted(tied_engines),
+        tied_engines=tied,
         actor=actor,
     )
     ledger.moves.append(move)

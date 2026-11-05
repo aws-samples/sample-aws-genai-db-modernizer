@@ -189,7 +189,9 @@ def _column_ddl(
         table_name, col, resolution.aurora_type, dialect, notes, source_engine, identity_ok
     )
     if override is not None:
-        return _column_from(col, resolution, source_type, dialect, default, script_derived=False)
+        return _column_from(
+            col, resolution, source_type, dialect, default, script_derived=False, table=table_name
+        )
     if (
         dialect.backslash_escapes
         and default.kind == "string"
@@ -230,7 +232,13 @@ def _column_ddl(
             }
         )
     return _column_from(
-        col, resolution, source_type, dialect, default, script_derived=not resolution.needs_judgment
+        col,
+        resolution,
+        source_type,
+        dialect,
+        default,
+        script_derived=not resolution.needs_judgment,
+        table=table_name,
     )
 
 
@@ -276,21 +284,29 @@ def _column_from(
     default: DefaultTranslation,
     *,
     script_derived: bool,
+    table: str,
 ) -> ColumnDDL:
+    # The one place a column type is written (#1860): whatever produced it (the
+    # source-type map, a normalized-type map, a residual's fallback or the model's
+    # override), it passes the allowlist for this engine or nothing is written.
+    try:
+        aurora_type = validate_aurora_type(resolution.aurora_type, dialect.name)
+    except ValueError as exc:
+        raise ValueError(f"column {table}.{col.column_name}: {exc}") from exc
     auto_increment = dialect.auto_increment(
         col.is_auto_increment or default.identity
     )  # nosemgrep: is-function-without-parentheses -- property, not a method
     # Identity/auto-increment and default are mutually exclusive — a column
     # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
     fragment = (
-        f"{dialect.q(col.column_name)} {resolution.aurora_type}"
+        f"{dialect.q(col.column_name)} {aurora_type}"
         f"{auto_increment}"
         f"{not_null_clause(col.nullable)}"
         f"{'' if auto_increment else default.clause}"
     )
     return ColumnDDL(
         name=col.column_name,
-        aurora_type=resolution.aurora_type,
+        aurora_type=aurora_type,
         source_type=source_type,
         script_derived=script_derived,
         needs_judgment=resolution.needs_judgment,
