@@ -38,6 +38,7 @@ from src.tools.database.offline_collection_check import (
     warn_absent_sections,
     without_sentinels,
 )
+from src.tools.database.routine_links import routine_id
 from src.tools.sql.query_type import statement_query_type
 from src.tools.sql.redact import (
     raw_collection_settings,
@@ -350,7 +351,9 @@ def _parse_offline_collection(
         "tmp_tables": int(raw_stats.get("created_tmp_tables", 0)),
     }
 
-    raw_queries, dropped_other_db = _drop_other_database_queries(data.get("queries") or [], db_name)
+    raw_queries, dropped_other_db = _drop_other_database_queries(
+        _with_routines(data.get("queries") or [], data), db_name
+    )
     other_db_note = {"queries_dropped_other_database": dropped_other_db} if dropped_other_db else {}
     sample_rows_note: dict[str, int] = {}
     if sample_rows_dropped:
@@ -437,6 +440,32 @@ def _redacted_definitions(items: object, source_engine: str) -> object:
             else item
         )
         for item in items
+    ]
+
+
+def _with_routines(raw: list[dict], data: Mapping) -> list[dict]:
+    """``raw`` with each row's ``parent_routine_ids`` (#1891): the routines the
+    collection's ``query_routines`` section links to its ``digest`` (SQL Server's
+    ``sys.dm_exec_sql_text(sql_handle).objectid``), sorted; ``[]`` for a row it links to
+    none. A collection with no such section (written before #1891, or another engine's)
+    records none, so its rows are returned unchanged and the field stays None."""
+    links = data.get("query_routines")
+    if not isinstance(links, list):
+        return raw
+    by_digest: dict[str, set[str]] = {}
+    for link in links:
+        if not isinstance(link, Mapping) or not link.get("digest"):
+            continue
+        rid = routine_id(link.get("routine_schema"), link.get("routine_name"))
+        if rid:
+            by_digest.setdefault(str(link["digest"]), set()).add(rid)
+    return [
+        (
+            {**r, "parent_routine_ids": sorted(by_digest.get(str(r.get("digest") or ""), ()))}
+            if isinstance(r, dict)
+            else r
+        )
+        for r in raw
     ]
 
 
@@ -598,6 +627,11 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
         ]
         merged["sample_first_count"] = int(sum(starts)) if starts else None
 
+        # A shape ran in every routine any of its variants ran in (#1891).
+        if any("parent_routine_ids" in v for v in variants):
+            merged["parent_routine_ids"] = sorted(
+                {str(rid) for v in variants for rid in v.get("parent_routine_ids") or []}
+            )
         merged.update(tags)
         merged_rows.append(merged)
 
@@ -1300,6 +1334,8 @@ def _transform_queries(
                 "warnings": r.get("sum_warnings") or 0,
                 "first_seen": r.get("first_seen"),
                 "last_seen": r.get("last_seen"),
+                # The routines the statement ran in (#1891); None when not collected.
+                "parent_routine_ids": r.get("parent_routine_ids"),
             }
         )
     if fallbacks:

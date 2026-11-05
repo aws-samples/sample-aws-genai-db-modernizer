@@ -734,7 +734,9 @@ def normalize_cache_owners(
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
     heavy = write_heavy_tables(query_list, source_engine)
-    counts = settled_counts(qas)
+    from src.agents.referee.routine_units import RoutineFollowers
+
+    counts = settled_counts(qas, exclude=RoutineFollowers.from_collector(collector).routine_of)
     ctx = None
     if isinstance(engines, Mapping):
         from src.agents.referee.query_scoring import ScoringContext

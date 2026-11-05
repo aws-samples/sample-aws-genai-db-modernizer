@@ -145,6 +145,10 @@ Version History:
   the fallback rule that found no engine), never onto an engine; the engine that rule
   names, outside the scope, is recorded for context. Additive; records without them
   still load.
+- 1.12 (2026-11-06, #1891): Added the ``ReasonCode.ROUTINE_FOLLOW`` value
+  (``group.routine_follow``): a SQL Server statement on temporary objects placed on the
+  engine its routine's other statements are on, neither scored nor gated with them
+  (#1891, ADR-031 Decision 4 Amendment 20).
 """
 
 from __future__ import annotations
@@ -207,6 +211,10 @@ class ReasonCode(str, Enum):
     # unrounded score, then the engine the plan uses more, then break_tie.
     TIE_DECIDED_FOR_YOU = "tie.decided_for_you"
     GROUP_MEAN = "group.mean"
+    # A SQL Server statement on temporary objects placed on the engine its routine's
+    # other statements are on (#1891, ADR-031 Decision 4 Amendment 20): it follows the
+    # routine and is neither scored nor gated with it.
+    ROUTINE_FOLLOW = "group.routine_follow"
     # A unit holding a table's write group: all of a table's writes share one
     # engine, its source of truth (ADR-031 Amendment 9, #992), placed on the unit's mean.
     WRITE_GROUP = "group.write"

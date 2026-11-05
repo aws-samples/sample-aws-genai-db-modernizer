@@ -90,7 +90,7 @@
       "reality_check",
       "source_of_truth_reroute"
     ],
-    "version": "1.24"
+    "version": "1.25"
   },
   "assignment_models.AssignmentStatus": {
     "module": "assignment_models",
@@ -102,7 +102,7 @@
       "reroute_rolled_back",
       "rerouted_after_approval"
     ],
-    "version": "1.24"
+    "version": "1.25"
   },
   "capability_ids": {
     "module": "triage_output",
@@ -151,7 +151,7 @@
       "postgresql",
       "sqlserver"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.DeploymentType": {
     "module": "collector_output",
@@ -160,7 +160,7 @@
       "on_premises",
       "rds_instance"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.ForeignKeyAction": {
     "module": "collector_output",
@@ -171,7 +171,7 @@
       "SET DEFAULT",
       "SET NULL"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.IndexType": {
     "module": "collector_output",
@@ -186,7 +186,7 @@
       "spatial",
       "spgist"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.NormalizedDataType": {
     "module": "collector_output",
@@ -206,7 +206,7 @@
       "uuid",
       "xml"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.ParameterMode": {
     "module": "collector_output",
@@ -215,7 +215,7 @@
       "INOUT",
       "OUT"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.ProcedureType": {
     "module": "collector_output",
@@ -224,7 +224,7 @@
       "PROCEDURE",
       "TRIGGER_FUNCTION"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.QueryLogSource": {
     "module": "collector_output",
@@ -238,7 +238,7 @@
       "slow_query_log",
       "v_dollar_sql"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.QueryType": {
     "module": "collector_output",
@@ -250,7 +250,7 @@
       "SELECT",
       "UPDATE"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.StorageType": {
     "module": "collector_output",
@@ -261,7 +261,7 @@
       "io2",
       "magnetic"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.TriggerEventType": {
     "module": "collector_output",
@@ -270,7 +270,7 @@
       "INSERT",
       "UPDATE"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.TriggerForEach": {
     "module": "collector_output",
@@ -278,7 +278,7 @@
       "ROW",
       "STATEMENT"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "collector_output.TriggerTiming": {
     "module": "collector_output",
@@ -287,7 +287,7 @@
       "BEFORE",
       "INSTEAD OF"
     ],
-    "version": "5.8"
+    "version": "5.9"
   },
   "dms_gate.GateStatus": {
     "module": "dms_gate",
@@ -628,7 +628,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "1.24"
+    "version": "1.25"
   },
   "feasibility_models.FindingKind": {
     "module": "feasibility_models",
@@ -685,7 +685,7 @@
       "model_flag",
       "rule"
     ],
-    "version": "1.11"
+    "version": "1.12"
   },
   "move_ledger.MovePass": {
     "module": "move_ledger",
@@ -711,7 +711,7 @@
       "unservable",
       "utility_pin"
     ],
-    "version": "1.11"
+    "version": "1.12"
   },
   "move_ledger.ReasonCode": {
     "module": "move_ledger",
@@ -729,6 +729,7 @@
       "gate.key_scoped_count",
       "group.customer_propagation",
       "group.mean",
+      "group.routine_follow",
       "group.write",
       "group.write_customer_propagation",
       "group.write_reroute",
@@ -744,7 +745,7 @@
       "tie.source_compatible",
       "tie.stability"
     ],
-    "version": "1.11"
+    "version": "1.12"
   },
   "opensearch_decision_trace.OpenSearchWorkloadType": {
     "module": "opensearch_decision_trace",
@@ -794,7 +795,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.78"
+    "version": "1.79"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -802,7 +803,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.78"
+    "version": "1.79"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -1003,7 +1004,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.78"
+    "version": "1.79"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",

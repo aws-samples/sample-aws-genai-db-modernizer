@@ -114,6 +114,9 @@ E2E_LLM_PROMPT: tuple[str, ...] = (
     "src/agents/referee/redesign_findings.py",
     "src/agents/referee/carried_writes.py",
     "src/agents/referee/engine_scope.py",
+    # Which statements on temporary objects follow their routine and so stay out of
+    # every designer's input (#1891).
+    "src/agents/referee/routine_units.py",
     # The shapes the model is asked to return.
     "src/contracts/*_model_output.py",
     "src/contracts/aurora_design_delta.py",

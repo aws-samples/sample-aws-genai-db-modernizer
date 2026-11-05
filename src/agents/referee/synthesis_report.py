@@ -45,6 +45,7 @@ from src.agents.referee.derived_copy_sync import tco_assumptions
 from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.gsi_cost import tco_assumption as gsi_tco_assumption
 from src.agents.referee.routed_confidence import RoutedFit, routed_fits
+from src.agents.referee.routine_units import following
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.substring_match import substring_match_risks
 from src.agents.referee.synthesis_grounding import (
@@ -84,6 +85,7 @@ from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fi
 from src.shared.report_facts import (
     BLAME_GROUP_LABELS,
     PROCEDURE_INTERNAL_GROUP_LABEL,
+    PROCEDURE_INTERNAL_ROUTINE_GROUP_LABEL,
     analysis_overview_facts,
     is_placeholder_table,
     mean_table_fit,
@@ -442,6 +444,7 @@ def routed_fits_of(data: SynthesisData) -> dict[str, RoutedFit]:
         source_tables=[str(t["table_id"]) for t in data.source_tables if t.get("table_id")],
         source_engine=source_engine_of(data.collector),
         schema_tables=data.source_tables,
+        source_scope=SourceScope.from_collector(data.collector),
     )
 
 
@@ -676,19 +679,29 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
 
 
 def _no_table_group_label(
-    query_text: str | None, tables: list[str], source_scope: SourceScope, pinned: bool
+    query_text: str | None,
+    tables: list[str],
+    source_scope: SourceScope,
+    pinned: bool,
+    with_routine: bool = False,
 ) -> str:
     """The group of a query that names no real source table (#478): a procedure-internal
-    statement on temporary objects (#1876), another utility statement, or one with no
-    source table.
+    statement on temporary objects (#1876), kept with the utility statements or
+    following its routine (#1891), another utility statement, or one with no source table.
 
-    The procedure-internal group follows the assignment's utility pin (``pinned``), not
-    the text alone: a statement the pin did not place (no Aurora engine to pin it to, or
-    an assignment saved before #1876, when it went through the tie-break) was routed
-    like any other query, so it is listed with no source table, as it was then.
+    The procedure-internal groups follow the assignment, not the text alone: the utility
+    pin (``pinned``), or the follow rule (``with_routine``: a follower of its routine,
+    unpinned, on the engine its routine's other statements are on). A statement placed
+    by neither (no Aurora engine to pin it to, or an
+    assignment saved before #1876, when it went through the tie-break) was routed like
+    any other query, so it is listed with no source table, as it was then.
     """
     if is_procedure_internal_statement(query_text, tables, source_scope):
-        return PROCEDURE_INTERNAL_GROUP_LABEL if pinned else UNRESOLVED_TABLE_GROUP_LABEL
+        if pinned:
+            return PROCEDURE_INTERNAL_GROUP_LABEL
+        if with_routine:
+            return PROCEDURE_INTERNAL_ROUTINE_GROUP_LABEL
+        return UNRESOLVED_TABLE_GROUP_LABEL
     if is_utility_statement(query_text, tables, source_scope):
         return UTILITY_GROUP_LABEL
     return UNRESOLVED_TABLE_GROUP_LABEL
@@ -739,6 +752,9 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
         for qa in (data.assignment or {}).get("query_assignments", [])
         if qa.get("query_id") and qa.get("pinned") == PINNED_UTILITY
     }
+    # The procedure-internal statements that follow their routine (#1891): on their
+    # routine's engine, unpinned (``routine_units.following``).
+    following_qids = {f["query_id"] for f in following(data.assignment, data.collector)}
     qid_to_assignment_reason = {
         qa["query_id"]: qa.get("assignment_reason")
         for qa in (data.assignment or {}).get("query_assignments", [])
@@ -766,6 +782,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                     source_scope,
                     pinned=bool(ap_qids := _access_pattern_query_ids(ap))
                     and all(str(q) in pinned_qids for q in ap_qids),
+                    with_routine=bool(ap_qids) and all(str(q) in following_qids for q in ap_qids),
                 )
             else:
                 group_name = ", ".join(clean_tables) or "ungrouped"
@@ -898,6 +915,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                     raw_tables,
                     source_scope,
                     pinned=qa.get("pinned") == PINNED_UTILITY,
+                    with_routine=str(qa.get("query_id")) in following_qids,
                 )
             # The query's own id: a short, truncated id
             # risks two different queries silently merging under the same

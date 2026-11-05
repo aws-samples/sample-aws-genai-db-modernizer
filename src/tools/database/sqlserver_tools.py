@@ -31,6 +31,7 @@ from src.shared.rate_window import (
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
+from src.tools.database.routine_links import routine_id
 from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
@@ -440,6 +441,9 @@ class SQLServerRemoteCollector:
         # stays one (#1874).
         limit, min_executions = capture_settings(limit, min_executions)
         rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
+        # The routine each statement shape ran in (#1891), read just before the shapes
+        # from the same plan cache.
+        routines = self.collect_query_routines()
         # No cap (the default, #384): every statement that ran often enough.
         top_clause = f"TOP {limit}" if limit is not None else ""
         statements_sql = f"""
@@ -603,6 +607,10 @@ class SQLServerRemoteCollector:
                     ),
                     "first_seen": str(r.get("creation_time") or "") or None,
                     "last_seen": str(r.get("last_execution_time") or "") or None,
+                    # None when the links could not be read (#1891).
+                    "parent_routine_ids": (
+                        None if routines is None else routines.get(str(r.get("query_id")), [])
+                    ),
                 }
             )
         reader.log_fallbacks()
@@ -620,6 +628,38 @@ class SQLServerRemoteCollector:
         except Exception:  # noqa: BLE001 -- no uptime: the rates fall back to 24 hours
             return None
         return server_window(uptime_seconds=first_row_figure(rows, "uptime_seconds"))
+
+    def collect_query_routines(self) -> dict[str, list[str]] | None:
+        """``{query_hash: [routine_id, ...]}``: the procedures, functions and triggers each
+        cached statement shape ran in (#1891), as ``<schema>.<name>``, sorted.
+
+        ``sys.dm_exec_sql_text(sql_handle).objectid`` names the module a cached statement
+        belongs to; an ad hoc or prepared statement has none, so its shape is not listed.
+        Only this database's modules count. The same read as the offline script's
+        ``query_routines`` section (``scripts/collect-sqlserver.sql``). None when the read
+        fails: the collection then records no links rather than an empty one.
+        """
+        try:
+            rows = self._query("""
+                SELECT DISTINCT
+                    CONVERT(VARCHAR(40), qs.query_hash, 1) AS query_id,
+                    OBJECT_SCHEMA_NAME(st.objectid, st.dbid) AS routine_schema,
+                    OBJECT_NAME(st.objectid, st.dbid) AS routine_name
+                FROM sys.dm_exec_query_stats qs
+                CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+                WHERE st.objectid IS NOT NULL
+                  AND st.dbid = DB_ID()
+                  AND OBJECT_NAME(st.objectid, st.dbid) IS NOT NULL
+            """)
+        except Exception as exc:  # noqa: BLE001 - the links are optional, the shapes are not
+            logger.warning("sqlserver_tools: statement routines not read: %s", exc)
+            return None
+        out: dict[str, set[str]] = {}
+        for r in rows or []:
+            rid = routine_id(r.get("routine_schema"), r.get("routine_name"))
+            if r.get("query_id") and rid:
+                out.setdefault(str(r["query_id"]), set()).add(rid)
+        return {qid: sorted(ids) for qid, ids in out.items()}
 
     # -------------------------------------------------------------------
     # Global stats

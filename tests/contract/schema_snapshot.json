@@ -2144,6 +2144,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
                               "group.write_reroute",
@@ -2255,6 +2256,7 @@
                     "gate.key_scoped_count",
                     "group.customer_propagation",
                     "group.mean",
+                    "group.routine_follow",
                     "group.write",
                     "group.write_customer_propagation",
                     "group.write_reroute",
@@ -3007,8 +3009,8 @@
         }
       }
     },
-    "schema_hash": "1ae9f061845298aac5b91729a100533a2fb3c7abb0a236859a1f2e5590d899c1",
-    "version": "1.24"
+    "schema_hash": "00856f80ab03afb9b760899b6253a6be72589922b9a8e4b39e5bfe97f9b79f1a",
+    "version": "1.25"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -8595,6 +8597,25 @@
                         ]
                       }
                     },
+                    "parent_routine_ids": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "parsed_facts": {
                       "required": false,
                       "schema": {
@@ -9296,8 +9317,8 @@
         }
       }
     },
-    "schema_hash": "0378d10cac207b42a6ca23152396a2042a2070d6215cd017748805271c135f02",
-    "version": "5.8"
+    "schema_hash": "7709b3a02f3baeb8ca5764a218eadd6e02f004136088b80a755c5cbb7c02703c",
+    "version": "5.9"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -20622,6 +20643,7 @@
                                   "gate.key_scoped_count",
                                   "group.customer_propagation",
                                   "group.mean",
+                                  "group.routine_follow",
                                   "group.write",
                                   "group.write_customer_propagation",
                                   "group.write_reroute",
@@ -20927,8 +20949,8 @@
         }
       }
     },
-    "schema_hash": "7b0b9b43f757ee17e5eebc03682c6a7494a51fc96101c174f4c4440ee4167cee",
-    "version": "1.8"
+    "schema_hash": "7acfe0c7b0edd2558dcc3fd700bac9e480c69b79dfed2f282f54b1e4569d22ff",
+    "version": "1.9"
   },
   "reality_check_marker.RealityCheckMarker": {
     "fields": {
@@ -26675,6 +26697,24 @@
                               "type": "integer"
                             }
                           },
+                          "procedure_internal_routine_counts": {
+                            "required": false,
+                            "schema": {
+                              "additional": {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              "kind": "object"
+                            }
+                          },
+                          "procedure_internal_routine_queries": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
                           "relational_only_engines": {
                             "required": false,
                             "schema": {
@@ -30388,6 +30428,7 @@
                                         "gate.key_scoped_count",
                                         "group.customer_propagation",
                                         "group.mean",
+                                        "group.routine_follow",
                                         "group.write",
                                         "group.write_customer_propagation",
                                         "group.write_reroute",
@@ -30826,6 +30867,7 @@
                                       "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.routine_follow",
                                       "group.write",
                                       "group.write_customer_propagation",
                                       "group.write_reroute",
@@ -31024,6 +31066,7 @@
                                       "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.routine_follow",
                                       "group.write",
                                       "group.write_customer_propagation",
                                       "group.write_reroute",
@@ -31357,6 +31400,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
                               "group.write_reroute",
@@ -31490,6 +31534,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
                               "group.write_reroute",
@@ -31995,6 +32040,38 @@
               }
             }
           }
+        }
+      },
+      "routine_followers": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "engine": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "routine_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
         }
       },
       "schema_designs": {
@@ -33334,8 +33411,8 @@
         }
       }
     },
-    "schema_hash": "8df9919a3dc075e88d81a5eeb9eb505f5d8bb64f701026201e940e461ba5d529",
-    "version": "1.78"
+    "schema_hash": "1bc6629a14a3957b108e99e972e3e9f86b0b7a8191da20dafe507333fd2a9634",
+    "version": "1.79"
   },
   "transformation_contract.StepContract": {
     "fields": {

@@ -25,6 +25,11 @@ from collections.abc import Callable
 
 from src.agents.referee.engine_scope import check_in_scope, scope_from_store
 from src.agents.referee.query_pattern import write_access_patterns
+from src.agents.referee.routine_units import (
+    RoutineFollowers,
+    follow_routines,
+    relational_engine_of,
+)
 from src.agents.referee.write_groups import (
     assignment_placement_groups,
     assignment_unit_weights,
@@ -104,6 +109,17 @@ def pipeline_redesign(store: ArtifactStore, llm_mode: str) -> Redesign:
         )
 
     return redesign
+
+
+def router_held_ids(assignment: dict, followers: RoutineFollowers) -> set[str]:
+    """The queries the post-schema router never moves: the customer's re-routes (#713
+    review r3) and the statements on temporary objects that follow their routine
+    (#1891), which the reroute version places after the router's moves."""
+    return {
+        qa["query_id"]
+        for qa in assignment.get("query_assignments", [])
+        if qa.get("customer_override") or qa["query_id"] in followers
+    }
 
 
 class PostSchemaRouting:
@@ -261,7 +277,9 @@ class PostSchemaRouting:
         )
         run["kept"] = sorted(kept)
         active_engines = [e for e in selected_engines if e in kept]
-        scoring["settled"] = settled_counts(assignment.get("query_assignments", []))
+        scoring["settled"] = settled_counts(
+            assignment.get("query_assignments", []), exclude=scoring["followers"].routine_of
+        )
 
         # Load schema outputs
         schema_outputs: dict[str, dict] = {}
@@ -306,12 +324,10 @@ class PostSchemaRouting:
                 qa["query_id"]: qa["assigned_engine"]
                 for qa in assignment.get("query_assignments", [])
             },
-            # The customer's own re-routes are never moved (#713 review r3).
-            customer_pinned={
-                qa["query_id"]
-                for qa in assignment.get("query_assignments", [])
-                if qa.get("customer_override")
-            },
+            # The customer's own re-routes are never moved (#713 review r3), and neither
+            # is a statement on temporary objects that follows its routine (#1891): the
+            # reroute version puts it on its routine's engine after the moves.
+            customer_pinned=router_held_ids(assignment, scoring["followers"]),
             # Co-dependency and write groups (ADR-031 Decision 4 and Amendment 9):
             # a reroute moves a table's writes together.
             co_dependency_groups=assignment_placement_groups(assignment),
@@ -332,7 +348,7 @@ class PostSchemaRouting:
                 for qa in assignment.get("query_assignments", [])
                 if qa.get("tied_engines")
             },
-            **scoring,
+            **{k: v for k, v in scoring.items() if k != "followers"},
         )
         router_output.job_id = job_id
 
@@ -469,7 +485,7 @@ class PostSchemaRouting:
         # engines the input version uses) still sees an engine the moves empty.
         query_assignments = [dict(qa) for qa in assignment.get("query_assignments", [])]
         start = state_of(query_assignments)
-        ledger = ledger_for(query_assignments)
+        ledger = ledger_for(query_assignments, assignment.get("unservable_queries") or [])
         for qa in query_assignments:
             routing = moved.get(qa.get("query_id"))
             if routing is None:
@@ -519,6 +535,21 @@ class PostSchemaRouting:
             collector,
             analysis_outputs,
             count_warnings,
+        )
+        # A statement on temporary objects follows its routine to wherever the moves,
+        # the counts' included, left the routine's other statements (#1891): a Move on
+        # this version's ledger, after them, as the customer edit and the split-write
+        # reroute place it.
+        scope = scope_from_store(self.store, database_name, job_id)
+        relational, compatible = relational_engine_of(assignment, collector)
+        follow_routines(
+            query_assignments,
+            RoutineFollowers.from_collector(collector),
+            ledger,
+            relational_engine=relational,
+            source_compatible=compatible,
+            scope=scope,
+            assignment=assignment,
         )
         reroutes = prior + [
             {
@@ -619,6 +650,7 @@ class PostSchemaRouting:
             write_groups=write_groups,
             before=assignment_sources_of_truth(assignment),
             pass_=MovePass.POST_SCHEMA_FLAG,
+            followers=RoutineFollowers.from_collector(collector).routine_of,
             source_compatible=SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector)),
             # A rule never moves a customer's pin (ADR-028); the router held the writes
             # of a pinned count's table, so this only guards it.
@@ -1028,7 +1060,8 @@ class PostSchemaRouting:
         from src.contracts.move_ledger import Move, MoveEvidence, MovePass, ReasonCode
 
         rerouted_qas = rerouted.get("query_assignments", [])
-        ledger = ledger_for(rerouted_qas)
+        # A follower the reroute brought back from unservable (#1891) goes back there.
+        ledger = ledger_for(rerouted_qas, rerouted.get("unservable_queries") or [])
         done = sorted(
             (Move.model_validate(m) for m in rerouted.get("moves") or []),
             key=lambda m: m.seq,
@@ -1073,8 +1106,10 @@ class PostSchemaRouting:
             )
         check_replay(
             ledger.moves,
-            state_of(rerouted_qas),
-            state_of(restated.get("query_assignments", [])),
+            state_of(rerouted_qas, rerouted.get("unservable_queries") or []),
+            state_of(
+                restated.get("query_assignments", []), restated.get("unservable_queries") or []
+            ),
             "post-schema rollback",
         )
         return [m.model_dump(mode="json") for m in ledger.moves]
@@ -1124,5 +1159,11 @@ class PostSchemaRouting:
             },
             "query_signals": _build_query_signals(triage.get("signals", [])),
             "source_engine": source_database_engine(collector),
-            "settled": settled_counts(assignment.get("query_assignments", [])),
+            # A follower (#1891) is not placed by any tie, and counts in none.
+            "settled": settled_counts(
+                assignment.get("query_assignments", []),
+                exclude=RoutineFollowers.from_collector(collector).routine_of,
+            ),
+            # The statements on temporary objects that follow their routine (#1891).
+            "followers": RoutineFollowers.from_collector(collector),
         }

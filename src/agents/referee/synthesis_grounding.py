@@ -662,6 +662,7 @@ _GROUPS_NEVER_TOP = frozenset(
     {
         "Utility and session statements",
         "Procedure-internal statements",  # #1876
+        "Procedure-internal statements, following their routine",  # #1891
         "No source table",
         "Table not identified by the collector",
     }

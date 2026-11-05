@@ -86,6 +86,11 @@ Version History:
   second_count, elapsed_seconds): a statement's rate over the time between two snapshots
   of the counters, and why it kept the single-snapshot rate when it did. Backward
   compatible: rate_sample defaults to None (one snapshot).
+- 5.9 (2026-11-06, #1891): Added optional ``QueryPattern.parent_routine_ids``: the
+  procedures, functions or triggers whose body a statement ran in (SQL Server's
+  ``sys.dm_exec_sql_text(sql_handle).objectid``, in the offline script and the live
+  collector), so routing can place a statement on temporary objects with its procedure
+  (#1891). Backward compatible: defaults to None (not recorded).
 """
 
 import re
@@ -1003,6 +1008,17 @@ class QueryPattern(BaseModel):
             "unresolved, or the statement cannot be rewritten onto the view's base tables"
         ),
     )
+    parent_routine_ids: list[str] | None = Field(
+        None,
+        description=(
+            "The procedures, functions or triggers whose body the statement ran in, as "
+            "'<schema>.<name>' (#1891): SQL Server's sys.dm_exec_sql_text(sql_handle)."
+            "objectid. An empty list: the source says it ran in none (an ad hoc or "
+            "prepared statement). A shape that runs both ad hoc and in a routine lists "
+            "the routine only: an ad hoc run leaves no objectid. None: the collection "
+            "does not record it"
+        ),
+    )
     rows_returned_avg: float | None = Field(
         None, ge=0, description="Average number of rows returned"
     )
@@ -1244,7 +1260,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.8",
+        default="5.9",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

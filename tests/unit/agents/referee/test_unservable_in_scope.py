@@ -321,7 +321,93 @@ def _list_writes(source: str) -> list[str]:
             getattr(k, "value", None) == "unservable_queries" for k in node.keys
         ):
             found.append(f"dict:{node.lineno}")
+        # An edit in place of the list itself (#1891): ``x.unservable_queries.append(...)``,
+        # ``d["unservable_queries"].extend(...)``, ``x.unservable_queries[:] = ...``.
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"append", "extend", "insert", "remove", "pop", "clear"}
+            and _names_the_list(node.func.value)
+        ):
+            found.append(f"in_place:{node.lineno}")
+        for t in targets:
+            if isinstance(t, ast.Subscript) and _names_the_list(t.value):
+                found.append(f"in_place:{t.lineno}")
     return found
+
+
+def _names_the_list(node: object) -> bool:
+    import ast
+
+    return (isinstance(node, ast.Attribute) and node.attr == "unservable_queries") or (
+        isinstance(node, ast.Subscript)
+        and getattr(node.slice, "value", None) == "unservable_queries"
+    )
+
+
+# The ledger's two editors of the list (#1891): only these modules call them, and none
+# hands them a list, so the ledger computes every entry it writes.
+LIST_EDITORS = {"unservable_in_assignment", "servable_in_assignment"}
+LIST_EDITOR_CALLERS = {
+    "src/agents/referee/cache_overlay.py",
+    "src/agents/referee/routine_units.py",
+}
+
+
+def _editor_calls(source: str) -> list[tuple[int, bool]]:
+    """``(line, passes a list)`` for each call of a list editor in ``source``: whether
+    any argument names an ``unservable_queries`` list."""
+    import ast
+
+    out: list[tuple[int, bool]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", getattr(node.func, "attr", None))
+        if name not in LIST_EDITORS:
+            continue
+        args = [*node.args, *(kw.value for kw in node.keywords)]
+        passes = any(
+            _names_the_list(sub)
+            or (isinstance(sub, ast.Constant) and sub.value == "unservable_queries")
+            for a in args
+            for sub in ast.walk(a)
+        ) or any(kw.arg in {"unservable", "unservable_queries"} for kw in node.keywords)
+        out.append((node.lineno, passes))
+    return out
+
+
+def test_only_the_ledger_builds_the_entries_its_editors_write() -> None:
+    """A later pass edits the list only through the ledger's editors, from known
+    callers, and never hands them a list of its own (ADR-031 Amendment 15)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4]
+    callers: set[str] = set()
+    handed: list[str] = []
+    for path in sorted((root / "src").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel == "src/agents/referee/move_ledger.py":
+            continue
+        for line, passes in _editor_calls(path.read_text(encoding="utf-8")):
+            callers.add(rel)
+            if passes:
+                handed.append(f"{rel}:{line}")
+    assert callers == LIST_EDITOR_CALLERS
+    assert handed == []
+
+
+# A self-check of the guard's own parsing helpers, which main already has.
+@pytest.mark.passes_on_main
+def test_the_guard_sees_a_list_handed_to_an_editor_or_edited_in_place() -> None:
+    source = (
+        "unservable_in_assignment(ledger, a, qa, r, records=a.unservable_queries)\n"
+        "servable_in_assignment(ledger, a, qa, 'x', records=rs, unservable=mine)\n"
+        "servable_in_assignment(ledger, a, qa, 'x', records=rs)\n"
+    )
+    assert _editor_calls(source) == [(1, True), (2, True), (3, False)]
+    edits = "a.unservable_queries.append(r)\nd['unservable_queries'][:] = []\n"
+    assert [h.split(":")[0] for h in _list_writes(edits)] == ["in_place", "in_place"]
 
 
 # The only writers of ``Assignment.unservable_queries``: the move ledger

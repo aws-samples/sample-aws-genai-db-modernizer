@@ -60,6 +60,11 @@ from src.agents.referee.reality_check_request import (
     with_read_pages,
 )
 from src.agents.referee.reality_check_summary import finalize_executive_summary
+from src.agents.referee.routine_units import (
+    RoutineFollowers,
+    follow_routines,
+    relational_engine_of,
+)
 from src.agents.referee.tie_break import settled_counts
 from src.agents.referee.write_groups import (
     assignment_placement_groups,
@@ -69,7 +74,7 @@ from src.agents.referee.write_groups import (
 )
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.model_flag import ResponseContractError, validation_error_note
-from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
+from src.contracts.move_ledger import UNSERVABLE, MoveActor, MovePass, ReasonCode
 from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
 from src.contracts.reality_check_model_response import (
     RealityCheckModelResponse,
@@ -168,7 +173,9 @@ def run_reality_check_deterministic(
     # stored input: every engine change from here on is one Move on it, and the
     # revision replays from ``input_state`` plus those Moves.
     input_state = state_of(assignment.get("query_assignments", []))
-    ledger = ledger_for(assignment.get("query_assignments", []))
+    ledger = ledger_for(
+        assignment.get("query_assignments", []), assignment.get("unservable_queries") or []
+    )
 
     # An assignment written before the cache overlay (#296) has ElastiCache owners:
     # move them to their system-of-record engine first, so the revision carries
@@ -200,9 +207,16 @@ def run_reality_check_deterministic(
     # (#860): it never removes one and moves the other queries off it.
     all_qas = assignment.get("query_assignments", [])
     pinned = [qa for qa in all_qas if qa.get("customer_override")]
-    candidates = [qa for qa in all_qas if not qa.get("customer_override")]
+    # A statement on temporary objects that follows its routine (#1891) is held out the
+    # same way: no phase of this check scores it, moves it or counts it on an engine.
+    # ``_settle_records`` puts it on its routine's engine once the check is done.
+    followers = RoutineFollowers.from_collector(collector_output)
+    held = [qa for qa in all_qas if qa["query_id"] in followers and not qa.get("customer_override")]
+    candidates = [
+        qa for qa in all_qas if not qa.get("customer_override") and qa["query_id"] not in followers
+    ]
     result = run_reality_check(
-        {**assignment, "query_assignments": candidates} if pinned else assignment,
+        {**assignment, "query_assignments": candidates} if pinned or held else assignment,
         triage,
         analysis_outputs,
         collector_output,
@@ -213,7 +227,7 @@ def run_reality_check_deterministic(
         # The whole input version's sources of truth, pinned writes included (#377).
         sources_of_truth=assignment_sources_of_truth(assignment),
     )
-    if pinned:
+    if pinned or held:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
         # Copies: later steps edit revised assignments in place, and the input
         # assignment is the before-state the records are reconciled against.
@@ -229,7 +243,12 @@ def run_reality_check_deterministic(
     # exactly these Moves (moves are per-version).
     check_ledger = result.get("move_ledger")
     ledger = MoveLedger(
-        {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]},
+        {
+            # The version's unservable queries start there (#1329), so a follower that
+            # comes back records where it left (#1891).
+            **{u["query_id"]: UNSERVABLE for u in assignment.get("unservable_queries") or []},
+            **{qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]},
+        },
         check_ledger.moves if isinstance(check_ledger, MoveLedger) else ledger.moves,
         tied={qa["query_id"]: qa.get("tied_engines") or [] for qa in result["revised_assignments"]},
     )
@@ -766,7 +785,10 @@ def _flag_settled_counts(result: dict, kept_engines: set[str]) -> dict[str, int]
     """
     snapshot = result.get("settled_counts")
     if not isinstance(snapshot, dict):
-        snapshot = settled_counts(result["revised_assignments"])
+        snapshot = settled_counts(
+            result["revised_assignments"],
+            exclude=RoutineFollowers.from_collector(result.get("collector_output")).routine_of,
+        )
     return {e: n for e, n in snapshot.items() if e in kept_engines}
 
 
@@ -873,7 +895,10 @@ def _ledger(result: dict) -> MoveLedger:
     """
     ledger = result.get("move_ledger")
     if not isinstance(ledger, MoveLedger):
-        ledger = ledger_for(result.get("revised_assignments", []))
+        ledger = ledger_for(
+            result.get("revised_assignments", []),
+            (result.get("assignment") or {}).get("unservable_queries") or [],
+        )
         result["move_ledger"] = ledger
     return ledger
 
@@ -903,6 +928,9 @@ def _run_sanity_sweep(det: dict) -> None:
     ``sweep_decisions`` and ``after_distribution``.
     """
     query_map, scoring_context = _scoring_inputs(det)
+    # A follower (#1891) is no query of the sweep's: it follows its routine afterwards.
+    followers = RoutineFollowers.from_collector(det.get("collector_output"))
+    before_sweep = list(det["revised_assignments"])
     if "co_dependency_groups" not in det.get("assignment", {}):
         # Every version writes this key today (#579 round 3) -- only a
         # legacy artifact predating it would land here, so this is a guard
@@ -912,7 +940,7 @@ def _run_sanity_sweep(det: dict) -> None:
             "will treat every query as ungrouped"
         )
     det["revised_assignments"], det["consolidations"], det["sweep_decisions"] = sanity_sweep(
-        det["revised_assignments"],
+        [qa for qa in det["revised_assignments"] if qa.get("query_id") not in followers],
         det["consolidations"],
         scoring_context,
         query_map,
@@ -933,6 +961,9 @@ def _run_sanity_sweep(det: dict) -> None:
         # The resolver's snapshot, as the placement and the flag path read it (#746).
         settled=det.get("settled_counts") if isinstance(det.get("settled_counts"), dict) else None,
     )
+    if followers:
+        swept = {qa.get("query_id"): qa for qa in det["revised_assignments"]}
+        det["revised_assignments"] = [swept.get(qa.get("query_id"), qa) for qa in before_sweep]
     # Recompute after_distribution post-sweep
     sweep_distribution: dict[str, int] = defaultdict(int)
     for qa in det["revised_assignments"]:
@@ -949,6 +980,7 @@ def _settle_records(result: dict) -> None:
     and recommendations, which were detected before the sweep and the restore.
     """
     _restore_customer_overrides(result)
+    _follow_routines(result)
     # Derived from the ledger (#616). The records are only right when the input
     # replayed with this check's Moves is the revised assignment, so check that
     # first: a result whose engines changed without Moves (one built without a
@@ -965,6 +997,36 @@ def _settle_records(result: dict) -> None:
         engines_in_use=engines_in_use(result.get("collector_output")),
     )
     refresh_patterns_and_recommendations(result)
+
+
+def _follow_routines(result: dict) -> None:
+    """Put each statement on temporary objects that follows its routine (#1891) on the
+    engine its routine's other statements now are on, or pin it to the relational engine
+    as the last resort (``routine_units.follow_routines``). Idempotent; recomputes
+    ``after_distribution`` when one moved."""
+    followers = RoutineFollowers.from_collector(result.get("collector_output"))
+    if not followers:
+        return
+    assignment = result.get("assignment") or {}
+    collector = result.get("collector_output") or {}
+    scope = scope_of(result.get("triage"))
+    relational, compatible = relational_engine_of(assignment, collector)
+    # The revision spreads ``assignment``: the ledger edits its ``unservable_queries``
+    # for a follower that becomes unservable or comes back.
+    moved = follow_routines(
+        result["revised_assignments"],
+        followers,
+        _ledger(result),
+        relational_engine=relational,
+        source_compatible=compatible,
+        scope=scope,
+        assignment=assignment,
+    )
+    if moved:
+        after: dict[str, int] = defaultdict(int)
+        for qa in result["revised_assignments"]:
+            after[qa["assigned_engine"]] += 1
+        result["after_distribution"] = dict(after)
 
 
 def _restore_customer_overrides(result: dict) -> None:

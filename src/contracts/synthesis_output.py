@@ -596,6 +596,12 @@ Version History:
   (default 0): the rates over two snapshots of the counters, the sampled statements with
   no calls between them, and those that kept a single-snapshot rate. Backward
   compatible: all default to 0.
+- 1.79 (2026-11-06, #1891): Added optional
+  ``QueryGroupFacts.procedure_internal_routine_queries``: how many queries the group of
+  procedure-internal statements that follow their routine holds (``"Procedure-internal
+  statements, following their routine"``, a new blame group: SQL Server statements on
+  temporary objects only, each on the engine its routine's other statements are on,
+  #1891).
 """
 
 from datetime import datetime
@@ -2167,6 +2173,23 @@ class QueryGroupFacts(BaseModel):
             "tables or table variables only, kept with the utility statements (#1876)"
         ),
     )
+    procedure_internal_routine_queries: int = Field(
+        0,
+        ge=0,
+        description=(
+            "How many statements follow their routine (the report's routine_followers): "
+            "SQL Server statements on temporary tables or table variables only, each on "
+            "the engine the other statements of the routine the collection names for it "
+            "are on, and not scored on its own (#1891)"
+        ),
+    )
+    procedure_internal_routine_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "procedure_internal_routine_queries per engine id (#1891): each engine's "
+            "section states its own; engines with none are left out"
+        ),
+    )
 
 
 class QueryPatternMember(BaseModel):
@@ -2219,6 +2242,14 @@ class ReplicaRead(BaseModel):
     read_query_ids: list[str] = Field(
         default_factory=list, description="The table's reads this engine serves, sorted"
     )
+
+
+class RoutineFollower(BaseModel):
+    """A statement on temporary objects that follows its routine (#1891)."""
+
+    query_id: str = Field(..., description="The statement on temporary objects")
+    routine_id: str = Field(..., description="The routine it runs in, '<schema>.<name>'")
+    engine: str = Field(..., description="The engine its routine's other statements are on")
 
 
 class TableSource(BaseModel):
@@ -2889,7 +2920,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.78",
+        default="1.79",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -3024,6 +3055,14 @@ class SynthesisOutputContract(BaseModel):
         ),
     )
 
+    routine_followers: list[RoutineFollower] = Field(
+        default_factory=list,
+        description=(
+            "The SQL Server statements on temporary objects that follow the routine they "
+            "run in (#1891): each on the engine its routine's other statements are on, not "
+            "scored on its own. Empty when none does (a collection that names no routine)."
+        ),
+    )
     table_sources: list[TableSource] | None = Field(
         None,
         description=(

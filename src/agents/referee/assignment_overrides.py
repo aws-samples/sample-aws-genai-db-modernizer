@@ -65,6 +65,11 @@ from src.agents.referee.move_ledger import (
 from src.agents.referee.pending_choices import AutoPick, auto_decisions_still_holding
 from src.agents.referee.query_pattern import read_analysis_outputs, write_access_patterns
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
+from src.agents.referee.routine_units import (
+    RoutineFollowers,
+    follow_routines,
+    relational_engine_of,
+)
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
 from src.agents.referee.write_groups import (
@@ -494,7 +499,11 @@ def _load_for_edit(
     # derived version keeps, each query's score on its own engine and its pin.
     follow_moves(raw, _earlier_versions(store, database_name, job_id, raw) + [raw])
     stored_state = state_of(raw.get("query_assignments") or [])
-    ledger = ledger_for(raw.get("query_assignments") or []) if new_version else None
+    ledger = (
+        ledger_for(raw.get("query_assignments") or [], raw.get("unservable_queries") or [])
+        if new_version
+        else None
+    )
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
     remember_collected_facts(collector_output)
@@ -681,7 +690,10 @@ def apply_assignment_overrides(
     # own ``tied_engines`` must not feed another tie's count (#549 review,
     # Important 3), so this is ``tie_break.settled_counts``, never a raw
     # count of every ``assigned_engine``.
-    owner_counts = settled_counts(current.query_assignments)
+    owner_counts = settled_counts(
+        current.query_assignments,
+        exclude=RoutineFollowers.from_collector(collector_output).routine_of,
+    )
     # Built once, before the per-override loop below, and handed to every
     # ``_apply_cache_override``/``fallback_owner`` call as ``ctx=`` (#549
     # round-3 review, Suggestion 3): a customer edit can carry several
@@ -946,6 +958,7 @@ def apply_assignment_overrides(
             before=before_sources,
             pass_=MovePass.CUSTOMER_GROUP_PROPAGATION,
             source_compatible=SOURCE_ENGINE_TO_AURORA.get(source_engine),
+            followers=RoutineFollowers.from_collector(collector_output).routine_of,
             pinned="move",
             actor=MoveActor.RULE if by_rule_only else MoveActor.CUSTOMER,
         )
@@ -957,6 +970,9 @@ def apply_assignment_overrides(
         )
         and not exclude_tables
     )
+    # A statement on temporary objects follows its routine to wherever this edit left
+    # the routine's other statements (#1891); one the customer re-routed stays.
+    _follow_routines(qa_map, current, collector_output, ledger, scope)
     new_version = current_version + 1
     new_assignment = current.model_copy(
         update={
@@ -1213,6 +1229,29 @@ def mark_assignment_customer_approved(
     store.write_json(path, patched)
     updated = current.model_copy(update={"status": AssignmentStatus.CUSTOMER_APPROVED})
     return updated
+
+
+def _follow_routines(
+    qa_map: dict[str, QueryAssignment],
+    assignment: Assignment,
+    collector_output: dict,
+    ledger: MoveLedger,
+    scope: Iterable[str] | None,
+) -> list[str]:
+    """Each follower of a routine (#1891) on its routine's engine, or, as the last
+    resort, pinned to the relational engine, or unservable with none in the ``scope``
+    (``routine_units.follow_routines``: the ledger takes it out of ``qa_map`` and edits
+    ``assignment``'s ``unservable_queries``, which the new version copies)."""
+    relational, compatible = relational_engine_of(assignment, collector_output)
+    return follow_routines(
+        qa_map,
+        RoutineFollowers.from_collector(collector_output),
+        ledger,
+        relational_engine=relational,
+        source_compatible=compatible,
+        scope=scope,
+        assignment=assignment,
+    )
 
 
 def _propagate_codependent_overrides(
@@ -1649,7 +1688,10 @@ def reroute_split_writes(
     weights = unit_call_weights(units, write_groups, query_by_id)
     kept = sorted({qa.assigned_engine for qa in qa_map.values() if qa.in_scope})
     source_compatible = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
-    settled = settled_counts(current.query_assignments)
+    settled = settled_counts(
+        current.query_assignments,
+        exclude=RoutineFollowers.from_collector(collector_output).routine_of,
+    )
     split_members = {q for t in split for q in write_groups[t]}
     # #1151: a customer-pinned key-scoped count on its table's writer holds those
     # writes there, as a pinned write does (ADR-028: a rule never moves a pin).
@@ -1769,6 +1811,7 @@ def reroute_split_writes(
         # The saved version's, read before the moves above edited its records.
         before=assignment_sources_of_truth(raw),
         pass_=MovePass.CO_DEPENDENCY,
+        followers=RoutineFollowers.from_collector(collector_output).routine_of,
         source_compatible=source_compatible,
         pinned="hold",
     )
@@ -1789,6 +1832,8 @@ def reroute_split_writes(
         )
         moved.append(count.query_id)
 
+    # A statement on temporary objects follows its routine's writes (#1891).
+    _follow_routines(qa_map, current, collector_output, ledger, scope_of(loaded.triage))
     new_assignment = current.model_copy(
         update={
             "contract_version": Assignment.model_fields["contract_version"].default,

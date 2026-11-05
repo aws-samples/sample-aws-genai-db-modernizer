@@ -58,6 +58,8 @@ from dataclasses import dataclass
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import _build_query_signals
+from src.agents.referee.routine_units import RoutineFollowers
+from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.write_groups import assignment_sources_of_truth
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.placeholder_tables import is_placeholder_table
@@ -136,6 +138,7 @@ def routed_fits(
     source_tables: Iterable[str] | None = None,
     source_engine: str = "",
     schema_tables: Iterable[Mapping] | None = None,
+    source_scope: SourceScope | None = None,
 ) -> dict[str, RoutedFit]:
     """``{engine: RoutedFit}`` for every engine in ``analysis_outputs``; {} without assignment.
 
@@ -152,9 +155,15 @@ def routed_fits(
     in_scope = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
     # A pinned query (a utility pin) is not placed by its score, so its fit says
     # nothing about the engine: it is left out of the mean and counted (#1373).
-    qas = [qa for qa in in_scope if not qa.get("pinned")]
-    pinned_qas = [qa for qa in in_scope if qa.get("pinned")]
     query_map = {str(q.get("query_id")): dict(q) for q in query_patterns}
+    # A statement on temporary objects that follows its routine (#1891) is not placed by
+    # its score either, and its confidence is its routine's: it is left out of the mean
+    # (and not counted as pinned).
+    followers = RoutineFollowers.of(
+        query_map.values(), source_scope or SourceScope(None, source_engine or None)
+    )
+    qas = [qa for qa in in_scope if not qa.get("pinned") and qa.get("query_id") not in followers]
+    pinned_qas = [qa for qa in in_scope if qa.get("pinned")]
     query_signals = _build_query_signals(list(triage.get("signals") or []))
     outputs = {e: dict(a or {}) for e, a in analysis_outputs.items()}
     known = set(source_tables) if source_tables is not None else None

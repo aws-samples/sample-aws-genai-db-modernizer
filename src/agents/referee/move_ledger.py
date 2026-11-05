@@ -41,8 +41,14 @@ Amendment 15) is a Move to ``UNSERVABLE`` (``apply_unservable``), never onto an 
 the first assignment records one for each query only an engine outside the scope could
 take, and the cache owner normalisation for a legacy owner whose fallback is outside it
 (``unservable_in_assignment``, which also takes the record out of
-``query_assignments``). ``state_of`` gives such a query the ``UNSERVABLE`` state, so a
-version's Moves replay to it.
+``query_assignments``). A statement on temporary objects that follows its routine
+(#1891, ADR-031 Decision 4 Amendment 20) is the one query a later pass (the reality
+check, a customer edit, the split-write reroute, the post-schema reroute) moves to or
+from the state: ``unservable_in_assignment`` adds its entry to ``unservable_queries``,
+and its inverse, ``servable_in_assignment``, removes it again once its routine gives it
+an engine. Those two are the only writers of the list after the first assignment.
+``ledger_for(..., unservable=...)`` starts such a query on ``UNSERVABLE`` and
+``state_of`` gives it that state, so a version's Moves, and a rollback's, replay to it.
 
 The helpers below only read values a pass already computed (the scores it
 compared, the gates it applied); none of them scores anything or decides an
@@ -343,27 +349,98 @@ def apply_unservable(
     )
 
 
+def _unservable_list(assignment: Any) -> list[Any]:
+    """``assignment``'s ``unservable_queries`` (a dict's key or a model's field)."""
+    if isinstance(assignment, Mapping):
+        return list(assignment.get("unservable_queries") or [])
+    return list(getattr(assignment, "unservable_queries", None) or [])
+
+
+def _set_unservable_list(assignment: Any, records: list[Any]) -> None:
+    """Set ``assignment``'s ``unservable_queries`` to ``records``, as dicts for a dict
+    and as ``UnservableQueryAssignment`` models for an ``Assignment``."""
+    if isinstance(assignment, MutableMapping):
+        assignment["unservable_queries"] = [
+            r if isinstance(r, Mapping) else r.model_dump(mode="json") for r in records
+        ]
+        return
+    from src.contracts.assignment_models import UnservableQueryAssignment
+
+    assignment.unservable_queries = [
+        (
+            r
+            if isinstance(r, UnservableQueryAssignment)
+            else UnservableQueryAssignment.model_validate(r)
+        )
+        for r in records
+    ]
+
+
+def _drop_record(records: Any, qid: str) -> None:
+    """Take ``qid``'s record out of a pass's records (a list or ``{query_id: record}``)."""
+    if isinstance(records, MutableMapping):
+        records.pop(qid, None)
+    else:
+        records[:] = [q for q in records if str(_get(q, "query_id")) != qid]
+
+
 def unservable_in_assignment(
     ledger: MoveLedger,
-    assignment: MutableMapping[str, Any],
-    qa: Mapping[str, Any],
+    assignment: Any,
+    qa: Any,
     record: Mapping[str, Any],
+    *,
+    records: Any = None,
     **move: Any,
 ) -> Move:
-    """:func:`apply_unservable` for a query-assignment dict of ``assignment`` (#1329).
+    """:func:`apply_unservable` for a query-assignment record of ``assignment`` (#1329).
 
-    Records the Move, then takes ``qa`` out of ``assignment["query_assignments"]`` and
-    adds ``record`` (an ``UnservableQueryAssignment`` as JSON) to
-    ``assignment["unservable_queries"]``: the one place a query leaves
-    ``query_assignments`` for the unservable state.
+    Records the Move, then takes ``qa`` out of the pass's records (``records``: a list or
+    a ``{query_id: record}`` mapping the pass edits; by default
+    ``assignment["query_assignments"]``) and adds ``record`` (an
+    ``UnservableQueryAssignment`` as JSON) to ``assignment``'s ``unservable_queries``
+    (a dict or an ``Assignment``), replacing any entry of the query's: the one place a
+    query leaves ``query_assignments`` for the unservable state.
     """
     qid = str(_get(qa, "query_id"))
     made = apply_unservable(ledger, qid, **move)
-    assignment["query_assignments"] = [
-        q for q in assignment.get("query_assignments") or [] if _get(q, "query_id") != qid
-    ]
-    kept = [u for u in assignment.get("unservable_queries") or [] if _get(u, "query_id") != qid]
-    assignment["unservable_queries"] = [*kept, dict(record)]
+    if records is None:
+        assignment["query_assignments"] = [
+            q for q in assignment.get("query_assignments") or [] if _get(q, "query_id") != qid
+        ]
+    else:
+        _drop_record(records, qid)
+    kept = [u for u in _unservable_list(assignment) if str(_get(u, "query_id")) != qid]
+    _set_unservable_list(assignment, [*kept, dict(record)])
+    return made
+
+
+def servable_in_assignment(
+    ledger: MoveLedger,
+    assignment: Any,
+    qa: Any,
+    to_engine: str,
+    *,
+    records: Any,
+    **move: Any,
+) -> Move:
+    """The inverse of :func:`unservable_in_assignment` (#1891): an unservable query gets
+    an engine again. Records the Move from ``UNSERVABLE`` (``apply_to_assignment``, so
+    ``qa``, a new record whose ``assigned_engine`` is ``UNSERVABLE``, ends on
+    ``to_engine``), takes the query out of ``assignment``'s ``unservable_queries`` and
+    adds ``qa`` to the pass's ``records`` (a list or a ``{query_id: record}`` mapping).
+    The ledger must start from the version's unservable queries
+    (``ledger_for(..., unservable=...)``) for the Move to leave ``UNSERVABLE``.
+    """
+    qid = str(_get(qa, "query_id"))
+    made = apply_to_assignment(ledger, qa, to_engine, **move)
+    _set_unservable_list(
+        assignment, [u for u in _unservable_list(assignment) if str(_get(u, "query_id")) != qid]
+    )
+    if isinstance(records, MutableMapping):
+        records[qid] = qa
+    else:
+        records.append(qa)
     return made
 
 
@@ -401,10 +478,15 @@ def pin_after(move: Move, current: PinKind | None = None) -> PinKind | None:
 
     The first assignment's utility pin (rule ``override.utility``) pins it as
     ``"utility"``; any later Move that changes its engine unpins it (the pin
-    named the engine it left), and a tie-only Move keeps ``current``.
+    named the engine it left), and so does a follow (``group.routine_follow``, #1891);
+    a tie-only Move keeps ``current``.
     """
     if move.reason_code == ReasonCode.OVERRIDE_UTILITY:
         return PINNED_UTILITY
+    if move.reason_code == ReasonCode.ROUTINE_FOLLOW:
+        # A statement that follows its routine (#1891) is placed by the routine, never
+        # pinned, even when the follow leaves it on the engine its last resort pinned.
+        return None
     return None if move.from_engine != move.to_engine else current
 
 
@@ -494,15 +576,20 @@ def _get(qa: Any, key: str) -> Any:
     return qa.get(key) if isinstance(qa, Mapping) else getattr(qa, key, None)
 
 
-def ledger_for(query_assignments: Iterable[Any]) -> MoveLedger:
+def ledger_for(query_assignments: Iterable[Any], unservable: Iterable[Any] = ()) -> MoveLedger:
     """An empty ledger starting from each query's current engine.
 
     For a pass that derives a version from an earlier one: its Moves start from
     the engines the queries are on, and only its own Moves are recorded.
+    ``unservable`` (the version's ``unservable_queries``, #1329) starts each such query
+    on ``UNSERVABLE``, so a Move that gives one an engine again records where it left
+    (#1891) and the history replays.
     """
     qas = list(query_assignments)
+    engines = {_get(u, "query_id"): UNSERVABLE for u in unservable}
+    engines.update({_get(qa, "query_id"): _get(qa, "assigned_engine") for qa in qas})
     return MoveLedger(
-        {_get(qa, "query_id"): _get(qa, "assigned_engine") for qa in qas},
+        engines,
         tied={_get(qa, "query_id"): _get(qa, "tied_engines") or [] for qa in qas},
     )
 

@@ -79,7 +79,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -1980,6 +1980,20 @@ const AnalysisResultsPage = memo(() => {
                           {cacheLayerLine}
                         </Box>
                       )}
+                      {/* #1891: per non-Aurora engine, its statements on temporary objects
+                          that follow their routine (facts.query_group_counts.
+                          procedure_internal_routine_counts); an Aurora engine states its
+                          own on its tab. */}
+                      {Object.entries(procedureInternalRoutineCountsOf(synthesis))
+                        .filter(([engine, count]) => count > 0 && !isAuroraEngine(engine))
+                        .map(([engine, count]) => (
+                          <Box key={`follows-${engine}`} fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                            {t('analysis-results.procedure-internal-routine-on', {
+                              engine: ENGINE_LABELS[engine] || engine,
+                              count,
+                            })}
+                          </Box>
+                        ))}
                       {/* #1252: the gate's cache candidates and the design's cached reads
                           can differ (the post-schema-design safety net drops reads the
                           design does not cover). The sentence comes from facts.cache_layer,
@@ -2961,6 +2975,13 @@ const AnalysisResultsPage = memo(() => {
                                   <Box color="text-body-secondary" fontSize="body-s">
                                     {t('analysis-results.aurora-design.procedure-internal', {
                                       count: procedureInternalQueryCountOf(synthesis),
+                                    })}
+                                  </Box>
+                                )}
+                                {procedureInternalRoutineCountOn(synthesis, design.engine) > 0 && (
+                                  <Box color="text-body-secondary" fontSize="body-s">
+                                    {t('analysis-results.aurora-design.procedure-internal-routine', {
+                                      count: procedureInternalRoutineCountOn(synthesis, design.engine),
                                     })}
                                   </Box>
                                 )}

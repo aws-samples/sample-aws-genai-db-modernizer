@@ -39,6 +39,7 @@ from src.agents.referee.query_pattern import (
     fixable_findings,
     redesign_requirements,
 )
+from src.agents.referee.routine_units import following
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.summary_input_slim import slim_summary_input
@@ -1412,6 +1413,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         ],
         # #762: the summary request's budget status, only when it cut a list.
         "summary_input_budget": result.get("summary_input_budget"),
+        # #1891: the statements on temporary objects that follow their routine.
+        "routine_followers": following(data.assignment, data.collector),
         # #992: each written table's source of truth and replicas, from the
         # assignment's write groups (None for an assignment written before them).
         "table_sources": (

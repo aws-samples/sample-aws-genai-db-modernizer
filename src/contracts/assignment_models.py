@@ -167,6 +167,9 @@ Version History:
 - 1.24 (2026-10-24, #1373): Added optional ``QueryAssignment.pinned`` ('utility' for a
   utility or DDL statement pinned to its engine; views show 'pinned (utility)' instead
   of its confidence).
+- 1.25 (2026-11-06, #1891): Added the ``group.routine_follow`` reason code value
+  (``ReasonCode.ROUTINE_FOLLOW``, #1891): a SQL Server statement on temporary objects
+  placed on the engine its routine's other statements are on.
 """
 
 from datetime import datetime
@@ -659,7 +662,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.24", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.25", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

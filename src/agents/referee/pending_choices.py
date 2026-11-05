@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.co_dependency import build_co_dependency_groups, group_engine_scores
+from src.agents.referee.routine_units import RoutineFollowers
 from src.agents.referee.tie_break import (
     DECIDED_BY_SETTLED_WORKLOAD,
     DECIDED_BY_UNROUNDED_SCORE,
@@ -252,7 +253,9 @@ def build_pending_choices(
     for qid in sorted(tied):
         components.setdefault(union.find(qid), []).append(qid)
 
-    settled = settled_counts(qas)
+    settled = settled_counts(
+        qas, exclude=RoutineFollowers.from_collector(collector_output).routine_of
+    )
     unresolved_views = _unresolved_views(collector_output)
     raw: list[tuple[str, list[str]]] = []
     for members in components.values():

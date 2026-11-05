@@ -72,8 +72,10 @@ COMMON_SECTIONS: tuple[str, ...] = (
     "global_stats",
 )
 
-#: Sections only the SQL Server and Oracle scripts write: never reported absent.
-ENGINE_SECTIONS: tuple[str, ...] = ("io_stats", "wait_events", "os_stats")
+#: Sections only some engines' scripts write (the SQL Server and Oracle scripts; the
+#: statement-to-routine links, ``query_routines``, the SQL Server script alone, #1891):
+#: never reported absent.
+ENGINE_SECTIONS: tuple[str, ...] = ("io_stats", "wait_events", "os_stats", "query_routines")
 
 #: Sections the transform iterates entry by entry: a non-empty one is a list of objects.
 ITERATED_SECTIONS: tuple[str, ...] = (
@@ -86,6 +88,7 @@ ITERATED_SECTIONS: tuple[str, ...] = (
     "procedures",
     "triggers",
     "queries",
+    "query_routines",
 )
 
 #: Sections the transform reads as objects: a non-empty one is an object.

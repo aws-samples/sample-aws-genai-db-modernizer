@@ -46,6 +46,9 @@ Version History:
   ``closest_engine`` (move ledger).
 - 1.8 (2026-10-29, #1650): RouterOutput.waived (WaivedFlag): designer unsupported
   entries that name a gap a catalog waiver lifted; no move (#1650)
+- 1.9 (2026-11-06, #1891): Added the ``group.routine_follow`` reason code value
+  (``ReasonCode.ROUTINE_FOLLOW``, #1891): a SQL Server statement on temporary objects
+  placed on the engine its routine's other statements are on.
 """
 
 from __future__ import annotations
@@ -145,7 +148,7 @@ class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.8", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.9", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")

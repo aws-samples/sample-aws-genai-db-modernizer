@@ -1,0 +1,298 @@
+{
+  "job_id": "job-1891",
+  "metadata": {
+    "source_database": {
+      "engine": "sqlserver",
+      "version": "16.0.4135.4",
+      "database_name": "TempWithProcedure"
+    }
+  },
+  "database_schema": {
+    "tables": [
+      {
+        "table_id": "dbo.Users",
+        "table_name": "Users",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "UserId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "Username",
+            "data_type": "nvarchar"
+          },
+          {
+            "column_name": "Email",
+            "data_type": "nvarchar"
+          },
+          {
+            "column_name": "IsDeleted",
+            "data_type": "bit"
+          }
+        ],
+        "primary_key": [
+          "UserId"
+        ],
+        "foreign_keys": [],
+        "size_mb": 40,
+        "row_count": 50000
+      },
+      {
+        "table_id": "dbo.Orders",
+        "table_name": "Orders",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "OrderId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "UserId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "Total",
+            "data_type": "decimal"
+          },
+          {
+            "column_name": "CreatedOnDate",
+            "data_type": "datetime"
+          }
+        ],
+        "primary_key": [
+          "OrderId"
+        ],
+        "foreign_keys": [],
+        "size_mb": 120,
+        "row_count": 400000
+      }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "app-user",
+        "query_text": "SELECT UserId, Username, Email FROM dbo.Users WHERE UserId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 40.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-orders",
+        "query_text": "SELECT OrderId, Total FROM dbo.Orders WHERE UserId = ? ORDER BY CreatedOnDate DESC",
+        "query_type": "SELECT",
+        "calls_per_second": 20.0,
+        "rows_returned_avg": 10,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-update",
+        "query_text": "UPDATE dbo.Orders SET Total = ? WHERE OrderId = ?",
+        "query_type": "UPDATE",
+        "calls_per_second": 2.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-get",
+        "query_text": "SELECT OrderId, UserId, Total FROM dbo.Orders WHERE OrderId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 120.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-total",
+        "query_text": "SELECT Total FROM dbo.Orders WHERE OrderId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 80.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-user-name",
+        "query_text": "SELECT Username FROM dbo.Users WHERE UserId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 90.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-delete",
+        "query_text": "DELETE FROM dbo.Orders WHERE OrderId = ?",
+        "query_type": "DELETE",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "search-read",
+        "query_text": "SELECT u.UserId, u.Username FROM dbo.Users u JOIN #PageIndexForUsers p ON p.UserId = u.UserId",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 20,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": true,
+        "join_count": 1,
+        "parent_routine_ids": [
+          "dbo.GetUsersAdvancedSearch"
+        ]
+      },
+      {
+        "query_id": "search-count",
+        "query_text": "SELECT TotalRecords = COUNT(*) FROM #PageIndexForUsers",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.GetUsersAdvancedSearch"
+        ]
+      },
+      {
+        "query_id": "search-nocount",
+        "query_text": "SET NOCOUNT ON",
+        "query_type": "OTHER",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.GetUsersAdvancedSearch"
+        ]
+      },
+      {
+        "query_id": "order-insert",
+        "query_text": "INSERT INTO dbo.Orders (UserId, Total, CreatedOnDate) VALUES (?, ?, ?)",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.AddOrder"
+        ]
+      },
+      {
+        "query_id": "order-tmp",
+        "query_text": "INSERT INTO @tmp (OrderId) VALUES (?)",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.AddOrder"
+        ]
+      },
+      {
+        "query_id": "no-routine-temp",
+        "query_text": "SELECT s.UserId FROM ##ActiveSessions s WHERE s.UserId = @UserId",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "adhoc-temp",
+        "query_text": "SELECT COUNT(*) FROM #Batch",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "shared-temp",
+        "query_text": "INSERT INTO @words VALUES (@pos, @s)",
+        "query_type": "INSERT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.SplitA",
+          "dbo.SplitB"
+        ]
+      },
+      {
+        "query_id": "only-temp",
+        "query_text": "IF NOT EXISTS (SELECT 1 FROM @list WHERE [string] = @s)",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.SplitList"
+        ]
+      }
+    ]
+  }
+}
