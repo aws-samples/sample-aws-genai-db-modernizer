@@ -65,7 +65,45 @@ def _write_deliverables_folder(
     return folder
 
 
-def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None) -> dict:
+def _prebuild_graph(store, artifact_root: str, db: str, job_id: str) -> str:
+    """Build the job's context graph now, so the results page's first read opens it
+    instead of building it (#1911); returns the result's ``graph`` field.
+
+    ``built``: the CLI copy was built. ``skipped``: a current graph was already
+    there. ``failed``: the build raised, or could not read an artifact (it is
+    logged); the API builds the graph on its first read as before. Best effort: a
+    graph failure never fails the report."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        from src.graph import job_graph
+
+        info = job_graph.prebuild(store, artifact_root, db, job_id)
+    except Exception:  # noqa: BLE001 - the deliverables are already written
+        logger.warning("could not prebuild the graph of %s/%s", db, job_id, exc_info=True)
+        return "failed"
+    if info.get("complete", True) is False:
+        logger.warning(
+            "the prebuilt graph of %s/%s is incomplete (an artifact could not be read); "
+            "the API rebuilds it on its first read",
+            db,
+            job_id,
+        )
+        return "failed"
+    return "built" if info.get("rebuilt") else "skipped"
+
+
+def run(
+    job_id: str,
+    db: str,
+    artifact_root: str,
+    assignment_version: int | None,
+    *,
+    graph: bool = True,
+) -> dict:
+    """Render the deliverables; with ``graph``, also prebuild the job's context graph
+    (the result's ``graph`` field: ``built``, ``skipped`` or ``failed``)."""
     from pathlib import Path
 
     from src.report.deliverables import FOLDER_FILENAMES, synthesis_report_key
@@ -109,8 +147,10 @@ def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None
             # #1574: the index states the scope from the same facts the reports read.
             facts=report_facts(store.read_json(report_key)),
         )
+        graph_state = _prebuild_graph(store, artifact_root, db, job_id) if graph else "skipped"
         return {
             "status": "partial" if rendered.errors else "complete",
+            "graph": graph_state,
             "report": report_key,
             "deliverables_dir": str(folder.resolve()),
             "deliverables": sorted(

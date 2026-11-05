@@ -9,11 +9,12 @@ Shared by the API (``src/api/routes/graph.py``) and the command line
 - ``is_current_graph_file``: a saved graph is used only when it carries this
   code's schema revision and, when known, the job's effective assignment
   version and the digest of its input artifacts (ADR-023, #819, #847).
-- ``build_graph_file``: build into ``<path>.building`` on a brand-new handle,
-  then move it over ``path``, so a failed or interrupted build leaves the
+- ``build_graph_file``: build into a temporary folder of this build's own next
+  to ``path``, on a brand-new handle, then move it over ``path``, so a failed or interrupted build leaves the
   previous graph intact; a complete build is uploaded when a persistence
   layer is given.
-- ``prepare_graph_file``: local file, then a download, then a build.
+- ``prepare_graph_file``: local file, then a download, then a current CLI
+  copy, then a build.
 - ``open_job_graph``: the command line's read-only way in. It reads the API's
   graph when that is current. Otherwise it builds its own copy
   (``graph/cli/context.lbug``) under a file lock and reads that, so it never
@@ -21,6 +22,14 @@ Shared by the API (``src/api/routes/graph.py``) and the command line
   file, then an atomic rename) without knowing about the CLI, and two CLI
   processes build the copy once between them. When the API's file is current
   again, the copy is removed.
+- ``prebuild``: build the job's graph at the end of a run (``scripts/run_report.py``,
+  #1911) through ``open_job_graph``, so the copy is ready before the results
+  page asks for it.
+- ``adopt_cli_copy``: the API's way to use that copy. When the API has no
+  current file (a job's first read, or an open graph behind a re-run's
+  artifacts), it copies a current CLI copy over its own file (temporary file,
+  then an atomic rename) instead of building, so the first read of a finished
+  job opens a file. The API stays the only writer of its file.
 
 Reading the API's file while the API swaps in a new one relies on POSIX rename
 semantics: an open handle keeps the old file. On Windows, where a file another
@@ -39,6 +48,7 @@ import errno
 import logging
 import os
 import shutil
+import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -59,6 +69,9 @@ logger = logging.getLogger(__name__)
 #: The CLI's own copy of a job's graph, next to the API's ``graph/context.lbug``.
 CLI_GRAPH_DIR = "cli"
 
+#: Prefix of a build's own temporary folder next to the graph file.
+_BUILDING_PREFIX = ".building-"
+
 #: True on Windows: no POSIX rename semantics, so the CLI never reads the API's file.
 IS_WINDOWS = os.name == "nt"
 
@@ -74,8 +87,12 @@ def api_graph_path(artifact_root: str, db_name: str, job_id: str) -> str:
 
 def cli_graph_path(artifact_root: str, db_name: str, job_id: str) -> str:
     """The command line's own copy of the job's graph; ValueError when it leaves the root."""
-    api = api_graph_path(artifact_root, db_name, job_id)
-    path = os.path.join(os.path.dirname(api), CLI_GRAPH_DIR, "context.lbug")
+    return _cli_copy_of(api_graph_path(artifact_root, db_name, job_id))
+
+
+def _cli_copy_of(api_path: str) -> str:
+    """The CLI copy next to the API's graph file ``api_path``; ValueError on a symlink."""
+    path = os.path.join(os.path.dirname(api_path), CLI_GRAPH_DIR, "context.lbug")
     if os.path.realpath(path) != path:
         raise ValueError("graph path escapes the artifact root")
     return path
@@ -155,46 +172,47 @@ def build_graph_file(
 ) -> dict:
     """Rebuild the graph into a temporary file, move it over ``path``, then upload it.
 
-    The caller must hold exclusive access to ``path``. Building next to the
-    live file and renaming it into place means a failed or interrupted build
-    leaves the previous graph intact, and the file never accumulates the
-    history of earlier builds. Closing the writer before the rename
+    The caller must hold exclusive access to ``path`` in its own process. The
+    build goes to a temporary folder no other build shares (another process
+    building the same job, #1911), next to the live file, and is renamed into
+    place, so a failed or interrupted build leaves the previous graph intact,
+    and the file never accumulates the history of earlier builds. Closing the writer before the rename
     checkpoints the new file. ``on_built(complete)`` runs as soon as the build
     is known to be complete or not, before the file is moved; ``rebuild`` and
     ``init_schema`` default to the populators' and the schema's.
     """
     rebuild = rebuild or _populators.rebuild_graph
     init_schema = init_schema or _schema.initialize_schema
-    building = f"{path}.building"
-    for leftover in sidecars(building):
-        Path(leftover).unlink(missing_ok=True)
-    # Always build on a brand-new handle. Re-running the same parameterised
-    # inserts on one connection after the schema is dropped and recreated makes
-    # the engine silently insert nothing, so a reused writer would produce an
-    # empty graph.
-    writer = GraphStore(building)
+    folder = tempfile.mkdtemp(dir=os.path.dirname(path), prefix=_BUILDING_PREFIX)
+    building = os.path.join(folder, os.path.basename(path))
     try:
-        init_schema(writer)
-        stats = rebuild(db_name, job_id, artifact_store, writer)
-    finally:
-        writer.close()
-    complete = stats.get("complete", True)
-    if on_built is not None:
-        on_built(complete)
-    if not complete and is_current_graph_file(path):
-        # An artifact could not be read: keep the previous graph (and its
-        # stamp), so a later read retries instead of serving a partial one.
-        logger.warning(
-            "graph rebuild for %s/%s was incomplete; keeping the previous graph", db_name, job_id
-        )
-        for leftover in sidecars(building):
+        # Always build on a brand-new handle. Re-running the same parameterised
+        # inserts on one connection after the schema is dropped and recreated makes
+        # the engine silently insert nothing, so a reused writer would produce an
+        # empty graph.
+        writer = GraphStore(building)
+        try:
+            init_schema(writer)
+            stats = rebuild(db_name, job_id, artifact_store, writer)
+        finally:
+            writer.close()
+        complete = stats.get("complete", True)
+        if on_built is not None:
+            on_built(complete)
+        if not complete and is_current_graph_file(path):
+            # An artifact could not be read: keep the previous graph (and its
+            # stamp), so a later read retries instead of serving a partial one.
+            logger.warning(
+                "graph rebuild for %s/%s was incomplete; keeping the previous graph",
+                db_name,
+                job_id,
+            )
+            return stats
+        for leftover in sidecars(path)[1:]:
             Path(leftover).unlink(missing_ok=True)
-        return stats
-    for leftover in sidecars(path)[1:]:
-        Path(leftover).unlink(missing_ok=True)
-    os.replace(building, path)
-    for leftover in sidecars(building)[1:]:
-        Path(leftover).unlink(missing_ok=True)
+        os.replace(building, path)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
     if not complete or persistence is None:
         # No previous graph: serve this unstamped one, which a later read
         # rebuilds; never upload it for other API tasks to reuse.
@@ -213,18 +231,81 @@ def prepare_graph_file(
     digest: str | None,
     download: Callable[[str], bool],
     build: Callable[[], object],
+    adopt: Callable[[str], bool] | None = None,
 ) -> None:
-    """Make ``path`` hold a current graph: the local file, else a download, else a build.
+    """Make ``path`` hold a current graph: the local file, else a download, else an
+    adopted CLI copy, else a build.
 
-    A local or downloaded graph is used only when it is current for
-    ``version`` and ``digest`` (None: not checked); ``download(path)`` returns
-    True when it wrote the file.
+    A local, downloaded or adopted graph is used only when it is current for
+    ``version`` and ``digest`` (None: not checked); ``download(path)`` and
+    ``adopt(path)`` return True when they wrote the file.
     """
     if is_current_graph_file(path, version, digest):
         return
     if download(path) and is_current_graph_file(path, version, digest):
         return
+    if adopt is not None and adopt(path) and is_current_graph_file(path, version, digest):
+        return
     build()
+
+
+def adopt_cli_copy(path: str, version: int | None, digest: str | None) -> bool:
+    """Copy a current CLI copy of the job's graph over the API's file ``path`` (#1911).
+
+    True when it did. The copy is checked and read under its shared lock, so
+    the copy is neither rebuilt nor removed while it is read: a CLI build or
+    ``remove_cli_copy`` holds the exclusive lock, and this waits for it. It is
+    copied to a temporary file of its own next to ``path`` (another process
+    adopting the same job has its own) and renamed into place. No copy, a stale
+    one (another assignment version, older artifacts, an earlier schema
+    revision) or a symlinked CLI folder is not adopted, and ``path`` is left as
+    it was. Neither is a copy that cannot be read or written (a lock file
+    another user owns, a full disk, a file Windows will not replace): that is
+    logged, and the caller builds as before.
+
+    Once adopted, the copy is removed when no CLI run is reading it, so the job
+    keeps one graph: the CLI reads the API's file while that is current. Not on
+    Windows, where the CLI never reads the API's file and keeps its copy.
+    """
+    try:
+        cli = _cli_copy_of(path)
+    except ValueError as exc:
+        logger.warning("CLI graph copy refused: %s", exc)
+        return False
+    if not Path(cli).exists():
+        return False
+    adopting: str | None = None
+    try:
+        with _file_lock(cli) as lock:
+            lock.acquire("shared")
+            if not is_current_graph_file(cli, version, digest):
+                return False
+            fd, adopting = tempfile.mkstemp(
+                dir=os.path.dirname(path), prefix=f"{os.path.basename(path)}.adopting."
+            )
+            os.close(fd)
+            shutil.copyfile(cli, adopting)
+        for leftover in sidecars(path)[1:]:
+            Path(leftover).unlink(missing_ok=True)
+        os.replace(adopting, path)
+    except OSError as exc:
+        logger.warning("could not adopt the CLI graph copy %s, building instead: %s", cli, exc)
+        return False
+    finally:
+        if adopting is not None:
+            Path(adopting).unlink(missing_ok=True)
+    logger.info("adopted the prebuilt graph %s", cli)
+    if not IS_WINDOWS:
+        _drop_adopted_copy(cli)
+    return True
+
+
+def _drop_adopted_copy(cli: str) -> None:
+    """Remove the CLI copy the API just adopted, unless a CLI run holds it; never raises."""
+    try:
+        _remove_copy(cli, wait=False)
+    except OSError as exc:
+        logger.warning("could not remove the adopted CLI graph copy %s: %s", cli, exc)
 
 
 class _FileLock:
@@ -316,7 +397,10 @@ def remove_cli_copy(artifact_root: str, db_name: str, job_id: str, *, wait: bool
     off: with ``wait`` False, a busy copy is left for a later run. The lock
     file stays (removing it would let two runs lock different files).
     """
-    cli = cli_graph_path(artifact_root, db_name, job_id)
+    return _remove_copy(cli_graph_path(artifact_root, db_name, job_id), wait=wait)
+
+
+def _remove_copy(cli: str, *, wait: bool) -> bool:
     if not Path(cli).exists():
         return True
     lock = _FileLock(cli)
@@ -419,3 +503,14 @@ def open_job_graph(
             yield store, info
         finally:
             store.close()
+
+
+def prebuild(artifact_store: ArtifactStore, artifact_root: str, db_name: str, job_id: str) -> dict:
+    """Build the job's graph ahead of its first read (#1911); ``open_job_graph``'s info.
+
+    The CLI copy is built unless the API's graph is already current, which is
+    then left as it is. The API adopts the copy (``adopt_cli_copy``) on its
+    first read instead of building.
+    """
+    with open_job_graph(artifact_store, artifact_root, db_name, job_id) as (_, info):
+        return info
