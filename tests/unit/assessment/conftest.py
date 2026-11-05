@@ -19,6 +19,13 @@ REPO = Path(__file__).resolve().parents[3]
 # sample (a heterogeneous source: the only one that reaches the Aurora engine choice).
 SAMPLES = ("wordpress", "discourse", "trailgear")
 
+# dnn: a collection from a real application on SQL Server (DNN Platform with Hotcakes
+# Commerce, under load, #1929). Its assess() run takes several seconds, so it isn't in
+# SAMPLES (every sample-parametrized test would pay it on every worker): the
+# collection checks run on ALL_SAMPLES, and test_dnn_sample.py assesses it once.
+REAL_SAMPLES = ("dnn",)
+ALL_SAMPLES = (*SAMPLES, *REAL_SAMPLES)
+
 # The trimmed AdventureWorks collection (SQL Server, a collector output): a second
 # heterogeneous source, beside the samples.
 ADVENTUREWORKS = "adventureworks"
@@ -35,6 +42,12 @@ def sample_collection(name: str) -> dict[str, Any]:
     """A fresh copy of one sample's raw collection, as the collection scripts wrote it."""
     loaded: dict[str, Any] = json.loads(extract_json_object(_sample_text(name)))
     return loaded
+
+
+def database_name(name: str) -> str:
+    """The database a sample was collected from: its folder name, except dnn, a real
+    collection whose database is ``DNN``."""
+    return str(sample_collection(name)["metadata"]["database_name"])
 
 
 def collection(name: str) -> dict[str, Any]:

@@ -27,7 +27,7 @@ from src.tools.database.offline_collection_check import (
     validate_offline_collection,
 )
 from src.tools.database.offline_parser import fetch_offline_json, parse_offline_collection
-from tests.unit.assessment.conftest import SAMPLES, sample_collection
+from tests.unit.assessment.conftest import ALL_SAMPLES, sample_collection
 
 SOURCE = "shop-collection.json"
 
@@ -323,14 +323,14 @@ def test_metadata_as_a_json_string_is_accepted() -> None:
 # -- The bundled samples ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", SAMPLES)
+@pytest.mark.parametrize("name", ALL_SAMPLES)
 def test_every_sample_passes_the_check_with_nothing_absent(name: str) -> None:
     raw = sample_collection(name)
 
     assert validate_offline_collection(raw, source=f"{name}.zip") == ()
 
 
-@pytest.mark.parametrize("name", SAMPLES)
+@pytest.mark.parametrize("name", ALL_SAMPLES)
 def test_every_sample_builds_the_same_collector_output_through_the_check(name: str) -> None:
     """The check adds nothing to the parsed collection of a well-formed sample."""
     parsed = parse_offline_collection(sample_collection(name), database_name=name, source=name)

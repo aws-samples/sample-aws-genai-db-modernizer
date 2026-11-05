@@ -21,7 +21,7 @@ import pytest
 
 from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.tools.database.offline_parser import parse_offline_collection
-from tests.unit.assessment.conftest import SAMPLES, sample_collection
+from tests.unit.assessment.conftest import ALL_SAMPLES, database_name, sample_collection
 
 
 def _collector(raw: dict[str, Any], name: str, *, tell_parser: bool = True) -> dict[str, Any]:
@@ -55,24 +55,26 @@ def _without_metadata_name(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("name", SAMPLES)
+@pytest.mark.parametrize("name", ALL_SAMPLES)
 def test_a_matching_name_keys_tables_by_it(name: str) -> None:
-    out = _collector(sample_collection(name), name, tell_parser=False)
-    assert all(i.startswith(f"{name}.") for i in _ids(out))
+    db = database_name(name)
+    out = _collector(sample_collection(name), db, tell_parser=False)
+    assert all(i.startswith(f"{db}.") for i in _ids(out))
     assert _resolved(out) and _resolved(out) <= _ids(out)
 
 
-@pytest.mark.parametrize("name", SAMPLES)
+@pytest.mark.parametrize("name", ALL_SAMPLES)
 def test_a_different_run_name_builds_the_same_collector_output(name: str) -> None:
     """The shared builder as every caller used it before #1572 (no name for the parser)."""
-    matching = _collector(sample_collection(name), name, tell_parser=False)
+    db = database_name(name)
+    matching = _collector(sample_collection(name), db, tell_parser=False)
     for tell_parser in (False, True):
         other = _collector(sample_collection(name), "shop", tell_parser=tell_parser)
         assert other["database_schema"] == matching["database_schema"]
         assert other["queries"] == matching["queries"]
         # One name for the ids and the source database (#835 reads the latter).
         assert other["metadata"]["source_database"] == matching["metadata"]["source_database"]
-        assert other["metadata"]["source_database"]["database_name"] == name
+        assert other["metadata"]["source_database"]["database_name"] == db
 
 
 @pytest.mark.parametrize("system_name", ["sys", "mysql"])
