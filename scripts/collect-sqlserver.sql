@@ -157,14 +157,15 @@ SET @queries = (
                 qs.max_elapsed_time,
                 qs.creation_time,
                 qs.last_execution_time,
-                REPLACE(REPLACE(REPLACE(
-                    SUBSTRING(st.text,
-                        (qs.statement_start_offset / 2) + 1,
-                        ((CASE qs.statement_end_offset
-                            WHEN -1 THEN DATALENGTH(st.text)
-                            ELSE qs.statement_end_offset
-                            END - qs.statement_start_offset) / 2) + 1),
-                    CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
+                -- The statement as written, line breaks and tabs kept: FOR JSON escapes
+                -- them, and a line break ends a -- comment, so the text never runs into
+                -- one (#1874).
+                SUBSTRING(st.text,
+                    (qs.statement_start_offset / 2) + 1,
+                    ((CASE qs.statement_end_offset
+                        WHEN -1 THEN DATALENGTH(st.text)
+                        ELSE qs.statement_end_offset
+                        END - qs.statement_start_offset) / 2) + 1) AS query_text,
                 ROW_NUMBER() OVER (
                     PARTITION BY qs.query_hash, d.statement_dbid
                     ORDER BY qs.total_elapsed_time DESC, qs.plan_handle, qs.statement_start_offset
