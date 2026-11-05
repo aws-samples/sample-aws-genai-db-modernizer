@@ -17,7 +17,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 ## Credentials and secrets
 
-Every AWS call uses the customer's own credentials: the ambient ones, or the named profiles in the inputs file, `read_profile` for the read-only calls (preflight, status, gate) and `write_profile` for the writes (deploy, execute, test, start). Recommend a read-only profile for `read_profile`; the preflight and the gate only read (the README lists their permissions). The inputs file holds ids and ARNs only. Never ask for, write, print or repeat a password or a secret's value; if the customer pastes one, do not write it anywhere, tell them it is not needed (DMS reads it from the secret) and ask for the secret's ARN instead. The scripts never read a secret's value.
+Every AWS call uses the customer's own credentials: the ambient ones, or the named profiles in the inputs file, `read_profile` for the read-only calls (preflight, status, gate) and `write_profile` for the writes (deploy, execute, test, start, stop, teardown). Recommend a read-only profile for `read_profile`; the preflight and the gate only read (the README lists their permissions). The inputs file holds ids and ARNs only. Never ask for, write, print or repeat a password or a secret's value; if the customer pastes one, do not write it anywhere, tell them it is not needed (DMS reads it from the secret) and ask for the secret's ARN instead. The scripts never read a secret's value.
 
 ## Step 0: The job and the step
 
@@ -29,7 +29,7 @@ uv run python scripts/run_dms_step.py steps --job-id {job_id} --db {db}
 
 An error line that says there are no step plans: run Prepare's first two commands (they make no AWS call), then this command again. Show each entry's `step`, `title` and `wave`, and ask which step to move. Under `--auto`, do not ask: take step 1. A step whose `supported` is false ends with `MOVE_RESULT: stopped stage=select reason=only step 1 is supported`.
 
-**Resume.** When the inputs file exists, run `status` (Prove) once before Prepare and go straight to the stage its `phase` names: `no_stack` → Prepare; `stack_in_progress`, `connections_not_tested`, `connections_testing`, `connections_failed`, `ready_to_start` or `stack_failed` → Move at the matching point; `loading`, `validating`, `caught_up` or `task_stopped` → Prove. Tell the customer in one sentence where the step stands.
+**Resume.** When the inputs file exists, run `status` (Prove) once before Prepare and go straight to the stage its `phase` names: `no_stack` → Prepare; `stack_in_progress`, `connections_not_tested`, `connections_testing`, `connections_failed`, `ready_to_start` or `stack_failed` → Move at the matching point; `loading`, `validating`, `caught_up` or `task_stopped` → Prove. Tell the customer in one sentence where the step stands. When the customer asked to end the step, go to Ending the step instead, whatever the `phase`.
 
 ## Stage 1: Prepare
 
@@ -171,7 +171,48 @@ uv run python scripts/run_dms_step.py gate --job-id {job_id} --db {db}
 
 Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:` or `parity:`), every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or validation are still arriving: run the gate again in a few minutes. Then quote the line's `cutover_message` field verbatim, as a block quote: never shorten, reword or summarise it, and never recommend a time to cut over. When to cut over is the customer's decision (`cutover_decision` is `customer`); this command never cuts over.
 
-End with `MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`.
+Then tell the customer in one line how the step ends: when you have cut over, or to abandon the move, ask `/move step-1` to end the step; it stops the task and then deletes the DMS stack (CloudFormation cannot delete a running task). End with `MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`.
+
+## Ending the step
+
+Ending the step is a run of its own: it starts only when the customer asks to end the step, in a later message or with `/move step-1` again (Resume sends that request here), never inside a run that is still proving. That run ends with exactly one result line, a `stage=end` one, and never prints `MOVE_RESULT: complete`. Say what it deletes and what stays, from the README's "Ending the step" section: the stack's six resources go; the Aurora cluster and its data stay (they are the customer's), and so do the source, the secrets and the certificates. Stopping the task ends ongoing replication, so changes on the source no longer reach Aurora. Both commands refuse any stack that is not this job's step 1 stack. Under `--auto`, never run `stop` or `teardown`: ending a step is the customer's own request, and `--approve-deploy` does not cover it.
+
+**What DMS reports.** Every line these commands print about the task carries `dms_reports`: DMS's own task status in words, for example `DMS reports the task stopped (not running)`, `DMS reports the task failed (not running): <DMS's reason>`, `DMS reports the task never started (ready, not running)` or `DMS reports the task stopping (still running)`. Quote it verbatim in every question and result line below (`{dms_reports}`): never shorten it to a generic "not running". When `task_status` is `failed`, also show the line's `last_failure` and `stop_reason`. A failed task cannot be stopped, so a failed or never-started task counts as not running and the step can still be ended.
+
+First show which stack this is (no AWS call), then read what DMS reports for its task (read-only, no wait):
+
+```bash
+uv run python scripts/run_dms_step.py plan --job-id {job_id} --db {db}
+uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until task_stopped --wait-seconds 0
+```
+
+`reached` true: tell the customer `{dms_reports}` and go straight to the delete question; there is nothing to stop. Otherwise ask: "{dms_reports}. Stop the replication task of stack {stack_name} in {region} now?" Only on a yes, with the `plan` line's `stack_name` and `region`; on a no, end with `MOVE_RESULT: stopped stage=end reason=customer declined to stop the task ({dms_reports})`:
+
+```bash
+uv run python scripts/run_dms_step.py stop --job-id {job_id} --db {db} --approve
+```
+
+`"status": "stopped"`, `"no_task"` or `"no_stack"`: tell the customer the line's `dms_reports`. `"status": "stopping"` (the wait ran out): never rerun `stop`; wait with the read-only status instead, in the same turn, up to 4 times:
+
+```bash
+uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until task_stopped --wait-seconds 540
+```
+
+`reached` true: DMS reports the task stopped, failed or never started, or the task is gone (`task_status` `deleted`); the wait reads the task whatever the stack's state. Tell the customer the line's `dms_reports`. A `task_status` of `running` or `starting` (the task started again): stopping it again needs a new yes, so ask the stop question again. Still `stopping` after the 4 waits: end with `MOVE_RESULT: stopped stage=end reason=task still stopping ({dms_reports}): run /move step-1 again to end the step`. Ask the delete question only once that is proven: a `stop` line with `"status"` `"stopped"`, `"no_task"` or `"no_stack"`, or a `status --until task_stopped` line with `reached` true. Never on `stopping`, and never from a stack status alone.
+
+Ask: "{dms_reports}. Delete the stack {stack_name} in {region} now?" Only on a yes; on a no, end with `MOVE_RESULT: stopped stage=end reason=customer declined to delete the stack ({dms_reports})`:
+
+```bash
+uv run python scripts/run_dms_step.py teardown --job-id {job_id} --db {db} --approve
+```
+
+Each `teardown` run deletes at most once, so it runs once per yes. `"status": "deleted"`: end with `MOVE_RESULT: stopped stage=end reason=step 1 ended: stack <stack_name> deleted ({dms_reports})`, with the `teardown` line's `dms_reports` (what DMS reported when the delete was decided). `"status": "delete_failed"`: handle it as the `DELETE_FAILED` below, with its `stack_reason`. `"status": "deleting"` (the wait ran out): never rerun `teardown`; wait with the read-only status instead, in the same turn, up to 4 times:
+
+```bash
+uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until stack --wait-seconds 540
+```
+
+`phase` `no_stack`: the stack is gone; end as for `deleted`. Still `DELETE_IN_PROGRESS` after the 4 waits: end with `MOVE_RESULT: stopped stage=end reason=stack still deleting ({dms_reports}): run /move step-1 again to end the step`. `stack_status` `DELETE_FAILED`: show its `stack_reason`, then ask again: "{dms_reports}. Delete the stack {stack_name} in {region} again?" Only on a yes, run `teardown` once more; on a no, end with `MOVE_RESULT: stopped stage=end reason=customer declined to delete the stack again: <stack_reason> ({dms_reports})`. Any error line (for example a stack that is not this job's step 1 stack, or `DMS reports the task running ...: run stop first`) ends with `MOVE_RESULT: stopped stage=end reason=<its message>`. In the result lines `{dms_reports}` is the latest one a command printed.
 
 ## Headless (`--auto`)
 
@@ -181,6 +222,7 @@ End with `MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's sta
 - Without `--inputs`: no AWS call at all. End with `MOVE_RESULT: stopped stage=check reason=needs customer inputs`.
 - With `--inputs` and without `--approve-deploy`: the preflight (read-only) and `plan` (no AWS call) run, then the run ends before any AWS write with `MOVE_RESULT: stopped stage=move reason=deploy needs --approve-deploy`.
 - With `--inputs` and `--approve-deploy`: Move runs every step without its question, then Prove.
+- `--auto` never stops the task or deletes the stack (Ending the step).
 - The writes refuse to run under `MODERNIZER_CI_SANDBOX=1` (the CI headless runs), whatever the flags.
 
 ## Result line
@@ -188,7 +230,11 @@ End with `MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's sta
 End every run with exactly one line, also when not `--auto`:
 
 - `MOVE_RESULT: complete job_id=<id> step=1 gate=<status>` — the gate ran; `<status>` is its `status`.
-- `MOVE_RESULT: stopped stage=<stage> reason=<one line>` — `<stage>` is `select`, `prepare`, `check`, `move` or `prove`.
+- `MOVE_RESULT: stopped stage=<stage> reason=<one line>` — `<stage>` is `select`, `prepare`, `check`, `move`, `prove` or `end` (Ending the step).
+
+A run that ends the step (Ending the step) is its own run and prints only its `stage=end` line, never a `complete` one.
+
+A question the customer answers no ends the run with `MOVE_RESULT: stopped stage=<the stage that asked> reason=customer declined <what was asked>`: in Move, for example, `stage=move reason=customer declined the change set`; Ending the step names its own three lines.
 
 ## Waiting Rule
 

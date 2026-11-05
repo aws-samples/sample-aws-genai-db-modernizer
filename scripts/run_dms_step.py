@@ -20,6 +20,12 @@ Every subcommand prints one JSON line (exit 1 only on ``"status": "error"``):
 - ``deploy --approve`` (create and show a change set), ``execute --change-set <name> --approve``,
   ``test --approve`` (test both endpoints), ``start --approve`` (start the task): AWS writes,
   refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``.
+- ``stop --approve`` (stop the task and wait until it has stopped) and ``teardown --approve``
+  (delete the step's stack once its task is not running, and wait until it is gone): the writes
+  that end the step (#1896), with the same refusals. Both are no-ops when there is nothing left
+  to do, act only on this job's step stack (exactly the template's six resources, and a task whose
+  identifier and ``modernizer:job-id`` tag name this job), wait up to ``--wait-seconds`` (default and maximum 540) and
+  print one progress line per poll on stderr.
 
 The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under the artifact
 root) holds ids and ARNs only, never a secret's value: an unknown key, such as ``password``,
@@ -31,6 +37,8 @@ Usage:
     uv run python scripts/run_dms_step.py plan --job-id <id> --db <db> [--inputs <file>]
     uv run python scripts/run_dms_step.py deploy --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py status --job-id <id> --db <db> --until stack --wait-seconds 540
+    uv run python scripts/run_dms_step.py stop --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py teardown --job-id <id> --db <db> --approve
 """
 
 from __future__ import annotations
@@ -58,13 +66,61 @@ from src.contracts.dms_preflight import CHECK_ORDER  # noqa: E402
 
 STEP_DIR = "data-movement/step-1"
 TEMPLATE = "dms-step-1.yaml"
-WRITES = ("deploy", "execute", "test", "start")
+ENDING = ("stop", "teardown")
+WRITES = ("deploy", "execute", "test", "start", *ENDING)
 READS = ("preflight", "gate", "status")
 LOCAL = ("steps", "summary", "plan")
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 PENDING_VALIDATION = {"Pending records", "Pending validation", "Pending revalidation"}
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
+TASK_IDLE = TASK_STOPPED | {"ready"}  # not running: nothing to stop, and the stack may be deleted
+TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
+# What DMS's own task status means, in the words the customer sees (``dms_reports``).
+_DMS_WORDS = {"stopped": "stopped (not running)", "failed": "failed (not running)",
+              "failed-move": "failed-move (not running)",
+              "ready": "never started (ready, not running)", "running": "running",
+              "starting": "starting (running)", "stopping": "stopping (still running)"}  # fmt: skip
+
+
+def dms_reports(task: dict[str, Any] | None) -> str:
+    """The task's status exactly as DMS reports it; a failed task carries DMS's reason."""
+    if task is None:
+        return "DMS has no such task (the task is gone, not running)"
+    state = task.get("Status") or "unknown"
+    text = f"DMS reports the task {_DMS_WORDS.get(state, state)}"
+    if state in ("failed", "failed-move"):
+        reasons = [r for r in (task.get("LastFailureMessage"), task.get("StopReason")) if r]
+        text += f": {'; '.join(reasons)}" if reasons else ": DMS gives no reason"
+    return text
+
+
+def _task_report(task: dict[str, Any] | None) -> dict[str, Any]:
+    """The task fields every ending line carries: DMS's status, its words, and its reasons."""
+    return {"task_status": "deleted" if task is None else task.get("Status"),
+            "dms_reports": dms_reports(task),
+            "stop_reason": None if task is None else task.get("StopReason"),
+            "last_failure": None if task is None else task.get("LastFailureMessage")}  # fmt: skip
+
+
+# The logical ids and types dms-step-1.yaml creates: stop and teardown act only on a stack that
+# holds exactly these (#1896).
+STEP_RESOURCES: dict[str, str] = {
+    "SecretsAccessRole": "AWS::IAM::Role",  # pragma: allowlist secret
+    "SubnetGroup": "AWS::DMS::ReplicationSubnetGroup",
+    "ReplicationInstance": "AWS::DMS::ReplicationInstance",
+    "SourceEndpoint": "AWS::DMS::Endpoint",
+    "TargetEndpoint": "AWS::DMS::Endpoint",
+    "ReplicationTask": "AWS::DMS::ReplicationTask",
+}
+JOB_TAG = "modernizer:job-id"  # on the stack (deploy) and on every resource (the template)
+
+
+def stack_tags(job_id: str) -> list[dict[str, str]]:
+    """The tags deploy puts on the stack itself, as the template puts them on its resources."""
+    return [{"Key": JOB_TAG, "Value": job_id}, {"Key": "modernizer:step", "Value": "1"}]
+
+
 _ARN = r"^arn:aws[a-z-]*:"
 _SECRET = _ARN + r"secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$"
 _CERT = r"^$|" + _ARN + r"dms:[a-z0-9-]+:\d{12}:cert:[A-Za-z0-9-]+$"
@@ -139,8 +195,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--change-set", help="execute: the change set deploy created")
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
                    help="preflight: a 'confirm' row the customer checked (repeatable)")  # fmt: skip
-    p.add_argument("--until", choices=["stack", "connections", "caught_up"])
-    p.add_argument("--wait-seconds", type=int, default=0)
+    p.add_argument("--until", choices=["stack", "connections", "caught_up", "task_stopped"])
+    p.add_argument("--wait-seconds", type=int, default=None,
+                   help=f"status: default 0; stop, teardown: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
     return p
 
@@ -295,7 +352,8 @@ def deploy_plan(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str
     name = stack_name(inputs, job_id)
     command = ["aws", "cloudformation", "deploy", "--template-file", str(path), "--stack-name", name,
                "--capabilities", "CAPABILITY_IAM", "--region", inputs.region, "--parameter-overrides",
-               *(f"{k}={v}" for k, v in params.items())]  # fmt: skip
+               *(f"{k}={v}" for k, v in params.items()),
+               "--tags", *(f"{t['Key']}={t['Value']}" for t in stack_tags(job_id))]  # fmt: skip
     return {"status": "ready", "stack_name": name, "region": inputs.region, "template": str(path),
             "template_bytes": len(body.encode()), "parameters": params,
             "command": shlex.join(command)}  # fmt: skip
@@ -376,7 +434,8 @@ def status(clients: MoveClients, name: str) -> dict[str, Any]:
                 "tables_queued": task_stats.get("TablesQueued"),
                 "tables_errored": task_stats.get("TablesErrored"),
                 "stop_reason": task.get("StopReason"),
-                "last_failure": task.get("LastFailureMessage")})  # fmt: skip
+                "last_failure": task.get("LastFailureMessage"),
+                "dms_reports": dms_reports(task)})  # fmt: skip
     if task.get("Status") == "ready":
         statuses = {c["status"] for c in connections.values()}
         phase = ("connections_testing" if "testing" in statuses
@@ -425,14 +484,44 @@ def wait_status(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    current = status(clients, name)
-    if until is None:
+    read: Callable[[MoveClients, str], dict[str, Any]] = status
+    done = UNTIL.get(until or "")
+    if until == "task_stopped":
+        read, done = task_state, lambda s: s["task_stopped"]
+    current = read(clients, name)
+    if until is None or done is None:
         return current
     deadline = clock() + wait_seconds
-    while not UNTIL[until](current) and clock() + interval <= deadline:
+    while not done(current) and clock() + interval <= deadline:
         sleep(interval)
-        current = status(clients, name)
-    return {**current, "until": until, "reached": UNTIL[until](current)}
+        current = read(clients, name)
+    return {**current, "until": until, "reached": done(current)}
+
+
+def task_state(clients: MoveClients, name: str) -> dict[str, Any]:
+    """Read-only: whether the stack's replication task is still running, in any stack state.
+
+    The task is read from the stack's resources whatever the stack's status (a failed or
+    rolled-back stack included). ``task_stopped`` is true only when DMS reports the task not
+    running (stopped, failed or never started) or the task is gone: no stack, no task resource,
+    a deleted one, or a task DMS no longer has."""
+    out: dict[str, Any] = {"status": "complete", "stack_name": name}
+    stack = _stack(clients, name)
+    if stack is None:
+        return {**out, "phase": "no_stack", **_task_report(None), "task_stopped": True}
+    out["stack_status"] = stack["StackStatus"]
+    rows = [r for page in clients.cloudformation.get_paginator("list_stack_resources").paginate(
+                StackName=name) for r in page.get("StackResourceSummaries") or []
+            if r["LogicalResourceId"] == "ReplicationTask"]  # fmt: skip
+    arn = rows[0].get("PhysicalResourceId") if rows else None
+    if not rows or rows[0].get("ResourceStatus") == "DELETE_COMPLETE" or not arn:
+        return {**out, "phase": "task_gone", **_task_report(None), "task_stopped": True}
+    task = _task(clients, arn)
+    if task is None:
+        return {**out, "phase": "task_gone", **_task_report(None), "task_stopped": True}
+    state = task.get("Status")
+    return {**out, "phase": "task_stopped" if state in TASK_IDLE else "task_running",
+            **_task_report(task), "task_stopped": state in TASK_IDLE}  # fmt: skip
 
 
 # --- AWS: writes, each after the customer's approval -----------------------------------------
@@ -465,7 +554,7 @@ def deploy(
     change_set = f"move-step-1-{now().strftime('%Y%m%d%H%M%S')}"
     clients.cloudformation.create_change_set(
         StackName=name, ChangeSetName=change_set, ChangeSetType=kind, TemplateBody=body,
-        Capabilities=["CAPABILITY_IAM"],
+        Capabilities=["CAPABILITY_IAM"], Tags=stack_tags(job_id),
         Parameters=[{"ParameterKey": k, "ParameterValue": v} for k, v in plan["parameters"].items()],
     )  # fmt: skip
     for _ in range(60):
@@ -537,6 +626,238 @@ def start(clients: MoveClients, name: str) -> dict[str, Any]:
     return {"status": "starting", "stack_name": name, "task_arn": arn}
 
 
+# --- AWS: ending the step, each after the customer's approval (#1896) ------------------------
+
+
+def _progress(command: str, state: str, waited: int, wait_seconds: int) -> None:
+    print(f"{command}: the {state} (waited {waited} s of {wait_seconds} s)", file=sys.stderr)
+
+
+def _step_stack(clients: MoveClients, name: str) -> dict[str, Any] | None:
+    """The step's stack, or None when it is gone; refuses one that is changing."""
+    stack = _stack(clients, name)
+    if (
+        stack is not None
+        and stack["StackStatus"].endswith("_IN_PROGRESS")
+        and (stack["StackStatus"] != "DELETE_IN_PROGRESS")
+    ):
+        raise MoveError(
+            f"stack {name} is {stack['StackStatus']}: wait for it with status --until stack"
+        )
+    return stack
+
+
+def _stack_tag_is_this_jobs(name: str, stack: dict[str, Any], job_id: str) -> bool:
+    """True when the stack carries this job's tag; refuses one that carries another job's."""
+    values = [t.get("Value") for t in stack.get("Tags") or [] if t.get("Key") == JOB_TAG]
+    if values and values != [job_id]:
+        raise _not_the_step(name, f"the stack's {JOB_TAG} tag is {values}, not [{job_id!r}]")
+    return values == [job_id]
+
+
+def _not_the_step(name: str, why: str) -> MoveError:
+    return MoveError(f"stack {name} is not this job's step 1 DMS stack: {why}; stop and teardown "
+                     "only end the stack dms-step-1.yaml created for this job (end any other "
+                     "stack yourself)")  # fmt: skip
+
+
+def _step_resources(clients: MoveClients, name: str) -> dict[str, dict[str, Any]]:
+    """Every resource of the stack, page by page; exactly the six ``dms-step-1.yaml`` creates."""
+    found: dict[str, dict[str, Any]] = {}
+    pages = clients.cloudformation.get_paginator("list_stack_resources").paginate(StackName=name)
+    for page in pages:
+        for r in page.get("StackResourceSummaries") or []:
+            found[r["LogicalResourceId"]] = r
+    kinds = {logical: r["ResourceType"] for logical, r in found.items()}
+    if kinds != STEP_RESOURCES:
+        extra = sorted(f"{k} ({v})" for k, v in kinds.items() if STEP_RESOURCES.get(k) != v)
+        missing = sorted(k for k in STEP_RESOURCES if kinds.get(k) != STEP_RESOURCES[k])
+        parts = [f"unexpected: {', '.join(extra)}"] if extra else []
+        parts += [f"missing: {', '.join(missing)}"] if missing else []
+        raise _not_the_step(
+            name, f"its resources are not the six of dms-step-1.yaml ({'; '.join(parts)})"
+        )
+    return found
+
+
+def _task(clients: MoveClients, arn: str) -> dict[str, Any] | None:
+    from botocore.exceptions import ClientError
+
+    try:
+        found: list[dict[str, Any]] | None = clients.dms.describe_replication_tasks(
+            Filters=[{"Name": "replication-task-arn", "Values": [arn]}]
+        ).get("ReplicationTasks")
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundFault":
+            return None
+        raise
+    return found[0] if found else None
+
+
+def _check_task_is_this_jobs(
+    clients: MoveClients, name: str, task: dict[str, Any], job_id: str
+) -> None:
+    """The task's identifier and its ``modernizer:job-id`` tag both name this job."""
+    from src.tools.data_movement.dms_step import task_identifier
+
+    expected = task_identifier(job_id)
+    if task.get("ReplicationTaskIdentifier") != expected:
+        raise _not_the_step(
+            name, f"its task is {task.get('ReplicationTaskIdentifier')!r}, not {expected!r}"
+        )
+    tags = clients.dms.list_tags_for_resource(ResourceArn=task["ReplicationTaskArn"])
+    job_tags = [
+        t.get("Value") for t in tags.get("TagList") or [] if t.get("Key") == "modernizer:job-id"
+    ]
+    if job_tags != [job_id]:
+        raise _not_the_step(
+            name, f"its task's modernizer:job-id tag is {job_tags or 'missing'}, not [{job_id!r}]"
+        )
+
+
+def _live_task(
+    clients: MoveClients, name: str, resources: dict[str, dict[str, Any]], job_id: str
+) -> dict[str, Any] | None:
+    """The stack's task, checked to be this job's; None once the task is gone."""
+    resource = resources["ReplicationTask"]
+    if resource.get("ResourceStatus") == "DELETE_COMPLETE":
+        return None
+    arn = resource.get("PhysicalResourceId")
+    if not arn:
+        raise _not_the_step(name, "its ReplicationTask has no physical id")
+    task = _task(clients, arn)
+    if task is not None:
+        _check_task_is_this_jobs(clients, name, task, job_id)
+    return task
+
+
+def stop(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Stop the step's task and wait until it has stopped; a task not running is left as is."""
+    stack = _step_stack(clients, name)
+    if stack is None:
+        return {"status": "no_stack", "stack_name": name}
+    _stack_tag_is_this_jobs(name, stack, job_id)
+    task = _live_task(clients, name, _step_resources(clients, name), job_id)
+    if task is None:
+        return {"status": "no_task", "stack_name": name, **_task_report(None)}
+    arn = task["ReplicationTaskArn"]
+    state = task.get("Status")
+    out = {"stack_name": name, "task_arn": arn}
+    if state in TASK_IDLE:
+        return {"status": "stopped", **out, **_task_report(task), "already_stopped": True}
+    if state in TASK_RUNNING:
+        clients.dms.stop_replication_task(ReplicationTaskArn=arn)
+        state = "stopping"
+    elif state != "stopping":
+        raise MoveError(f"{dms_reports(task)}: wait until it is running or stopped, then run "
+                        "stop again (status shows where it stands)")  # fmt: skip
+    waited = 0
+    current: dict[str, Any] | None = task
+    while state not in TASK_IDLE and waited + interval <= wait_seconds:
+        sleep(interval)
+        waited += interval
+        current = _task(clients, arn)
+        state = "deleted" if current is None else current.get("Status")
+        _progress("stop", f"task is {state}", waited, wait_seconds)
+        if current is None:
+            break
+    reached = current is None or state in TASK_IDLE
+    return {"status": "stopped" if reached else "stopping", **out, **_task_report(current),
+            "already_stopped": False, "reached": reached, "waited_seconds": waited}  # fmt: skip
+
+
+def _resources_are_this_jobs(
+    clients: MoveClients, name: str, resources: dict[str, dict[str, Any]], job_id: str
+) -> bool:
+    """True when the stack's replication instance or endpoints still exist and every one of them
+    carries this job's tag; refuses one that carries another job's tag or none."""
+    from botocore.exceptions import ClientError
+
+    proven = False
+    for logical in ("ReplicationInstance", "SourceEndpoint", "TargetEndpoint"):
+        resource = resources[logical]
+        arn = resource.get("PhysicalResourceId")
+        if resource.get("ResourceStatus") == "DELETE_COMPLETE" or not arn:
+            continue
+        try:
+            tags = clients.dms.list_tags_for_resource(ResourceArn=arn).get("TagList") or []
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundFault":
+                continue
+            raise
+        values = [t.get("Value") for t in tags if t.get("Key") == JOB_TAG]
+        if values != [job_id]:
+            raise _not_the_step(
+                name, f"its {logical}'s {JOB_TAG} tag is {values or 'missing'}, not [{job_id!r}]"
+            )
+        proven = True
+    return proven
+
+
+def teardown(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Delete the step's stack once its task is not running, and wait until it is gone.
+
+    At most one ``DeleteStack`` per run, on the step's own stack only, proven from AWS state and
+    never from a local file: exactly the six resources of ``dms-step-1.yaml``, no other job's tag
+    on the stack, and a task whose identifier and tag name this job or, once the task is gone, a
+    replication instance or endpoint carrying this job's tag (or this job's stack tag). A stack
+    already being deleted is only waited on; a ``DELETE_FAILED`` seen while waiting is an error,
+    so a new delete needs a new run (and a new approval)."""
+    stack = _step_stack(clients, name)
+    if stack is None:
+        return {"status": "deleted", "stack_name": name, "already_deleted": True}
+    tagged = _stack_tag_is_this_jobs(name, stack, job_id)
+    resources = _step_resources(clients, name)
+    task = _live_task(clients, name, resources, job_id)
+    if task is None and not (_resources_are_this_jobs(clients, name, resources, job_id) or tagged):
+        raise _not_the_step(name, "its task is gone and no replication instance, endpoint or "
+                                  f"stack tag shows {job_id!r} owns it")  # fmt: skip
+    if task is not None and task.get("Status") not in TASK_IDLE:
+        raise MoveError(f"{dms_reports(task)}: run stop first; CloudFormation "
+                        "cannot delete a running replication task")  # fmt: skip
+    # The stack checked above, by its id: a stack re-created under the same name is not it.
+    stack_id = stack.get("StackId") or name
+    if stack["StackStatus"] != "DELETE_IN_PROGRESS":
+        clients.cloudformation.delete_stack(StackName=stack_id)
+    waited, state = 0, "DELETE_IN_PROGRESS"
+    # What DMS reported for the task when the delete was decided (gone: no such task).
+    out = {"stack_name": name, "stack_id": stack_id, "already_deleted": False,
+           **_task_report(task)}  # fmt: skip
+    while waited + interval <= wait_seconds:
+        sleep(interval)
+        waited += interval
+        current = _stack(clients, stack_id)
+        state = "deleted" if current is None else current["StackStatus"]
+        state = "deleted" if state == "DELETE_COMPLETE" else state  # by id, a gone stack stays
+        _progress("teardown", f"stack is {state}", waited, wait_seconds)
+        if state == "deleted":
+            break
+        if state == "DELETE_FAILED":
+            # Not an error: the same state status --until stack reports; a new delete needs a
+            # new run and a new approval.
+            return {"status": "delete_failed", **out, "reached": False, "waited_seconds": waited,
+                    "stack_reason": (current or {}).get("StackStatusReason")}  # fmt: skip
+    reached = state == "deleted"
+    return {"status": "deleted" if reached else "deleting", **out, "reached": reached,
+            "waited_seconds": waited}  # fmt: skip
+
+
 # --- Entry point -------------------------------------------------------------------------
 
 
@@ -593,6 +914,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
     if args.command in WRITES and not args.approve:
         return emit({"status": "error", "message": f"{args.command} is an AWS write: pass --approve "
                      "only after the customer approved it"})  # fmt: skip
+    if args.wait_seconds is None:
+        args.wait_seconds = MAX_WAIT_SECONDS if args.command in ENDING else 0
     if not 0 <= args.wait_seconds <= MAX_WAIT_SECONDS:
         return emit(
             {"status": "error", "message": f"--wait-seconds must be 0 to {MAX_WAIT_SECONDS}"}
@@ -636,6 +959,14 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             return emit(execute(clients, name, args.change_set))
         if args.command == "test":
             return emit(connection_tests(clients, name))
+        if args.command == "stop":
+            return emit(stop(clients, name, job_id, args.wait_seconds, args.interval_seconds,
+                             sleep=sleep))  # fmt: skip
+        if args.command == "teardown":
+            return emit(
+                teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,
+                         sleep=sleep)  # fmt: skip
+            )
         return emit(start(clients, name))
     except (MoveError, ValueError) as exc:
         return emit({"status": "error", "message": str(exc)})
