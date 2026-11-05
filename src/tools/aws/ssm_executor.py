@@ -76,7 +76,7 @@ class SSMExecutor:
     ) -> list[dict]:
         """Execute SQL and parse output as list of dicts."""
         raw = self.run_sql(engine, host, port, database, secret_arn, sql, region, timeout)
-        return _parse_tabular_output(raw)
+        return _parse_tabular_output(raw, engine)
 
     def _wait_for_result(self, command_id: str, timeout: int) -> str:
         """Poll until command completes or times out."""
@@ -100,9 +100,11 @@ class SSMExecutor:
                 return result["StandardOutputContent"]  # type: ignore[no-any-return]
             if status in ("Failed", "Cancelled", "TimedOut"):
                 stderr = result.get("StandardErrorContent", "")
-                raise RuntimeError(
-                    f"SSM command {status}: {stderr or result.get('StatusDetails', '')}"
-                )
+                # sqlplus and sqlcmd print their errors on stdout: name those lines (only
+                # the client's error lines, never the rows), so the failure says why.
+                errors = _client_error_lines(result.get("StandardOutputContent", ""), None)
+                detail = stderr or "; ".join(errors) or result.get("StatusDetails", "")
+                raise RuntimeError(f"SSM command {status}: {detail}")
             # Status is Pending/InProgress/Delayed — keep polling
             time.sleep(POLL_INTERVAL)  # nosemgrep: arbitrary-sleep  # polling SSM command status
 
@@ -146,6 +148,8 @@ def _build_sql_command(
         #       NVARCHAR(MAX) (statement text) at 256 characters (#1884). -W cannot be
         #       combined with -y 0, so sqlcmd pads each column and _parse_tabular_output
         #       strips every value, which is what -W did.
+        # -b: exit with a non-zero status on an error of severity 11 or more, so SSM reports
+        #     the command Failed; without it sqlcmd exits 0 and prints the error as output.
         # -k 1: replace control characters in output with single space (prevents tabs/newlines in
         #       data from breaking the parser)
         # -C: trust server certificate. sqlcmd v18 makes encryption mandatory and cert
@@ -160,12 +164,18 @@ def _build_sql_command(
         return (
             f"{cred_fetch} && "
             f'sqlcmd -S {host},{port} -U "$DB_USER" -P "$DB_PASS" '
-            f"-d {database} -s $'\\t' -y 0 -k 1 -C -Q '{safe_sql}'"
+            f"-d {database} -s $'\\t' -y 0 -b -k 1 -C -Q '{safe_sql}'"
         )
     elif engine == "oracle":
         # sqlplus requires SET commands to produce parseable tab-separated output.
         # Newline separates SET commands from the user SQL.
+        # WHENEVER SQLERROR / OSERROR: a SQL (ORA-) or operating-system error ends sqlplus
+        # with a non-zero status, so SSM reports the command Failed rather than returning
+        # the error as rows. The status is SQL.SQLCODE modulo 256 (0 for ORA-01536, say),
+        # and sqlplus's own SP2- errors do not trigger it, so _parse_tabular_output also
+        # refuses output holding an error line.
         oracle_preamble = (
+            "WHENEVER SQLERROR EXIT SQL.SQLCODE\\nWHENEVER OSERROR EXIT FAILURE\\n"
             "SET PAGESIZE 50000\\nSET LINESIZE 32767\\nSET FEEDBACK OFF\\n"
             "SET HEADING ON\\nSET TRIMSPOOL ON\\nSET TRIMOUT ON\\n"
         )
@@ -179,10 +189,39 @@ def _build_sql_command(
         raise ValueError(f"Unsupported engine: {engine}")
 
 
-def _parse_tabular_output(raw: str) -> list[dict]:
+class SqlClientError(RuntimeError):
+    """The database client's output holds an error (an ORA-, SP2- or sqlcmd Msg line)."""
+
+
+# A client error line, at the start of a line (a row never starts with one: its first
+# column is a value, and an empty one is padding). sqlplus: ERROR:, ERROR at line N:,
+# ORA-nnnnn, SP2-nnnn, PLS-nnnnn. sqlcmd: Msg N, Level L (L of 11 or more is an error;
+# 10 or less is an informational message), and its own Sqlcmd: Error: lines.
+_CLIENT_ERRORS = {
+    "oracle": re.compile(r"^(?:ERROR(?: at line \d+)?:|ORA-\d{5}\b|SP2-\d{4}\b|PLS-\d{5}\b)"),
+    "sqlserver": re.compile(
+        r"^(?:Msg \d+, Level (?:1[1-9]|2\d), State \d+|Sqlcmd: Error:|HResult 0x)"
+    ),
+}
+
+
+def _client_error_lines(raw: str, engine: str | None) -> list[str]:
+    """The lines of ``raw`` that are ``engine``'s client errors (every engine's if None)."""
+    if engine is None:
+        patterns = list(_CLIENT_ERRORS.values())
+    else:
+        patterns = [_CLIENT_ERRORS[engine]] if engine in _CLIENT_ERRORS else []
+    return [line.rstrip() for line in raw.split("\n") if any(p.match(line) for p in patterns)][:5]
+
+
+def _parse_tabular_output(raw: str, engine: str | None = None) -> list[dict]:
     """
     Parse delimited output from CLI tools into list of dicts.
     First line = headers (lowercased), remaining lines = data.
+
+    Output from ``engine``'s client (Oracle's sqlplus, SQL Server's sqlcmd) that holds an
+    error line raises :class:`SqlClientError`: the error and every row after it would
+    otherwise read as rows, or the rows the statement never returned as none.
 
     Supports two formats:
     1. Tab-delimited (MySQL, PostgreSQL, SQL Server) — splits by '\\t'
@@ -193,6 +232,10 @@ def _parse_tabular_output(raw: str) -> list[dict]:
       - PostgreSQL footer: '(5 rows)'
       - SQL Server footer: '(5 rows affected)'
     """
+    errors = _client_error_lines(raw, engine) if engine in _CLIENT_ERRORS else []
+    if errors:
+        raise SqlClientError(f"{engine} client error: {'; '.join(errors)}")
+
     lines = [line for line in raw.strip().split("\n") if line.strip()]
 
     # Strip row-count footers

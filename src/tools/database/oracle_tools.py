@@ -369,7 +369,8 @@ class OracleRemoteCollector:
 
         No AWR/Diagnostic Pack dependency. Only totals available — no min/max
         per-execution, so percentile estimation is not possible (left as None).
-        CLOB sql_fulltext is truncated to 4000 chars via DBMS_LOB.SUBSTR.
+        CLOB sql_fulltext is truncated to 4000 chars via DBMS_LOB.SUBSTR, and the
+        text sent back, with its line breaks escaped, to at most 4000 bytes (#1880).
 
         Note: V$SQLSTATS lacks PARSING_SCHEMA_NAME, so we query V$SQL which
         has the same metrics plus schema filtering capability.
@@ -387,6 +388,18 @@ class OracleRemoteCollector:
         ``scripts/collect-oracle.sql``. It has not been run against an Oracle
         database; the tests check the generated SQL and the row handling.
         """
+        # sqlplus prints one row per line, in fixed-width columns, so the query text is
+        # sent with its backslashes, CR, LF and tabs written as \\, \r, \n and \t
+        # (CHR(92) is the backslash: printf, which pipes the SQL to sqlplus, would read a
+        # literal one), and live_sql.decode_query_text restores them: a line break that
+        # ends a -- comment stays one (#1880). The escapes are written on a CLOB, which has
+        # no length limit, and the result is cut back to a VARCHAR2, which SQL caps at 4000
+        # bytes (DBMS_LOB.SUBSTR counts characters; past the cap it raises ORA-06502). The
+        # escapes are ASCII, so the encoded text has as many extra bytes per character as
+        # the statement: cutting at 4000 less those (LENGTHB - LENGTH) keeps it within
+        # 4000 bytes, and an ASCII statement keeps 4000 characters. Each escaped character
+        # (backslash, CR, LF, tab) takes two of them, so a statement with any keeps fewer
+        # of its own.
         limit, min_executions = capture_settings(limit, min_executions)
         # No cap (the default, #384): every statement that ran often enough.
         rownum_clause = f"WHERE ROWNUM <= {limit}" if limit is not None else ""
@@ -396,7 +409,12 @@ class OracleRemoteCollector:
             FROM (
                 SELECT
                     g.query_key AS query_id,
-                    REPLACE(REPLACE(g.query_text, CHR(13), ' '), CHR(10), ' ') AS query_text,
+                    DBMS_LOB.SUBSTR(
+                        REPLACE(REPLACE(REPLACE(REPLACE(TO_CLOB(g.query_text),
+                            CHR(92), CHR(92) || CHR(92)), CHR(13), CHR(92) || 'r'),
+                            CHR(10), CHR(92) || 'n'), CHR(9), CHR(92) || 't'),
+                        4000 - (LENGTHB(g.query_text) - LENGTH(g.query_text)), 1)
+                        AS query_text,
                     g.executions AS execution_count,
                     g.elapsed_time AS total_elapsed_us,
                     g.cpu_time AS total_cpu_us,
@@ -450,9 +468,14 @@ class OracleRemoteCollector:
         patterns = []
         reader = LiveQueryReader("oracle", "oracle_tools", empty=())
         for r in raw:
-            query_text = str(r.get("query_text") or "").strip()
+            query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
-            query_id = str(r.get("query_id") or _hash(query_text))
+            # The text-hash fallback hashes the text with its line breaks and tabs as
+            # spaces. For CR and LF that is the text hashed before #1880, so a statement
+            # whose escaped text fits the cut keeps its id; a tab used to shift sqlplus's
+            # columns, so its old id hashed a misread text. query_key falls back to the
+            # SQL_ID, which is never null, so a real row never reaches this fallback.
+            query_id = str(r.get("query_id") or _hash(live_sql.flattened(query_text)))
             shape = reader.fields(query_id, query_text)
 
             total_elapsed_us = float(r.get("total_elapsed_us") or 0)

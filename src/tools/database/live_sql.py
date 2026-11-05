@@ -312,3 +312,27 @@ def column_text(sql: str, source_engine: str) -> ColumnText:
         return "".join(out)
 
     return ColumnText(read(text), names)
+
+
+# The escapes a live query writes in a statement's text so it stays on one line of the
+# client's output (#1874, #1880): each backslash doubled first, then CR, LF and tab.
+_ESCAPED = {"\\": "\\", "r": "\r", "n": "\n", "t": "\t"}
+_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
+
+
+def decode_query_text(text: str) -> str:
+    """The statement a live query wrote with escapes (``sqlserver_tools``, ``oracle_tools``).
+
+    The query writes each backslash as ``\\\\`` first, then CR, LF and tab as ``\\r``,
+    ``\\n`` and ``\\t``, so reading the escapes left to right gives the text back. A
+    backslash before any other character, or a last one with nothing after it, is kept as
+    it is. Call it once, on the live row's text only: an offline collection's text is
+    JSON and was never encoded.
+    """
+    return _ESCAPE_RE.sub(lambda m: _ESCAPED.get(m.group(1), m.group(0)), text)
+
+
+def flattened(text: str) -> str:
+    """``text`` with CR, LF and tab as spaces: the form the live SQL Server and Oracle
+    queries read before #1874 and #1880, which their text-hash fallback ids hash."""
+    return text.replace("\r", " ").replace("\n", " ").replace("\t", " ")

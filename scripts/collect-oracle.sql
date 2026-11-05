@@ -123,7 +123,10 @@ BEGIN
     FOR rec IN (
         SELECT JSON_OBJECT(
             'digest' VALUE g.query_key,
-            'query_text' VALUE REGEXP_REPLACE(g.query_text, '[[:cntrl:]]', ' '),
+            -- The statement as written, line breaks and tabs kept: JSON_OBJECT escapes
+            -- them, so the row stays on one line, and a line break ends a -- comment,
+            -- so the text never runs into one (#1880).
+            'query_text' VALUE g.query_text,
             'execution_count' VALUE g.executions,
             'total_time_ms' VALUE ROUND(g.elapsed_time / 1000, 3),
             'avg_time_ms' VALUE ROUND(g.elapsed_time / GREATEST(g.executions, 1) / 1000, 3),

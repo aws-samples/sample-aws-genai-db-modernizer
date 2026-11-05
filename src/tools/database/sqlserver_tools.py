@@ -352,7 +352,7 @@ class SQLServerRemoteCollector:
         """
         # sqlcmd's output is one row per line, tab-separated, so the query text is
         # sent with its backslashes, CR, LF and tabs written as \\, \r, \n and \t,
-        # and _decode_query_text restores them: a line break that ends a -- comment
+        # and live_sql.decode_query_text restores them: a line break that ends a -- comment
         # stays one (#1874).
         limit, min_executions = capture_settings(limit, min_executions)
         # No cap (the default, #384): every statement that ran often enough.
@@ -446,14 +446,14 @@ class SQLServerRemoteCollector:
         patterns = []
         reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())
         for r in raw:
-            query_text = _decode_query_text(str(r.get("query_text") or "")).strip()
+            query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
             # The text-hash fallback hashes the text with its line breaks and tabs as
             # spaces, the form hashed before #1874. A statement of 256 characters or
             # fewer keeps its id; a longer one used to be cut at sqlcmd's old default
             # width before it was hashed, and now hashes whole (#1884). The id only
             # comes from the text when the row has no query_hash.
-            query_id = str(r.get("query_id") or _hash(_flattened(query_text)))
+            query_id = str(r.get("query_id") or _hash(live_sql.flattened(query_text)))
             shape = reader.fields(query_id, query_text)
 
             total_elapsed_us = float(r.get("total_elapsed_time") or 0)
@@ -650,26 +650,6 @@ def _extract_sort_columns(sql: str) -> list[str] | None:
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
-
-
-_ESCAPED = {"\\": "\\", "r": "\r", "n": "\n", "t": "\t"}
-_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
-
-
-def _decode_query_text(text: str) -> str:
-    """The statement ``collect_query_patterns``'s SQL encoded (#1874).
-
-    The SQL writes each backslash as ``\\\\`` first, then CR, LF and tab as ``\\r``,
-    ``\\n`` and ``\\t``, so reading the escapes left to right gives the text back. A
-    backslash before any other character, or a last one with nothing after it, is kept as
-    it is.
-    """
-    return _ESCAPE_RE.sub(lambda m: _ESCAPED.get(m.group(1), m.group(0)), text)
-
-
-def _flattened(text: str) -> str:
-    """``text`` with CR, LF and tab as spaces: the form the live query read before #1874."""
-    return text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
 
 
 def _normalize_index_type(raw: object) -> str:
