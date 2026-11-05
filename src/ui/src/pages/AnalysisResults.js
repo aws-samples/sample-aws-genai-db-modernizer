@@ -66,7 +66,7 @@ import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
-import { buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
+import { PROCEDURE_INTERNAL_GROUP, buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
@@ -79,7 +79,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2950,6 +2950,14 @@ const AnalysisResultsPage = memo(() => {
                               <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-queries')}</Box>
                             ) : (
                               <SpaceBetween size="s">
+                                {procedureInternalQueryCountOf(synthesis) > 0 &&
+                                  design.queryGroups.some(g => g.sourceTable === PROCEDURE_INTERNAL_GROUP) && (
+                                  <Box color="text-body-secondary" fontSize="body-s">
+                                    {t('analysis-results.aurora-design.procedure-internal', {
+                                      count: procedureInternalQueryCountOf(synthesis),
+                                    })}
+                                  </Box>
+                                )}
                                 {design.queryGroups.map(group => (
                                   <ExpandableSection
                                     key={group.sourceTable}

@@ -50,6 +50,16 @@ are *all* system catalog tables (``pg_class``, ``pg_type``, ``pg_proc``,
 queries written straight against the catalog's own tables (seen in
 ActiveRecord/Rails schema dumping on the discourse sample).
 
+A SQL Server statement whose only objects are temporary tables (``#t``, ``##t``) or
+table variables (``@t``) is procedure-internal (#1876): ``SELECT COUNT(*) FROM
+#PageIndexForUsers`` or ``INSERT INTO @tmp (seckey) VALUES (?)`` reads or writes
+scratch rows local to its session or batch, never application data, so it counts as
+a utility statement too (:func:`is_procedure_internal_statement`). One that also
+names a real table (``SELECT ... FROM dbo.Users u JOIN #p ...``) is the application's
+and is routed on that table. One whose rows come from a table-valued function or a
+procedure (``INSERT INTO #t EXEC dbo.p``) is kept the same way, with a reason of its own
+(:func:`procedure_internal_reason`): it may read application data through that routine.
+
 Rather than dropping these from the assignment (which would change every
 downstream artifact that counts "every collected query"), they are kept on the
 source-compatible relational engine: the one engine that already understands
@@ -71,6 +81,15 @@ from src.shared.sql_comments import (
     unwrap_executable_comment,
 )
 from src.shared.sql_spans import code_text
+from src.tools.sql.query_facts import query_facts
+
+# The reasons a procedure-internal statement carries wherever it is listed (#1876): one
+# on temporary objects alone, and one whose rows come from a table-valued function or a
+# procedure, which can read application data the collector cannot name a table for.
+PROCEDURE_INTERNAL_REASON = "procedure-internal: touches only temporary tables or table variables"
+PROCEDURE_INTERNAL_ROUTINE_REASON = (
+    "procedure-internal: fills or reads temporary objects with rows from a function or procedure"
+)
 
 # Leading ``/* block */``, ``-- line`` and ``# line`` comments before the verb
 # that actually marks the statement are stripped before any verb match, so a
@@ -325,6 +344,41 @@ def _all_tables_are_system_catalog(
     return bool(real) and all(is_engine_system_object(t, source) for t in real)
 
 
+def is_procedure_internal_statement(
+    query_text: str | None,
+    tables_accessed: Iterable[str] | None = None,
+    source: SourceScope | None = None,
+) -> bool:
+    """Whether ``query_text`` touches only SQL Server temporary objects (#1876).
+
+    True when the source is SQL Server, the statement reads or writes at least one temp
+    table (``#t``, ``##t``) or table variable (``@t``) as the tsql parser reads it
+    (``QueryFacts.temp_objects``), and ``tables_accessed`` names no real table (only
+    the collector's ``unknown`` placeholder or a pseudo table). A statement that also
+    touches a real table is not one, and neither is any statement from another source
+    (MySQL's ``SELECT ... INTO @v`` names a session variable).
+    """
+    return procedure_internal_reason(query_text, tables_accessed, source) is not None
+
+
+def procedure_internal_reason(
+    query_text: str | None,
+    tables_accessed: Iterable[str] | None = None,
+    source: SourceScope | None = None,
+) -> str | None:
+    """Why a procedure-internal statement (:func:`is_procedure_internal_statement`) is
+    one, or None for any other statement: :data:`PROCEDURE_INTERNAL_ROUTINE_REASON` when
+    its rows come from a table-valued function or a procedure (``INSERT INTO @t SELECT *
+    FROM dbo.fn(...)``, ``INSERT INTO #t EXEC dbo.p``, ``CROSS APPLY dbo.fn_Split(...)``;
+    ``QueryFacts.routine_source``), else :data:`PROCEDURE_INTERNAL_REASON`."""
+    if source is None or source.engine != "sqlserver":
+        return None
+    facts = query_facts(query_text, source.engine)
+    if not facts.temp_objects or not _has_no_real_source_table(tables_accessed):
+        return None
+    return PROCEDURE_INTERNAL_ROUTINE_REASON if facts.routine_source else PROCEDURE_INTERNAL_REASON
+
+
 def is_utility_statement(
     query_text: str | None,
     tables_accessed: Iterable[str] | None = None,
@@ -348,7 +402,9 @@ def is_utility_statement(
     (``NEXT VALUE FOR seq``, ``seq.NEXTVAL``, #654) when ``tables_accessed``
     or a read of a PostgreSQL sequence's own state
     (``SELECT last_value FROM public.badges_id_seq``, :func:`is_sequence_state_read`,
-    #783) when ``tables_accessed`` names no real application table.
+    #783) when ``tables_accessed`` names no real application table, and for a SQL
+    Server statement that touches only temporary tables or table variables
+    (:func:`is_procedure_internal_statement`, #1876).
 
     This is the one definition: routing's utility pin, aurora-anti-05's admin
     skip and Aurora schema design (``design_view._designable``) all ask it, so
@@ -382,4 +438,4 @@ def is_utility_statement(
         or is_sequence_state_read(query_text)
     ):
         return _has_no_real_source_table(tables_accessed)
-    return False
+    return is_procedure_internal_statement(query_text, tables_accessed, source)

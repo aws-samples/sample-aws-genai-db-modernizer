@@ -55,7 +55,10 @@ from src.agents.referee.synthesis_grounding import (
 )
 from src.agents.referee.table_resolution import SourceScope, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.agents.referee.utility_statements import is_utility_statement
+from src.agents.referee.utility_statements import (
+    is_procedure_internal_statement,
+    is_utility_statement,
+)
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps, overlap_home
 from src.agents.schema_design.scope import covered_query_ids
 from src.contracts.executive_summary_response import (
@@ -80,6 +83,7 @@ from src.shared.progress import say
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
 from src.shared.report_facts import (
     BLAME_GROUP_LABELS,
+    PROCEDURE_INTERNAL_GROUP_LABEL,
     analysis_overview_facts,
     is_placeholder_table,
     mean_table_fit,
@@ -97,7 +101,7 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_mitigation,
     unsupported_pattern_text,
 )
-from src.shared.workload_fit_labels import PINNED_UTILITY_LABEL
+from src.shared.workload_fit_labels import PINNED_UTILITY, PINNED_UTILITY_LABEL
 from src.tools.analysis.aurora_common_pattern_catalog import (
     CATALOG_ENGINE_GUIDANCE,
     CATALOG_ENGINE_HINTS,
@@ -671,6 +675,25 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
     return mappings
 
 
+def _no_table_group_label(
+    query_text: str | None, tables: list[str], source_scope: SourceScope, pinned: bool
+) -> str:
+    """The group of a query that names no real source table (#478): a procedure-internal
+    statement on temporary objects (#1876), another utility statement, or one with no
+    source table.
+
+    The procedure-internal group follows the assignment's utility pin (``pinned``), not
+    the text alone: a statement the pin did not place (no Aurora engine to pin it to, or
+    an assignment saved before #1876, when it went through the tie-break) was routed
+    like any other query, so it is listed with no source table, as it was then.
+    """
+    if is_procedure_internal_statement(query_text, tables, source_scope):
+        return PROCEDURE_INTERNAL_GROUP_LABEL if pinned else UNRESOLVED_TABLE_GROUP_LABEL
+    if is_utility_statement(query_text, tables, source_scope):
+        return UTILITY_GROUP_LABEL
+    return UNRESOLVED_TABLE_GROUP_LABEL
+
+
 def build_query_groups(data: SynthesisData) -> list[dict]:
     """Build unified query group view across all engines.
 
@@ -709,6 +732,13 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     # t; filtered by id"), not why the query is on Aurora at all -- that
     # fact lives only in the assignment, same source the relational branch
     # below already reads for the not-yet-designed case.
+    # The queries the assignment's utility pin placed (#1373), which the
+    # procedure-internal group follows (#1876).
+    pinned_qids = {
+        str(qa["query_id"])
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("query_id") and qa.get("pinned") == PINNED_UTILITY
+    }
     qid_to_assignment_reason = {
         qa["query_id"]: qa.get("assignment_reason")
         for qa in (data.assignment or {}).get("query_assignments", [])
@@ -730,10 +760,12 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                 # without this a literal "unknown" leaked into the group name
                 # instead of one of the two blame labels the relational
                 # branch below already uses for exactly this fact.
-                group_name = (
-                    UTILITY_GROUP_LABEL
-                    if is_utility_statement(ap.get("sql_text"), source_tables, source_scope)
-                    else UNRESOLVED_TABLE_GROUP_LABEL
+                group_name = _no_table_group_label(
+                    ap.get("sql_text"),
+                    source_tables,
+                    source_scope,
+                    pinned=bool(ap_qids := _access_pattern_query_ids(ap))
+                    and all(str(q) in pinned_qids for q in ap_qids),
                 )
             else:
                 group_name = ", ".join(clean_tables) or "ungrouped"
@@ -860,12 +892,13 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             clean_tables = sorted({t for t in raw_tables if not is_placeholder_table(t)})
             if clean_tables:
                 group_name = ", ".join(clean_tables)
-            elif is_utility_statement(
-                src_query.get("query_text") if src_query else None, raw_tables, source_scope
-            ):
-                group_name = UTILITY_GROUP_LABEL
             else:
-                group_name = UNRESOLVED_TABLE_GROUP_LABEL
+                group_name = _no_table_group_label(
+                    src_query.get("query_text") if src_query else None,
+                    raw_tables,
+                    source_scope,
+                    pinned=qa.get("pinned") == PINNED_UTILITY,
+                )
             # The query's own id: a short, truncated id
             # risks two different queries silently merging under the same
             # prefix (real on a non-cryptographic id scheme, e.g.

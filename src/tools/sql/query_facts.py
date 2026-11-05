@@ -1077,6 +1077,25 @@ class QueryFacts:
         return targets
 
     @_fact
+    def temp_objects(self) -> tuple[str, ...]:
+        """The SQL Server temp tables (``#t``, ``##t``) and table variables (``@t``) the
+        statement reads or writes, lower-cased with their ``#``/``@``; empty for any other
+        source (``SqlFacts.temp_objects``, #1876). None of them is a table reference.
+        """
+        if self._source_engine != "sqlserver" or not self._has("#", "@"):
+            return ()
+        return self._parsed.temp_objects
+
+    @_fact
+    def routine_source(self) -> bool:
+        """The SQL Server statement takes rows from a table-valued function that is not a
+        built-in row source, or from a procedure (``EXEC``); False for any other source
+        (``SqlFacts.routine_source``, #1876)."""
+        if self._source_engine != "sqlserver" or not self._has("(", "exec"):
+            return False
+        return self._parsed.routine_source
+
+    @_fact
     def json_access(self) -> bool:
         """The query reads or builds JSON: a JSON function or operator, a cast to
         ``json``/``jsonb``, a JSON containment (``SqlFacts.json_access``).

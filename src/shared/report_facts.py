@@ -2114,7 +2114,12 @@ LEGACY_UNRESOLVED_TABLE_GROUP_LABELS = frozenset({"Table not identified by the c
 NO_SOURCE_TABLE_GROUP_LABELS = frozenset({UNRESOLVED_TABLE_GROUP_LABEL}) | (
     LEGACY_UNRESOLVED_TABLE_GROUP_LABELS
 )
-BLAME_GROUP_LABELS = frozenset({UTILITY_GROUP_LABEL}) | NO_SOURCE_TABLE_GROUP_LABELS
+# A SQL Server statement on temporary tables or table variables only (#1876): kept with
+# the utility statements, never a busiest table either.
+PROCEDURE_INTERNAL_GROUP_LABEL = "Procedure-internal statements"
+BLAME_GROUP_LABELS = (
+    frozenset({UTILITY_GROUP_LABEL, PROCEDURE_INTERNAL_GROUP_LABEL}) | NO_SOURCE_TABLE_GROUP_LABELS
+)
 
 
 def _strings(value: Any) -> list[str]:
@@ -2377,7 +2382,9 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     "Queries on Aurora by table" rows: per relational engine and group, that engine's
     own queries and calls/s, busiest first with the two blame groups last, and each
     engine's query total; and the in-scope queries no group of their own engine serves
-    (``ungrouped_queries``, #226). None for a report with no ``query_groups`` field.
+    (``ungrouped_queries``, #226); and how many queries the procedure-internal group
+    holds (``procedure_internal_queries``, #1876). None for a report with no
+    ``query_groups`` field.
     """
     groups = report.get("query_groups")
     if not isinstance(groups, list):
@@ -2431,6 +2438,16 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "relational_rows": rows,
         "relational_query_counts": query_counts,
         "ungrouped_queries": _ungrouped_query_rows(report, [g for _, g in indexed]),
+        "procedure_internal_queries": len(
+            {
+                str(q)
+                for _, g in indexed
+                if g.get("group_name") == PROCEDURE_INTERNAL_GROUP_LABEL
+                for ap in g.get("access_patterns") or []
+                if isinstance(ap, dict)
+                for q in ap.get("query_ids") or []
+            }
+        ),
     }
 
 

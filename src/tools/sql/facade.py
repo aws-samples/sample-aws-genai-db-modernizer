@@ -85,6 +85,7 @@ from src.tools.sql.normalize import (
 from src.tools.sql.refs import ColumnUse, TableRef
 from src.tools.sql.regex_facts import (
     TIMESTAMP_COLUMN_NAME_RE,
+    TSQL_BUILTIN_ROW_SOURCES,
     WORDS_RE,
     RegexMatch,
     WildcardLike,
@@ -105,8 +106,10 @@ from src.tools.sql.regex_facts import (
     regex_pattern_match,
     regex_ranking_window_function,
     regex_recursive_cte,
+    regex_routine_source,
     regex_row_limit,
     regex_similarity_match,
+    regex_temp_objects,
     regex_timestamp_column_names,
     regex_top_n,
     regex_wildcard_leading,
@@ -371,6 +374,15 @@ class SqlFacts:
             UPDATE``, ``ON DUPLICATE KEY UPDATE``, MySQL's ``REPLACE``). ``ON CONFLICT
             DO NOTHING`` and ``INSERT IGNORE`` keep the row there and append. A
             ``MERGE``'s ``WHEN NOT MATCHED THEN INSERT`` is the ``MERGE``'s, an upsert.
+        temp_objects: The SQL Server temp tables (``#t``, ``##t``) and table variables
+            (``@t``) the text reads or writes, lower-cased with their ``#``/``@``, in
+            first-seen order (:func:`temp_object_name`, #1876). None of them is a table
+            reference. Only the tsql dialect reads them; empty for every other one.
+        routine_source: The text takes rows from a table-valued function or a procedure:
+            a function in a ``FROM``, ``JOIN`` or ``APPLY`` that is not one of SQL
+            Server's built-in row sources (``regex_facts.TSQL_BUILTIN_ROW_SOURCES``:
+            ``OPENJSON``, ``STRING_SPLIT``, ...), or an ``EXEC`` (``INSERT INTO #t EXEC
+            dbo.p``, #1876). Only the tsql dialect reads it.
     """
 
     join_count: int
@@ -404,6 +416,8 @@ class SqlFacts:
     regex_matches: tuple[RegexMatch, ...] = ()
     write_targets: tuple[str, ...] = ()
     append_targets: tuple[str, ...] = ()
+    temp_objects: tuple[str, ...] = ()
+    routine_source: bool = False
 
     @property
     def timestamp_column(self) -> bool:
@@ -833,7 +847,7 @@ def _from_statements(statements: list[exp.Expr], dialect: str, truncated: bool) 
         aliases = _table_aliases(statement)
         for table in _statement_tables(statement):
             ref = _ref_from_node(table)
-            if ref is None or _is_temp_table(table) or _is_cte_reference(table, ref):
+            if ref is None or temp_object_name(table) or _is_cte_reference(table, ref):
                 continue
             if _is_alias_reference(table, ref, aliases):
                 continue
@@ -910,10 +924,90 @@ def _is_alias_reference(table: exp.Table, ref: TableRef, aliases: frozenset[str]
     return not ref.qualifiers and not table.alias and ref.name.lower() in aliases
 
 
-def _is_temp_table(table: exp.Table) -> bool:
-    """A T-SQL ``#local`` or ``##global`` temp table (sqlglot drops the ``#``)."""
+def temp_object_name(table: exp.Table) -> str | None:
+    """The name of a T-SQL temp table or table variable a table node names, or None.
+
+    The one classification (#1876): sqlglot reads ``#t``, ``##t`` and ``tempdb..#t`` as
+    a table whose identifier is marked ``temporary`` or ``global_`` (it drops the
+    ``#``, so it is put back: ``#t``, ``##t``), and a table variable ``@t`` as a table
+    whose name is a parameter (``@t``). Neither is a collected table: each is local to
+    the session or batch.
+    """
     ident = table.this
-    return bool(ident.args.get("temporary") or ident.args.get("global_"))
+    if isinstance(ident, exp.Parameter):
+        name = ident.name or (ident.this.name if isinstance(ident.this, exp.Expr) else "")
+        return f"@{name}".lower() if name else None
+    if not isinstance(ident, exp.Identifier):
+        return None
+    if ident.args.get("global_"):
+        return f"##{ident.name}".lower()
+    if ident.args.get("temporary"):
+        return f"#{ident.name}".lower()
+    return None
+
+
+def _temp_objects(statements: tuple[exp.Expr, ...], dialect: str) -> tuple[str, ...]:
+    """``SqlFacts.temp_objects``: the temp objects the statements' table nodes name, and
+    an ``OUTPUT ... INTO`` target (sqlglot keeps it as the ``RETURNING`` clause's ``into``:
+    a parameter for ``@t``, a temporary identifier for ``#t``), in text order."""
+    if dialect != "tsql":
+        return ()
+    found: list[tuple[int, str]] = []
+    for statement in statements:
+        for node in statement.walk():
+            name: str | None = None
+            if isinstance(node, exp.Table):
+                name = temp_object_name(node)
+            elif isinstance(node, exp.Returning):
+                into = node.args.get("into")
+                if isinstance(into, exp.Parameter | exp.Identifier):
+                    name = temp_object_name(exp.Table(this=into))
+                elif isinstance(into, exp.Table):
+                    name = temp_object_name(into)
+            if name:
+                found.append((_node_position(node), name))
+    found.sort(key=lambda item: item[0])
+    return tuple(dict.fromkeys(name for _, name in found))
+
+
+def _node_position(node: exp.Expr) -> int:
+    """Where a table node or an ``OUTPUT ... INTO`` target starts in the text."""
+    ident = node.this if isinstance(node, exp.Table) else node.args.get("into")
+    while isinstance(ident, exp.Expr) and not isinstance(ident, exp.Identifier | exp.Var):
+        ident = ident.this
+    start = ident.meta.get("start") if isinstance(ident, exp.Expr) else None
+    return int(start) if isinstance(start, int) else 1 << 62
+
+
+def _row_function_name(node: exp.Expr | None) -> str | None:
+    """The function a table node or ``APPLY`` reads rows from (``dbo.fn(...)`` is a
+    ``Dot`` around the call), or None when it reads no function."""
+    if isinstance(node, exp.Dot):
+        node = node.expression
+    if isinstance(node, exp.Anonymous):
+        return str(node.name).lower()
+    if isinstance(node, exp.Func):
+        return str(node.key)  # sqlglot's own key: openjson, generateseries, ...
+    return None
+
+
+# The built-in row sources compared without underscores: sqlglot's keys drop them
+# (``generateseries``), an unknown function keeps its written name (``string_split``).
+_BUILTIN_ROW_SOURCE_KEYS = frozenset(n.replace("_", "") for n in TSQL_BUILTIN_ROW_SOURCES)
+
+
+def _routine_source(nodes: list[exp.Expr], dialect: str) -> bool:
+    """``SqlFacts.routine_source``: a table-valued function that is not a built-in row
+    source in a ``FROM``/``JOIN`` (a table node) or an ``APPLY`` (a lateral). A statement
+    with an ``EXEC`` never reaches here: the facade reads it with the regex fallback."""
+    if dialect != "tsql":
+        return False
+    for node in nodes:
+        if isinstance(node, exp.Table | exp.Lateral):
+            fn = _row_function_name(node.this)
+            if fn is not None and fn.replace("_", "") not in _BUILTIN_ROW_SOURCE_KEYS:
+                return True
+    return False
 
 
 def _position(table: exp.Table) -> int:
@@ -1031,6 +1125,8 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         multi_table_write=regex_multi_table_write(sql),
         write_targets=regex_write_targets(sql, dialect),
         append_targets=regex_append_targets(sql, dialect),
+        temp_objects=regex_temp_objects(sql, dialect),
+        routine_source=regex_routine_source(sql, dialect),
     )
 
 
@@ -1103,6 +1199,8 @@ def _facts_from_statements(
         multi_table_write=any(_is_multi_table_write(node) for node in nodes),
         write_targets=_write_targets(statements),
         append_targets=_append_targets(statements, replace_read_as_insert),
+        temp_objects=_temp_objects(statements, dialect),
+        routine_source=_routine_source(nodes, dialect),
     )
 
 

@@ -152,7 +152,10 @@ Version History:
   ``"Utility and session statements"`` when it is a real utility/session
   statement (``utility_statements.is_utility_statement``, already routed to
   the relational engine by the assignment: SHOW/SET/EXPLAIN, catalog
-  introspection) -- never a literal "unknown". Every consumer that walks
+  introspection), or under ``"Procedure-internal statements"`` when it is a SQL
+  Server statement on temporary tables or table variables only
+  (``utility_statements.is_procedure_internal_statement``, #1876) -- never a
+  literal "unknown". Every consumer that walks
   ``query_groups`` generically (``access_pattern_scope``, the deterministic
   summary's query/group counts and "top query groups" sentence, the
   Bedrock executive-summary context, ``build_effective_architecture``'s
@@ -580,6 +583,10 @@ Version History:
 - 1.75 (2026-11-04, #1078): Added the ``extension`` value to ``GapObject.kind``: a
   relational-move gap can name an installed extension as its evidence; and optional
   ``GapObject.note`` (the Aurora PostgreSQL version an extension is offered from).
+- 1.76 (2026-11-05, #1876): Added optional
+  ``QueryGroupFacts.procedure_internal_queries``: how many queries the
+  procedure-internal group holds (SQL Server statements on temporary tables or table
+  variables, pinned by the utility pin).
 """
 
 from datetime import datetime
@@ -2074,6 +2081,14 @@ class QueryGroupFacts(BaseModel):
             "empty when every one is grouped"
         ),
     )
+    procedure_internal_queries: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Queries in the procedure-internal group: SQL Server statements on temporary "
+            "tables or table variables only, kept with the utility statements (#1876)"
+        ),
+    )
 
 
 class QueryPatternMember(BaseModel):
@@ -2788,7 +2803,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.75",
+        default="1.76",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

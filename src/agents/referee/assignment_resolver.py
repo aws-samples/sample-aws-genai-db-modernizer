@@ -108,7 +108,10 @@ from src.agents.referee.tie_break import (
     pick_unresolved_tie_placeholder,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.agents.referee.utility_statements import is_utility_statement
+from src.agents.referee.utility_statements import (
+    is_utility_statement,
+    procedure_internal_reason,
+)
 from src.agents.referee.write_groups import (
     WRITE_GROUP_LABEL,
     build_write_groups,
@@ -965,6 +968,15 @@ class AssignmentResolver:
                 query.get("query_text"), query.get("tables_accessed"), source_scope
             )
         ]
+        procedure_internal_reasons = {
+            query["query_id"]: internal_reason
+            for query in queries
+            if (
+                internal_reason := procedure_internal_reason(
+                    query.get("query_text"), query.get("tables_accessed"), source_scope
+                )
+            )
+        }
         # #550 review: the pre-tie ``settled_counts`` snapshot (Critical 2), never a
         # fresh recount of ``assigned``, which by now also folds in Step 6b's own
         # placeholder picks and the Aurora fallback just above; and a tie key built
@@ -1008,8 +1020,11 @@ class AssignmentResolver:
                 # heterogeneous source it is the chosen engine (ADR-031 Decision 6
                 # Amendment 1, #710).
                 compatible = SOURCE_ENGINE_TO_AURORA.get(source_engine) == utility_engine
+                # A statement on temp tables or table variables only says so (#1876): it
+                # is kept with the utility statements, not routed on its own.
+                kind = procedure_internal_reasons.get(qid, "utility/metadata statement")
                 assigned_reason[qid] = (
-                    "utility/metadata statement, kept on the "
+                    f"{kind}, kept on the "
                     f"{'source-compatible' if compatible else 'chosen'} "
                     f"relational engine ({display_engine(utility_engine)})"
                 )
@@ -1116,7 +1131,14 @@ class AssignmentResolver:
         query_tables: dict[str, list[str]] = {}
         for query in queries:
             qid = query["query_id"]
-            query_tables[qid] = query.get("tables_accessed", [])
+            # A pinned procedure-internal statement has no source table (#1876): it lists
+            # none, never the collector's ``unknown`` placeholder. With no Aurora engine to
+            # pin it to, it keeps its collected tables like any other routed query.
+            query_tables[qid] = (
+                []
+                if utility_engine and qid in procedure_internal_reasons
+                else query.get("tables_accessed", [])
+            )
 
         # Build query assignments
         query_assignments: list[QueryAssignment] = []

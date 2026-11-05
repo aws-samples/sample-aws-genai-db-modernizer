@@ -1,0 +1,293 @@
+{
+  "job_id": "job-1876",
+  "metadata": {
+    "source_database": {
+      "engine": "sqlserver",
+      "version": "16.0.4135.4",
+      "database_name": "TempObjects"
+    }
+  },
+  "database_schema": {
+    "tables": [
+      {
+        "table_id": "dbo.Users",
+        "table_name": "Users",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "UserId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "Username",
+            "data_type": "nvarchar"
+          },
+          {
+            "column_name": "Email",
+            "data_type": "nvarchar"
+          },
+          {
+            "column_name": "IsDeleted",
+            "data_type": "bit"
+          }
+        ],
+        "primary_key": [
+          "UserId"
+        ],
+        "foreign_keys": [],
+        "size_mb": 40,
+        "row_count": 50000
+      },
+      {
+        "table_id": "dbo.Orders",
+        "table_name": "Orders",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "OrderId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "UserId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "Total",
+            "data_type": "decimal"
+          },
+          {
+            "column_name": "CreatedOnDate",
+            "data_type": "datetime"
+          }
+        ],
+        "primary_key": [
+          "OrderId"
+        ],
+        "foreign_keys": [],
+        "size_mb": 120,
+        "row_count": 400000
+      },
+      {
+        "table_id": "dbo.Plans",
+        "table_name": "Plans",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "PlanId",
+            "data_type": "int"
+          },
+          {
+            "column_name": "PlanName",
+            "data_type": "nvarchar"
+          },
+          {
+            "column_name": "plan_type",
+            "data_type": "nvarchar"
+          }
+        ],
+        "primary_key": [
+          "PlanId"
+        ],
+        "foreign_keys": [],
+        "size_mb": 1,
+        "row_count": 12
+      }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "tt-app-user",
+        "query_text": "SELECT UserId, Username, Email FROM dbo.Users WHERE UserId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 40.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-app-orders",
+        "query_text": "SELECT OrderId, Total FROM dbo.Orders WHERE UserId = ? ORDER BY CreatedOnDate DESC",
+        "query_type": "SELECT",
+        "calls_per_second": 20.0,
+        "rows_returned_avg": 10,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-app-order-insert",
+        "query_text": "INSERT INTO dbo.Orders (UserId, Total, CreatedOnDate) VALUES (?, ?, ?)",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-temp-select",
+        "query_text": "SELECT TotalRecords = COUNT(*) FROM #PageIndexForUsers",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-tablevar-insert",
+        "query_text": "INSERT INTO @tmp (seckey) VALUES (? + Cast(@UserId as nvarchar(200)))",
+        "query_type": "INSERT",
+        "calls_per_second": 2.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-temp-and-real",
+        "query_text": "SELECT u.UserId, u.Username FROM dbo.Users u JOIN #PageIndexForUsers p ON p.UserId = u.UserId",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 20,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": true,
+        "join_count": 1
+      },
+      {
+        "query_id": "tt-global-temp",
+        "query_text": "SELECT s.UserId FROM ##ActiveSessions s WHERE s.UserId = @UserId",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-plan-store",
+        "query_text": "select p.plan_id from @plansByGroup as p where plan_id = @lastKnownGoodPlanId and plan_type = @planType",
+        "query_type": "SELECT",
+        "calls_per_second": 0.5,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-app-plan",
+        "query_text": "SELECT PlanId, PlanName FROM dbo.Plans WHERE plan_type = @planType",
+        "query_type": "SELECT",
+        "calls_per_second": 2.0,
+        "rows_returned_avg": 3,
+        "tables_accessed": [
+          "dbo.Plans"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-tablevar-if",
+        "query_text": "IF NOT EXISTS (SELECT 1 FROM @words WHERE [string] = @s)",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-drop-guard",
+        "query_text": "IF OBJECT_ID(?) IS NOT NULL DROP TABLE #PageIndexForUsers",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-fn-insert",
+        "query_text": "INSERT INTO @t SELECT * FROM dbo.fn_GetUsers(@x)",
+        "query_type": "INSERT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-exec-insert",
+        "query_text": "INSERT INTO #t EXEC dbo.GetUsers @p",
+        "query_type": "INSERT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-apply",
+        "query_text": "SELECT t.a FROM #t t CROSS APPLY dbo.fn_Split(t.s, ?) f",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "unknown"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-real-apply",
+        "query_text": "SELECT u.UserId FROM dbo.Users u CROSS APPLY dbo.fn_Split(u.Email, ?) f",
+        "query_type": "SELECT",
+        "calls_per_second": 2.0,
+        "rows_returned_avg": 5,
+        "tables_accessed": [
+          "dbo.Users"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "tt-real-exec",
+        "query_text": "INSERT INTO dbo.Orders (UserId, Total, CreatedOnDate) EXEC dbo.GetPending @p",
+        "query_type": "INSERT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0
+      }
+    ]
+  }
+}

@@ -794,7 +794,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.75"
+    "version": "1.76"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -802,7 +802,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.75"
+    "version": "1.76"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -1003,7 +1003,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.75"
+    "version": "1.76"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",

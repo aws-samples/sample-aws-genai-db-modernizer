@@ -42,7 +42,13 @@ export const isAuroraEngine = (engine) => AURORA_ENGINE_KEYS.includes(engine);
 // neither is a real table a reader should see ranked by throughput like
 // the others, so both always sort last here -- the same rule the
 // engineering report's "Queries on Aurora by table" subsection applies.
-export const AURORA_BLAME_LABELS = ['Utility and session statements', NO_SOURCE_TABLE];
+// Mirrors PROCEDURE_INTERNAL_GROUP_LABEL in src/shared/report_facts.py (#1876).
+export const PROCEDURE_INTERNAL_GROUP = 'Procedure-internal statements';
+export const AURORA_BLAME_LABELS = [
+  'Utility and session statements',
+  PROCEDURE_INTERNAL_GROUP,
+  NO_SOURCE_TABLE,
+];
 
 /**
  * One schema design's `table_definitions` entry, shaped for compact display:

@@ -489,7 +489,25 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
                 f"| {escaping.md_cell(reason_text or '-')} |"
             )
         out.append("")
+    internal = int(counts.get("procedure_internal_queries") or 0)
+    if internal:
+        out += [_procedure_internal_text(internal), ""]
     return out
+
+
+def _procedure_internal_text(n: int) -> str:
+    """The procedure-internal sentence (#1876), from ``procedure_internal_queries``."""
+    if n == 1:
+        return (
+            "1 statement is procedure-internal: it works on temporary tables or table "
+            "variables, so it is kept with the utility statements and not routed on its "
+            "own. Its reason says whether its rows come from a function or procedure."
+        )
+    return (
+        f"{n} statements are procedure-internal: they work on temporary tables or table "
+        "variables, so they are kept with the utility statements and not routed on their "
+        "own. Each one's reason says whether its rows come from a function or procedure."
+    )
 
 
 # How many distinct reasons one "Queries on Aurora by table" row names; the rest

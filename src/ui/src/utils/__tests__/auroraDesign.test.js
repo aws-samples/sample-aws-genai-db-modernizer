@@ -307,4 +307,20 @@ describe('AURORA_BLAME_LABELS ordering (#478)', () => {
     const result = buildAuroraQueryGroups('aurora_mysql', groups);
     expect(result.map((g) => g.sourceTable)).toEqual(['wordpress.wp_posts', 'No source table']);
   });
+
+  test('procedure-internal statements sort last too (#1876)', () => {
+    const groups = ['Procedure-internal statements', 'dbo.Users'].map((name, i) => ({
+      group_name: name,
+      engines: ['aurora_postgresql'],
+      access_patterns: [
+        { engine: 'aurora_postgresql', design_rps: i ? 1 : 999, query_ids: [`q${i}`] },
+      ],
+      source_queries: [{ query_id: `q${i}`, query_text: 'SELECT 1' }],
+    }));
+    const result = buildAuroraQueryGroups('aurora_postgresql', groups);
+    expect(result.map((g) => g.sourceTable)).toEqual([
+      'dbo.Users',
+      'Procedure-internal statements',
+    ]);
+  });
 });
