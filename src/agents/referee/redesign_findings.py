@@ -95,6 +95,7 @@ from src.shared.key_refusals import (
     refusal_sentence,
 )
 from src.tools.sql.query_facts import query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 FIXABLE = "fixable"
 INTRINSIC = "intrinsic"
@@ -279,7 +280,7 @@ class RedesignModel:
     # --- the redesign ---------------------------------------------------------------
 
     def _candidate_keys(self, query: Mapping) -> _Candidates | None:
-        memo = (str(query.get("query_id") or ""), str(query.get("query_text") or ""))
+        memo = (str(query.get("query_id") or ""), access_text(query))
         if memo in self._candidates:
             return self._candidates[memo]
         found = self._read_candidates(query)
@@ -287,7 +288,7 @@ class RedesignModel:
         return found
 
     def _read_candidates(self, query: Mapping) -> _Candidates | None:
-        facts = query_facts(str(query.get("query_text") or ""), self.source_engine).access_facts()
+        facts = query_facts(access_text(query), self.source_engine).access_facts()
         if facts.parsed_by != "sqlglot" or facts.truncated_read:
             return None
         rewritten = set(facts.assigned_columns)
@@ -406,7 +407,7 @@ class RedesignModel:
 
     def redesign(self, query: Mapping) -> QueryRedesign | None:
         """The redesign that applies to ``query``, or None (see the module docstring)."""
-        memo = (str(query.get("query_id") or ""), str(query.get("query_text") or ""))
+        memo = (str(query.get("query_id") or ""), access_text(query))
         if memo in self._redesigns:
             return self._redesigns[memo]
         found = self._redesign(query)
@@ -417,7 +418,7 @@ class RedesignModel:
         candidates = self._candidate_keys(query)
         if candidates is None or not candidates.keys:
             return None
-        text = str(query.get("query_text") or "")
+        text = access_text(query)
         written = classify_query(query, self.keys, self.source_engine)
         facts = query_facts(text, self.source_engine).access_facts()
         redesigned = classify_facts(
@@ -440,7 +441,7 @@ class RedesignModel:
         candidates = self._candidate_keys(query)
         if candidates is None:
             return "its predicates cannot all be read, so no key is evidenced"
-        facts = query_facts(str(query.get("query_text") or ""), self.source_engine).access_facts()
+        facts = query_facts(access_text(query), self.source_engine).access_facts()
         notes = []
         for label, why in candidates.refused:
             notes.append(f"{label}: {why}, which no redesign keys")

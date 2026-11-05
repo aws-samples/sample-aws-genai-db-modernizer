@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 from src.shared import catalog
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.view_lineage import access_text
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ def validate_customer_overrides(
         List of dicts: {query_id, original_engine, rule_id, customer_message}
         for each violated override.
     """
-    query_text_map = {q["query_id"]: q.get("query_text", "") for q in queries}
+    query_text_map = {q["query_id"]: access_text(q) for q in queries}
     violations = []
 
     for assignment in query_assignments:

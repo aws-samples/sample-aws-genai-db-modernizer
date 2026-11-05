@@ -84,6 +84,7 @@ from src.tools.analysis.variant_attributes import (
 )
 from src.tools.schema.design_metrics import row_count_or_assumed, sizing_row_count
 from src.tools.sql.query_facts import query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 # ---------------------------------------------------------------------------
 # Target version. The text detectors (aggregate calls, window functions,
@@ -423,7 +424,7 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     graph_hierarchy: list[dict] = []
 
     for q in queries:
-        facts = query_facts(q.get("query_text", ""), source_engine)
+        facts = query_facts(access_text(q), source_engine)
         qt = q.get("query_type", "").upper()
         accessed = q.get("tables_accessed") or []
         join_count = q.get("join_count") or 0
@@ -992,7 +993,7 @@ def _detect_version_dependent_features(queries: list[dict], source_engine: str =
     """
     features: set[str] = set()
     for q in queries:
-        facts = query_facts(q.get("query_text", ""), source_engine)
+        facts = query_facts(access_text(q), source_engine)
         if facts.ranking_window_function or facts.windowed_aggregate:
             features.add("$setWindowFields (ranking and window aggregates): needs 8.0.2+")
         elif facts.window_function and not facts.offset_window_function:
@@ -1015,7 +1016,7 @@ def _detect_unsupported_features(queries: list[dict], source_engine: str = "") -
     """
     features: set[str] = set()
     for q in queries:
-        if query_facts(q.get("query_text", ""), source_engine).offset_window_function:
+        if query_facts(access_text(q), source_engine).offset_window_function:
             features.add("LAG/LEAD/NTILE (offset and bucketing window functions)")
     return sorted(features)
 

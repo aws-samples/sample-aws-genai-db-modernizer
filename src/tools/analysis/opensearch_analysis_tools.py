@@ -73,6 +73,7 @@ from src.tools.sql.query_facts import (
     source_engine_of,
     timestamp_column_trace,
 )
+from src.tools.sql.view_lineage import access_text
 
 # ==========================================================================
 # WorkloadType enum
@@ -210,7 +211,7 @@ def analyze_opensearch_use_cases(collector_output: dict) -> WorkloadAnalysis:
     for q in queries:
         qid = q.get("query_id", "")
         qt = (q.get("query_type") or "").upper()
-        facts = query_facts(q.get("query_text") or "", source_engine)
+        facts = query_facts(access_text(q), source_engine)
         tables = q.get("tables_accessed") or []
         cps = float(q.get("calls_per_second") or 0.0)
         has_joins = bool(q.get("has_joins", False))
@@ -907,7 +908,7 @@ def build_opensearch_decision_trace(
     def _signals_for_query(qid: str, q: dict) -> list[str]:
         signals = []
         matched_pids = query_pattern_map.get(qid, [])
-        facts = query_facts(q.get("query_text") or "", source_engine)
+        facts = query_facts(access_text(q), source_engine)
         for pid in matched_pids:
             catalog = PATTERN_BY_ID.get(pid)
             if catalog:

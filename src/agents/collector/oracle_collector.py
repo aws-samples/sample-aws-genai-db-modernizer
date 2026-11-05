@@ -69,6 +69,7 @@ from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_m
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.oracle_tools import OracleRemoteCollector
+from src.tools.sql.view_lineage import apply_view_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,8 @@ def collect(input_contract: CollectorInput) -> CollectorOutputContract:
         return result
 
     if input_contract.mode == CollectionMode.live:
-        result = _collect_live(input_contract, ckpt)
+        # #1875: a statement on a view is scored on the view's base tables.
+        result = apply_view_lineage(_collect_live(input_contract, ckpt), "oracle")
     elif input_contract.mode == CollectionMode.ddl:
         result = _collect_ddl(input_contract, ckpt)
     else:

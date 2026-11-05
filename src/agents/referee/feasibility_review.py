@@ -48,6 +48,7 @@ from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import REPLICA_READS_NAMED
 from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 # Engine -> architectural role, used to recommend the replication pattern that
 # makes an intended read/write split work. A polyglot target routing reads to a
@@ -147,7 +148,7 @@ def _detect_read_write_splits(
         if not engine:
             continue  # not routed / out of scope
         tables = q.get("tables_accessed") or []
-        if is_utility_statement(q.get("query_text"), tables, scope):
+        if is_utility_statement(access_text(q), tables, scope):
             continue  # administration traffic: pinned, never routed
         written = set(written_tables(q, source_engine, scope))
         for table in tables:

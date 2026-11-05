@@ -253,6 +253,7 @@ def build_pending_choices(
         components.setdefault(union.find(qid), []).append(qid)
 
     settled = settled_counts(qas)
+    unresolved_views = _unresolved_views(collector_output)
     raw: list[tuple[str, list[str]]] = []
     for members in components.values():
         homes = Counter(home_of[q] for q in members if home_of[q])
@@ -279,9 +280,42 @@ def build_pending_choices(
                 ctx,
                 settled,
                 source_compatible_engine,
+                unresolved_views,
             )
         )
     return choices
+
+
+def _unresolved_views(collector_output: Mapping) -> dict[str, str]:
+    """``{view_id: reason}`` for each collected view with no resolved base table (#1875)."""
+    views = (collector_output.get("database_schema") or {}).get("views") or []
+    return {
+        str(v["view_id"]): str(v.get("lineage_reason") or "its base tables are unknown")
+        for v in views
+        if isinstance(v, Mapping) and v.get("view_id") and v.get("lineage_status") == "unresolved"
+    }
+
+
+def _view_note(
+    members: Iterable[str],
+    query_by_id: Mapping[str, Mapping],
+    unresolved_views: Mapping[str, str],
+) -> str:
+    """Why a choice's queries on an unresolved view score the same on every engine (#1875):
+    they have no base table to score, so the tie is not about the engines at all."""
+    named = sorted(
+        {
+            str(read.get("view_id"))
+            for qid in members
+            for read in (query_by_id.get(qid) or {}).get("views_read") or []
+            if isinstance(read, Mapping) and read.get("view_id") in unresolved_views
+        }
+    )
+    return "".join(
+        f" {_bare(view)} is a view whose base tables are unknown: {unresolved_views[view]}. "
+        "A query on it has no table to score, so every engine scores it the same."
+        for view in named
+    )
 
 
 def _choice(
@@ -297,6 +331,7 @@ def _choice(
     ctx: ScoringContext | None,
     settled: Mapping[str, int],
     source_compatible_engine: str | None,
+    unresolved_views: Mapping[str, str] | None = None,
 ) -> PendingEngineChoice:
     whole = _choice_scores(members, engines, query_by_id, weights, ctx, exact=False)
     exact = _choice_scores(members, engines, query_by_id, weights, ctx, exact=True)
@@ -330,7 +365,8 @@ def _choice(
         current_engine=placeholder,
         current_engines=sorted(current),
         options=choice_engines,
-        why_tied=_why_tied(engines, whole, unrounded),
+        why_tied=_why_tied(engines, whole, unrounded)
+        + _view_note(members, query_by_id, unresolved_views or {}),
         decide_for_me_engine=pick,
         decide_for_me_rule=rule,
         decide_for_me_reason=_pick_reason(pick, rule, kind, engines, unrounded, settled),

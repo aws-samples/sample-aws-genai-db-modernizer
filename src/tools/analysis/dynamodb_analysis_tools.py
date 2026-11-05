@@ -93,6 +93,7 @@ from src.tools.sql.query_facts import (
     source_engine_of,
     timestamp_column_trace,
 )
+from src.tools.sql.view_lineage import access_text
 
 # ---------------------------------------------------------------------------
 # LLM Advisor Pydantic models (structured LLM response parsing only)
@@ -978,7 +979,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     wide_transaction_queries: list[dict] = []
 
     for q in queries:
-        facts = query_facts(q.get("query_text", ""), source_engine)
+        facts = query_facts(access_text(q), source_engine)
         qt = q.get("query_type", "").upper()
         tables_accessed = q.get("tables_accessed") or []
         rows_avg = q.get("rows_returned_avg", 0)

@@ -52,6 +52,7 @@ from src.tools.sql.regex_facts import (
     SELECT_WORD_RE,
     aggregate_function_names,
 )
+from src.tools.sql.view_lineage import access_text
 
 __all__ = [
     "CRUD",
@@ -668,7 +669,7 @@ def _relational_reasons(
     tables = list(query.get("tables_accessed") or [])
     if len(tables) != 1 or query.get("has_joins"):
         reasons.add("join")
-    text = str(query.get("query_text") or "")
+    text = access_text(query)  # #1875: a view's body is the statement's too
     capabilities = detect_required_capabilities(text, [], tables, source)
     if capabilities:
         facts = query_facts(text, source.engine if source else None)

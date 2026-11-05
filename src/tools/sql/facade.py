@@ -59,7 +59,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -464,6 +464,469 @@ def read_sql(sql: str, source_engine: str) -> SqlReading:
     parse."""
     parsed = _parse(sql, source_engine)
     return SqlReading(tables=_tables(parsed), facts=_facts(parsed), access=_access(parsed))
+
+
+@dataclass(frozen=True)
+class ViewColumn:
+    """One output column of a view and the stored column it shows (#1875).
+
+    ``name`` is the column's name in the view (lower-case), ``source`` the relation
+    (table or view) the body reads it from, ``column`` that relation's column
+    (lower-case). Only a plain column projection has one: an expression has no single
+    stored column."""
+
+    name: str
+    source: TableRef
+    column: str
+
+
+@dataclass(frozen=True)
+class ViewReading:
+    """What a view's stored definition reads (#1875), from one parse.
+
+    ``reading`` is :func:`read_sql`'s answer for the definition: its ``tables`` hold
+    every relation the text names, the view a ``CREATE VIEW`` creates included (the
+    caller knows the view's name and leaves it out), and ``facts.join_count`` the
+    joins. ``columns`` maps the view's plain-column projections to their source
+    relations (:class:`ViewColumn`); empty when the text falls back, or when its body
+    is not one ``SELECT`` (a ``UNION``)."""
+
+    reading: SqlReading
+    columns: tuple[ViewColumn, ...]
+
+
+def read_view_definition(definition: str, source_engine: str) -> ViewReading:
+    """The relations and projected columns of a view's ``definition`` (``CREATE VIEW
+    ... AS SELECT ...`` or its bare ``SELECT``), read with the source engine's dialect.
+    Never raises."""
+    parsed = _parse(definition, source_engine)
+    reading = SqlReading(tables=_tables(parsed), facts=_facts(parsed), access=_access(parsed))
+    if parsed.fallback_reason is not None or not parsed.statements:
+        return ViewReading(reading, ())
+    return ViewReading(reading, _view_columns(parsed.statements[0]))
+
+
+def _view_columns(statement: exp.Expr) -> tuple[ViewColumn, ...]:
+    names: list[str] = []
+    body = statement
+    if isinstance(statement, exp.Create):
+        body = statement.expression
+        target = statement.this
+        if isinstance(target, exp.Schema):  # CREATE VIEW v (a, b) AS ...
+            names = [e.name.lower() for e in target.expressions if isinstance(e, exp.Identifier)]
+    if not isinstance(body, exp.Select):
+        return ()
+    sources: dict[str, TableRef] = {}
+    from_ = body.args.get("from_")
+    items = [from_.this] if isinstance(from_, exp.From) else []
+    items += [j.this for j in body.args.get("joins") or []]
+    plain = all(isinstance(i, exp.Table) for i in items)
+    for item in items:
+        if isinstance(item, exp.Table) and (ref := _ref_from_node(item)) is not None:
+            sources[item.alias_or_name.lower()] = ref
+    out: list[ViewColumn] = []
+    for index, projection in enumerate(body.expressions):
+        inner = projection.this if isinstance(projection, exp.Alias) else projection
+        if not isinstance(inner, exp.Column) or isinstance(inner.this, exp.Star):
+            continue
+        name = names[index] if index < len(names) else projection.alias_or_name.lower()
+        qualifier = inner.table.lower()
+        if qualifier:
+            source = sources.get(qualifier)
+        else:
+            source = next(iter(sources.values())) if plain and len(sources) == 1 else None
+        if source is not None and name:
+            out.append(ViewColumn(name=name, source=source, column=inner.name.lower()))
+    return tuple(out)
+
+
+def written_columns(sql: str, source_engine: str) -> tuple[str, ...] | None:
+    """The columns (lower-case) the first statement of ``sql`` writes: an ``INSERT``'s
+    column list or the plain columns an ``UPDATE``'s ``SET`` assigns (#1875). None when
+    the text does not say: an ``INSERT`` with no column list, a ``SET`` target that is
+    not a plain column, any other statement, or text the facade cannot parse."""
+    parsed = _parse(sql, source_engine)
+    if parsed.fallback_reason is not None or not parsed.statements:
+        return None
+    statement = parsed.statements[0]
+    if isinstance(statement, exp.Insert):
+        target = statement.this
+        if not isinstance(target, exp.Schema) or not target.expressions:
+            return None
+        return tuple(e.name.lower() for e in target.expressions)
+    if isinstance(statement, exp.Update):
+        columns = [_set_column(a) for a in statement.expressions]
+        if not columns or any(c is None for c in columns):
+            return None
+        return tuple(c.name.lower() for c in columns if c is not None)
+    return None
+
+
+# How many views deep a statement's views are resolved (a view on a view on a view ...).
+_MAX_VIEW_DEPTH = 16
+
+ViewTextForm = Literal["merged", "derived", "base_write"]
+
+
+@dataclass(frozen=True)
+class ViewText:
+    """A statement with the views it names resolved (#1875), read in its dialect.
+
+    ``form``: ``merged`` (each view merged in, the direct join of its base tables, by
+    sqlglot's ``merge_subqueries``), ``derived`` (a view that does not merge kept as its
+    body, a derived table under the view's name, so its aggregation, ``GROUP BY``,
+    ``DISTINCT``, ``TOP``/``LIMIT`` or ``UNION`` is the statement's too) or
+    ``base_write`` (a write through a column-preserving view written onto its base table,
+    with the view's own filter on that table). ``text`` is None when the statement cannot
+    be rewritten, and ``fallback`` says why."""
+
+    text: str | None
+    form: ViewTextForm | None = None
+    fallback: str | None = None
+
+
+_NULL_WORD_RE = re.compile(r"\bNULL\b", re.IGNORECASE)
+
+
+def resolve_view_text(
+    sql: str,
+    source_engine: str,
+    views: Mapping[str, str],
+    columns: Mapping[str, Sequence[str]],
+) -> ViewText:
+    """``sql`` with every view of ``views`` it names resolved (:class:`ViewText`).
+
+    ``views`` maps a view's bare name (lower-case) to its definition, ``columns`` a
+    table's bare name (lower-case) to its column names, the schema sqlglot qualifies the
+    columns with before it merges. Table qualifiers are dropped, so the caller leaves out
+    a name two relations share. A name that is a common table expression where it stands
+    is that expression, never a view. Never raises."""
+    parsed = _parse(sql, source_engine)
+    if parsed.fallback_reason is not None:
+        return ViewText(
+            None, fallback=f"the statement could not be parsed ({parsed.fallback_reason})"
+        )
+    if len(parsed.statements) != 1:
+        return ViewText(None, fallback="the text holds more than one statement")
+    placeholders = _placeholders_were_nulls(sql, source_engine)
+    if placeholders is None:
+        return ViewText(
+            None,
+            fallback="its ? placeholders and NULL literals cannot be told apart in a rewritten text",
+        )
+    dialect = parsed.dialect or None
+    bodies: dict[str, exp.Expr] = {}
+    for name, definition in views.items():
+        body = _view_body(definition, source_engine)
+        if body is not None:
+            bodies[name.lower()] = body
+    try:
+        tree = _without_qualifiers(parsed.statements[0].copy())
+        if placeholders:
+            # The statement's own NULLs are its ? placeholders (the MySQL family's digest
+            # normalization); a NULL in a view's body stays NULL.
+            for node in list(tree.find_all(exp.Null)):
+                node.replace(exp.Placeholder())
+        form: ViewTextForm | None = None
+        target = _write_target(tree)
+        if target is not None and target.name.lower() in bodies:
+            why = _onto_base_table(tree, target, bodies)
+            if why is not None:
+                return ViewText(None, fallback=why)
+            form, target = "base_write", None
+        own = sum(1 for _ in tree.find_all(exp.Subquery))
+        inlined = _inline_views(tree, bodies, 0, skip=target)
+        if form is None and not inlined:
+            unreadable = sorted(
+                t.name.lower()
+                for t in tree.find_all(exp.Table)
+                if t.name.lower() in views and t.name.lower() not in bodies
+            )
+            if unreadable:
+                return ViewText(
+                    None,
+                    fallback=(
+                        f"the definition of view {unreadable[0]} is not one query the "
+                        "rewrite can read (it does not parse, or its column list does not "
+                        "match its SELECT)"
+                    ),
+                )
+            return ViewText(
+                None,
+                fallback=(
+                    "it names no view the collector can read by name (a view whose name a "
+                    "table or another view shares is read as written)"
+                ),
+            )
+        if form is None and isinstance(tree, exp.Query):
+            merged = _merged(tree, columns, dialect, own)
+            if merged is not None:
+                return ViewText(_view_sql(merged, dialect), "merged")
+        return ViewText(_view_sql(tree, dialect), form or "derived")
+    except Exception:  # noqa: BLE001 -- a statement sqlglot cannot rewrite keeps its own text
+        return ViewText(None, fallback="sqlglot could not rewrite it")
+
+
+def _placeholders_were_nulls(sql: str, source_engine: str) -> bool | None:
+    """Whether the facade's reading turned ``?`` placeholders into ``NULL`` (the MySQL
+    family's digest normalization), so the rewritten text puts them back; None when the
+    text also holds a ``NULL`` of its own, which a rewrite could not tell apart."""
+    if sqlglot_dialect(source_engine) != "mysql":
+        return False
+    mask = quoted_mask(sql, source_engine or "")
+    plain = "".join(" " if quoted else ch for ch, quoted in zip(sql, mask, strict=False))
+    if "?" not in plain:
+        return False
+    return None if _NULL_WORD_RE.search(plain) else True
+
+
+def _view_sql(tree: exp.Expr, dialect: str | None) -> str:
+    return str(tree.sql(dialect=dialect))
+
+
+def _merged(
+    tree: exp.Expr, columns: Mapping[str, Sequence[str]], dialect: str | None, own: int
+) -> exp.Expr | None:
+    """``tree`` (its views inlined) with every view merged into it, or None."""
+    from sqlglot.optimizer.merge_subqueries import merge_subqueries
+    from sqlglot.optimizer.qualify import qualify
+
+    schema: dict[str, object] = {
+        table: {c: "UNKNOWN" for c in cols} for table, cols in columns.items()
+    }
+    try:
+        qualified = qualify(
+            tree.copy(),
+            dialect=dialect,
+            schema=schema,
+            validate_qualify_columns=False,
+            quote_identifiers=False,
+            identify=False,
+        )
+        merged = merge_subqueries(qualified)
+    except Exception:  # noqa: BLE001 -- a read that does not merge keeps its derived tables
+        return None
+    if sum(1 for _ in merged.find_all(exp.Subquery)) > own:
+        return None  # a view's body stayed a derived table
+    return merged
+
+
+def _view_body(definition: str, source_engine: str) -> exp.Expr | None:
+    parsed = _parse(definition, source_engine)
+    if parsed.fallback_reason is not None or len(parsed.statements) != 1:
+        return None
+    statement = parsed.statements[0]
+    body = statement.expression if isinstance(statement, exp.Create) else statement
+    if not isinstance(body, exp.Query):
+        return None
+    if isinstance(statement, exp.Create) and isinstance(statement.this, exp.Schema):
+        # CREATE VIEW v (a, b) AS SELECT x, y: the list names the body's columns.
+        names = [e.name for e in statement.this.expressions if isinstance(e, exp.Identifier)]
+        if not isinstance(body, exp.Select) or len(names) != len(body.expressions):
+            return None
+        body = body.copy()
+        for name, projection in zip(names, list(body.expressions), strict=True):
+            inner = projection.this if isinstance(projection, exp.Alias) else projection
+            projection.replace(exp.alias_(inner.copy(), name))
+    return body
+
+
+def _without_qualifiers(tree: exp.Expr) -> exp.Expr:
+    for table in tree.find_all(exp.Table):
+        table.set("db", None)
+        table.set("catalog", None)
+    return tree
+
+
+def _inline_views(
+    tree: exp.Expr, bodies: Mapping[str, exp.Expr], depth: int, skip: exp.Expr | None = None
+) -> bool:
+    """Replace each table node of ``tree`` that names a view in ``bodies`` (not ``skip``,
+    and not a common table expression in scope) with the view's body as a derived table
+    under the same alias, the views it reads too. Whether any was replaced."""
+    if depth > _MAX_VIEW_DEPTH:
+        raise ValueError("views nested too deep")
+    replaced = False
+    for table in list(tree.find_all(exp.Table)):
+        if table is skip or not isinstance(table.this, exp.Identifier):
+            continue
+        body = bodies.get(table.name.lower())
+        ref = _ref_from_node(table)
+        if body is None or ref is None or _is_cte_reference(table, ref):
+            continue
+        inner = _without_qualifiers(body.copy())
+        _inline_views(inner, bodies, depth + 1)
+        sub = exp.Subquery(
+            this=inner, alias=exp.TableAlias(this=exp.to_identifier(table.alias_or_name))
+        )
+        table.replace(sub)
+        replaced = True
+    return replaced
+
+
+def _write_target(tree: exp.Expr) -> exp.Table | None:
+    """The table node a write statement writes (an ``INSERT``'s, ``UPDATE``'s,
+    ``DELETE``'s or ``MERGE``'s target), or None for any other statement."""
+    if not isinstance(tree, _WRITE_NODES):
+        return None
+    target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+    return target if isinstance(target, exp.Table) and target.name else None
+
+
+def _onto_base_table(
+    tree: exp.Expr, target: exp.Table, bodies: Mapping[str, exp.Expr]
+) -> str | None:
+    """Write ``tree``, a write through the view ``target`` names, onto the view's base
+    table in place: the target, its column list or ``SET`` and ``WHERE`` columns, and the
+    view's own filter on that table. None when done, else why it cannot be."""
+    view = target.name.lower()
+    if isinstance(tree, exp.Merge):
+        return f"a MERGE through view {view} is read as written"
+    if tree.args.get("from_") or tree.args.get("joins") or tree.args.get("using"):
+        return f"it writes view {view} from other tables, which the rewrite does not map"
+    if tree.args.get("tables"):
+        return f"it writes view {view} with other tables"
+    name = (target.alias or target.name).lower()
+    schema = tree.this if isinstance(tree, exp.Insert) else None
+    if isinstance(tree, exp.Insert):
+        if not isinstance(schema, exp.Schema) or not schema.expressions:
+            return f"it inserts into view {view} with no column list, so no column maps"
+        names = [e.name.lower() for e in schema.expressions]
+        own: list[exp.Column] = []
+    else:
+        own = _own_columns(tree)
+        for column in own:
+            if column.table and column.table.lower() != name:
+                return f"it names {column.table}.{column.name}, which is not view {view}"
+        names = [c.name.lower() for c in own]
+    mapped = _view_columns_onto_base(view, names, bodies, 0)
+    if isinstance(mapped, str):
+        return mapped
+    base, columns, filters = mapped
+    table = exp.Table(this=exp.to_identifier(base))
+    if target.alias:
+        table.set("alias", exp.TableAlias(this=exp.to_identifier(target.alias)))
+    if isinstance(schema, exp.Schema):
+        for ident in schema.expressions:
+            ident.set("this", columns[ident.name.lower()])
+        schema.set("this", table)
+    else:
+        target.replace(table)
+    for column in own:
+        column.set("this", exp.to_identifier(columns[column.name.lower()]))
+        if column.table:
+            column.set("table", exp.to_identifier(target.alias or base))
+    if filters and isinstance(tree, (exp.Update, exp.Delete)):
+        where = tree.args.get("where")
+        condition = exp.and_(*([where.this] if where is not None else []), *filters)
+        tree.set("where", exp.Where(this=condition))
+    return None
+
+
+_ROW_CHANGING_ARGS = (
+    ("group", "a GROUP BY"),
+    ("having", "a HAVING"),
+    ("distinct", "DISTINCT"),
+    ("limit", "a TOP or LIMIT"),
+    ("offset", "an OFFSET"),
+)
+
+
+def _view_columns_onto_base(
+    view: str, names: list[str], bodies: Mapping[str, exp.Expr], depth: int
+) -> tuple[str, dict[str, str], list[exp.Expr]] | str:
+    """The base table ``names`` (columns of ``view``) come from, each column's name
+    there, and the view's filters on that table (unqualified); or why not."""
+    if depth > _MAX_VIEW_DEPTH:
+        return "its views are nested too deep"
+    body = bodies[view]
+    if not isinstance(body, exp.Select):
+        return f"view {view} is not one plain SELECT (a UNION, for one)"
+    if body.args.get("with_"):
+        return (
+            f"view {view} reads a common table expression, which the rewrite does not map "
+            "onto a base table"
+        )
+    for arg, what in _ROW_CHANGING_ARGS:
+        if body.args.get(arg):
+            return f"view {view} has {what}, so its rows are not its base table's"
+    if body.find(exp.Window) is not None or any(
+        _is_aggregate_function(n) for n in body.find_all(exp.Func)
+    ):
+        return f"view {view} computes its rows (an aggregate or window function)"
+    from_ = body.args.get("from_")
+    items = [from_.this] if isinstance(from_, exp.From) else []
+    items += [j.this for j in body.args.get("joins") or []]
+    if not items or not all(isinstance(i, exp.Table) and i.name for i in items):
+        return f"view {view} reads a derived table or a function"
+    aliases = {i.alias_or_name.lower(): i.name for i in items}
+    single = next(iter(aliases)) if len(aliases) == 1 else None
+    shown: dict[str, tuple[str | None, str]] = {}
+    star = False
+    for projection in body.expressions:
+        inner = projection.this if isinstance(projection, exp.Alias) else projection
+        if isinstance(inner, exp.Star) or (
+            isinstance(inner, exp.Column) and isinstance(inner.this, exp.Star)
+        ):
+            star = True
+        elif isinstance(inner, exp.Column):
+            shown[projection.alias_or_name.lower()] = (inner.table.lower() or single, inner.name)
+    sources: dict[str, tuple[str | None, str]] = {}
+    for name in names:
+        if name in shown:
+            sources[name] = shown[name]
+        elif star and single is not None:
+            sources[name] = (single, name)
+        else:
+            return f"it names {name}, which view {view} does not show as a plain column"
+    used = {alias for alias, _ in sources.values()}
+    if not names:
+        if single is None:
+            return (
+                f"it names no column, so it does not say which table of view {view}'s join "
+                "it writes"
+            )
+        used = {single}  # a DELETE with no WHERE: the view's one table
+    if len(used) != 1 or None in used or next(iter(used)) not in aliases:
+        return f"its columns come from more than one table of view {view}"
+    (alias,) = used
+    assert alias is not None  # nosec B101 -- checked just above
+    filters = []
+    where = body.args.get("where")
+    terms: list[exp.Expr] = []
+    if isinstance(where, exp.Where):
+        terms = list(where.this.flatten()) if isinstance(where.this, exp.And) else [where.this]
+    for term in terms:
+        cols = list(term.find_all(exp.Column))
+        if term.find(exp.Select) is None and all(
+            (c.table.lower() or single) == alias for c in cols
+        ):
+            copied = term.copy()
+            for c in copied.find_all(exp.Column):
+                c.set("table", None)
+            filters.append(copied)
+    base = aliases[alias]
+    columns = {n: col for n, (_, col) in sources.items()}
+    if base.lower() in bodies:
+        deeper = _view_columns_onto_base(
+            base.lower(), [c.lower() for c in columns.values()], bodies, depth + 1
+        )
+        if isinstance(deeper, str):
+            return deeper
+        below_base, below, more = deeper
+        columns = {n: below[c.lower()] for n, c in columns.items()}
+        kept = []
+        for f in filters:
+            # A filter of this view stays when its columns land on the same table.
+            names = [c.name.lower() for c in f.find_all(exp.Column)]
+            onto = _view_columns_onto_base(base.lower(), names, bodies, depth + 1)
+            if isinstance(onto, str) or onto[0] != below_base:
+                continue
+            for c in f.find_all(exp.Column):
+                c.set("this", exp.to_identifier(onto[1][c.name.lower()]))
+            kept.append(f)
+        base, filters = below_base, [*kept, *more]
+    return base, columns, filters
 
 
 @dataclass(frozen=True)

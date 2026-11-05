@@ -36,6 +36,7 @@ from src.shared.catalog.write_intents import carried_write_floor, write_intent
 from src.shared.sql_spans import replace_strings_and_comments
 from src.tools.sql.facade import sql_tokens
 from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 # The intents, one catalog file each, in the order the classifier tries them (the first
 # that matches wins; ``SET_BASED_WRITE`` is the rest).
@@ -123,7 +124,7 @@ def classify_write_intent(
       addresses;
     - ``set-based-write``: the rest.
     """
-    text = str(query.get("query_text") or "")
+    text = access_text(query)
     facts = query_facts(text, source_engine).access_facts()
     kind = facts.kind
     target = _short(table_id)
@@ -231,7 +232,7 @@ class CarriedWrite:
 
 def _statement(query: Mapping, source_engine: str) -> str:
     """The statement's kind as SQL names it (``DELETE``, ``UPDATE``, ...)."""
-    kind = query_facts(str(query.get("query_text") or ""), source_engine).access_facts().kind
+    kind = query_facts(access_text(query), source_engine).access_facts().kind
     if kind in ("select", "other"):
         return str(query.get("query_type") or "").upper()
     return str(kind).upper()

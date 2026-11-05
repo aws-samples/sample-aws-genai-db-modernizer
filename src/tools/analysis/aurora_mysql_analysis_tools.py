@@ -55,6 +55,7 @@ from src.tools.analysis.scoring import (
     compute_confidence,
 )
 from src.tools.sql.query_facts import query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 # ==========================================================================
 # MySQL-specific feature detection
@@ -128,7 +129,7 @@ def analyze_aurora_mysql_use_cases(collector_output: dict) -> WorkloadAnalysis:
     for q in queries:
         qid = q.get("query_id", "")
         qt = (q.get("query_type") or "").upper()
-        text = q.get("query_text") or ""
+        text = access_text(q)
         tables = q.get("tables_accessed") or []
 
         matched_ids = detect_mysql_specific_features(text, source_engine)
@@ -332,11 +333,9 @@ def build_aurora_mysql_decision_trace(
                 "query_text_preview": (q.get("query_text") or "")[:120],
                 "matched_patterns": query_pattern_map.get(qid, []),
                 "matched_anti_patterns": query_anti_pattern_map.get(qid, []),
-                "mysql_features": detect_mysql_specific_features(
-                    q.get("query_text") or "", source_engine
-                ),
+                "mysql_features": detect_mysql_specific_features(access_text(q), source_engine),
                 # A locking read's transactional need (#799): recorded, never scored.
-                "locking_clause": locking_clause(q.get("query_text") or "", source_engine),
+                "locking_clause": locking_clause(access_text(q), source_engine),
             }
         )
 

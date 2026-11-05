@@ -61,6 +61,7 @@ from src.agents.referee.table_resolution import SourceScope
 from src.shared import catalog
 from src.tools.analysis.key_access import KeyAccessReader
 from src.tools.sql.query_facts import ColumnTypes, query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,8 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
     high_freq_reads: list[str] = []
 
     for q in queries:
-        text = q.get("query_text") or ""
+        # #1875: a statement on a view reads as the view's body does.
+        text = access_text(q)
         facts = query_facts(text, source_engine)
         qtype = (q.get("query_type") or "").upper()
         cps = q.get("calls_per_second") or 0
@@ -615,7 +617,7 @@ def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str
     result: dict[str, list[str]] = {}
     for q in queries:
         qid = q.get("query_id", "")
-        query_text = q.get("query_text", "")
+        query_text = access_text(q)  # #1875: a view's body is the statement's too
         sigs = query_signal_map.get(qid, [])
         caps = detect_required_capabilities(query_text, sigs, q.get("tables_accessed"), source)
         if caps:

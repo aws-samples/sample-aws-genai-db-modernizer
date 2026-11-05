@@ -37,6 +37,7 @@ from src.tools.sql.redact import (
     redact_definition,
     redact_literals,
 )
+from src.tools.sql.view_lineage import apply_view_lineage
 from src.tools.validation.ingestion_limits import check_collection_counts
 
 if TYPE_CHECKING:
@@ -1030,7 +1031,12 @@ def _rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
         rows.append(row)
     queries = out.setdefault("queries", {})
     queries["query_patterns"] = rows
-    return out
+    # #1875: a statement on a view is scored on the view's base tables, as in a collection.
+    for row in rows:
+        for key in ("views_read", "view_resolved_text", "view_text_form", "view_text_fallback"):
+            row[key] = None
+    resolved: dict = apply_view_lineage(out, source_engine)
+    return resolved
 
 
 def _transform_queries(

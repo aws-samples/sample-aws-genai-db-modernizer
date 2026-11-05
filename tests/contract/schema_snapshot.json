@@ -6065,7 +6065,62 @@
                             ]
                           }
                         },
+                        "lineage_reason": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "lineage_status": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "partial",
+                                  "resolved",
+                                  "unresolved"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "referenced_tables": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "items": {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                },
+                                "kind": "array"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "referenced_views": {
                           "required": false,
                           "schema": {
                             "kind": "anyOf",
@@ -8874,6 +8929,114 @@
                         ]
                       }
                     },
+                    "view_resolved_text": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "view_text_fallback": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "view_text_form": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "enum",
+                            "values": [
+                              "base_write",
+                              "derived",
+                              "merged"
+                            ]
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "views_read": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "base_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "view_id": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "written_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "items": {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        },
+                                        "kind": "array"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "wait_events": {
                       "required": false,
                       "schema": {
@@ -8988,8 +9151,8 @@
         }
       }
     },
-    "schema_hash": "79cb10df2fab334311dee06890a008cbe86ab453f9c585d2c6f650e3b566b959",
-    "version": "5.4"
+    "schema_hash": "bab23cf7296dce813c61f6b60e7a7c34e1a4884d3b43630aee939873ab044e21",
+    "version": "5.5"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

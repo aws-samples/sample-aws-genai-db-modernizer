@@ -1080,15 +1080,23 @@ def _redacted_pattern(
 ) -> Mapping[str, Any]:
     text = row.get("query_text")
     tags = row.get("query_tags")
+    resolved = row.get("view_resolved_text")
     new_text = redact_literals(text, engine, settings) if isinstance(text, str) else text
+    # #1875: the statement with its views resolved is query text too.
+    new_resolved = (
+        redact_literals(resolved, engine, settings) if isinstance(resolved, str) else resolved
+    )
     new_tags = tags
     if isinstance(tags, list) and tags:
         fixed = [redact_comment(t, engine) if isinstance(t, str) else t for t in tags]
         if fixed != tags:
             new_tags = list(dict.fromkeys(fixed))
-    if new_text == text and new_tags is tags:
+    if new_text == text and new_tags is tags and new_resolved == resolved:
         return row
-    return {**row, "query_text": new_text, "query_tags": new_tags}
+    out = {**row, "query_text": new_text, "query_tags": new_tags}
+    if "view_resolved_text" in row:
+        out["view_resolved_text"] = new_resolved
+    return out
 
 
 def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1161,7 +1169,13 @@ def _reported_settings(data: Any, source_engine: str | None) -> SpanSettings | N
     return None
 
 
-_TEXT_KEYS = {"query_text": redact_literals, "definition": redact_definition}
+_TEXT_KEYS = {
+    "query_text": redact_literals,
+    # #1875: the statement with its views resolved, built from redacted text, redacted
+    # again so a later path that builds it otherwise cannot keep a literal.
+    "view_resolved_text": redact_literals,
+    "definition": redact_definition,
+}
 
 
 def redact_values(

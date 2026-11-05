@@ -43,6 +43,7 @@ from src.agents.referee.utility_statements import has_sequence_reference
 from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.tools.sql.query_facts import query_facts, scan_sql, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 AURORA_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
 
@@ -176,7 +177,7 @@ def detect_heterogeneous_features(
     """
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
-    query_texts = [str(q.get("query_text") or "") for q in queries]
+    query_texts = [access_text(q) for q in queries]
     facts = [query_facts(t, source_engine) for t in query_texts]
     schema_names = {t.get("schema_name") for t in tables if t.get("schema_name")}
     json_columns = any(

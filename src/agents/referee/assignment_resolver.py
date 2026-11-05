@@ -143,6 +143,7 @@ from src.shared.engine_names import (
 )
 from src.shared.move_reasons import render_group_gates
 from src.shared.signal_labels import signal_noun
+from src.tools.sql.view_lineage import access_text
 
 # Callers import these from here; they live in the modules imported above.
 __all__ = [
@@ -964,16 +965,14 @@ class AssignmentResolver:
         utility_qids = [
             query["query_id"]
             for query in queries
-            if is_utility_statement(
-                query.get("query_text"), query.get("tables_accessed"), source_scope
-            )
+            if is_utility_statement(access_text(query), query.get("tables_accessed"), source_scope)
         ]
         procedure_internal_reasons = {
             query["query_id"]: internal_reason
             for query in queries
             if (
                 internal_reason := procedure_internal_reason(
-                    query.get("query_text"), query.get("tables_accessed"), source_scope
+                    access_text(query), query.get("tables_accessed"), source_scope
                 )
             )
         }
