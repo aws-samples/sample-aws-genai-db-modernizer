@@ -72,6 +72,7 @@ The one-step option means adopting the whole target architecture in one cutover 
 | `/design-schema` | Designs target schemas per engine (needs a model) |
 | `/synthesize` | Produces the final report and renders the deliverables into `artifacts/<db>/<job>/deliverables/` (see [Understand the results](understand-the-results.md#the-deliverables)) |
 | `/explore` | Answers a question about an assessed job from its context graph (see [Ask about an assessment](#ask-about-an-assessment-explore)) |
+| `/move` | Moves step 1 (the source into the Aurora engine the assessment chose) with AWS DMS, with your approval before each AWS write (see [Move step 1](#move-step-1-move)) |
 
 Each command is defined in `.claude/commands/` and reads the job state from `.modernizer-state.json`, so you can run them out of order to re-do a single phase after changing an earlier decision.
 
@@ -89,6 +90,27 @@ After an assessment, ask about it in plain words:
 - It never writes a graph query itself and never states a figure the result does not hold. When no catalog question fits, it says so and lists the closest ones.
 - An empty answer names the pipeline stages the job has not run (for example, no load test yet), so "no rows" is not read as "nothing there".
 - The questions, and the same commands without Claude Code, are in the [query cookbook](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/context-graph-query-cookbook.md).
+
+## Move step 1 (`/move`)
+
+After `/modernize`, `/move step-1` walks you through the first step of the migration: your MySQL or PostgreSQL database into the Aurora engine the assessment chose, with AWS DMS (a full load, then ongoing replication). The step's details, and what you must have in place, are in the [data movement README](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/data-movement/README.md#step-1-dms-into-your-aurora-cluster).
+
+```text
+/move step-1
+/move --job-id <job_id> --db <db>
+```
+
+It works on the job in `.modernizer-state.json` unless you pass `--job-id` and `--db`; with no step it lists the job's steps and asks. It has four stages, each ending at a checkpoint:
+
+1. **Prepare** writes the step's transformation contract and plan and renders three files: the suggested `aurora-target.yaml` and `step-1.ddl.sql`, which are yours to deploy and run, and `dms-step-1.yaml`, the DMS stack. It shows the contract's status, the instance sizing and the step's cost, quotes the customer-responsibility disclaimer, and lists what you do before the next stage.
+2. **Check** asks for your inputs one block at a time (the cluster, the source, the two secrets' ARNs, the certificate ARNs, subnets and security group) and writes them to `artifacts/<db>/<job>/data-movement/step-1/inputs.json`, then runs the read-only preflight until it passes, walking you through each failure and each item you must confirm yourself.
+3. **Move** shows the stack's parameters, then its change set, and asks before creating the change set, before executing it and before starting the task; it tests both endpoints in between.
+4. **Prove** polls the task until the full load is done and validation has caught up, runs the read-only gate, and shows its load, lag and parity evidence, the tables DMS could not validate, and the cutover message. When to cut over stays your decision.
+
+- Every AWS call uses your own credentials: the ambient ones, or the profiles you name in the inputs file (`read_profile` for the preflight, status and gate, which only read; `write_profile` for the deploy). The inputs file holds ids and ARNs only, never a secret's value.
+- Run `/move step-1` again to resume: it reads where the stack and the task stand and picks up at that stage.
+- `--auto` never asks: without `--inputs <file.json>` it stops after Prepare; with `--inputs` it runs the preflight and stops before the first AWS write unless you also pass `--approve-deploy`.
+- The run ends with one line, `MOVE_RESULT: complete job_id=<id> step=1 gate=<status>` or `MOVE_RESULT: stopped stage=<stage> reason=<reason>`.
 
 ## Analyzing your own database
 

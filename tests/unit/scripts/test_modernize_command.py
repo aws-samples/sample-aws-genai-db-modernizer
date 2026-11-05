@@ -80,6 +80,7 @@ COMMANDS_WITH_TOOL_USE_RULE = [
     "design-schema.md",
     "review-schema.md",
     "explore.md",
+    "move.md",
 ]
 
 

@@ -87,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         return _error("--check only works with --examples")
     if args.examples and (args.job_id or args.db or args.bundle):
         return _error("--examples renders the committed examples: drop --job-id, --db and --bundle")
+    if args.examples and not args.check and os.environ.get("MODERNIZER_CI_SANDBOX") == "1":
+        return _error(
+            "--examples rewrites the committed examples: refused under MODERNIZER_CI_SANDBOX=1 "
+            "(--examples --check only compares)"
+        )
     if args.examples:
         try:
             return _examples(args.check)

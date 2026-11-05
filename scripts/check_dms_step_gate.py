@@ -12,7 +12,7 @@ when the gate could not run.
 
 Usage:
     uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> \\
-      --stack-name <job-id>-dms-step-1 [--window-minutes 15] [--stale-seconds 300]
+      --stack-name dm-<job-id>-step-1 [--window-minutes 15] [--stale-seconds 300]
 """
 
 from __future__ import annotations

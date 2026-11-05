@@ -564,10 +564,7 @@ obvious entries lives here instead:
   runs (`list`, `params <id>`, `run <id> --param k=v --job-id <id>`). It takes catalog
   entry ids and parameter values, never Cypher: each entry is a fixed, read-only,
   bounded statement, the values are bound as parameters, and `run` refuses a value
-  that is not one of its parameter's choices on the job's graph. It opens the job's
-  graph read-only with the read timeout and the entry's row bound. The only files it
-  writes are its own copy of a stale graph and that copy's lock file, under
-  `<artifact root>/<db>/<job>/graph/cli/`, and `--clean` removes that folder. Under
+  that is not one of its parameter's choices on the job's graph. Under
   `MODERNIZER_CI_SANDBOX=1` the artifact root must be the pipeline's own,
   `<repo>/artifacts` (or `$ARTIFACT_DIR` when set; the model cannot set it, since an
   allow rule matches only a command that starts with the script's name): any other
@@ -575,6 +572,9 @@ obvious entries lives here instead:
   the graph is opened, with or without `--clean`, as is a `--db`/`--job-id` that is not
   a plain name (`scripts/_sandbox.py` `pipeline_artifact_root_violation`, tested in
   `tests/graph/test_graph_query_cli.py`). It prints one JSON line.
+- `Bash(uv run python scripts/run_transformation_contract.py *)`, `...run_data_movement_plan.py *)`,
+  `...render_dms_step.py *)`, `...run_dms_step.py *)` (#1886): `/move`; the sandbox refuses
+  AWS writes (`tests/unit/scripts/test_run_dms_step.py`).
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
   in the pipeline needs any of these. They're explicit denies, not just
   absent from `allow`, as defense in depth against a prompt-injected or

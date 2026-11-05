@@ -23,6 +23,8 @@ Nothing we deploy changes your cluster's configuration or runs inside it. `dms-s
 
 The instance class and storage come from `src/catalog/dms_sizing.toml` (the collector's database size and write rate); the parameter descriptions in `dms-step-1.yaml` and the plan's `replication.sizing.reason` say why. Override them with the `InstanceClass` and `AllocatedStorage` parameters. The plan's step 1 cost prices the sized class Multi-AZ, as the stack deploys it by default, and states the Single-AZ figure next to it; it also prices the storage beyond the instance's included GB. The Aurora cluster's own cost is in the assessment's total cost of ownership, not here.
 
+In Claude Code, `/move step-1` walks you through this section after `/modernize`: it runs the scripts below, asks for your inputs and for an explicit approval before each AWS write, and deploys, tests and starts the stack with your credentials through `scripts/run_dms_step.py` (see `docs/use-claude-code.md`).
+
 ### Before you deploy the DMS stack
 
 - The cluster has every setting `aurora-target.yaml` lists, and every instance uses its DB parameter group. Reboot the instances after a parameter group changed.
@@ -82,7 +84,7 @@ Removing the stack removes everything of ours. It never touches your cluster.
 Once the stack is deployed and the task started, run the gate. It only makes these read calls (DMS `DescribeReplicationTasks`, `DescribeTableStatistics`, `DescribeReplicationInstances`, `ListTagsForResource`; CloudWatch `ListMetrics`, `GetMetricData`; CloudFormation `DescribeStacks`; `tests/unit/tools/data_movement/test_dms_gate_read_only.py::test_the_gate_only_reads`), so run it with read-only credentials, for example through `AWS_PROFILE`, and it writes `data-movement/step-1/gate.json`:
 
 ```bash
-uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> --stack-name <job-id>-dms-step-1
+uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> --stack-name dm-<job-id>-step-1
 ```
 
 - **Load**: the task runs in CDC, the full load is at 100%, every table of the step's contract is "Table completed" without errors, no other table is loaded, and the task was rendered from this step's contract.
