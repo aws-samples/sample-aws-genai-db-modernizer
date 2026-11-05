@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import boto3
 
+from src.agents.collector.routine_rows import merge_trigger_rows
 from src.shared.sample_rows import without_sample_rows
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
 from src.tools.database.index_keys import add_index_key, expression_key_fields
@@ -365,7 +366,10 @@ def _parse_offline_collection(
         # #1625: string literals in stored definitions are redacted too.
         "views": _redacted_definitions(data.get("views", []), source_engine),
         "procedures": _redacted_definitions(data.get("procedures", []), source_engine),
-        "triggers": _redacted_definitions(data.get("triggers", []), source_engine),
+        # #1651: one row per trigger, with every event (PostgreSQL writes one per event).
+        "triggers": _redacted_definitions(
+            _merged_triggers(data.get("triggers", [])), source_engine
+        ),
         "queries": _transform_queries(
             raw_queries,
             db_name,
@@ -401,6 +405,12 @@ def _index_key_position(row: dict) -> tuple[bool, int]:
     except (TypeError, ValueError):
         return (True, 0)
     return (included and number <= 0, number)
+
+
+def _merged_triggers(rows: object) -> object:
+    """The trigger rows merged to one per trigger (:func:`merge_trigger_rows`, #1651);
+    a section that is not a list is left for the collection check to report."""
+    return merge_trigger_rows(rows) if isinstance(rows, list) else rows
 
 
 def _redacted_definitions(items: object, source_engine: str) -> object:

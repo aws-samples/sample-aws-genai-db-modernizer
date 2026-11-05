@@ -16,6 +16,7 @@ import hashlib
 import logging
 import re
 
+from src.agents.collector.routine_rows import trigger_timing
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
@@ -345,14 +346,9 @@ class OracleRemoteCollector:
             r["trigger_name"] = str(r.get("trigger_name") or "").lower()
             r["table_name"] = str(r.get("table_name") or "").lower()
             r["schema_name"] = str(r.get("schema_name") or "").lower()
-            # Normalize timing: "BEFORE EACH ROW" → "BEFORE"
-            timing = str(r.get("timing") or "")
-            if "BEFORE" in timing.upper():
-                r["timing"] = "BEFORE"
-            elif "AFTER" in timing.upper() or "COMPOUND" in timing.upper():
-                r["timing"] = "AFTER"
-            elif "INSTEAD OF" in timing.upper():
-                r["timing"] = "INSTEAD_OF"
+            # The contract's timing ("BEFORE EACH ROW" -> "BEFORE", "INSTEAD OF", #1651);
+            # an unknown one is kept for the builder to skip.
+            r["timing"] = trigger_timing(r.get("timing")) or r.get("timing")
         return rows
 
     # -------------------------------------------------------------------

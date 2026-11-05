@@ -29,6 +29,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from src.agents.collector.routine_rows import dml_trigger, log_skipped_triggers
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -1398,70 +1399,34 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
 
 
 def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
+    """The offline path's (and MySQL's and MariaDB's live) triggers: every DML trigger
+    with its timing and events in any source spelling (#1651); a trigger with no DML
+    event (LOGON, DDL, STARTUP, TRUNCATE), no known timing or no table is skipped."""
     if not raw:
         return None
 
     triggers = []
-    skipped = 0
+    skipped: list[dict] = []
     for t in raw:
-        # Trim whitespace (Oracle sometimes emits trailing spaces on
-        # TRIGGERING_EVENT) and uppercase for enum matching.
-        event_raw = str(t.get("event_type") or "").strip().upper()
-        timing_raw = str(t.get("timing") or "").strip().upper()
-        table = t.get("table_name") or ""
-
-        # Contract enum: event_type ∈ {INSERT, UPDATE, DELETE}.
-        # Filter out non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.)
-        # For compound DML triggers (e.g. Oracle 'INSERT OR UPDATE'),
-        # normalize to the first matching event.
-        if "INSERT" in event_raw:
-            event = "INSERT"
-        elif "UPDATE" in event_raw:
-            event = "UPDATE"
-        elif "DELETE" in event_raw:
-            event = "DELETE"
-        else:
-            skipped += 1
+        shape = dml_trigger(t)
+        if shape is None:
+            skipped.append(t)
             continue
-
-        # Contract enum: timing ∈ {BEFORE, AFTER, INSTEAD OF}.
-        # Oracle emits values like 'BEFORE EACH ROW', 'AFTER STATEMENT',
-        # 'AFTER EVENT' — normalize by taking the prefix.
-        if timing_raw.startswith("INSTEAD OF"):
-            timing = "INSTEAD OF"
-        elif timing_raw.startswith("BEFORE"):
-            timing = "BEFORE"
-        elif timing_raw.startswith("AFTER"):
-            timing = "AFTER"
-        else:
-            skipped += 1
-            continue
-
-        # DB-level triggers have no table_name and cannot map to the
-        # Trigger.table_id field.
-        if not table:
-            skipped += 1
-            continue
-
+        events, timing = shape
         triggers.append(
             Trigger(
                 trigger_id=t.get("trigger_name", ""),
                 trigger_name=t.get("trigger_name", ""),
-                table_id=table,
-                event_type=TriggerEventType(event),
+                table_id=t.get("table_name") or "",
+                event_type=TriggerEventType(events[0]),
+                events=[TriggerEventType(e) for e in events],
                 timing=TriggerTiming(timing),
                 definition=t.get("definition"),
                 sql_mode=_text_or_none(t.get("sql_mode")),
             )
         )
 
-    if skipped:
-        logger.warning(
-            "Skipped %d non-DML or DB-level trigger(s) "
-            "(LOGON/DDL/STARTUP/DROP, TRUNCATE, or events without table_name)",
-            skipped,
-        )
-
+    log_skipped_triggers(logger, skipped)
     return triggers or None
 
 

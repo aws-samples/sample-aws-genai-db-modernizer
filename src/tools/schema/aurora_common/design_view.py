@@ -189,6 +189,9 @@ def _source_features(raw_collector: dict, table_keys: set[str]) -> dict:
             "table": t.get("table_id"),
             "timing": t.get("timing"),
             "event_type": t.get("event_type"),
+            # #1651: every event, so a multi-event trigger does not read as its first only
+            # (a collector output from before the field has only event_type).
+            "events": t.get("events") or [t.get("event_type")],
             "definition": (t.get("definition") or "")[:_QUERY_TEXT_LIMIT],
         }
         for t in schema.get("triggers") or []

@@ -76,6 +76,7 @@ Version History:
   and ``QueryPattern.view_text_fallback``; the collector now fills
   ``View.referenced_tables`` and resolves a statement on a view to its base tables.
   Backward compatible: every new field defaults to None.
+- 5.6 (2026-11-05, #1651): Optional Trigger.events: every DML event a trigger fires on
 """
 
 import re
@@ -787,6 +788,13 @@ class Trigger(BaseModel):
     for_each: TriggerForEach | None = Field(
         None, description="Whether trigger fires per row or per statement"
     )
+    events: list[TriggerEventType] = Field(
+        default_factory=list,
+        description=(
+            "Every DML event the trigger fires on, in INSERT, UPDATE, DELETE order (#1651); "
+            "event_type is the first. Empty for a collection that predates the field"
+        ),
+    )
     definition: str | None = Field(
         None,
         description=(
@@ -1160,7 +1168,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.5",
+        default="5.6",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

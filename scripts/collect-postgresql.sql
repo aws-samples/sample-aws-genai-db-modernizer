@@ -237,14 +237,32 @@ procedures_data AS (
 triggers_data AS (
   SELECT coalesce(json_agg(tr ORDER BY tr.table_name, tr.trigger_name), '[]'::json) AS data
   FROM (
+    -- pg_trigger, not information_schema.triggers: that view lists only the triggers
+    -- on tables the user owns or holds more than SELECT on, so a read-only user saw
+    -- none (#1651). One row per trigger, with every event it fires on.
     SELECT
-      trigger_name,
-      event_manipulation AS event_type,
-      event_object_table AS table_name,
-      action_timing AS timing,
-      action_statement AS definition
-    FROM information_schema.triggers
-    WHERE trigger_schema NOT IN ('pg_catalog', 'information_schema')
+      t.tgname AS trigger_name,
+      n.nspname AS schema_name,
+      c.relname AS table_name,
+      concat_ws(' OR ',
+        CASE WHEN t.tgtype & 4 <> 0 THEN 'INSERT' END,
+        CASE WHEN t.tgtype & 16 <> 0 THEN 'UPDATE' END,
+        CASE WHEN t.tgtype & 8 <> 0 THEN 'DELETE' END,
+        CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END) AS event_type,
+      CASE t.tgtype & 66 WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER' END
+        AS timing,
+      -- the EXECUTE FUNCTION clause, as information_schema.triggers.action_statement
+      substring(pg_get_triggerdef(t.oid) FROM
+        position('EXECUTE FUNCTION' IN substring(pg_get_triggerdef(t.oid) FROM 48)) + 47)
+        AS definition
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE NOT t.tgisinternal
+      -- a partition's clone of its parent's trigger is the parent's trigger: one row
+      -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
+      AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   ) tr
 ),
 

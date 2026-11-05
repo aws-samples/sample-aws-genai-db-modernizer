@@ -443,7 +443,7 @@ SET @triggers = (
         t.name AS table_name,
         s.name AS schema_name,
         CASE WHEN OBJECTPROPERTY(tr.object_id, 'ExecIsInsteadOfTrigger') = 1
-             THEN 'INSTEAD_OF'
+             THEN 'INSTEAD OF'
              ELSE 'AFTER'
         END AS timing,
         CASE
@@ -451,9 +451,14 @@ SET @triggers = (
             WHEN OBJECTPROPERTY(tr.object_id, 'ExecIsUpdateTrigger') = 1 THEN 'UPDATE'
             WHEN OBJECTPROPERTY(tr.object_id, 'ExecIsDeleteTrigger') = 1 THEN 'DELETE'
             ELSE 'OTHER'
-        END AS event_type
+        END AS event_type,
+        -- #1651: every event the trigger fires on, e.g. 'INSERT,UPDATE'
+        STUFF((SELECT ',' + te.type_desc FROM sys.trigger_events te
+               WHERE te.object_id = tr.object_id ORDER BY te.type
+               FOR XML PATH('')), 1, 1, '') AS events
     FROM sys.triggers tr
-    INNER JOIN sys.tables t ON tr.parent_id = t.object_id
+    -- sys.objects, not sys.tables: an INSTEAD OF trigger can sit on a view (#1651)
+    INNER JOIN sys.objects t ON tr.parent_id = t.object_id AND t.type IN ('U', 'V')
     INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
     WHERE tr.is_ms_shipped = 0
       AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')
