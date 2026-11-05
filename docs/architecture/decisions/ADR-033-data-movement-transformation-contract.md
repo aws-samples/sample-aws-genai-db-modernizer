@@ -3,7 +3,7 @@
 **Status:** Accepted (2026-11-02). The open questions and the assumptions the pilot tests are listed below; epic #1777 implements the transformation contract.
 **Date:** 2026-11-02
 **Deciders:** Database Modernizer Assessment Architecture Team
-**Related ADRs:** ADR-029 (Assignment Re-Entry), ADR-031 (Query-First Routing and the Engine Rule Catalog), ADR-032 (One Facts Layer); the adoption paths design (`docs/architecture/designs/adoption-paths.md`), with the slice-first amendment planned under #1128
+**Related ADRs:** ADR-029 (Assignment Re-Entry), ADR-031 (Query-First Routing and the Engine Rule Catalog), ADR-032 (One Facts Layer); the slice-first amendment is planned under #1128
 
 ---
 
@@ -64,7 +64,7 @@ A later step's rules are rebased from legacy columns to the columns step 1 produ
 
 ### 9. The cache step
 
-The cache always comes after step 1, and moving to a cache is never offered as a modernization step of its own; this supersedes the `cache_first` path of the adoption paths design (section 8.2 and decision 4), through the planned amendment. With no cached reads there is no cache step, and with no relational engine to front there is none either. Every cache key has one writer, decided by a deterministic rule that runs in synthesis before step planning: pipeline keys, whose values derive from source rows through catalog operations, are a CDC-fed mirror the application only reads; application keys (rate limits, counters, sessions, data types that cannot be fed, keys over the memory budget) stay cache-aside with their TTL. The memory budget goes first to the keys that serve the most reads per GB.
+The cache always comes after step 1, and moving to a cache is never offered as a modernization step of its own; this replaces the earlier cache-first adoption path, through the planned amendment. With no cached reads there is no cache step, and with no relational engine to front there is none either. Every cache key has one writer, decided by a deterministic rule that runs in synthesis before step planning: pipeline keys, whose values derive from source rows through catalog operations, are a CDC-fed mirror the application only reads; application keys (rate limits, counters, sessions, data types that cannot be fed, keys over the memory budget) stay cache-aside with their TTL. The memory budget goes first to the keys that serve the most reads per GB.
 
 In the first delivery pipeline keys have no TTL. Under ElastiCache's default `maxmemory-policy` (`volatile-lru`), only keys with a TTL are evicted, so the application keys are evicted first and the mirror is kept; once no key with a TTL is left, writes fail rather than evict. The memory budget is therefore a hard limit, sized against the node's memory less the reserved share (`reserved-memory-percent`, 25% by default). A TTL with refill by the pipeline follows as a fast follow. Values use one canonical encoding: JSON for string keys (the JSON data type needs Valkey 7.2 or later), one field per column in hashes, ISO-8601 UTC dates, decimals as strings.
 

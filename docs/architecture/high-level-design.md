@@ -668,7 +668,6 @@ The ADR index, [decisions/README.md](decisions/README.md), lists every ADR with 
 
 - [Architecture Diagrams](diagrams/README.md) - The system context and the pipeline
 - [Rule catalog](rule-catalog.md) - Engines, patterns, gates and thresholds (generated)
-- [Adoption paths design](designs/adoption-paths.md) - Design for epic #1128
 
 **Contracts:**
 
