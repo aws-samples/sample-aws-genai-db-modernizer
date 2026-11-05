@@ -56,7 +56,8 @@ def test_the_wordpress_job_gets_the_three_step_1_files(
     for name in FILES:
         assert (step / name).is_file(), name
     dms = (step / "dms-step-1.yaml").read_text()
-    assert dms.count('"rule-type": "selection"') == 50
-    assert '"rule-type": "transformation"' not in dms
+    # The table mappings are compact JSON (#1915), so match with or without a space.
+    assert len(re.findall(r'"rule-type":\s*"selection"', dms)) == 50
+    assert not re.search(r'"rule-type":\s*"transformation"', dms)
     ddl = (step / "step-1.ddl.sql").read_text()
     assert len(re.findall(r"^CREATE TABLE ", ddl, re.M)) == 50

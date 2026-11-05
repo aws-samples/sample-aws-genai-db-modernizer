@@ -347,43 +347,11 @@ Resources:
       TargetEndpointArn:
         Ref: TargetEndpoint
       TableMappings: |-
-        {
-          "rules": [
-            {
-              "rule-type": "selection",
-              "rule-id": "1",
-              "rule-name": "1",
-              "object-locator": {
-                "schema-name": "public",
-                "table-name": "audit_log"
-              },
-              "rule-action": "include",
-              "filters": []
-            },
-            {
-              "rule-type": "selection",
-              "rule-id": "2",
-              "rule-name": "2",
-              "object-locator": {
-                "schema-name": "public",
-                "table-name": "customers"
-              },
-              "rule-action": "include",
-              "filters": []
-            },
-            {
-              "rule-type": "selection",
-              "rule-id": "3",
-              "rule-name": "3",
-              "object-locator": {
-                "schema-name": "public",
-                "table-name": "orders"
-              },
-              "rule-action": "include",
-              "filters": []
-            }
-          ]
-        }
+        {"rules":[
+        {"rule-type":"selection","rule-id":"1","rule-name":"1","object-locator":{"schema-name":"public","table-name":"audit_log"},"rule-action":"include"},
+        {"rule-type":"selection","rule-id":"2","rule-name":"2","object-locator":{"schema-name":"public","table-name":"customers"},"rule-action":"include"},
+        {"rule-type":"selection","rule-id":"3","rule-name":"3","object-locator":{"schema-name":"public","table-name":"orders"},"rule-action":"include"}
+        ]}
       ReplicationTaskSettings: |-
         {
           "TargetMetadata": {

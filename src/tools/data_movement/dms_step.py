@@ -395,14 +395,22 @@ def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
     No ``table-settings`` rule carries ``lob-settings``: DMS rejects the per-table full LOB
     rule (``bulk-max-size`` 0) when the task is created, and a nonzero size is combination
     full LOB mode, which MySQL and PostgreSQL endpoints lack. Full LOB mode is a task setting
-    (:func:`task_settings`)."""
+    (:func:`task_settings`). A selection rule's ``filters`` is optional in DMS, so none is
+    written."""
     rules: list[dict[str, Any]] = []
     for table in contract_tables(inputs.contract):
         n = str(len(rules) + 1)
         rules.append({"rule-type": "selection", "rule-id": n, "rule-name": n,
                       "object-locator": {"schema-name": table.schema, "table-name": table.name},
-                      "rule-action": "include", "filters": []})  # fmt: skip
+                      "rule-action": "include"})  # fmt: skip
     return {"rules": rules}
+
+
+def compact_mappings(mappings: dict[str, Any]) -> str:
+    """The table mappings as compact JSON, one rule per line: a few hundred tables stay a
+    fraction of the pretty-printed size (#1915), and the YAML keeps a ``|-`` block."""
+    rules = [json.dumps(r, separators=(",", ":")) for r in mappings["rules"]]
+    return '{"rules":[\n' + ",\n".join(rules) + "\n]}" if rules else '{"rules":[]}'
 
 
 def _any_full_lob_table(inputs: Step1Inputs) -> bool:
@@ -742,7 +750,7 @@ def render_dms_template(inputs: Step1Inputs) -> dict[str, Any]:
             "ReplicationInstanceArn": {"Ref": "ReplicationInstance"},
             "SourceEndpointArn": {"Ref": "SourceEndpoint"},
             "TargetEndpointArn": {"Ref": "TargetEndpoint"},
-            "TableMappings": json.dumps(table_mappings(inputs), indent=2),
+            "TableMappings": compact_mappings(table_mappings(inputs)),
             "ReplicationTaskSettings": json.dumps(task_settings(inputs), indent=2),
             "Tags": _tags(inputs)}},
     }  # fmt: skip
