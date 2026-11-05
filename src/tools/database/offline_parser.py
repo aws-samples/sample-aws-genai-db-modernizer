@@ -239,7 +239,13 @@ def _parse_offline_collection(
 
     source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     indexes_by_table: dict[str, dict[str, dict]] = {}
-    for i in data.get("indexes") or []:
+    # An index's column order is the key's position (``seq_in_index``; SQL Server's
+    # ``key_ordinal``), not the row order: MySQL's JSON_ARRAYAGG drops the subquery's
+    # ORDER BY (#1927). The sort is stable and moves a row whole, so ``columns`` and
+    # ``prefix_lengths`` stay aligned. Rows without a position keep their order, so old
+    # collections load as before; SQL Server writes 0 for an included column, which
+    # follows the key columns.
+    for i in sorted(data.get("indexes") or [], key=_index_key_position):
         tbl = i["table_name"]
         idx_name = i["index_name"]
         if tbl not in indexes_by_table:
@@ -376,6 +382,25 @@ def _parse_offline_collection(
         # has no such section (written before #1078, or another engine's).
         "extensions": data.get("extensions"),
     }
+
+
+def _index_key_position(row: dict) -> tuple[bool, int]:
+    """Sort key for an index row: its position in the index, rows without one last.
+
+    ``seq_in_index`` is MySQL's (from 1), PostgreSQL's (``array_position`` on ``indkey``,
+    from 0) and Oracle's. SQL Server's ``key_ordinal`` is 0 for an included column, which
+    follows the key columns.
+    """
+    included = False
+    position = row.get("seq_in_index")
+    if position is None:
+        position = row.get("key_ordinal")
+        included = True
+    try:
+        number = int(position)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return (True, 0)
+    return (included and number <= 0, number)
 
 
 def _redacted_definitions(items: object, source_engine: str) -> object:

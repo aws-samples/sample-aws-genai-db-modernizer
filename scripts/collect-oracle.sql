@@ -308,6 +308,7 @@ BEGIN
             'table_name' VALUE LOWER(i.TABLE_NAME),
             'index_name' VALUE CASE WHEN c.CONSTRAINT_TYPE = 'P' THEN 'PRIMARY' ELSE LOWER(i.INDEX_NAME) END,
             'column_name' VALUE LOWER(ic.COLUMN_NAME),
+            'seq_in_index' VALUE ic.COLUMN_POSITION,
             'non_unique' VALUE CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 0 ELSE 1 END,
             'index_type' VALUE CASE
                 -- Contract enum: btree|hash|gist|gin|fulltext|spatial|other
