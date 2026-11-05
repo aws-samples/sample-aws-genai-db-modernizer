@@ -83,16 +83,74 @@ def test_every_helper_example_parses_with_the_helpers_own_parser() -> None:
 
 
 def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
-    move = _section("Stage 3: Move")
+    move, ending = _section("Stage 3: Move"), _section("Ending the step")
     for command in _bash_commands():
         if "run_dms_step.py" not in command:
             continue
         args = run_dms_step._parser().parse_args(_helper_argv(command))
-        if args.command in run_dms_step.WRITES:
+        if args.command in run_dms_step.ENDING:
+            assert args.approve, command
+            assert command in ending, f"stop or teardown outside Ending the step: {command}"
+        elif args.command in run_dms_step.WRITES:
             assert args.approve, command
             assert command in move, f"an AWS write outside Move: {command}"
         else:
             assert not args.approve, command
+
+
+def test_ending_the_step_follows_prove_asks_before_each_write_and_never_runs_under_auto() -> None:
+    text = _text()
+    assert (
+        text.index("## Stage 4: Prove")
+        < text.index("## Ending the step")
+        < text.index("## Headless (`--auto`)")
+    )
+    ending = _flat(_section("Ending the step"))
+    for question in ("{dms_reports}. Stop the replication task of stack {stack_name} in {region} now?",
+                     "{dms_reports}. Delete the stack {stack_name} in {region} now?",
+                     "{dms_reports}. Delete the stack {stack_name} in {region} again?"):  # fmt: skip
+        assert f'"{question}" Only on a yes' in ending, question
+    order = [ending.index(x) for x in ("plan --job-id", "Stop the replication task",
+                                       "Delete the stack {stack_name} in {region} now?")]  # fmt: skip
+    assert order == sorted(order)  # the stack and region come from plan before either question
+    assert "Under `--auto`, never run `stop` or `teardown`" in ending
+    assert "the Aurora cluster and its data stay" in ending
+    headless = _flat(_section("Headless (`--auto`)"))
+    assert "never stops the task or deletes the stack" in headless
+
+
+def test_a_run_prints_one_result_line_whether_it_proves_or_ends_the_step() -> None:
+    prove = _flat(_section("Stage 4: Prove"))
+    hint = prove.index("when you have cut over, or to abandon the move")
+    assert hint < prove.index("End with `MOVE_RESULT: complete")  # the hint comes before the line
+    ending = _flat(_section("Ending the step"))
+    assert "Ending the step is a run of its own" in ending
+    assert "never inside a run that is still proving" in ending
+    assert (
+        "exactly one result line, a `stage=end` one, and never prints `MOVE_RESULT: complete`"
+        in ending
+    )
+    assert set(re.findall(r"MOVE_RESULT: (\w+)", ending)) == {"stopped", "complete"}
+    assert set(re.findall(r"MOVE_RESULT: stopped stage=(\w+)", ending)) == {"end"}
+    result = _flat(_section("Result line"))
+    assert "prints only its `stage=end` line, never a `complete` one" in result
+
+
+def test_a_teardown_that_is_still_deleting_is_waited_on_read_only_and_reapproved_after_a_failure() -> (
+    None
+):
+    ending = _section("Ending the step")
+    flat = _flat(ending)
+    assert "never rerun `teardown`" in flat and "once per yes" in flat
+    after = ending.split('`"status": "deleting"`', 1)[1]
+    first = _bash_commands(after)[0]
+    args = run_dms_step._parser().parse_args(_helper_argv(first))
+    assert args.command == "status" and args.until == "stack" and not args.approve
+    assert (
+        after.index("DELETE_FAILED")
+        < after.index("again?")
+        < after.index("run `teardown` once more")
+    )
 
 
 def test_move_asks_before_the_change_set_its_execution_and_the_task_start() -> None:
@@ -130,7 +188,7 @@ def test_auto_never_writes_without_inputs_and_approve_deploy() -> None:
 
 def test_every_stage_that_asks_says_what_auto_does_instead() -> None:
     for heading in ("Step 0: The job and the step", "Stage 1: Prepare", "Stage 2: Check",
-                    "Stage 3: Move"):  # fmt: skip
+                    "Stage 3: Move", "Ending the step"):  # fmt: skip
         section = _section(heading)
         if re.search(r"\b[Aa]sk\b", section):
             assert "Under `--auto`" in section, heading
@@ -142,8 +200,8 @@ def test_the_result_line_has_exactly_the_two_documented_forms() -> None:
     assert "`MOVE_RESULT: stopped stage=<stage> reason=<one line>`" in text
     assert "End every run with exactly one line" in text
     stages = set(re.findall(r"MOVE_RESULT: stopped stage=(\w+)", text)) - {"<stage>"}
-    assert stages <= {"select", "prepare", "check", "move", "prove"}
-    assert stages == {"select", "prepare", "check", "move", "prove"}
+    assert stages <= {"select", "prepare", "check", "move", "prove", "end"}
+    assert stages == {"select", "prepare", "check", "move", "prove", "end"}
 
 
 def test_the_disclaimer_and_the_cutover_message_are_quoted_from_the_scripts_never_written_here() -> (
@@ -237,3 +295,109 @@ def test_settings_ci_allows_every_script_the_command_runs() -> None:
     ]
     for script in (*STEP_SCRIPTS, "run_dms_step.py"):
         assert f"Bash(uv run python scripts/{script} *)" in allow, script
+
+
+def test_ending_defines_a_result_line_for_every_no_and_for_waits_that_run_out() -> None:
+    ending = _flat(_section("Ending the step"))
+    for question, declined in (
+        (
+            "{dms_reports}. Stop the replication task of stack {stack_name} in {region} now?",
+            "to stop the task",
+        ),
+        ("{dms_reports}. Delete the stack {stack_name} in {region} now?", "to delete the stack"),
+        (
+            "{dms_reports}. Delete the stack {stack_name} in {region} again?",
+            "to delete the stack again",
+        ),
+    ):
+        after = ending.split(f'"{question}"', 1)[1]
+        no = after.index(
+            "on a no, end with `MOVE_RESULT: stopped stage=end reason=customer declined"
+        )
+        assert no < after.index("```") if "```" in after else True, question
+        assert f"reason=customer declined {declined}" in after, question
+    for still in ("task still stopping", "stack still deleting"):
+        assert (
+            f"`MOVE_RESULT: stopped stage=end reason={still} ({{dms_reports}}): run /move step-1 again"
+            in ending
+        )
+    assert ending.index("Still `DELETE_IN_PROGRESS` after the 4 waits") < ending.index(
+        "reason=stack still deleting"
+    )
+    result = _flat(_section("Result line"))
+    assert "A question the customer answers no ends the run with `MOVE_RESULT: stopped" in result
+
+
+def test_a_stop_that_is_still_stopping_is_waited_on_read_only_and_a_restarted_task_is_asked_again() -> (
+    None
+):
+    ending = _section("Ending the step")
+    after = ending.split('`"status": "stopping"`', 1)[1]
+    first = _bash_commands(after)[0]
+    args = run_dms_step._parser().parse_args(_helper_argv(first))
+    assert args.command == "status" and args.until == "task_stopped" and not args.approve
+    flat = _flat(after.split("```", 2)[0] + after.split("```", 2)[2])
+    assert "never rerun `stop`" in _flat(after.split("```", 1)[0])
+    assert "the task started again" in flat and "ask the stop question again" in flat
+    assert "needs a new yes" in flat
+
+
+def test_the_delete_question_is_asked_only_once_the_task_is_proven_stopped() -> None:
+    ending = _flat(_section("Ending the step"))
+    proof = ending.index("Ask the delete question only once that is proven")
+    assert proof < ending.index('"{dms_reports}. Delete the stack {stack_name} in {region} now?"')
+    for evidence in ('`"stopped"`, `"no_task"` or `"no_stack"`',
+                     "a `status --until task_stopped` line with `reached` true",
+                     "Never on `stopping`, and never from a stack status alone"):  # fmt: skip
+        assert evidence in ending[proof:], evidence
+    assert "the wait reads the task whatever the stack's state" in ending
+
+
+def test_teardowns_own_delete_failed_gets_the_same_question_as_the_status_wait() -> None:
+    ending = _flat(_section("Ending the step"))
+    routed = ending.index('`"status": "delete_failed"`: handle it as the `DELETE_FAILED` below')
+    assert routed < ending.index(
+        '"{dms_reports}. Delete the stack {stack_name} in {region} again?"'
+    )
+    statuses = {"deleted", "deleting", "delete_failed"}
+    source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
+    for status in statuses:
+        assert f'`"status": "{status}"`' in ending and f'"{status}"' in source, status
+
+
+def test_every_question_and_result_line_names_what_dms_reports() -> None:
+    """The customer sees DMS's own task status (stopped, failed with its reason, never started),
+    never a generic "not running" (maintainer feedback on #1907)."""
+    ending = _flat(_section("Ending the step"))
+    questions = re.findall(r'"([^"]*\?)" Only on a yes', ending)
+    assert len(questions) == 3 and all(
+        q.startswith("{dms_reports}. ") for q in questions
+    ), questions
+    lines = [m for m in re.findall(r"`MOVE_RESULT: stopped stage=end reason=([^`]*)`", ending)
+             if m != "<its message>"]  # fmt: skip
+    assert len(lines) == 6 and all("({dms_reports})" in m for m in lines), lines
+    assert "Quote it verbatim in every question and result line below" in ending
+    assert 'never shorten it to a generic "not running"' in ending
+    assert (
+        "When `task_status` is `failed`, also show the line's `last_failure` and `stop_reason`"
+        in ending
+    )
+    for words in ("DMS reports the task stopped (not running)",
+                  "DMS reports the task failed (not running): <DMS's reason>",
+                  "DMS reports the task never started (ready, not running)"):  # fmt: skip
+        assert f"`{words}`" in ending, words
+    assert (
+        run_dms_step.dms_reports({"Status": "stopped"})
+        == "DMS reports the task stopped (not running)"
+    )
+    assert run_dms_step.dms_reports({"Status": "ready"}) == (
+        "DMS reports the task never started (ready, not running)"
+    )
+    assert run_dms_step.dms_reports({"Status": "failed", "LastFailureMessage": "x"}) == (
+        "DMS reports the task failed (not running): x"
+    )
+    assert "not running" not in _flat(_section("Ending the step")).replace(
+        "(not running)", ""
+    ).replace("ready, not running", "").replace('a generic "not running"', "").replace(
+        "counts as not running", ""
+    )
