@@ -11,7 +11,7 @@ import pytest
 
 from scripts import render_dms_step as script
 from src.tools.transformation_contract.hashing import canonical_json
-from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, write_job
+from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, write_job, write_pg_job
 
 
 def _args(tmp_path, *extra):
@@ -48,8 +48,29 @@ def test_bundle_writes_the_inputs(tmp_path, capsys):
     target = tmp_path / "input.json"
     assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
     data = json.loads(target.read_text())
-    assert set(data) == {"plan", "contract", "ddl", "zero_date_defaults"}
+    assert set(data) == {"plan", "contract", "ddl", "zero_date_defaults", "identity_columns",
+                         "source_objects", "extensions"}  # fmt: skip
     assert data["zero_date_defaults"] == ["shop.orders.created"]
+    assert data["source_objects"] == {"procedures": 0, "functions": 0, "triggers": 0, "views": 1}
+
+
+def test_a_postgresql_bundle_round_trips_its_sequences_and_extensions(tmp_path, capsys):
+    """The bundle carries the identity columns, the collection's counts and its extensions,
+    so an example renders the same four files as the job (#1905, #1906)."""
+    store = write_pg_job(tmp_path, extensions=[{"name": "citext", "version": "1.6"}])
+    target = tmp_path / "input.json"
+    assert script.main(_args(tmp_path, "--bundle", str(target))) == 0
+    data = json.loads(target.read_text())
+    assert data["identity_columns"] == [["public.orders", "id"], ["public.tags", "we\"ird'id"]]
+    assert data["extensions"] == ["citext"]
+    assert script.main(_args(tmp_path)) == 0
+    bundle_dir = tmp_path / "ex"
+    bundle_dir.mkdir()
+    (bundle_dir / "input.json").write_text(target.read_text())
+    rendered = script.render_example(bundle_dir)
+    assert "step-1.sequences.sql" in rendered
+    for name, text in rendered.items():
+        assert store.read_bytes(f"shop/job1/data-movement/step-1/{name}").decode() == text, name
 
 
 def test_the_bundle_round_trips_to_the_same_files(tmp_path, capsys):

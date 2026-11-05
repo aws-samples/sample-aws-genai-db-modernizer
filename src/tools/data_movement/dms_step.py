@@ -11,8 +11,11 @@ of every table the contract moves, this module renders:
 
 - ``aurora-target.yaml``: a suggested cluster template, headed by the customer-responsibility
   disclaimer and the settings the cluster must have, each with its reason;
-- ``step-1.ddl.sql``: the tables' DDL with instructions to run it (on Aurora PostgreSQL, a
-  commented ``REPLICA IDENTITY FULL`` recommendation per table);
+- ``step-1.ddl.sql``: the tables' DDL with instructions to run it, the extensions its column
+  types need (Aurora PostgreSQL) and what the source has that step 1 does not move (on Aurora
+  PostgreSQL, a commented ``REPLICA IDENTITY FULL`` recommendation per table);
+- ``step-1.sequences.sql`` (Aurora PostgreSQL only): one ``setval`` per identity column, run
+  at cutover, since DMS writes the ids but never advances their sequences;
 - ``dms-step-1.yaml``: our stack: a replication subnet group, a provisioned replication
   instance, source and target endpoints on Secrets Manager ARNs, one full-load-and-CDC task.
 
@@ -51,6 +54,7 @@ from src.tools.transformation_contract.hashing import contract_sha256
 STEP_DIR = "data-movement/step-1"
 AURORA_TEMPLATE = "aurora-target.yaml"
 DDL_FILE = "step-1.ddl.sql"
+SEQUENCES_FILE = "step-1.sequences.sql"
 DMS_TEMPLATE = "dms-step-1.yaml"
 AURORA_ENGINES: dict[str, str] = {
     "aurora_mysql": "aurora-mysql",
@@ -104,6 +108,28 @@ class UnsupportedField:
     description: str
 
 
+class SourceObjects(BaseModel):
+    """What the collection lists that step 1 does not move: DMS moves table rows only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    procedures: int = Field(0, ge=0)
+    # Functions, trigger functions included.
+    functions: int = Field(0, ge=0)
+    triggers: int = Field(0, ge=0)
+    views: int = Field(0, ge=0)
+
+
+@dataclass(frozen=True)
+class NotMoved:
+    """One kind of source object step 1 does not move; ``count`` is None when the
+    collection does not record it."""
+
+    kind: str
+    count: int | None
+    note: str
+
+
 @dataclass(frozen=True)
 class Step1Inputs:
     plan: DataMovementPlan
@@ -117,6 +143,12 @@ class Step1Inputs:
     unsupported: tuple[UnsupportedField, ...] = ()
     # Moved columns whose collector default is a zero date (``table_id.column``, sorted).
     zero_date_defaults: tuple[str, ...] = ()
+    # The DDL's identity (or AUTO_INCREMENT) columns, (table id, column), sorted.
+    identity_columns: tuple[tuple[str, str], ...] = ()
+    # The source's procedures, functions, triggers and views; None when not read.
+    source_objects: SourceObjects | None = None
+    # The extensions the collection lists as installed; None when it did not read them.
+    extensions: tuple[str, ...] | None = None
 
     @property
     def unbounded_varchar(self) -> UnboundedVarchar:
@@ -151,6 +183,12 @@ class DmsStepBundle(BaseModel):
     ddl: str = Field(..., min_length=1)
     # Source columns (``table_id.column``) whose collector default is a zero date.
     zero_date_defaults: list[str] = Field(default_factory=list)
+    # The DDL's identity columns, as (table id, column) pairs.
+    identity_columns: list[tuple[str, str]] = Field(default_factory=list)
+    # The collection's procedures, functions, triggers and views (None: not known).
+    source_objects: SourceObjects | None = None
+    # The collection's installed extensions, by name (None: not read).
+    extensions: list[str] | None = None
 
 
 def _selected(contract: StepContract) -> list[Rule]:
@@ -267,9 +305,12 @@ def bundle_inputs(bundle: DmsStepBundle) -> Step1Inputs:
     ref = bundle.plan.contract
     if ref is not None and ref.sha256 is not None and ref.sha256 != sha:
         raise DmsStepError("the contract changed since the plan was written: write the plan again")
+    extensions = None if bundle.extensions is None else tuple(sorted(set(bundle.extensions)))
     return _checked(
         Step1Inputs(plan=bundle.plan, contract=bundle.contract, contract_sha256=sha, ddl=bundle.ddl,
-                    zero_date_defaults=tuple(sorted(set(bundle.zero_date_defaults))))
+                    zero_date_defaults=tuple(sorted(set(bundle.zero_date_defaults))),
+                    identity_columns=tuple(sorted(set(bundle.identity_columns))),
+                    source_objects=bundle.source_objects, extensions=extensions)
     )  # fmt: skip
 
 
@@ -314,10 +355,13 @@ def _zero_date_defaults(job: Any, contract: StepContract) -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
-def _step1_ddl(job: Any, plan: DataMovementPlan, contract: StepContract) -> str:
+def _step1_ddl(
+    job: Any, plan: DataMovementPlan, contract: StepContract
+) -> tuple[str, tuple[tuple[str, str], ...]]:
     """The DDL of every table step 1 moves: the Aurora DDL generator over the whole
     collector (``step1.design_base``), each column declared as the contract's
-    ``target_type``, kept to the moved tables (and foreign keys between them)."""
+    ``target_type``, kept to the moved tables (and foreign keys between them); and the
+    columns it declares identity (AUTO_INCREMENT on Aurora MySQL), as (table id, column)."""
     from src.tools.schema.aurora_common.ddl_generator import TypeOverride, assemble_full_ddl
     from src.tools.transformation_contract.step1 import _load_collector, design_base
 
@@ -353,7 +397,37 @@ def _step1_ddl(job: Any, plan: DataMovementPlan, contract: StepContract) -> str:
                 raise DmsStepError(f"{rule.source_table}.{f.target_column}: the DDL declares "
                                    f"{declared.get(f.target_column)}, the contract {f.target_type}")  # fmt: skip
     ordered = [generated[name] for name in sorted(generated)]
-    return assemble_full_ddl(ordered) + "\n"
+    identity = sorted(
+        (rule.source_table, c.name)
+        for name, rule in rules.items()
+        for c in generated[name].columns
+        if c.identity
+    )
+    return assemble_full_ddl(ordered) + "\n", tuple(identity)
+
+
+def source_objects(collector: Any) -> SourceObjects:
+    """The collection's procedures, functions (trigger functions included), triggers and
+    views: what DMS does not move."""
+    schema = collector.database_schema
+    routines = [
+        str(getattr(p.procedure_type, "value", p.procedure_type)) for p in schema.procedures or []
+    ]
+    return SourceObjects(
+        procedures=sum(1 for r in routines if r == "PROCEDURE"),
+        functions=sum(1 for r in routines if r != "PROCEDURE"),
+        triggers=len(schema.triggers or []),
+        views=len(schema.views or []),
+    )
+
+
+def _collection(job: Any) -> tuple[SourceObjects, tuple[str, ...] | None]:
+    from src.tools.transformation_contract.step1 import _load_collector
+
+    collector = _load_collector(job)
+    installed = collector.metadata.extensions
+    names = None if installed is None else tuple(sorted({e.name.lower() for e in installed}))
+    return source_objects(collector), names
 
 
 def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> Step1Inputs:
@@ -384,9 +458,12 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
     if not with_ddl:
         return inputs
     job = _load_job(store, db, job_id, plan)
-    ddl = _step1_ddl(job, plan, contract)
+    ddl, identity = _step1_ddl(job, plan, contract)
     defaults = _zero_date_defaults(job, contract)
-    return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults))
+    objects, extensions = _collection(job)
+    return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults,
+                                        identity_columns=identity, source_objects=objects,
+                                        extensions=extensions))  # fmt: skip
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
@@ -1092,10 +1169,181 @@ def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -
     ]
 
 
+# The extension a PostgreSQL column type's base name needs (pgvector's types, PostGIS's);
+# a base name that is itself an installed extension's name (citext, hstore) needs that one.
+_TYPE_EXTENSIONS: dict[str, str] = {
+    "vector": "vector",
+    "halfvec": "vector",
+    "sparsevec": "vector",
+    "geometry": "postgis",
+    "geography": "postgis",
+    "citext": "citext",
+    "hstore": "hstore",
+}
+_BASE_TYPE = re.compile(r"[a-z_][a-z0-9_]*")
+_EXTENSION_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+
+
+@dataclass(frozen=True)
+class RequiredExtension:
+    """An extension a moved column type needs on Aurora PostgreSQL."""
+
+    name: str
+    # The column types (base names, sorted) that need it, and how many moved columns have one.
+    types: tuple[str, ...]
+    columns: int
+    # The newest version the target line offers, from the Aurora PostgreSQL extension
+    # catalog; None when the catalog does not list it (or the line is unknown).
+    offered: str | None
+
+
+def required_extensions(inputs: Step1Inputs) -> list[RequiredExtension]:
+    """The extensions the moved columns' declared types need, sorted by name (Aurora
+    PostgreSQL only): each is created before the tables, or the DDL fails on the type."""
+    from src.shared.catalog.gaps import aurora_extension_lines
+
+    if inputs.contract.target.engine != "aurora_postgresql":
+        return []
+    installed = set(inputs.extensions or ())
+    found: dict[str, list[str]] = {}
+    for rule in _selected(inputs.contract):
+        for f in rule.fields:
+            base = _BASE_TYPE.match(f.target_type.strip().lower())
+            if base is None:
+                continue
+            name = _TYPE_EXTENSIONS.get(base.group()) or (
+                base.group() if base.group() in installed else None
+            )
+            if name and _EXTENSION_NAME.fullmatch(name):
+                found.setdefault(name, []).append(base.group())
+    line = _replication(inputs).target_engine_line
+    offered = aurora_extension_lines()["aurora_postgresql"].lines.get(line or "")
+    return [
+        RequiredExtension(name=name, types=tuple(sorted(set(types))), columns=len(types),
+                          offered=offered.extensions.get(name) if offered else None)
+        for name, types in sorted(found.items())
+    ]  # fmt: skip
+
+
+def _extension_lines(inputs: Step1Inputs) -> list[str]:
+    needed = required_extensions(inputs)
+    if not needed:
+        return []
+    line = _replication(inputs).target_engine_line
+    where = f"Aurora PostgreSQL {line}" if line else "your Aurora PostgreSQL version"
+    out = ["", "Extensions: the moved columns' types need these extensions, so this file creates them "
+           "(CREATE EXTENSION IF NOT EXISTS) before the tables. Each must be available on your Aurora "
+           "PostgreSQL version, and creating one needs the administrator (rds_superuser):"]  # fmt: skip
+    for e in needed:
+        noun = "column" if e.columns == 1 else "columns"
+        offered = (f"{where} offers {e.offered}" if e.offered else
+                   f"not in the extension list for {where}: check that it is available")  # fmt: skip
+        extra = (" halfvec and sparsevec need version 0.7.0 or later."
+                 if e.name == "vector" and {"halfvec", "sparsevec"} & set(e.types) else "")  # fmt: skip
+        out.append(
+            f"- {e.name}, for {e.columns} {noun} of type {', '.join(e.types)}: {offered}.{extra}"
+        )
+    return out
+
+
+def moved_identity_columns(inputs: Step1Inputs) -> list[tuple[str, str]]:
+    """The identity columns of the tables step 1 moves, sorted by table id and column."""
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    return sorted(c for c in inputs.identity_columns if c[0] in moved)
+
+
+def not_moved(inputs: Step1Inputs) -> list[NotMoved]:
+    """What the source has that step 1 does not move, with the collection's counts: DMS
+    moves table rows only. The DDL header and ``run_dms_step.py summary`` list these."""
+    objects = inputs.source_objects
+    out = []
+    for kind in ("procedures", "functions", "triggers", "views"):
+        count = None if objects is None else int(getattr(objects, kind))
+        note = ("not known: the collection was not read" if count is None
+                else "recreate them on Aurora yourself" if count else "none in the collection")  # fmt: skip
+        out.append(NotMoved(kind, count, note))
+    if inputs.plan.source.engine in ("mysql", "mariadb"):
+        out.append(NotMoved("events", None, "not in the collection: list them on the source with "
+                            "SHOW EVENTS and recreate them on Aurora yourself"))  # fmt: skip
+    if inputs.contract.target.engine == "aurora_postgresql":
+        n = len(moved_identity_columns(inputs))
+        out.append(NotMoved("sequence values", n, f"run {SEQUENCES_FILE} at cutover"))
+    else:
+        out.append(NotMoved("sequence values", None, "none to set: an AUTO_INCREMENT counter moves past "
+                            "every value inserted into its column, so it follows the loaded ids"))  # fmt: skip
+    return out
+
+
+def _not_moved_lines(inputs: Step1Inputs) -> list[str]:
+    lines = ["Not moved by step 1 (DMS moves table rows only; counts from the collection):"]
+    for n in not_moved(inputs):
+        lines.append(
+            f"- {n.kind}: " + (n.note if n.count is None else f"{n.count} ({n.note})") + "."
+        )
+    return lines
+
+
+def _pg_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _pg_literal(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def render_sequences(inputs: Step1Inputs) -> str:
+    """``step-1.sequences.sql`` (Aurora PostgreSQL): one ``setval`` per identity column of
+    a moved table, sorted by table id and column, setting the column's sequence so the
+    next generated value is the column's maximum plus one. DMS writes each row's id as the
+    source has it and never advances the sequence, so without it the first insert on
+    Aurora without an explicit id collides with a loaded row."""
+    if inputs.contract.target.engine != "aurora_postgresql":
+        raise DmsStepError(f"{SEQUENCES_FILE} is for an Aurora PostgreSQL target")
+    plan = inputs.plan
+    columns = moved_identity_columns(inputs)
+    by_id = {t.table_id: t for t in contract_tables(inputs.contract)}
+    run = (f'psql "host=<writer endpoint> dbname={plan.source.database} user=<admin user> '
+           f'sslmode=verify-full sslrootcert=<RDS CA bundle>" -f {SEQUENCES_FILE}')  # fmt: skip
+    head = [
+        "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+        "SPDX-License-Identifier: MIT-0",
+        "",
+        f"{SEQUENCES_FILE}: sets the sequence of every identity column step 1 moves into Aurora "
+        f"PostgreSQL, for job {plan.job_id} (assignment v{plan.assignment_version}). {_GENERATED}",
+        "",
+        "YOUR RESPONSIBILITY: " + CUSTOMER_RESPONSIBILITY,
+        "",
+        "Why: DMS writes each row's id as the source has it but never advances the column's sequence, "
+        "so after the load every sequence still starts at 1 and the first insert without an explicit "
+        "id collides with a loaded row. The gate compares rows only and cannot see this.",
+        "",
+        "When to run it: at cutover, after your applications stopped writing to the source and DMS "
+        "applied the last change, and before anything writes to Aurora. Each statement sets the "
+        "sequence so the next value is the column's maximum plus one; running it again is safe.",
+        f"How: {run}",
+        "",
+        f"Identity columns: {len(columns)}.",
+    ]
+    out = with_header("", head, "--")
+    if columns:
+        out += "\n"
+    for table_id, column in columns:
+        t = by_id[table_id]
+        qualified = f"{_pg_ident(t.schema)}.{_pg_ident(t.name)}"
+        col = _pg_ident(column)
+        # A file the customer runs, never executed here: schema and table are plain identifiers
+        # (_checked), and the column is quoted with its quotes doubled, as an identifier and
+        # as a literal.
+        sequence = f"pg_get_serial_sequence({_pg_literal(qualified)}, {_pg_literal(column)})"
+        out += f"SELECT setval({sequence}, COALESCE(MAX({col}), 0) + 1, false) FROM {qualified};\n"  # nosec B608 -- quoted, see above
+    return out
+
+
 def render_ddl(inputs: Step1Inputs) -> str:
     """``step-1.ddl.sql``: the license header, the disclaimer and the instructions as
     comments, then the database (Aurora MySQL) or schema (Aurora PostgreSQL), then the DDL;
-    on Aurora PostgreSQL, the commented REPLICA IDENTITY FULL recommendation per table."""
+    on Aurora PostgreSQL, the extensions its column types need before the tables and the
+    commented REPLICA IDENTITY FULL recommendation per table."""
     engine = inputs.contract.target.engine
     plan = inputs.plan
     tables = contract_tables(inputs.contract)
@@ -1136,6 +1384,11 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "as declared.",
         "5. Do not change these tables or the source's tables until the step is cut over: this release does "
         "not carry schema changes during the migration window.",
+    ]
+    if pg:
+        head.append(f"6. At cutover, once writes to the source stopped and DMS applied the last change, run "
+                    f"{SEQUENCES_FILE} the same way: DMS never advances the identity columns' sequences.")  # fmt: skip
+    head += [
         "",
         "About this DDL:",
         "- Keep the declared column names: DMS matches columns by name, not by position, so the column "
@@ -1157,7 +1410,9 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head += ["", f"Zero dates: aurora-target.yaml sets sql_mode = {ZERO_DATE_SQL_MODE} in the writer's "
                  f"DB parameter group. Why: {_zero_date_reason(counts)} The columns: "
                  + ", ".join(f"{t}.{c}" for t, c in zero) + "."]  # fmt: skip
+    head += _extension_lines(inputs)
     head.append("")
+    head += [*_not_moved_lines(inputs), ""]
     if inputs.skipped:
         head.append("Tables left out (blocked in the contract; DMS does not move them):")
         head += [f"- {s.table_id}: {s.reason}" for s in inputs.skipped]
@@ -1175,6 +1430,8 @@ def render_ddl(inputs: Step1Inputs) -> str:
         out += (
             f'\nCREATE SCHEMA IF NOT EXISTS "{schemas[0]}";\nSET search_path TO "{schemas[0]}";\n'
         )
+        for e in required_extensions(inputs):
+            out += f"CREATE EXTENSION IF NOT EXISTS {_pg_ident(e.name)};\n"
     else:
         db = database.replace("`", "``")
         out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`;\nUSE `{db}`;\n"
@@ -1206,16 +1463,26 @@ def render_ddl(inputs: Step1Inputs) -> str:
 
 
 def render_files(inputs: Step1Inputs) -> dict[str, str]:
-    """The three files of step 1, by file name."""
+    """The files of step 1, by file name: three, and ``step-1.sequences.sql`` on Aurora
+    PostgreSQL."""
     from src.tools.data_movement.debezium_connector import dump_template
 
     aurora = with_header(dump_template(render_aurora_template(inputs)), _disclaimer_lines(inputs))
     dms = with_header(dump_template(render_dms_template(inputs)), [_GENERATED])
-    return {AURORA_TEMPLATE: aurora, DDL_FILE: render_ddl(inputs), DMS_TEMPLATE: dms}
+    files = {AURORA_TEMPLATE: aurora, DDL_FILE: render_ddl(inputs), DMS_TEMPLATE: dms}
+    if inputs.contract.target.engine == "aurora_postgresql":
+        files[SEQUENCES_FILE] = render_sequences(inputs)
+    return files
+
+
+def step1_files(target_engine: str) -> tuple[str, ...]:
+    """The names of the files :func:`render_files` writes for a target engine."""
+    base = (AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE)
+    return (*base, SEQUENCES_FILE) if target_engine == "aurora_postgresql" else base
 
 
 def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
-    """Write step 1's three files under the job; ``skipped`` when the step moves no table."""
+    """Write step 1's files under the job; ``skipped`` when the step moves no table."""
     try:
         inputs = load_step1(store, db, job_id)
     except DmsStepSkipped as skipped:
@@ -1233,4 +1500,6 @@ def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
         "instance_class": replication.sizing.instance_class,
         "contract_sha256": inputs.contract_sha256,
         "replica_identity_recommended": len(contract_tables(inputs.contract)) if pg else 0,
+        "sequences_to_set": len(moved_identity_columns(inputs)) if pg else 0,
+        "extensions": [e.name for e in required_extensions(inputs)],
     }

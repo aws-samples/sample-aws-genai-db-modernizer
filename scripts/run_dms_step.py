@@ -7,8 +7,8 @@
 Every subcommand prints one JSON line (exit 1 only on ``"status": "error"``):
 
 - ``steps``, ``summary``, ``plan``: no AWS call. The job's steps; step 1's contract, sizing,
-  cost and the customer-responsibility disclaimer; the stack name, the parameters and the
-  equivalent ``aws cloudformation deploy`` command.
+  cost, what it does not move and the customer-responsibility disclaimer; the stack name, the
+  parameters and the equivalent ``aws cloudformation deploy`` command.
 - ``preflight [--confirm <check_id>]``, ``gate``: read-only; they run
   ``scripts/check_dms_step_preflight.py`` and ``scripts/check_dms_step_gate.py`` with the
   inputs file's values and print those scripts' own line. The file's optional
@@ -250,24 +250,25 @@ def steps(root: str, db: str, job_id: str) -> dict[str, Any]:
 
 
 def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
-    """Step 1's figures, from the plan and contract the scripts wrote: quoted, never computed."""
+    """Step 1's figures, from the plan, the contract and the collection: quoted, never
+    computed here (the not-moved list is ``dms_step.not_moved``, as the DDL header lists it)."""
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import (
-        AURORA_TEMPLATE,
         CUSTOMER_RESPONSIBILITY,
-        DDL_FILE,
-        DMS_TEMPLATE,
         load_step1,
+        not_moved,
+        step1_files,
     )
 
-    inputs = load_step1(LocalArtifactStore(base_dir=root), db, job_id, with_ddl=False)
+    # The whole step 1 input, as render_dms_step.py reads it: the not-moved list is the
+    # DDL header's, from the same function.
+    inputs = load_step1(LocalArtifactStore(base_dir=root), db, job_id)
     plan, contract = inputs.plan, inputs.contract
     replication = plan.replication
     warnings = [f.message for r in contract.rules for f in r.findings if f.severity == "warning"]
     blocked = [r.source_table for r in contract.rules if r.status == "blocked"]
     files = {
-        name: f"{db}/{job_id}/{STEP_DIR}/{name}"
-        for name in (AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE)
+        name: f"{db}/{job_id}/{STEP_DIR}/{name}" for name in step1_files(contract.target.engine)
     }
     missing = [n for n in files if not (Path(root) / files[n]).is_file()]
     return {
@@ -288,6 +289,7 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
         "monthly_cost_usd": plan.monthly_cost_usd,
         "cost_assumptions": list(plan.cost_assumptions),
         "notes": list(plan.notes),
+        "not_moved": [{"kind": n.kind, "count": n.count, "note": n.note} for n in not_moved(inputs)],
         "files": files,
         "files_missing": missing,
         "disclaimer": CUSTOMER_RESPONSIBILITY,
