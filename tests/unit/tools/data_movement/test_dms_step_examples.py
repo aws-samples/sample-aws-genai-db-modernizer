@@ -12,7 +12,7 @@ import pytest
 from cfnlint.api import ManualArgs, lint
 
 from scripts import render_dms_step as script
-from src.tools.data_movement.dms_step import AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE
+from src.tools.data_movement.dms_step import AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE, SEQUENCES_FILE
 
 
 def _cfn_lint(text: str) -> list[str]:
@@ -72,8 +72,19 @@ def test_the_mysql_example_shows_its_zero_date_counts():
 
 def test_the_examples_say_nothing_internal():
     for example in script.example_dirs():
-        for name in (AURORA_TEMPLATE, DMS_TEMPLATE, DDL_FILE):
-            assert "ADR-" not in (example / name).read_text(), (example.name, name)
+        for name in (AURORA_TEMPLATE, DMS_TEMPLATE, DDL_FILE, SEQUENCES_FILE):
+            if (example / name).exists():
+                assert "ADR-" not in (example / name).read_text(), (example.name, name)
+
+
+def test_the_postgresql_example_sets_every_identity_columns_sequence_and_mysql_has_none():
+    """The PostgreSQL example's two identity columns each get a setval (#1905); the MySQL
+    example has no sequences file, and both DDL headers list what step 1 does not move."""
+    text = (_example("postgresql-shop") / SEQUENCES_FILE).read_text()
+    assert len(re.findall(r"^SELECT setval\(pg_get_serial_sequence\(", text, re.M)) == 2
+    assert not (_example("wordpress-mysql") / SEQUENCES_FILE).exists()
+    for name in ("postgresql-shop", "wordpress-mysql"):
+        assert "-- Not moved by step 1" in (_example(name) / DDL_FILE).read_text(), name
 
 
 def test_examples_check_mode_passes(capsys):

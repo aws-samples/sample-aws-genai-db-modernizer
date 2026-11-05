@@ -54,14 +54,15 @@ A line with `"status": "error"` (or a non-zero exit) ends with `MOVE_RESULT: sto
 - The step: `title`, `source`, `target_engine`, `table_count`.
 - The contract: `status`, and `status_reason` when it has one; every table in `blocked_rules` (those tables do not move until the contract is fixed); `warning_count`, with its `warnings`.
 - The plan: the `replication_instance` (`instance_class`, `allocated_storage_gb`, `multi_az_default`, `reason`) and `monthly_cost_usd`, with its `cost_assumptions` and `notes`.
-- The three files in `files`: `aurora-target.yaml` and `step-1.ddl.sql` are the customer's to deploy and run; `dms-step-1.yaml` is the stack this command deploys, with the customer's credentials.
+- Not moved: every entry of `not_moved`, each `kind` with its `count` (when it has one) and its `note`: what the source has that step 1 does not move (procedures, functions, triggers, views, events, sequence values). The customer recreates those objects on Aurora; on Aurora PostgreSQL, `step-1.sequences.sql` sets the sequence values at cutover. <!-- claim: tests/unit/scripts/test_run_dms_step.py::test_summary_lists_the_sequences_file_and_the_not_moved_counts_on_postgresql, tests/unit/scripts/test_run_dms_step.py::test_summary_lists_what_a_mysql_step_1_does_not_move -->
+- The files in `files`: `aurora-target.yaml` and `step-1.ddl.sql` are the customer's to deploy and run, and so is `step-1.sequences.sql` (Aurora PostgreSQL only), which they run at cutover; `dms-step-1.yaml` is the stack this command deploys, with the customer's credentials.
 - The disclaimer: quote the line's `disclaimer` field verbatim, as a block quote. Never shorten, reword or summarise it.
 
 Then list what the customer does before Check, from the README's "Before you deploy the DMS stack" section (point them at it for the details):
 
 1. Create the Aurora cluster from the suggested `aurora-target.yaml`, or give an existing cluster every setting it lists; every instance uses its DB parameter group (reboot after a parameter group changed).
-2. Run `step-1.ddl.sql` on the cluster, and create the DMS user it describes, with its grants.
-3. Turn on change capture on the source (MySQL: `binlog_format=ROW`, `binlog_row_image=FULL`, binary log retention; PostgreSQL: logical replication), and give the source user its replication grants.
+2. Run `step-1.ddl.sql` on the cluster (on Aurora PostgreSQL it creates the extensions its column types need), and create the DMS user it describes, with its grants.
+3. Turn on change capture on the source (MySQL: `binlog_format=ROW`, `binlog_row_image=FULL`, binary log retention; PostgreSQL: logical replication), and give the source user its replication grants (PostgreSQL 15 and later: also `CREATE` on the heartbeat schema, `public` by default).
 4. Create two Secrets Manager secrets, one for the source user and one for the DMS user on the Aurora writer endpoint, each with the keys `username`, `password`, `host` and `port` (not the RDS-managed master secret).
 5. Import the certificate authority bundles into DMS (`aws dms import-certificate`) and keep the two certificate ARNs: required on MySQL-family endpoints.
 6. Make sure the account has the DMS roles `dms-vpc-role` and `dms-cloudwatch-logs-role`, and pick private subnets (two Availability Zones) that reach Secrets Manager and a security group with egress to both databases and to Secrets Manager.

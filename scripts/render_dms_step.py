@@ -5,8 +5,9 @@
 """Render step 1's delivery: the DMS stack, the suggested Aurora template and the DDL file (#1798).
 
 Reads the job's ``data-movement/step-1/plan.json``, the transformation contract it pins and
-the Aurora design, and writes ``aurora-target.yaml``, ``step-1.ddl.sql`` and
-``dms-step-1.yaml`` under ``<db>/<job>/data-movement/step-1/``. No AWS call is made;
+the Aurora design, and writes ``aurora-target.yaml``, ``step-1.ddl.sql``,
+``dms-step-1.yaml`` and, on Aurora PostgreSQL, ``step-1.sequences.sql`` under
+``<db>/<job>/data-movement/step-1/``. No AWS call is made;
 deploying is a separate step (``infrastructure/cloudformation/data-movement/README.md``).
 Prints one JSON status line.
 
@@ -121,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
                 contract=inputs.contract,
                 ddl=inputs.ddl,
                 zero_date_defaults=list(inputs.zero_date_defaults),
+                identity_columns=list(inputs.identity_columns),
+                source_objects=inputs.source_objects,
+                extensions=None if inputs.extensions is None else list(inputs.extensions),
             )
             args.bundle.write_text(bundle.model_dump_json(indent=2) + "\n")
             result: dict[str, object] = {"status": "complete", "bundle": str(args.bundle)}

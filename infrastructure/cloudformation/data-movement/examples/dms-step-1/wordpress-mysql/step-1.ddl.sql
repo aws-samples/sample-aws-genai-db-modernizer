@@ -81,6 +81,16 @@
 -- wordpress.wp_woocommerce_downloadable_product_permissions.access_granted,
 -- wordpress.wp_woocommerce_log.timestamp.
 --
+-- Not moved by step 1 (DMS moves table rows only; counts from the collection):
+-- - procedures: 0 (none in the collection).
+-- - functions: 0 (none in the collection).
+-- - triggers: 0 (none in the collection).
+-- - views: 0 (none in the collection).
+-- - events: not in the collection: list them on the source with SHOW EVENTS and recreate them
+-- on Aurora yourself.
+-- - sequence values: none to set: an AUTO_INCREMENT counter moves past every value inserted
+-- into its column, so it follows the loaded ids.
+--
 -- Tables left out: none.
 -- Unsupported fields: none.
 

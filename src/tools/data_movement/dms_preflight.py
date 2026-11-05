@@ -500,6 +500,14 @@ _GRANTS_ITEM = (
     "step 1 table"
 )
 _REPLICA_IDENTITY_ITEM = "Every table without a primary key has REPLICA IDENTITY FULL, or DMS cannot replicate its updates and deletes"
+# The task turns the DMS heartbeat on (HeartbeatEnable), which creates its heartbeat table in the
+# heartbeat schema, public by default; from PostgreSQL 15, public grants CREATE to its owner only.
+HEARTBEAT_SCHEMA = "public"
+_HEARTBEAT_ITEM = (
+    f"The source user has CREATE on the heartbeat schema {HEARTBEAT_SCHEMA} (GRANT CREATE ON SCHEMA "
+    f"{HEARTBEAT_SCHEMA} TO <source user>): the task's DMS heartbeat creates its table there, and from "
+    "PostgreSQL 15 that schema grants CREATE to its owner only, so without it the task fails at start"
+)
 SELF_MANAGED: dict[str, list[str]] = {
     "mysql": [
         "binlog_format = ROW and binlog_row_image = FULL",
@@ -512,6 +520,7 @@ SELF_MANAGED: dict[str, list[str]] = {
         "max_replication_slots and max_wal_senders leave room for the DMS slot",
         _REPLICA_IDENTITY_ITEM,
         _GRANTS_ITEM % "the REPLICATION attribute",
+        _HEARTBEAT_ITEM,
         _TLS_ITEM,
     ],
 }  # fmt: skip
@@ -526,6 +535,7 @@ MANAGED: dict[str, list[str]] = {
         "The DMS user is a member of the rds_replication role (GRANT rds_replication TO the DMS user), "
         "and has SELECT on every step 1 table",
         _REPLICA_IDENTITY_ITEM,
+        _HEARTBEAT_ITEM,
         _TLS_ITEM,
     ],
 }
@@ -624,9 +634,11 @@ def check_dms_service_roles(inputs: Step1Inputs, req: PreflightRequest, clients:
 def _checklist_row(summary: str, evidence: dict[str, Any], items: list[str]) -> PreflightCheck:
     if not items:
         return _row("source_cdc", "pass", summary, evidence)
+    heartbeat = (f" On PostgreSQL 15 and later, that includes CREATE on the heartbeat schema "
+                 f"{HEARTBEAT_SCHEMA} for the source user." if _HEARTBEAT_ITEM in items else "")  # fmt: skip
     return _row("source_cdc", "confirm", summary + "; confirm the checklist", evidence,
                 "Check each item on the source, then run the preflight again with --confirm source_cdc "
-                "(alias --confirm-source-checklist).", items)  # fmt: skip
+                f"(alias --confirm-source-checklist).{heartbeat}", items)  # fmt: skip
 
 
 def _not_in_sync(group: str, status: str, reboot: str, evidence: dict[str, Any]) -> PreflightCheck:
