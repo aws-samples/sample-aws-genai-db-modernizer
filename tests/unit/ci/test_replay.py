@@ -5,19 +5,27 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
+import os
+import re
+import shutil
+import subprocess  # nosec B404 -- runs the repo's own ci/replay.sh
 import tarfile
 from pathlib import Path
 
 import pytest
 
-from ci.llm import judge_facts, replay, run
+from ci.llm import judge_facts, private_scan, replay, run
 from src.report.deliverables import FOLDER_FILENAMES
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE = replay.DEFAULT_FIXTURE
 REPO_ROOT = replay.REPO_ROOT
+# Every saved fixture (#1847: discourse joins once its run is saved); the tests over
+# the saved runs take each one.
+SAVED = pytest.mark.parametrize("fixture", replay.saved_fixtures(), ids=lambda p: p.name)
 
 
 def _records(text: str) -> list[dict]:
@@ -293,17 +301,26 @@ def test_save_refuses_a_run_that_did_not_pass(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_saved_transcript_passes_the_transcript_checks() -> None:
+def _unpacked_transcript(fixture: Path, tmp_path: Path) -> Path:
+    path = tmp_path / replay.TRANSCRIPT_FILE
+    path.write_text(replay.fixture_text(fixture, replay.TRANSCRIPT_FILE))
+    return path
+
+
+@pytest.mark.passes_on_main  # main's wordpress case, now taken for every saved fixture
+@SAVED
+def test_the_saved_transcript_passes_the_transcript_checks(fixture: Path, tmp_path: Path) -> None:
     """The current allowlist and transcript checks, the chat checks of #1605 included, still
     accept the saved passing run."""
-    saved = json.loads((FIXTURE / replay.RUN_FILE).read_text())
-    summary = run.check_transcript(FIXTURE / replay.TRANSCRIPT_FILE, saved["mode"])
+    saved = json.loads((fixture / replay.RUN_FILE).read_text())
+    transcript = _unpacked_transcript(fixture, tmp_path)
+    summary = run.check_transcript(transcript, saved["mode"])
     assert (summary["db"], summary["job_id"], summary["mode"]) == (
         saved["db"],
         saved["job_id"],
         saved["mode"],
     )
-    records = run.iter_jsonl(FIXTURE / replay.TRANSCRIPT_FILE)
+    records = run.iter_jsonl(transcript)
     assert run.check_printed_blocks_shown(records, saved["mode"]) == (True, None)
 
 
@@ -340,27 +357,34 @@ def test_the_saved_run_without_its_chat_quotes_fails(tmp_path: Path) -> None:
 def test_replay_runs_every_transcript_check() -> None:
     script = (REPO_ROOT / "ci" / "replay.sh").read_text()
     assert "--recorded-before-chat-quote" not in script
-    assert 'ci/llm/run.py check-transcript "$FIXTURE/transcript.jsonl" --mode "$MODE"' in script
+    # The transcript prepare unpacked (#1847: it may be stored as transcript.jsonl.gz).
+    assert '--transcript-out "$out/transcript.jsonl"' in script
+    assert 'ci/llm/run.py check-transcript "$out/transcript.jsonl" --mode "$MODE"' in script
 
 
-@pytest.mark.passes_on_main  # guards that the fixture names no machine; it now also covers job/
-def test_the_saved_run_names_no_machine_user_or_account() -> None:
-    """Every record and field of every fixture file, not only the init record's cwd."""
-    for path in sorted(p for p in FIXTURE.rglob("*") if p.is_file()):
-        assert replay.private_data(path.read_text()) == [], path.relative_to(FIXTURE).as_posix()
+@pytest.mark.passes_on_main  # main's wordpress case, now taken for every saved fixture
+@SAVED
+def test_the_saved_run_names_no_machine_user_or_account(fixture: Path) -> None:
+    """Every record and field of every fixture file, compressed ones decompressed (#1847),
+    not only the init record's cwd."""
+    for path in sorted(p for p in fixture.rglob("*") if p.is_file()):
+        text = private_scan.read_text(path)
+        assert replay.private_data(text) == [], path.relative_to(fixture).as_posix()
     recs = [
         json.loads(line)
-        for line in (FIXTURE / replay.TRANSCRIPT_FILE).read_text().splitlines()
+        for line in replay.fixture_text(fixture, replay.TRANSCRIPT_FILE).splitlines()
         if line.strip()
     ]
     cwds = {r.get("cwd") for r in recs if r.get("type") == "system" and r.get("subtype") == "init"}
     assert cwds == {replay.PLACEHOLDER_CWD}
 
 
-def test_prepare_lays_the_run_out_as_a_job_and_renders_it(tmp_path: Path) -> None:
-    info = replay.prepare(FIXTURE, tmp_path)
+@pytest.mark.passes_on_main  # main's wordpress case, now taken for every saved fixture
+@SAVED
+def test_prepare_lays_the_run_out_as_a_job_and_renders_it(fixture: Path, tmp_path: Path) -> None:
+    info = replay.prepare(fixture, tmp_path)
     job = tmp_path / info["db"] / info["job_id"]
-    run_info = json.loads((FIXTURE / "run.json").read_text())
+    run_info = json.loads((fixture / "run.json").read_text())
     version = run_info["synthesis_version"]
     assert (job / "synthesis" / f"v{version}" / "report.json").is_file()
     # The saved job folder (#1463): the artifacts the external checks read.
@@ -374,15 +398,17 @@ def test_prepare_lays_the_run_out_as_a_job_and_renders_it(tmp_path: Path) -> Non
     assert names == sorted(FOLDER_FILENAMES)
     # A second prepare starts from a clean job, not on top of the first.
     (job / "stray.json").write_text("{}")
-    replay.prepare(FIXTURE, tmp_path)
+    replay.prepare(fixture, tmp_path)
     assert not (job / "stray.json").exists()
 
 
-def test_the_judge_facts_read_the_real_report() -> None:
+@pytest.mark.passes_on_main  # main's wordpress case, now taken for every saved fixture
+@SAVED
+def test_the_judge_facts_read_the_real_report(fixture: Path) -> None:
     """Built from a real report.json, not a hand-written one (#1215: a field the
     writer stores as a count, read as a list)."""
-    report = json.loads((FIXTURE / "report.json").read_text())
-    llm_input = json.loads((FIXTURE / "llm_input.json").read_text())
+    report = json.loads(replay.fixture_text(fixture, "report.json"))
+    llm_input = json.loads(replay.fixture_text(fixture, "llm_input.json"))
     facts = judge_facts.build_facts(report, llm_input)
     totals = facts["totals"]
     assert totals["open_risks"] == report["facts"]["open_risk_count"]
@@ -445,10 +471,12 @@ def test_save_refuses_an_archive_member_over_the_size_cap(
         replay.save(src, tmp_path / "fixture")
 
 
-def test_the_fixture_says_where_its_job_came_from() -> None:
+@pytest.mark.passes_on_main  # main's wordpress case, now taken for every saved fixture
+@SAVED
+def test_the_fixture_says_where_its_job_came_from(fixture: Path) -> None:
     """The judge, checks and cost in run.json belong to the transcript's run; the job
     folder may come from another (#1463), and run.json must say so."""
-    run_info = json.loads((FIXTURE / "run.json").read_text())
+    run_info = json.loads((fixture / "run.json").read_text())
     assert run_info["job_source"] in ("e2e-llm", "research run (not e2e-llm)")
     if run_info["job_source"] != "e2e-llm":
         assert run_info["job_relabelled_from"] and run_info["job_timestamp"]
@@ -474,3 +502,286 @@ def test_a_finding_names_its_kind_and_line_never_the_value(leak: str) -> None:
     assert all(f.endswith("at line 3") for f in findings), findings
     for f in findings:
         assert leak not in f and leak.split("/")[-1] not in f
+
+
+# ---------------------------------------------------------------------------
+# Large files stored gzip-compressed (#1847)
+# ---------------------------------------------------------------------------
+
+# Over the plain cap even compact, and compressible: what a discourse run's report,
+# transcript and collector output are like.
+_BIG_ROWS = [f"row {i} of the collector output" for i in range(40_000)]
+
+
+def _big_run(tmp_path: Path) -> Path:
+    src = _e2e_llm_output(tmp_path)
+    big_report = json.dumps({"database_name": "wordpress", "rows": _BIG_ROWS})
+    (src / "deliverables" / "wordpress" / "synthesis" / "report.json").write_text(big_report)
+    big_line = {"type": "user", "message": {"content": [{"type": "text", "text": "x"}]}}
+    with (src / "transcript.jsonl").open("a") as f:
+        for i in range(12_000):
+            f.write(json.dumps({**big_line, "n": i, "pad": "p" * 60}) + "\n")
+    _write_job_archive(
+        src / replay.JOB_ARCHIVE,
+        {
+            "assignment/v1/assignment.json": '{"v": 1}',
+            "collector/output.json": json.dumps({"rows": _BIG_ROWS}),
+            "synthesis/v1/report.json": big_report,
+        },
+    )
+    return src
+
+
+def test_save_stores_a_file_over_the_cap_gzip_compressed(tmp_path: Path) -> None:
+    src = _big_run(tmp_path)
+    dest = tmp_path / "fixture"
+    replay.save(src, dest)
+    for name in ("report.json", "transcript.jsonl", "job/collector/output.json"):
+        assert not (dest / name).exists(), name
+        packed = dest / (name + ".gz")
+        assert 0 < packed.stat().st_size <= replay.MAX_COMPRESSED_FILE_BYTES, name
+        assert len(gzip.decompress(packed.read_bytes())) > replay.MAX_FIXTURE_FILE_BYTES, name
+    # A JSON file is compact inside; the transcript keeps its lines.
+    report = gzip.decompress((dest / "report.json.gz").read_bytes()).decode()
+    assert json.loads(report)["rows"] == _BIG_ROWS and ", " not in report[:200]
+    transcript = replay.fixture_text(dest, replay.TRANSCRIPT_FILE)
+    assert transcript.count("\n") > 12_000 and _CWD not in transcript
+    # Small files stay plain.
+    assert (dest / "llm_input.json").is_file() and (
+        dest / "job/assignment/v1/assignment.json"
+    ).is_file()
+
+
+def test_a_resave_writes_the_same_compressed_bytes(tmp_path: Path) -> None:
+    src = _big_run(tmp_path)
+    first, second = tmp_path / "first", tmp_path / "second"
+    replay.save(src, first)
+    replay.save(src, second)
+    packed = sorted(p.relative_to(first) for p in first.rglob("*.gz"))
+    assert len(packed) == 3
+    for rel in packed:
+        data = (first / rel).read_bytes()
+        assert data == (second / rel).read_bytes(), rel
+        # gzip header: no file name flag, mtime 0.
+        assert data[3] == 0 and data[4:8] == b"\0\0\0\0", rel
+
+
+def test_a_resave_replaces_the_other_form_of_a_file(tmp_path: Path) -> None:
+    dest = tmp_path / "fixture"
+    replay.save(_big_run(tmp_path / "big"), dest)
+    assert (dest / "report.json.gz").is_file()
+    replay.save(_e2e_llm_output(tmp_path / "small"), dest)
+    assert (dest / "report.json").is_file() and not (dest / "report.json.gz").exists()
+    assert not list(dest.rglob("*.gz"))
+    replay.save(_big_run(tmp_path / "big2"), dest)
+    assert (dest / "report.json.gz").is_file() and not (dest / "report.json").exists()
+
+
+def test_save_refuses_a_file_too_large_even_compressed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(replay, "MAX_COMPRESSED_FILE_BYTES", 1000)
+    dest = tmp_path / "fixture"
+    with pytest.raises(ValueError, match="even gzip-compressed"):
+        replay.save(_big_run(tmp_path), dest)
+    assert not dest.exists()  # nothing is written
+
+
+def _large_file_limit_bytes() -> int:
+    config = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+    hook = config[config.index("id: check-added-large-files") :]
+    hook = hook[: hook.index("- id:", 1)]
+    return int(re.search(r"--maxkb=(\d+)", hook).group(1)) * 1024
+
+
+def test_every_compressed_fixture_file_stays_under_the_repo_large_file_limit() -> None:
+    """check-added-large-files (--maxkb=1000) must pass on the compressed files: the cap
+    save holds them to is under its limit, it does not exclude the fixtures, and every
+    committed fixture file, compressed or not, is under it."""
+    limit = _large_file_limit_bytes()
+    assert limit == 1000 * 1024
+    assert replay.MAX_FIXTURE_FILE_BYTES < replay.MAX_COMPRESSED_FILE_BYTES < limit
+    config = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+    hook = config[config.index("id: check-added-large-files") :]
+    exclude = re.search(r"exclude: (.+)", hook[: hook.index("- id:", 1)]).group(1)
+    assert not re.search(exclude, "tests/fixtures/real_runs/discourse-both/report.json.gz")
+    files = [p for p in replay.FIXTURES_DIR.rglob("*") if p.is_file()]
+    assert files
+    for path in files:
+        assert path.stat().st_size <= replay.MAX_COMPRESSED_FILE_BYTES, path
+
+
+def _compressed_copy(tmp_path: Path) -> Path:
+    """The wordpress fixture with its report, transcript and a job file gzip-compressed."""
+    copy = tmp_path / "packed"
+    shutil.copytree(FIXTURE, copy)
+    for name in ("report.json", "transcript.jsonl", "job/collector/output.json"):
+        plain = copy / name
+        (copy / (name + ".gz")).write_bytes(gzip.compress(plain.read_bytes(), mtime=0))
+        plain.unlink()
+    return copy
+
+
+def test_prepare_unpacks_every_compressed_file(tmp_path: Path) -> None:
+    packed = _compressed_copy(tmp_path)
+    info = replay.prepare(packed, tmp_path / "root", tmp_path / "out" / "transcript.jsonl")
+    job = tmp_path / "root" / info["db"] / info["job_id"]
+    assert not list(job.rglob("*.gz"))
+    assert (job / "collector/output.json").read_text() == (
+        FIXTURE / "job/collector/output.json"
+    ).read_text()
+    version = json.loads((FIXTURE / "run.json").read_text())["synthesis_version"]
+    assert (job / f"synthesis/v{version}/report.json").read_text() == (
+        FIXTURE / "report.json"
+    ).read_text()
+    transcript = tmp_path / "out" / "transcript.jsonl"
+    assert transcript.read_text() == (FIXTURE / "transcript.jsonl").read_text()
+    assert run.check_transcript(transcript, info["mode"])["job_id"] == info["job_id"]
+    assert sorted(p.name for p in (job / "deliverables").iterdir()) == sorted(FOLDER_FILENAMES)
+
+
+def test_prepare_refuses_a_file_kept_both_plain_and_compressed(tmp_path: Path) -> None:
+    packed = _compressed_copy(tmp_path)
+    shutil.copy2(FIXTURE / "job/collector/output.json", packed / "job/collector/output.json")
+    with pytest.raises(ValueError, match="keep one"):
+        replay.prepare(packed, tmp_path / "root")
+    shutil.copy2(FIXTURE / "report.json", packed / "report.json")
+    with pytest.raises(ValueError, match="keep one"):
+        replay.fixture_text(packed, "report.json")
+
+
+_REBUILT_NOTE = "rebuilt with scripts/run_collect.py from the run's own input"
+
+
+def test_save_records_a_rebuilt_job_file_and_prepare_names_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job file the run did not record is named in run.json, and the replay says so
+    (#1900, #2057)."""
+    src, dest = _e2e_llm_output(tmp_path), tmp_path / "fixture"
+    replay.main(
+        [
+            "save",
+            "--from",
+            str(src),
+            "--to",
+            str(dest),
+            "--rebuilt",
+            f"collector/output.json={_REBUILT_NOTE}",
+        ]
+    )
+    run_info = json.loads((dest / replay.RUN_FILE).read_text())
+    assert run_info["rebuilt_files"] == {"collector/output.json": _REBUILT_NOTE}
+    capsys.readouterr()
+    import scripts.run_report as run_report
+
+    monkeypatch.setattr(run_report, "run", lambda *a, **k: {"status": "complete"})
+    replay.main(["prepare", "--fixture", str(dest), "--root", str(tmp_path / "root")])
+    out = capsys.readouterr()
+    assert out.out.strip() == "wordpress job1 both"
+    assert f"job/collector/output.json was rebuilt, not recorded: {_REBUILT_NOTE}" in out.err
+
+
+def test_a_save_without_rebuilt_files_records_none(tmp_path: Path) -> None:
+    info = replay.save(_e2e_llm_output(tmp_path), tmp_path / "fixture")
+    assert "rebuilt_files" not in info
+
+
+@pytest.mark.parametrize(
+    ("rebuilt", "match"),
+    [
+        ({"collector/missing.json": _REBUILT_NOTE}, "no such file"),
+        ({"collector/output.json": " "}, "how and why"),
+    ],
+    ids=["not-in-the-archive", "empty-note"],
+)
+def test_save_refuses_a_rebuilt_file_it_cannot_vouch_for(
+    tmp_path: Path, rebuilt: dict[str, str], match: str
+) -> None:
+    dest = tmp_path / "fixture"
+    with pytest.raises(ValueError, match=match):
+        replay.save(_e2e_llm_output(tmp_path), dest, rebuilt=rebuilt)
+    assert not dest.exists()
+
+
+@SAVED
+def test_every_rebuilt_file_of_a_saved_fixture_is_in_its_job(fixture: Path) -> None:
+    rebuilt = json.loads((fixture / replay.RUN_FILE).read_text()).get("rebuilt_files") or {}
+    for name, note in rebuilt.items():
+        assert replay.fixture_file(fixture / replay.JOB_DIR, name).is_file(), name
+        assert note.strip()
+
+
+def test_the_archive_member_cap_holds_the_upload_cap() -> None:
+    """collect-job keeps a discourse collector output (about 14 MB, #1847) and save reads it."""
+    assert run.JOB_MAX_FILE_BYTES >= 20_000_000
+    assert replay.MAX_ARCHIVE_MEMBER_BYTES >= run.JOB_MAX_FILE_BYTES
+
+
+# ---------------------------------------------------------------------------
+# ci/replay.sh replays every saved fixture (#1847)
+# ---------------------------------------------------------------------------
+
+
+def _replay_sh(env: dict[str, str], tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # nosec B603 -- fixed argv, the repo's own script
+        ["bash", str(REPO_ROOT / "ci" / "replay.sh")],
+        env={**os.environ, "E2E_OUTPUT": str(tmp_path / "out"), **env},
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+
+
+def test_replay_sh_replays_both_samples_by_default() -> None:
+    script = (REPO_ROOT / "ci" / "replay.sh").read_text()
+    default = re.search(r'^DEFAULT_FIXTURES="([^"]+)"', script, re.M).group(1).split()
+    assert default == [p.relative_to(REPO_ROOT).as_posix() for p in replay.FIXTURES]
+    assert [p.name for p in replay.FIXTURES] == ["wordpress-both", "discourse-both"]
+
+
+def test_replay_sh_skips_a_fixture_not_saved_yet_and_fails_when_none_ran(tmp_path: Path) -> None:
+    missing = tmp_path / "discourse-both"
+    proc = _replay_sh({"REPLAY_FIXTURES": str(missing)}, tmp_path)
+    assert f"skip discourse-both: not saved yet (no {missing}/run.json)" in proc.stdout
+    assert "skipped 1 (discourse-both)" in proc.stdout
+    # A replay that replayed nothing is not green.
+    assert proc.returncode == 1 and "no fixture was replayed" in proc.stderr
+
+
+def test_replay_sh_keeps_going_after_a_failed_fixture_and_fails_at_the_end(
+    tmp_path: Path,
+) -> None:
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "run.json").write_text("{}")
+    proc = _replay_sh({"REPLAY_FIXTURES": f"{broken} {tmp_path / 'discourse-both'}"}, tmp_path)
+    assert proc.returncode == 1
+    last = proc.stdout.strip().splitlines()[-1]
+    assert last == (
+        "replay: passed 0 (none), skipped 1 (discourse-both), failed 1 (broken)"
+    ), proc.stdout
+
+
+def test_an_explicit_replay_fixture_must_exist(tmp_path: Path) -> None:
+    proc = _replay_sh({"REPLAY_FIXTURE": str(tmp_path / "nope")}, tmp_path)
+    assert proc.returncode == 2 and "has no run.json" in proc.stderr
+
+
+def test_a_trim_never_cuts_through_a_number() -> None:
+    """Twelve digits left of a cut 19-digit pattern id read as an AWS account id (#1847)."""
+    pattern_id = "-4224723110337123456"
+    head = "a" * (replay.TRIM_KEEP - 7) + pattern_id + "b" * 2000
+    tail = "c" * 2000 + pattern_id + "d" * (replay.TRIM_KEEP - 12)
+    for value in (head, tail):
+        out = replay._trim(value)
+        assert "characters trimmed" in out
+        assert replay.private_data(out) == [], out
+        kept = out.split("\n[... ")[0] + out.split(" characters trimmed ...]\n")[1]
+        # The number is kept whole or left out whole; the marker counts what was cut.
+        assert re.findall(r"\d+", kept) in ([], ["4224723110337123456"]), kept
+        cut = int(re.search(r"\[\.\.\. (\d+) characters", out).group(1))
+        assert len(kept) + cut == len(value)
+    # A cut between two non-digits is where it always was.
+    plain = "x" * 3000
+    assert replay._trim(plain).startswith("x" * replay.TRIM_KEEP + "\n[... ")

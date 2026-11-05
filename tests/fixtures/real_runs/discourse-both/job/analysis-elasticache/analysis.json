@@ -1,0 +1,5858 @@
+{
+  "contract_version": "2.5",
+  "agent_metadata": {
+    "agent_name": "elasticache-analysis-agent",
+    "agent_version": "1.0.0",
+    "target_database": "elasticache",
+    "analysis_timestamp": "2026-11-09T12:29:36.154657",
+    "analysis_duration_seconds": 7.768791
+  },
+  "table_recommendations": [
+    {
+      "table_id": "public.ad_plugin_house_ads",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ad_plugin_house_ads_categories",
+      "confidence_score": 24,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 65,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ad_plugin_house_ads_groups",
+      "confidence_score": 24,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 65,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ad_plugin_house_ads_routes",
+      "confidence_score": 24,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 65,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ad_plugin_impressions",
+      "confidence_score": 30,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 85,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.admin_notices",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_agent_mcp_servers",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_agents",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 85,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_api_audit_logs",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_api_request_stats",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_artifact_key_values",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_artifact_versions",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_artifacts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_document_fragments_embeddings",
+      "confidence_score": 26,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 70,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_mcp_oauth_tokens",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_mcp_servers",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_moderation_settings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_posts_embeddings",
+      "confidence_score": 26,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 70,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_secrets",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_spam_logs",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_summaries",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_tool_actions",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_tool_secret_bindings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_tools",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ai_topics_embeddings",
+      "confidence_score": 28,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 5,
+        "complexity_score": 65,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.allowed_pm_users",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.anonymous_users",
+      "confidence_score": 69,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.api_key_scopes",
+      "confidence_score": 84,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.api_keys",
+      "confidence_score": 86,
+      "rationale": "Strong caching and leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 100,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.application_requests",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ar_internal_metadata",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.assignments",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.associated_groups",
+      "confidence_score": 47,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 80,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.backup_draft_posts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.backup_draft_topics",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.backup_metadata",
+      "confidence_score": 35,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.badge_groupings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.badge_types",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.badges",
+      "confidence_score": 71,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 75,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.bookmarks",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.calendar_events",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.categories",
+      "confidence_score": 77,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 75,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.categories_web_hooks",
+      "confidence_score": 27,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_custom_fields",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_featured_topics",
+      "confidence_score": 63,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.category_form_templates",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_groups",
+      "confidence_score": 74,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.category_localizations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_moderation_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_posting_review_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_required_tag_groups",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_search_data",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_settings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_tag_groups",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_tag_stats",
+      "confidence_score": 71,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.category_tags",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.category_users",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_channel_archives",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_channel_custom_fields",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_channels",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 70,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_drafts",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_mention_notifications",
+      "confidence_score": 21,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 55,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_mentions",
+      "confidence_score": 27,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_message_custom_fields",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_message_custom_prompts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_message_interactions",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_message_links",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_message_reactions",
+      "confidence_score": 34,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 70,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_message_revisions",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_message_search_data",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_messages",
+      "confidence_score": 66,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_pinned_messages",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_thread_custom_fields",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.chat_threads",
+      "confidence_score": 35,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.chat_webhook_events",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.child_themes",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.classification_results",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.color_scheme_colors",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.color_schemes",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.completion_prompts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.custom_emojis",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.data_explorer_queries",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.data_explorer_query_groups",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.developers",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.direct_message_channels",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.direct_message_users",
+      "confidence_score": 35,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.directory_columns",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.directory_items",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 65,
+        "complexity_score": 70,
+        "performance_score": 5,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 12%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.discourse_automation_automations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_automation_fields",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_automation_pending_automations",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_automation_pending_pms",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_automation_stats",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_automation_user_global_notices",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_calendar_disabled_holidays",
+      "confidence_score": 33,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_calendar_post_event_dates",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_post_event_events",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_post_event_invitees",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_reactions_reaction_users",
+      "confidence_score": 27,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.discourse_reactions_reactions",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_rss_polling_rss_feeds",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_solved_solved_topics",
+      "confidence_score": 54,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.discourse_subscriptions_customers",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_subscriptions_products",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_subscriptions_subscriptions",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.discourse_templates_usage_count",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.dismissed_topic_users",
+      "confidence_score": 59,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.do_not_disturb_timings",
+      "confidence_score": 50,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.draft_sequences",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.drafts",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.email_change_requests",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.email_logs",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.email_tokens",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.embeddable_host_tags",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.embeddable_hosts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.embedding_definitions",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.external_upload_stubs",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.flags",
+      "confidence_score": 69,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.form_templates",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.gamification_leaderboards",
+      "confidence_score": 67,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.gamification_score_events",
+      "confidence_score": 34,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 70,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.gamification_scores",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 65,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.github_commits",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.github_repos",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.given_daily_likes",
+      "confidence_score": 40,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 60,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.group_archived_messages",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_associated_groups",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.group_category_notification_defaults",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_custom_fields",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_histories",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_mentions",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_requests",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_tag_notification_defaults",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.group_users",
+      "confidence_score": 76,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 80,
+        "performance_score": 35,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.groups",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 75,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.groups_web_hooks",
+      "confidence_score": 27,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.ignored_users",
+      "confidence_score": 70,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.incoming_chat_webhooks",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.incoming_domains",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.incoming_emails",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.incoming_links",
+      "confidence_score": 69,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.incoming_referers",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.inferred_concept_posts",
+      "confidence_score": 37,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 85,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.inferred_concept_topics",
+      "confidence_score": 37,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 85,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.inferred_concepts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.invited_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.invited_users",
+      "confidence_score": 68,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 85,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.invites",
+      "confidence_score": 66,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.javascript_caches",
+      "confidence_score": 36,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 5,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.linked_topics",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_credit_allocations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_credit_daily_usages",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_feature_credit_costs",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_models",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_quota_usages",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.llm_quotas",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.message_bus",
+      "confidence_score": 35,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 100,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.model_accuracies",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.moved_posts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.muted_users",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.notifications",
+      "confidence_score": 70,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.oauth2_user_infos",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.onceoff_logs",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.optimized_images",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 80,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.optimized_videos",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.permalinks",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.plugin_store_rows",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.policy_users",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.poll_options",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.poll_votes",
+      "confidence_score": 25,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 5,
+        "complexity_score": 55,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.polls",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_action_types",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_actions",
+      "confidence_score": 64,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 70,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.post_custom_fields",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_custom_prompts",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_details",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_hotlinked_media",
+      "confidence_score": 41,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_localizations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_policies",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 85,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.post_policy_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_replies",
+      "confidence_score": 34,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 75,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_reply_keys",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_revisions",
+      "confidence_score": 65,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 80,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.post_search_data",
+      "confidence_score": 72,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.post_stats",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_timings",
+      "confidence_score": 46,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 60,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.post_voting_comment_custom_fields",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_voting_comments",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.post_voting_votes",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.posts",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 70,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.problem_check_trackers",
+      "confidence_score": 60,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.published_pages",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.push_subscriptions",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.quoted_posts",
+      "confidence_score": 66,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.rag_document_fragments",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.redelivering_webhook_events",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 85,
+        "performance_score": 20,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.remote_themes",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.reviewable_claimed_topics",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.reviewable_histories",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.reviewable_notes",
+      "confidence_score": 50,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.reviewable_scores",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.reviewables",
+      "confidence_score": 66,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.scheduler_stats",
+      "confidence_score": 39,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 20,
+        "cost_score": 70
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.schema_migration_details",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.schema_migrations",
+      "confidence_score": 36,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 5,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.screened_emails",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.screened_ip_addresses",
+      "confidence_score": 57,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.screened_urls",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.search_logs",
+      "confidence_score": 50,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 95,
+        "performance_score": 15,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.shared_ai_conversations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.shared_drafts",
+      "confidence_score": 59,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.shelved_notifications",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.sidebar_section_links",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 75,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.sidebar_sections",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.sidebar_urls",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.silenced_assignments",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.single_sign_on_records",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.site_setting_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.site_settings",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 90,
+        "performance_score": 15,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.sitemaps",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.skipped_email_logs",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 95,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.stylesheet_cache",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.summary_sections",
+      "confidence_score": 33,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 95,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.tag_group_memberships",
+      "confidence_score": 59,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.tag_group_permissions",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.tag_groups",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.tag_localizations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.tag_search_data",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.tag_users",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.tags",
+      "confidence_score": 74,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.tags_web_hooks",
+      "confidence_score": 27,
+      "rationale": "No query activity detected for this table",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "No queries reference this table in the collection window"
+      ],
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_fields",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_modifier_sets",
+      "confidence_score": 57,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_settings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_settings_migrations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_site_settings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_svg_sprites",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.theme_translation_overrides",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.themes",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 95,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.top_topics",
+      "confidence_score": 51,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 65,
+        "complexity_score": 65,
+        "performance_score": 5,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 12%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_allowed_groups",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_allowed_users",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_custom_fields",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_embeds",
+      "confidence_score": 60,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_hot_scores",
+      "confidence_score": 64,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 70,
+        "performance_score": 25,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_invites",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_link_clicks",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_links",
+      "confidence_score": 72,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_localizations",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_search_data",
+      "confidence_score": 48,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 90,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_tags",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 90,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_thumbnails",
+      "confidence_score": 45,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 80,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_timers",
+      "confidence_score": 61,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 20,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_users",
+      "confidence_score": 72,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 90,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_view_stats",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_views",
+      "confidence_score": 30,
+      "rationale": "Strong time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 20,
+        "complexity_score": 55,
+        "performance_score": 5,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topic_voting_category_settings",
+      "confidence_score": 41,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 10,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_voting_topic_vote_count",
+      "confidence_score": 48,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 15,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.topic_voting_votes",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.topics",
+      "confidence_score": 75,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 70,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.translation_overrides",
+      "confidence_score": 62,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.unsubscribe_keys",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 95,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.upcoming_change_events",
+      "confidence_score": 57,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.upload_references",
+      "confidence_score": 48,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 80,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.uploads",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 80,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_actions",
+      "confidence_score": 65,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 80,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_api_key_client_scopes",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_api_key_clients",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_api_key_scopes",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_api_keys",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_archived_messages",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_associated_accounts",
+      "confidence_score": 59,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 20,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_associated_groups",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_auth_token_logs",
+      "confidence_score": 49,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 95,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_auth_tokens",
+      "confidence_score": 73,
+      "rationale": "Strong leaderboard and session-store candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-session-001",
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_avatars",
+      "confidence_score": 44,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_badges",
+      "confidence_score": 59,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 70,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 25%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_chat_channel_memberships",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 65,
+        "complexity_score": 70,
+        "performance_score": 5,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_chat_thread_memberships",
+      "confidence_score": 27,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 0,
+        "complexity_score": 75,
+        "performance_score": 0,
+        "cost_score": 50
+      },
+      "supporting_patterns": null,
+      "concerns": [
+        "Write-heavy workload (read ratio 0%) increases cache invalidation overhead"
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_custom_fields",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 85,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_emails",
+      "confidence_score": 58,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 25,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_exports",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_field_options",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_fields",
+      "confidence_score": 53,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_histories",
+      "confidence_score": 47,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 75,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_ip_address_histories",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_notification_schedules",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 10,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_open_ids",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_options",
+      "confidence_score": 61,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 50,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_passwords",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_profile_views",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_profiles",
+      "confidence_score": 48,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 60,
+        "performance_score": 25,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_required_fields_versions",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_search_data",
+      "confidence_score": 48,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 90,
+        "performance_score": 10,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_second_factors",
+      "confidence_score": 60,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_security_keys",
+      "confidence_score": 56,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 20,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_stats",
+      "confidence_score": 64,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 80,
+        "complexity_score": 70,
+        "performance_score": 25,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_statuses",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_uploads",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.user_visits",
+      "confidence_score": 67,
+      "rationale": "Strong leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 85,
+        "complexity_score": 80,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.user_warnings",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.users",
+      "confidence_score": 79,
+      "rationale": "Strong caching and leaderboard and time-series candidate",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 75,
+        "performance_score": 35,
+        "cost_score": 95
+      },
+      "supporting_patterns": [
+        "redis-caching-001",
+        "redis-leaderboard-001",
+        "redis-timeseries-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.watched_word_groups",
+      "confidence_score": 55,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 100,
+        "performance_score": 5,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.watched_words",
+      "confidence_score": 61,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 100,
+        "performance_score": 20,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.web_crawler_requests",
+      "confidence_score": 52,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 35,
+        "complexity_score": 100,
+        "performance_score": 15,
+        "cost_score": 50
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.web_hook_event_types",
+      "confidence_score": 54,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 45,
+        "complexity_score": 90,
+        "performance_score": 15,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.web_hook_event_types_hooks",
+      "confidence_score": 28,
+      "rationale": "Moderate workload detected but no strong migration patterns",
+      "score_breakdown": {
+        "pattern_match_score": 5,
+        "complexity_score": 60,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": null,
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.web_hook_events",
+      "confidence_score": 48,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 80,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "public.web_hook_events_daily_aggregates",
+      "confidence_score": 51,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 40,
+        "complexity_score": 90,
+        "performance_score": 10,
+        "cost_score": 60
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "public.web_hooks",
+      "confidence_score": 57,
+      "rationale": "Strong leaderboard candidate",
+      "score_breakdown": {
+        "pattern_match_score": 50,
+        "complexity_score": 85,
+        "performance_score": 20,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "redis-leaderboard-001"
+      ],
+      "concerns": null,
+      "migration_complexity": "MEDIUM"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "redis-caching-001",
+        "pattern_type": "caching",
+        "confidence": "HIGH",
+        "description": "Detected 3 high-frequency SELECT queries suitable for caching",
+        "query_ids": [
+          "-7551067248247426933",
+          "7025230785254451127",
+          "-5742163561492595810"
+        ],
+        "table_ids": [
+          "public.api_key_scopes",
+          "public.api_keys",
+          "public.users"
+        ],
+        "frequency_percent": 0.18137847642079807
+      },
+      {
+        "pattern_id": "redis-session-001",
+        "pattern_type": "session-store",
+        "confidence": "MEDIUM",
+        "description": "Detected session or user lookup patterns",
+        "query_ids": [
+          "-5927031768024532749",
+          "-1974524916895746886"
+        ],
+        "table_ids": [
+          "public.user_auth_tokens",
+          "unknown"
+        ],
+        "frequency_percent": 0.12091898428053204
+      },
+      {
+        "pattern_id": "redis-leaderboard-001",
+        "pattern_type": "leaderboard",
+        "confidence": "MEDIUM",
+        "description": "Detected ranking/leaderboard query patterns (ORDER BY + LIMIT)",
+        "query_ids": [
+          "7025230785254451127",
+          "-1602716336244625217",
+          "2949401854001144818",
+          "-2229249684013450830",
+          "6826449183265118530",
+          "1808844318287852918",
+          "1390640690527763004",
+          "7794711552236498212",
+          "-7615290150693229009",
+          "-2254340992805958683",
+          "-2737379763419002731",
+          "-8710165031828078757",
+          "7278955145337253793",
+          "-1534029783287028673",
+          "7332084627685228394",
+          "-7242907340372960807",
+          "7837473461810961085",
+          "-3053083297772159297",
+          "6826711034383817131",
+          "-3193856301211889036",
+          "-1179844003464550886",
+          "5010051216597228966",
+          "-5532906375556944207",
+          "8489813756843861235",
+          "-4657735504706866536",
+          "7682686902688830487",
+          "8141402772855022595",
+          "8283957491598813437",
+          "-4540499569423215511",
+          "-2219281150371335836",
+          "6491389966993170930",
+          "8191398053738929873",
+          "-7906638646931925422",
+          "7867144291288177551",
+          "2393238499254247328",
+          "-2126902423283042916",
+          "-8964547248665492217",
+          "5613834496745930396",
+          "8103230813110922376",
+          "4408185892816898559",
+          "-3983690881457160113",
+          "4545120196807849109",
+          "6657074412798940959",
+          "3902135112376113879",
+          "7878344277770259713",
+          "-8977741495026134173",
+          "-6175774472141093012",
+          "-6189805068782917532",
+          "-7535639640707101790",
+          "-1413608754244097612",
+          "-7533694964148006197",
+          "-5581650746972622891",
+          "-5272548625492493566",
+          "-315837101501372427",
+          "-300496098072847618",
+          "-7745666108570143205",
+          "-474350153585389341",
+          "-3561875505590624830",
+          "4933548533986307415",
+          "2675324315564474907",
+          "-4457441022698115814",
+          "961359219494899767",
+          "-4215057963694390591",
+          "6572827114015809263",
+          "6157275300738333978",
+          "685888892982097012",
+          "-7996683523272772048",
+          "7865826359643642743",
+          "-1330754677166013668",
+          "-5671385353774962278",
+          "-1974524916895746886",
+          "3252789394079404679",
+          "-2039684120543040350",
+          "7292100665492439618",
+          "7598703348511258835",
+          "2259020210458413582",
+          "-5481939256497558320",
+          "-6036929411178554051",
+          "2005058621851882830",
+          "4253263512682689512",
+          "1990519973131840831",
+          "4905717133137539738",
+          "-4980041717619845185",
+          "-8400597078852665671",
+          "264505752143190844",
+          "-4306077776368577388",
+          "-886128835241901962",
+          "1071821866664412189",
+          "-3492969709226696543",
+          "2569280667674600624",
+          "2576868685873863433",
+          "-1865084872888433006",
+          "-5908800003624449628",
+          "4429914391965282668",
+          "7808559004568833348",
+          "4501972205210561471",
+          "3564446706771137629",
+          "-4023109251189018993",
+          "4976475729516223017",
+          "1861721657625326369",
+          "2009356856875269766",
+          "6829029511482186838",
+          "938091314293305469",
+          "9071625862238311566",
+          "-8362446441995817350",
+          "2510296565388216794",
+          "-3529412378266055388",
+          "-5299924762698866390",
+          "7010209932027975332",
+          "-3203224814280946176",
+          "5478030731252565576",
+          "-5636015552671319981",
+          "7178495157092655369",
+          "4662625499430250475",
+          "5260556333236183808",
+          "938085769535767413",
+          "3756830763901544895",
+          "-6073168293450897439",
+          "-8491059448092032417",
+          "-4817116737200515865",
+          "-5409848600951212264",
+          "2339665957422339904",
+          "5341241118357077802",
+          "3382857474086564316",
+          "8511874033816409897",
+          "5134707959701838304",
+          "-7306156214942952334",
+          "1750050958145595338",
+          "7149771606067803051",
+          "5829022107319145419",
+          "-6881652490253255496",
+          "3355959069201843397",
+          "-1328873741424793931",
+          "-7940730680576332550",
+          "2405886827518306364",
+          "7483683001016674637",
+          "1281918328308679357",
+          "6979512532690513797",
+          "-407364549779816730",
+          "-8748744033165890059",
+          "2343284990073554612",
+          "-4552615160714048096",
+          "-7148613319047025181",
+          "-5283579652637359535",
+          "1227177099090094420",
+          "-7435184608810297394",
+          "-457147778879377042",
+          "5779399687545169665",
+          "3465310544858933935",
+          "-6503834076509517923",
+          "-5599111531928033859",
+          "-6471323376772479827",
+          "-7330738024435456508",
+          "6946259433174667106",
+          "6552347454646022856",
+          "8274005779073043157",
+          "6158250602764366565",
+          "5438095672668320041",
+          "7849627957057916558",
+          "-511290253230378339",
+          "3885673598561694928",
+          "-4058381805390196520",
+          "-4683277550056442497",
+          "8542172175575284615",
+          "5774051044469687877",
+          "7868541256111656663",
+          "-5170554928936418988",
+          "419561698647771809",
+          "8474300826436013604",
+          "654928829006360026",
+          "1207549728649113477",
+          "4786678248306548575",
+          "5670348402622559723",
+          "-6997969648734466119",
+          "-1366468012519243542",
+          "2029652543742243616",
+          "-8550910603495985414",
+          "-7708798026749373504",
+          "-9079857646312563842",
+          "-678611859119506308",
+          "4335359150118143182",
+          "-5930040289722984563",
+          "8089753146802579804",
+          "3903358922992619508",
+          "-1000823203494274772",
+          "2484145761590206778",
+          "-7269647831185931002",
+          "7024929048630398855",
+          "-5586199873412083557",
+          "-1259282824700340813",
+          "-4312569910370499580",
+          "7107768530381826640",
+          "-1249005700589742180",
+          "3549284890212719011",
+          "5642030393389593033",
+          "-968974765949962540",
+          "6701229165684951537",
+          "-1621636543122909883",
+          "5128569853349621174",
+          "-1113812928965792605",
+          "-572822285798391684",
+          "-5833613103609007378",
+          "8124931048701709468",
+          "5026464283372811511",
+          "6169176701755803140",
+          "9144949915940616211",
+          "301950949592870645",
+          "3779407423740659555",
+          "-5703656507900044281",
+          "-3968615903783063182",
+          "7551743092387284843",
+          "6489211740518170984",
+          "6628918243500046796",
+          "8166140768438420031",
+          "6508266934729175966",
+          "3292799485352178246",
+          "-6617767148308311415",
+          "5873516161118699459",
+          "-8290435954551753267",
+          "8445630872540417263",
+          "-3306470726594940534",
+          "8957703839335549480",
+          "1574080501833188131",
+          "3458469600565854411",
+          "1504374690383322942",
+          "-824123034891587611",
+          "482932977922097542",
+          "3937283848163657068",
+          "-5311596384963382407",
+          "8822173397344570347",
+          "-3536306580163684720",
+          "3431441312176705961",
+          "6852115483579482966",
+          "5722586690459735033",
+          "-8817989101063680101",
+          "-7701439627296867585",
+          "8328313726663333128",
+          "-8374368996055686289",
+          "-6271553852715715211",
+          "5533569248215450991",
+          "2314682383524028446",
+          "3852449019273645952",
+          "-7772446406543866798",
+          "6477553172727427340",
+          "8260386708419179657",
+          "-4509198221312966157",
+          "6812955801702557664",
+          "-8389585861970127575",
+          "3120954939807187915",
+          "6303931783715845318",
+          "-4682149677444953085",
+          "-8661271596279618329",
+          "1436606011281903875",
+          "2806532498853301478",
+          "8432538210495811043",
+          "5881666641232206541",
+          "-1477453022461915049",
+          "4251406132422509510",
+          "5406260258595998921",
+          "-8728201540361216343",
+          "6407317680255509867",
+          "-3750695126046007509",
+          "-1721632459022732857",
+          "-1017864778902155060",
+          "461174567081068331",
+          "-6163634341443868161",
+          "5363531450619259775",
+          "-2860776499990238726",
+          "8711305687902073408",
+          "-1091174960893812121",
+          "7025800081613136008",
+          "9187689700586432471",
+          "-4787725416199930402",
+          "7829726744181600012",
+          "-2341089822409255441",
+          "-5700787204340243342",
+          "2377491428608003801",
+          "2256105594275727741",
+          "1242110353076717374",
+          "3686834716510845110",
+          "-4659618402561955299",
+          "5405535409155913091",
+          "6961787728586610160",
+          "1888256815691595881",
+          "7908854167178775789",
+          "6557155676952976757",
+          "8496821054402417371",
+          "-6877180358148758483",
+          "373798747538230469",
+          "8803938825104368762",
+          "-4407452083168858318",
+          "-1640123711666451158",
+          "4673070021145091638",
+          "5695333200668412427",
+          "5432933628032331035",
+          "4632254263458614297",
+          "2065202332478627713",
+          "-6584047974916090801",
+          "8267795477155885055",
+          "6135034163160161416",
+          "7398389068923671335",
+          "5661416304127772335",
+          "341983454601024163",
+          "-8647972239736154945",
+          "-3332123755236206205",
+          "7825053714488380373",
+          "-8587531367421632660",
+          "-2570878641001751275",
+          "-6755304694253621293",
+          "8639371723949465214",
+          "5361342612269561195",
+          "3895082344694045392",
+          "-336330415767644206",
+          "-3768388299555846654",
+          "292828900660273334",
+          "8058582496086435890",
+          "-3430461297154585333",
+          "8248350005856979501",
+          "-3289084995337174283",
+          "8782993669416900199",
+          "-377205314672439040",
+          "-3665954557450632788",
+          "-7712622221247931722",
+          "-7233678288628276076",
+          "2621455123917191103",
+          "675217097362407078",
+          "7454315736152562462",
+          "-6722499829561798994",
+          "-1441676284831744920",
+          "2351847411664941068",
+          "705673191115403798",
+          "-279273619853154437",
+          "7640847530093131267",
+          "-611589077839281512",
+          "7884653858212002857",
+          "28022568383625834",
+          "-7281525675388216478",
+          "-7241518665225533876",
+          "1335228096605655940",
+          "-8399431433360144800",
+          "4124790721943303108",
+          "-4307159104280053213",
+          "-1854242127936629597",
+          "-7844703372895600453",
+          "7482943998060137352",
+          "7243180267374819045",
+          "-7566603695525044144",
+          "6872019859485183992",
+          "-8826845071464972346",
+          "-2504234037844169316",
+          "-7342784054445875993",
+          "2249843989217633705",
+          "-4239036059124250306",
+          "3050822896130397197",
+          "2046474372964063502"
+        ],
+        "table_ids": [
+          "public.admin_notices",
+          "public.ai_agent_mcp_servers",
+          "public.ai_agents",
+          "public.ai_api_audit_logs",
+          "public.ai_api_request_stats",
+          "public.ai_artifact_key_values",
+          "public.ai_artifact_versions",
+          "public.ai_artifacts",
+          "public.ai_mcp_oauth_tokens",
+          "public.ai_mcp_servers",
+          "public.ai_moderation_settings",
+          "public.ai_secrets",
+          "public.ai_spam_logs",
+          "public.ai_summaries",
+          "public.ai_tool_actions",
+          "public.ai_tool_secret_bindings",
+          "public.ai_tools",
+          "public.allowed_pm_users",
+          "public.anonymous_users",
+          "public.api_key_scopes",
+          "public.api_keys",
+          "public.application_requests",
+          "public.assignments",
+          "public.associated_groups",
+          "public.backup_draft_posts",
+          "public.backup_draft_topics",
+          "public.badge_groupings",
+          "public.badge_types",
+          "public.badges",
+          "public.bookmarks",
+          "public.calendar_events",
+          "public.categories",
+          "public.category_custom_fields",
+          "public.category_featured_topics",
+          "public.category_form_templates",
+          "public.category_groups",
+          "public.category_localizations",
+          "public.category_moderation_groups",
+          "public.category_posting_review_groups",
+          "public.category_required_tag_groups",
+          "public.category_search_data",
+          "public.category_settings",
+          "public.category_tag_groups",
+          "public.category_tag_stats",
+          "public.category_tags",
+          "public.category_users",
+          "public.chat_channels",
+          "public.chat_message_custom_prompts",
+          "public.chat_message_search_data",
+          "public.chat_messages",
+          "public.child_themes",
+          "public.classification_results",
+          "public.color_scheme_colors",
+          "public.color_schemes",
+          "public.completion_prompts",
+          "public.custom_emojis",
+          "public.developers",
+          "public.directory_columns",
+          "public.directory_items",
+          "public.discourse_automation_automations",
+          "public.discourse_calendar_post_event_dates",
+          "public.discourse_post_event_events",
+          "public.dismissed_topic_users",
+          "public.do_not_disturb_timings",
+          "public.draft_sequences",
+          "public.drafts",
+          "public.email_change_requests",
+          "public.email_logs",
+          "public.email_tokens",
+          "public.embeddable_host_tags",
+          "public.embeddable_hosts",
+          "public.embedding_definitions",
+          "public.external_upload_stubs",
+          "public.flags",
+          "public.form_templates",
+          "public.gamification_leaderboards",
+          "public.gamification_scores",
+          "public.group_archived_messages",
+          "public.group_associated_groups",
+          "public.group_category_notification_defaults",
+          "public.group_custom_fields",
+          "public.group_histories",
+          "public.group_mentions",
+          "public.group_requests",
+          "public.group_tag_notification_defaults",
+          "public.group_users",
+          "public.groups",
+          "public.ignored_users",
+          "public.incoming_domains",
+          "public.incoming_emails",
+          "public.incoming_links",
+          "public.incoming_referers",
+          "public.inferred_concepts",
+          "public.invited_groups",
+          "public.invited_users",
+          "public.invites",
+          "public.linked_topics",
+          "public.llm_credit_allocations",
+          "public.llm_credit_daily_usages",
+          "public.llm_feature_credit_costs",
+          "public.llm_models",
+          "public.llm_quota_usages",
+          "public.llm_quotas",
+          "public.model_accuracies",
+          "public.moved_posts",
+          "public.muted_users",
+          "public.notifications",
+          "public.oauth2_user_infos",
+          "public.onceoff_logs",
+          "public.optimized_images",
+          "public.optimized_videos",
+          "public.permalinks",
+          "public.plugin_store_rows",
+          "public.policy_users",
+          "public.poll_options",
+          "public.polls",
+          "public.post_action_types",
+          "public.post_actions",
+          "public.post_custom_fields",
+          "public.post_custom_prompts",
+          "public.post_details",
+          "public.post_localizations",
+          "public.post_policies",
+          "public.post_policy_groups",
+          "public.post_reply_keys",
+          "public.post_revisions",
+          "public.post_search_data",
+          "public.post_stats",
+          "public.post_voting_comment_custom_fields",
+          "public.post_voting_comments",
+          "public.post_voting_votes",
+          "public.posts",
+          "public.problem_check_trackers",
+          "public.published_pages",
+          "public.push_subscriptions",
+          "public.quoted_posts",
+          "public.rag_document_fragments",
+          "public.redelivering_webhook_events",
+          "public.remote_themes",
+          "public.reviewable_claimed_topics",
+          "public.reviewable_histories",
+          "public.reviewable_notes",
+          "public.reviewable_scores",
+          "public.reviewables",
+          "public.schema_migration_details",
+          "public.screened_emails",
+          "public.screened_ip_addresses",
+          "public.screened_urls",
+          "public.search_logs",
+          "public.shared_ai_conversations",
+          "public.shared_drafts",
+          "public.shelved_notifications",
+          "public.sidebar_section_links",
+          "public.sidebar_sections",
+          "public.sidebar_urls",
+          "public.silenced_assignments",
+          "public.single_sign_on_records",
+          "public.site_setting_groups",
+          "public.site_settings",
+          "public.sitemaps",
+          "public.skipped_email_logs",
+          "public.stylesheet_cache",
+          "public.tag_group_memberships",
+          "public.tag_group_permissions",
+          "public.tag_groups",
+          "public.tag_localizations",
+          "public.tag_search_data",
+          "public.tag_users",
+          "public.tags",
+          "public.theme_fields",
+          "public.theme_modifier_sets",
+          "public.theme_settings",
+          "public.theme_settings_migrations",
+          "public.theme_site_settings",
+          "public.theme_svg_sprites",
+          "public.theme_translation_overrides",
+          "public.themes",
+          "public.top_topics",
+          "public.topic_allowed_groups",
+          "public.topic_allowed_users",
+          "public.topic_custom_fields",
+          "public.topic_embeds",
+          "public.topic_groups",
+          "public.topic_hot_scores",
+          "public.topic_invites",
+          "public.topic_link_clicks",
+          "public.topic_links",
+          "public.topic_localizations",
+          "public.topic_search_data",
+          "public.topic_tags",
+          "public.topic_thumbnails",
+          "public.topic_timers",
+          "public.topic_users",
+          "public.topic_view_stats",
+          "public.topic_voting_votes",
+          "public.topics",
+          "public.translation_overrides",
+          "public.unsubscribe_keys",
+          "public.upcoming_change_events",
+          "public.upload_references",
+          "public.uploads",
+          "public.user_actions",
+          "public.user_api_key_client_scopes",
+          "public.user_api_key_clients",
+          "public.user_api_key_scopes",
+          "public.user_api_keys",
+          "public.user_archived_messages",
+          "public.user_associated_accounts",
+          "public.user_associated_groups",
+          "public.user_auth_token_logs",
+          "public.user_auth_tokens",
+          "public.user_avatars",
+          "public.user_badges",
+          "public.user_chat_channel_memberships",
+          "public.user_custom_fields",
+          "public.user_emails",
+          "public.user_exports",
+          "public.user_field_options",
+          "public.user_fields",
+          "public.user_histories",
+          "public.user_ip_address_histories",
+          "public.user_notification_schedules",
+          "public.user_open_ids",
+          "public.user_options",
+          "public.user_passwords",
+          "public.user_profile_views",
+          "public.user_profiles",
+          "public.user_required_fields_versions",
+          "public.user_search_data",
+          "public.user_second_factors",
+          "public.user_security_keys",
+          "public.user_stats",
+          "public.user_statuses",
+          "public.user_uploads",
+          "public.user_visits",
+          "public.user_warnings",
+          "public.users",
+          "public.watched_word_groups",
+          "public.watched_words",
+          "public.web_crawler_requests",
+          "public.web_hook_event_types",
+          "public.web_hook_events",
+          "public.web_hook_events_daily_aggregates",
+          "public.web_hooks"
+        ],
+        "frequency_percent": 21.463119709794437
+      },
+      {
+        "pattern_id": "redis-timeseries-001",
+        "pattern_type": "time-series",
+        "confidence": "MEDIUM",
+        "description": "Detected time series aggregation patterns",
+        "query_ids": [
+          "-2229249684013450830",
+          "7611281791412075472",
+          "-2737379763419002731",
+          "-8710165031828078757",
+          "2040020623867184355",
+          "5144715013755698936",
+          "2970857995478110394",
+          "-6763543732371414534",
+          "-1004235067717942071",
+          "6169459376937595858",
+          "-8584217811922084942",
+          "3902135112376113879",
+          "-1660360859863392351",
+          "-4799317785105149624",
+          "6987826367712605538",
+          "-6442466429009365552",
+          "-2717559100013712792",
+          "3353888636379930360",
+          "-2864669685797348249",
+          "-5950788889771999588",
+          "-7185097824561554817",
+          "5118120564598251580",
+          "3684205725107205315",
+          "5572403115239036930",
+          "-8370432530087673463",
+          "909992139203371394",
+          "1216033589518599100",
+          "6356404669745832141",
+          "3944477294737226067",
+          "-1853555041741715826",
+          "-6947345877943528501",
+          "535016033615599427",
+          "3495374680662967459",
+          "6638974776237358290",
+          "-6979369317897571151",
+          "4134196159145128452",
+          "-5658934198442176954",
+          "983175630980832915",
+          "-428618377466171696",
+          "7599796186737283499",
+          "-6964554303921391221",
+          "338963197926644072",
+          "7547741912898954106",
+          "4976475729516223017",
+          "2410607677652360243",
+          "-2145280970755321440",
+          "2003249409411440803",
+          "-338325340284795114",
+          "-5068298447400723681",
+          "-6480951750315674342",
+          "645815335720628763",
+          "-4431378267206090646",
+          "-5958614937945225961",
+          "-907987643280610645",
+          "1220692297187363656",
+          "-2314078559829778982",
+          "8511874033816409897",
+          "-7306156214942952334",
+          "-839977719595330808",
+          "-7404496403021978255",
+          "-4552615160714048096",
+          "-4565844634331573086",
+          "4555734156672259118",
+          "6552347454646022856",
+          "-8422869144669894201",
+          "-2162485691724703076",
+          "8831514578829869739",
+          "-7178360157763612586",
+          "-3705832016463242135",
+          "4056878213227261100",
+          "-7185720404482671605",
+          "4430338058950768112",
+          "3874519334780150901",
+          "2186222807369346904",
+          "8517207344322383878",
+          "2251886690646688742",
+          "5467353937489111082",
+          "-7573284693031314003",
+          "6261178101635825556",
+          "6070672324718259578",
+          "-6077760688981531505",
+          "-4418425690543798143",
+          "4890482523784121838",
+          "-8830672598839447375",
+          "8493988727057762927",
+          "-833810342053494812",
+          "-6528272821321133621"
+        ],
+        "table_ids": [
+          "public.anonymous_users",
+          "public.badges",
+          "public.categories",
+          "public.category_featured_topics",
+          "public.category_groups",
+          "public.category_tag_stats",
+          "public.category_users",
+          "public.chat_channels",
+          "public.chat_message_reactions",
+          "public.chat_messages",
+          "public.chat_threads",
+          "public.direct_message_users",
+          "public.directory_items",
+          "public.discourse_solved_solved_topics",
+          "public.flags",
+          "public.gamification_leaderboards",
+          "public.gamification_score_events",
+          "public.gamification_scores",
+          "public.given_daily_likes",
+          "public.group_users",
+          "public.ignored_users",
+          "public.incoming_links",
+          "public.invited_users",
+          "public.invites",
+          "public.notifications",
+          "public.post_actions",
+          "public.post_revisions",
+          "public.post_search_data",
+          "public.post_timings",
+          "public.posts",
+          "public.quoted_posts",
+          "public.reviewables",
+          "public.tags",
+          "public.top_topics",
+          "public.topic_allowed_groups",
+          "public.topic_allowed_users",
+          "public.topic_hot_scores",
+          "public.topic_links",
+          "public.topic_tags",
+          "public.topic_users",
+          "public.topic_views",
+          "public.topics",
+          "public.user_actions",
+          "public.user_badges",
+          "public.user_chat_channel_memberships",
+          "public.user_options",
+          "public.user_stats",
+          "public.user_visits",
+          "public.users"
+        ],
+        "frequency_percent": 5.259975816203144
+      }
+    ],
+    "anti_patterns_detected": []
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 184.67,
+    "cost_components": {
+      "primary_node": 92.27,
+      "replica_nodes": 92.27,
+      "backup_storage": 0.04,
+      "data_transfer": 0.08,
+      "instance_type": "cache.m7g.large",
+      "replica_count": 1,
+      "list_prices": "elasticache.valkey",
+      "price_list": {
+        "source": "AWS Price List",
+        "region": "us-east-1",
+        "pricing_model": "on-demand",
+        "retrieved_on": "2026-11-04"
+      }
+    },
+    "pricing_assumptions": [
+      "Instance: Valkey cache.m7g.large (6.38 GiB, $0.1264/hr) in us-east-1",
+      "Estimated cache size: 0.5 GB (15% of 41 MB source)",
+      "Estimated throughput: 34 ops/sec (31 reads + 3 writes)",
+      "1 replica for high availability",
+      "On-demand pricing (no reserved instances)",
+      "Daily backup snapshot included",
+      "Cross-AZ replication data transfer estimated from write throughput"
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": null,
+  "key_scoped_writes": null,
+  "key_scoped_counts": null,
+  "redesign_requirements": null,
+  "carried_writes": null
+}

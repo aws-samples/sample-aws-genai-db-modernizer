@@ -1,0 +1,259 @@
+{
+  "contract_version": "1.2",
+  "job_id": "61bd7de6",
+  "source_database": "discourse",
+  "target_engine": "elasticache",
+  "key_designs": [
+    {
+      "key_pattern": "users:{username_lower}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "public.users"
+      ],
+      "fields_mapped": [
+        "id",
+        "username",
+        "username_lower",
+        "name",
+        "title",
+        "active",
+        "admin",
+        "moderator",
+        "staged",
+        "approved",
+        "trust_level",
+        "locale",
+        "primary_group_id",
+        "flair_group_id",
+        "uploaded_avatar_id",
+        "suspended_till",
+        "silenced_till",
+        "last_seen_at",
+        "last_posted_at"
+      ],
+      "ttl_seconds": 300,
+      "eviction_notes": "The 300 second TTL bounds how long a changed user row (suspension, silencing, trust level, username) stays stale when the delete after the owner write fails, and it keeps the key evictable under volatile-lru.",
+      "estimated_key_count": 53,
+      "estimated_avg_value_bytes": 600,
+      "rationale": "Query `-7551067` reads one users row by the unique username_lower and runs about 3.3 times a second. A hash holds the row as fields so HGETALL returns it in one round trip. The key is single-key and needs no hash tag; the lookup value username_lower is the key suffix.",
+      "example_key": "users:<username_lower>",
+      "example_value": "{\"id\": 42, \"username\": \"<username>\", \"username_lower\": \"<username_lower>\", \"active\": true, \"admin\": false, \"moderator\": false, \"staged\": false, \"trust_level\": 1, \"locale\": \"en\", \"suspended_till\": null, \"silenced_till\": null}"
+    },
+    {
+      "key_pattern": "api_keys:{key_hash}",
+      "data_type": "hash",
+      "use_case": "caching",
+      "source_tables": [
+        "public.api_keys"
+      ],
+      "fields_mapped": [
+        "id",
+        "user_id",
+        "created_by_id",
+        "hidden",
+        "scope_mode",
+        "allowed_ips",
+        "last_used_at",
+        "revoked_at"
+      ],
+      "ttl_seconds": 60,
+      "eviction_notes": "The 60 second TTL bounds how long a revoked key keeps authenticating when the delete after the revocation fails, and it keeps the key evictable under volatile-lru. Only rows with revoked_at null are cached.",
+      "estimated_key_count": 1,
+      "estimated_avg_value_bytes": 300,
+      "rationale": "Query `70252307` looks up the one active API key by its hash, about 3.3 times a second, and the filter on revoked_at null plus ORDER BY id LIMIT returns at most one row. A hash with a short TTL serves the lookup with HGETALL. The key suffix is the key_hash column, a credential, so the example uses a placeholder.",
+      "example_key": "api_keys:<token>",
+      "example_value": "{\"id\": 1, \"user_id\": 42, \"created_by_id\": 42, \"hidden\": false, \"scope_mode\": 0, \"last_used_at\": null, \"revoked_at\": null}"
+    },
+    {
+      "key_pattern": "api_key_scopes:{api_key_id}",
+      "data_type": "string",
+      "use_case": "caching",
+      "source_tables": [
+        "public.api_key_scopes"
+      ],
+      "fields_mapped": [
+        "id",
+        "api_key_id",
+        "resource",
+        "action",
+        "allowed_parameters"
+      ],
+      "ttl_seconds": 300,
+      "eviction_notes": "The 300 second TTL bounds how long a changed scope list stays stale, and it keeps the key evictable under volatile-lru. An empty list is cached as an empty JSON array so a key with no scopes does not reach the owner on every call.",
+      "estimated_key_count": 1,
+      "estimated_avg_value_bytes": 200,
+      "rationale": "Query `-5742163` returns all scope rows of one API key, about 3.3 times a second, and the average result is zero rows. One string holding the serialized array keeps the whole list in a single GET and works on every engine version.",
+      "example_key": "api_key_scopes:1",
+      "example_value": "[]"
+    }
+  ],
+  "access_patterns": [
+    {
+      "pattern_id": "EC-AP-1",
+      "description": "Look up a user by lowercase username from the cache, and fill the cache from the owner on a miss.",
+      "operation": "HGETALL",
+      "key_pattern": "users:{username_lower}",
+      "command_example": "HGETALL users:<username_lower>",
+      "source_tables": [
+        "public.users"
+      ],
+      "source_query_ids": [
+        "-7551067248247426933"
+      ],
+      "pipeline_commands": [
+        "HSET users:<username_lower> id 42 username <username> trust_level 1",
+        "EXPIRE users:<username_lower> 300"
+      ]
+    },
+    {
+      "pattern_id": "EC-AP-2",
+      "description": "Look up an active API key by its hash from the cache, and fill the cache from the owner on a miss.",
+      "operation": "HGETALL",
+      "key_pattern": "api_keys:{key_hash}",
+      "command_example": "HGETALL api_keys:<token>",
+      "source_tables": [
+        "public.api_keys"
+      ],
+      "source_query_ids": [
+        "7025230785254451127"
+      ],
+      "pipeline_commands": [
+        "HSET api_keys:<token> id 1 user_id 42 hidden 0",
+        "EXPIRE api_keys:<token> 60"
+      ]
+    },
+    {
+      "pattern_id": "EC-AP-3",
+      "description": "Read all scopes of an API key as one serialized list from the cache, and fill the cache from the owner on a miss.",
+      "operation": "GET",
+      "key_pattern": "api_key_scopes:{api_key_id}",
+      "command_example": "GET api_key_scopes:1",
+      "source_tables": [
+        "public.api_key_scopes"
+      ],
+      "source_query_ids": [
+        "-5742163561492595810"
+      ],
+      "pipeline_commands": [
+        "SET api_key_scopes:1 \"[]\" EX 300"
+      ]
+    }
+  ],
+  "cache_invalidation": [
+    {
+      "key_pattern": "users:{username_lower}",
+      "strategy": "manual",
+      "description": "The application deletes the key after each owner write on the users row. A username change deletes the key of the old username_lower and of the new one. The 300 second TTL ends the staleness if a delete fails.",
+      "source_write_query_ids": [
+        "-439324983697871549",
+        "-2497336206258084571",
+        "-2782077088915282901",
+        "6393695394883266315",
+        "-7268244878270074906",
+        "-7318606370788713916"
+      ]
+    },
+    {
+      "key_pattern": "api_keys:{key_hash}",
+      "strategy": "manual",
+      "description": "The application deletes the key when the owner revokes or changes the API key. The last_used_at update does not delete the key: the cached last_used_at is stale by up to the 60 second TTL.",
+      "source_write_query_ids": [
+        "-2787986452481923624"
+      ]
+    },
+    {
+      "key_pattern": "api_key_scopes:{api_key_id}",
+      "strategy": "ttl",
+      "description": "The collection captured no owner write on API key scopes, so the key expires after 300 seconds and a changed scope list is stale until then. A read that must see a scope change immediately reads the owner database.",
+      "source_write_query_ids": []
+    }
+  ],
+  "unsupported_patterns": [],
+  "migration_notes": [],
+  "trade_offs": [
+    {
+      "description": "User rows are cached by lowercase username with a 300 second TTL, and the application deletes the key after each owner write.",
+      "impact": "A suspension or silencing that is not followed by a successful delete is visible to cached reads for up to 300 seconds. A read that must see the change at once reads the owner database, which serves every cache miss.",
+      "source_tables": [
+        "public.users"
+      ],
+      "target_tables": [
+        "users:{username_lower}"
+      ],
+      "query_ids": [
+        "-7551067248247426933"
+      ],
+      "engine": "elasticache",
+      "topic": "consistency"
+    },
+    {
+      "description": "API key rows are cached by key hash with a 60 second TTL, and only keys with revoked_at null are cached.",
+      "impact": "A revoked key keeps authenticating for up to 60 seconds if the delete after the revocation fails. A hash that matches no active key is not cached, so every request with an unknown hash is served by the owner database.",
+      "source_tables": [
+        "public.api_keys"
+      ],
+      "target_tables": [
+        "api_keys:{key_hash}"
+      ],
+      "query_ids": [
+        "7025230785254451127"
+      ],
+      "engine": "elasticache",
+      "topic": "consistency"
+    },
+    {
+      "description": "The key hash is a credential and forms part of the cache key name.",
+      "impact": "Key names appear in cache monitoring and slow logs, so the stored hash, never the raw API key, is used in the name and access to those tools is limited to operators.",
+      "source_tables": [
+        "public.api_keys"
+      ],
+      "target_tables": [
+        "api_keys:{key_hash}"
+      ],
+      "query_ids": [
+        "7025230785254451127"
+      ],
+      "engine": "elasticache",
+      "topic": "operational"
+    },
+    {
+      "description": "API key scopes are cached as one serialized array per API key, with an empty array cached for a key with no scopes.",
+      "impact": "Scope changes are visible after the 300 second TTL expires, because no owner write on scopes was captured to trigger a delete. The array is read and written whole, so a single scope cannot be read alone.",
+      "source_tables": [
+        "public.api_key_scopes"
+      ],
+      "target_tables": [
+        "api_key_scopes:{api_key_id}"
+      ],
+      "query_ids": [
+        "-5742163561492595810"
+      ],
+      "engine": "elasticache",
+      "topic": "key_design"
+    },
+    {
+      "description": "All three workloads are single-key reads of small values, with an estimated total below 1 MB.",
+      "impact": "Every key sits in its own hash slot with no multi-key command, so no hash tag is needed and no slot is hot. Memory is not a constraint at this size, and every key carries a TTL so it stays evictable.",
+      "source_tables": [
+        "public.users",
+        "public.api_keys",
+        "public.api_key_scopes"
+      ],
+      "target_tables": [
+        "users:{username_lower}",
+        "api_keys:{key_hash}",
+        "api_key_scopes:{api_key_id}"
+      ],
+      "query_ids": [
+        "-7551067248247426933",
+        "7025230785254451127",
+        "-5742163561492595810"
+      ],
+      "engine": "elasticache",
+      "topic": "capacity"
+    }
+  ],
+  "validation_passed": true,
+  "validation_failures": []
+}

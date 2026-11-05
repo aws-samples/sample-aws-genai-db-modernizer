@@ -23,8 +23,8 @@
 #                       `determinism` (test_deliverable_determinism.py), `cross` (the
 #                       other report checks, tied to no sample), `ui` (UI smoke +
 #                       help site, the only shard that builds the UI and the site),
-#                       or `replay` (ci/replay.sh: the saved real-model run's checks,
-#                       no browser, #1409). Unset runs everything, as before. The six report shards' -k
+#                       or `replay` (ci/replay.sh: the saved real-model runs' checks,
+#                       each saved fixture, no browser, #1409, #1847). Unset runs everything, as before. The six report shards' -k
 #                       expressions partition the report suite: each test lands in
 #                       exactly one of them (see e2e_shard_k).
 #
@@ -157,6 +157,6 @@ uv run pytest tests/e2e/test_ui.py tests/e2e/test_docs_site.py -m e2e -p no:xdis
 fi
 
 if [ "$run_replay" = 1 ]; then
-log "replay of the saved real-model run (#1409)"
+log "replay of the saved real-model runs (#1409, #1847)"
 "$(dirname "$0")/replay.sh"
 fi
