@@ -5,7 +5,7 @@
 
 ``src/catalog/dms_sizing.toml`` lists, in order, the rows step 1's replication instance is
 chosen from (the first row whose database-size and write-rate bounds both hold; the last row
-has no bounds) and the LOB rules the task settings follow. Loaded into strict Pydantic models
+has no bounds) the lag limit of the step's gate and the LOB rules the task settings follow. Loaded into strict Pydantic models
 like the rest of the catalog: an unknown field, a missing one or rows out of order fail at
 load time. The choice itself is ``src.tools.data_movement.dms_sizing``.
 """
@@ -24,6 +24,7 @@ from src.shared.catalog.engines import CatalogError
 __all__ = [
     "DMS_SIZING_FILE",
     "DmsSizingTable",
+    "GateRules",
     "LobRules",
     "SizingRow",
     "dms_sizing",
@@ -91,10 +92,20 @@ class LobRules(BaseModel):
         return self
 
 
+class GateRules(BaseModel):
+    """The lag limit of step 1's DMS gate, with its reason."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_lag_seconds: int = Field(strict=True, ge=1)
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
 class DmsSizingTable(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     rows: tuple[SizingRow, ...] = Field(min_length=1)
+    gate: GateRules
     lob: LobRules
 
     @model_validator(mode="after")

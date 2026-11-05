@@ -14,7 +14,7 @@ from pathlib import Path
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
 from src.tools.data_movement.dms_sizing import size_from_collector
-from src.tools.data_movement.plan import JobInputs, build_step_plans
+from src.tools.data_movement.plan import MAX_LAG_SECONDS, JobInputs, build_step_plans
 
 from .test_plan import _job, _waves
 
@@ -203,3 +203,12 @@ def test_the_cost_assumption_states_the_included_storage() -> None:
     s = size_from_collector(inputs.collector)
     plan = build_step_plans(inputs, prices=_prices())[0][0]
     assert any(f"{s.included_storage_gb} GB included" in a for a in plan.cost_assumptions)
+
+
+def test_the_dms_step_gates_on_the_catalog_lag_limit_and_other_tools_keep_theirs() -> None:
+    steps, _hub = build_step_plans(_job(), prices=None)
+    assert steps[0].cdc.tool == "dms"
+    assert steps[0].gates.max_lag_seconds == dms_sizing().gate.max_lag_seconds == 30
+    assert any("30 seconds" in n for n in steps[0].notes)
+    later = [s for s in steps[1:] if s.cdc.tool != "dms"]
+    assert later and all(s.gates.max_lag_seconds == MAX_LAG_SECONDS == 5 for s in later)
