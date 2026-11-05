@@ -537,6 +537,8 @@ def _build_queries(raw: list[dict]) -> Queries:
             query_type=p.get("query_type"),
             frequency_per_hour=p["frequency_per_hour"],
             calls_per_second=p.get("calls_per_second"),
+            rate_window_seconds=p.get("rate_window_seconds"),
+            rate_window_basis=p.get("rate_window_basis"),
             tables_accessed=p["tables_accessed"] or ["unknown"],
             execution_time_ms_avg=p.get("execution_time_ms_avg"),
             execution_time_ms_min=p.get("execution_time_ms_min"),

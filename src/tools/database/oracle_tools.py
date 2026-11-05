@@ -12,12 +12,19 @@ Oracle uppercases unquoted identifiers — all output from this module is
 lowercased for downstream consistency.
 """
 
+import functools
 import hashlib
 import logging
 import re
 
 from src.agents.collector.routine_rows import trigger_timing
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
+from src.shared.rate_window import (
+    ServerWindow,
+    first_row_figure,
+    server_window,
+    statement_rate_fields,
+)
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.index_keys import add_index_key
@@ -463,6 +470,8 @@ class OracleRemoteCollector:
 
         patterns = []
         reader = LiveQueryReader("oracle", "oracle_tools", empty=())
+        # #1893: read once, and only if a statement has no usable window of its own.
+        counters_window = functools.cache(self.stats_window)
         for r in raw:
             query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
@@ -497,8 +506,11 @@ class OracleRemoteCollector:
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "oracle"),
                     "execution_count": calls,
-                    "frequency_per_hour": calls / 24,
-                    "calls_per_second": calls / (24 * 3600),
+                    # #1893: over the cursor's FIRST_LOAD_TIME to LAST_ACTIVE_TIME, else
+                    # the instance's uptime.
+                    **statement_rate_fields(
+                        calls, r.get("first_seen"), r.get("last_seen"), counters_window
+                    ),
                     "execution_time_ms_avg": round(avg_ms, 3),
                     "execution_time_ms_min": None,  # V$SQLSTATS has no per-exec min
                     "execution_time_ms_max": None,  # V$SQLSTATS has no per-exec max
@@ -535,6 +547,18 @@ class OracleRemoteCollector:
             )
         reader.log_fallbacks()
         return patterns
+
+    def stats_window(self) -> ServerWindow | None:
+        """The window ``V$SQL``'s counters can cover (#1893): the instance's uptime
+        (``V$INSTANCE.STARTUP_TIME``). None when it can't be read."""
+        try:
+            rows = self._query(
+                "SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) AS uptime_seconds "
+                "FROM V$INSTANCE"
+            )
+        except Exception:  # noqa: BLE001 -- no uptime: the rates fall back to 24 hours
+            return None
+        return server_window(uptime_seconds=first_row_figure(rows, "uptime_seconds"))
 
     # -------------------------------------------------------------------
     # Global stats

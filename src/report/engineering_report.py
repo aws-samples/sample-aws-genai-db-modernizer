@@ -1252,6 +1252,10 @@ def render_engineering_report_md(
     row_counts = (facts.get("row_counts") or {}).get("statement")
     if row_counts:
         out += [f"Row counts: {escaping.md_text(row_counts)}.", ""]
+    # #1893: what the call rates rest on, whichever basis drove them.
+    rate_windows = (facts.get("rate_windows") or {}).get("statement")
+    if rate_windows:
+        out += [f"Call rates: {escaping.md_text(rate_windows)}.", ""]
     trust = summary_trusted(report) if trust_generated_summary is None else trust_generated_summary
     out += _summary_md(report, trust)
     out += _target_engines_md(report)

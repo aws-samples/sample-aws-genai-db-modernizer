@@ -554,7 +554,9 @@ BEGIN
                 (SELECT VALUE FROM V$OSSTAT WHERE STAT_NAME = 'PHYSICAL_MEMORY_BYTES') / 1024/1024/1024, 2),
             'sga_size_gb' VALUE (SELECT ROUND(SUM(VALUE)/1024/1024/1024, 2) FROM V$SGA),
             'pga_allocated_gb' VALUE (SELECT ROUND(VALUE/1024/1024/1024, 2) FROM V$PGASTAT WHERE NAME = 'total PGA allocated'),
-            'db_uptime_hours' VALUE (SELECT ROUND((SYSDATE - STARTUP_TIME) * 24, 1) FROM V$INSTANCE)
+            'db_uptime_hours' VALUE (SELECT ROUND((SYSDATE - STARTUP_TIME) * 24, 1) FROM V$INSTANCE),
+            -- #1893: in seconds, the statement rates' fallback window.
+            'db_uptime_seconds' VALUE (SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) FROM V$INSTANCE)
         ) AS j FROM DUAL
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j);

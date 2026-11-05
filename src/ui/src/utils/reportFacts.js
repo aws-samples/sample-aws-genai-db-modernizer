@@ -393,6 +393,15 @@ export function rowCountStatementOf(synthesis) {
   return typeof statement === 'string' && statement ? statement : null;
 }
 
+// #1893: the sentence every deliverable prints about the call rates
+// (facts.rate_windows.statement): how many rates used each window basis, and that the
+// costs assume each rate runs continuously. Null for a report written before the fact.
+export function rateWindowStatementOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).rate_windows;
+  const statement = fact && fact.statement;
+  return typeof statement === 'string' && statement ? statement : null;
+}
+
 // #1527: the stream sync of a DynamoDB design conflict's derived copies
 // (facts.derived_copy_sync), printed under the risk it belongs to. The sentences are the
 // facts' own; `basis` is the figures' assumptions, carried by the first sync only.

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import boto3
 
 from src.agents.collector.routine_rows import merge_trigger_rows
+from src.shared.rate_window import ServerWindow, server_window, statement_rate_fields
 from src.shared.sample_rows import without_sample_rows
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
 from src.tools.database.index_keys import add_index_key, expression_key_fields
@@ -377,6 +378,8 @@ def _parse_offline_collection(
             table_schemas=table_schemas,
             shadow=shadow,
             source_engine=source_engine,
+            # #1893: the window a statement with no usable observed window falls back on.
+            server_window=_collection_server_window(data, source_engine),
         ),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
@@ -568,6 +571,14 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
             merged["first_seen"] = min(first_seens)
         if last_seens:
             merged["last_seen"] = max(last_seens)
+        # #1893: PostgreSQL 17's per-entry window, the oldest variant's (as first_seen).
+        ages = [
+            float(v["stats_since_age_seconds"])
+            for v in variants
+            if isinstance(v.get("stats_since_age_seconds"), int | float)
+        ]
+        if ages:
+            merged["stats_since_age_seconds"] = max(ages)
 
         merged.update(tags)
         merged_rows.append(merged)
@@ -1092,6 +1103,25 @@ def _rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
     return resolved
 
 
+def _collection_server_window(data: dict, source_engine: str) -> ServerWindow | None:
+    """The window an offline collection's statement counters cover (#1893).
+
+    PostgreSQL: only ``global_stats.stats_reset_age_seconds``, the time since
+    ``pg_stat_statements`` was reset (PostgreSQL 14+); its counters survive a restart, so
+    the uptime is never their window. Every other engine: its uptime,
+    ``os_stats.db_uptime_seconds`` (SQL Server, Oracle), ``global_stats.uptime`` (MySQL,
+    MariaDB) or, from an older collection, ``os_stats.db_uptime_hours``.
+    """
+    stats = data.get("global_stats") or {}
+    if source_engine == "postgresql":
+        return server_window(stats_reset_seconds=stats.get("stats_reset_age_seconds"))
+    os_stats = data.get("os_stats") or {}
+    return server_window(
+        uptime_seconds=os_stats.get("db_uptime_seconds") or stats.get("uptime"),
+        uptime_hours=os_stats.get("db_uptime_hours"),
+    )
+
+
 def _transform_queries(
     raw: list[dict],
     db_name: str,
@@ -1099,6 +1129,7 @@ def _transform_queries(
     table_schemas: Mapping[str, set[str]] | None = None,
     shadow: TableShadow | None = None,
     source_engine: str = "",
+    server_window: ServerWindow | None = None,
 ) -> list[dict]:
     """Transform raw MySQL performance_schema rows into the format _build_queries expects.
 
@@ -1121,6 +1152,12 @@ def _transform_queries(
     A PostgreSQL sequence-state read of a relation the schema does not hold
     (``SELECT last_value FROM public.badges_id_seq``) has no source table, so
     its ``tables_accessed`` is ``["unknown"]`` (``is_unlisted_sequence_read``, #783).
+
+    Each row's ``frequency_per_hour`` and ``calls_per_second`` divide its execution
+    count by the window it covers, recorded as ``rate_window_seconds`` and
+    ``rate_window_basis`` (:mod:`src.shared.rate_window`, #1893): the row's own
+    ``first_seen`` to ``last_seen`` (PostgreSQL 17: its ``stats_since_age_seconds``),
+    else ``server_window`` (:func:`_collection_server_window`), else 24 hours.
 
     Each ``query_text`` is stored, and parsed, with its literal values redacted in the
     ``source_engine`` dialect (:func:`src.tools.sql.redact.redact_literals`, #1625),
@@ -1163,8 +1200,13 @@ def _transform_queries(
                 "query_tags": r["query_tags"],
                 "query_tags_dropped": r["query_tags_dropped"],
                 "execution_count": exec_count,
-                "frequency_per_hour": exec_count / 24,
-                "calls_per_second": exec_count / (24 * 3600),
+                **statement_rate_fields(
+                    exec_count,
+                    r.get("first_seen"),
+                    r.get("last_seen"),
+                    server_window,
+                    observed_seconds=r.get("stats_since_age_seconds"),
+                ),
                 "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                 "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                 "execution_time_ms_max": float(r.get("max_time_ms") or 0),

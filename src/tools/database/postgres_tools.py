@@ -9,11 +9,18 @@ Mirrors MySQLRemoteCollector pattern but with PostgreSQL-specific queries
 (pg_stat_statements, pg_stat_user_tables, pg_stats, information_schema).
 """
 
+import functools
 import hashlib
 import logging
 import re
 
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
+from src.shared.rate_window import (
+    ServerWindow,
+    first_row_figure,
+    server_window,
+    statement_rate_fields,
+)
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -327,8 +334,11 @@ class PostgreSQLRemoteCollector:
                 shared_blks_hit, shared_blks_read,
                 blk_read_time AS io_read_time_ms,
                 blk_write_time AS io_write_time_ms,
-                temp_blks_read, temp_blks_written
-            FROM pg_stat_statements
+                temp_blks_read, temp_blks_written,
+                -- #1893: PostgreSQL 17's per-entry start (NULL before 17, no such column).
+                round(extract(epoch FROM now() - (to_jsonb(s) ->> 'stats_since')::timestamptz)
+                    ::numeric, 3) AS stats_since_age_seconds
+            FROM pg_stat_statements s
             WHERE calls >= {min_executions}
               AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
             ORDER BY total_exec_time DESC
@@ -337,6 +347,8 @@ class PostgreSQLRemoteCollector:
 
         patterns = []
         reader = LiveQueryReader("postgresql", "postgres_tools")
+        # #1893: read once, and only if a statement has no usable window of its own.
+        counters_window = functools.cache(self.stats_window)
         for r in raw:
             query_text = str(r.get("query") or "")
             calls = r.get("calls") or 1
@@ -356,8 +368,15 @@ class PostgreSQLRemoteCollector:
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "postgresql"),
                     "execution_count": calls,
-                    "frequency_per_hour": calls / 24,
-                    "calls_per_second": calls / (24 * 3600),
+                    # #1893: PostgreSQL 17's time since the entry started counting,
+                    # else the time since pg_stat_statements was reset, else 24 hours.
+                    **statement_rate_fields(
+                        calls,
+                        None,
+                        None,
+                        counters_window,
+                        observed_seconds=r.get("stats_since_age_seconds"),
+                    ),
                     "execution_time_ms_avg": avg_ms,
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                     "execution_time_ms_max": float(r.get("max_time_ms") or 0),
@@ -406,6 +425,20 @@ class PostgreSQLRemoteCollector:
             )
         reader.log_fallbacks()
         return patterns
+
+    def stats_window(self) -> ServerWindow | None:
+        """The window ``pg_stat_statements``' counters cover (#1893): the time since it was
+        last reset (``pg_stat_statements_info.stats_reset``, PostgreSQL 14+). Never the
+        uptime: with ``pg_stat_statements.save`` on (the default) the counters survive a
+        clean restart. None before 14, or when it can't be read."""
+        try:
+            rows = self._query(
+                "SELECT extract(epoch FROM now() - stats_reset) AS stats_reset_seconds "
+                "FROM pg_stat_statements_info"
+            )
+        except Exception:  # noqa: BLE001 -- no reset time: the rates fall back to 24 hours
+            return None
+        return server_window(stats_reset_seconds=first_row_figure(rows, "stats_reset_seconds"))
 
     # -------------------------------------------------------------------
     # Global stats

@@ -189,6 +189,7 @@ L_DECISIONS_REALITY = "Reality-check decisions"
 L_COST_BREAKDOWN = "Cost by engine"
 L_ASSUMPTIONS = "Assumptions"
 L_ROW_COUNTS = "Row counts"
+L_RATE_WINDOWS = "Call rates"
 L_TIED_BETWEEN = "Tied between"
 L_PLACED_ON = "Placed on"
 L_NOT_REVIEWED = "Not reviewed"
@@ -1089,6 +1090,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     row_counts = (facts.get("row_counts") or {}).get("statement")
     if row_counts:
         flow += [_gap(6), _para(f"{L_ROW_COUNTS}: {row_counts}.", st["small"])]
+    # #1893: what the call rates rest on, whichever basis drove them.
+    rate_windows = (facts.get("rate_windows") or {}).get("statement")
+    if rate_windows:
+        flow += [_gap(6), _para(f"{L_RATE_WINDOWS}: {rate_windows}.", st["small"])]
     # #1474: the one caveat where the costs are stated.
     flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     return flow

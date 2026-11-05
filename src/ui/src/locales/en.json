@@ -277,6 +277,7 @@
   "analysis-results.cost-breakdown.description": "Estimated monthly cost per target engine",
   "analysis-results.cost-breakdown.sized-for": "Sized for {{what}}, {{rate}}",
   "analysis-results.cost-breakdown.row-counts": "Row counts",
+  "analysis-results.cost-breakdown.rate-windows": "Call rates",
   "analysis-results.cost-breakdown.sized-also-on-owners": ", also billed on their owners",
   "analysis-results.cost-breakdown.sized-nothing": "Sized for no in-scope queries",
   "analysis-results.cost-breakdown.sized-unqueried_one": ", plus {{formatted}} table no query reads",

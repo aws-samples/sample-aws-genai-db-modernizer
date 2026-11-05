@@ -157,11 +157,16 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     #483 (``ALTER INDEX ... ON [StockMovement]`` names its table): 7256 to 7258 and 7286
     to 7288. The maintenance query now counts on ``StockMovement``, which lifts the table
     level scores of that table's queries on both Aurora engines by the same 2 points; the
-    30-point lead is unchanged and no query changes engine."""
+    30-point lead is unchanged and no query changes engine.
+
+    #1893 (each statement's rate over its own first-to-last-seen window, 19 to 30 hours
+    here, not 24): 7258 to 7216 and 7288 to 7246. The rate-tiered table scores and cost
+    move both Aurora engines by the same 42 points; the 30-point lead is unchanged and the
+    features still decide."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7258.0, 7288.0)
+    assert (mysql, pg) == (7216.0, 7246.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"
@@ -345,38 +350,52 @@ def test_the_reality_check_resolves_the_documentdb_ties(trailgear_run: PipelineR
     Aurora PostgreSQL (DynamoDB scores them 77, 75 or cannot serve them), and no tie
     reaches the deliverables. The deliverables' tie heading stays covered by discourse's
     33 open ties (``tests/e2e/test_deliverable_figures.py``) and by
-    ``tests/unit/report/test_tied_queries_deliverables.py``."""
+    ``tests/unit/report/test_tied_queries_deliverables.py``.
+
+    #1893 (each statement's rate over its own window): the ProductReview top-10 read
+    (``0x459FA64B551E3BF2``, 0.62 to 0.59 calls/s) now scores 76 on Aurora PostgreSQL,
+    DocumentDB and DynamoDB alike (78, 78 and 77 before), a three-way tie the placeholder
+    puts on DynamoDB. DocumentDB does not survive the reality check, so the tie between
+    the two survivors stays open, listed under DynamoDB pending the customer's choice, and
+    the deliverables state it as a pending engine choice. The other three ties still clear
+    onto Aurora PostgreSQL."""
     v1 = _by_id(_assignment(trailgear_run, 1))
     final = _by_id(_assignment(trailgear_run, _final_version(trailgear_run)))
-    pg, doc = "aurora_postgresql", "documentdb"
+    pg, doc, ddb = "aurora_postgresql", "documentdb", "dynamodb"
     first_ties = (
         "SELECT r.[ReviewID], r.[Rating], r.[Title] FROM [ProductReview]",
-        "SELECT TOP (10) r.[ReviewID], r.[Rating], r.[Title], r.[CreatedDate]",
         "SELECT AVG(CAST([Rating] AS decimal(4, 2))) AS [AvgRating]",
         "[ParentCategoryID], [Name], [Slug] FROM [ProductCategory]",
     )
+    three_way = _qid(
+        trailgear_run, "SELECT TOP (10) r.[ReviewID], r.[Rating], r.[Title], r.[CreatedDate]"
+    )
     assert {q: qa["tied_engines"] for q, qa in v1.items() if qa.get("tied_engines")} == {
-        _qid(trailgear_run, text): [pg, doc] for text in first_ties
+        **{_qid(trailgear_run, text): [pg, doc] for text in first_ties},
+        three_way: [pg, doc, ddb],
     }
     for text in first_ties:
         qa = final[_qid(trailgear_run, text)]
         assert (qa["assigned_engine"], qa["tied_engines"]) == (pg, []), text
         assert "reality check" in qa["assignment_reason"].lower(), text
-    assert not [q for q, qa in final.items() if qa.get("tied_engines")]
+    assert (final[three_way]["assigned_engine"], final[three_way]["tied_engines"]) == (
+        ddb,
+        [pg, ddb],
+    )
+    assert "pending your choice" in final[three_way]["assignment_reason"]
+    assert [q for q, qa in final.items() if qa.get("tied_engines")] == [three_way]
     assert doc not in {qa["assigned_engine"] for qa in final.values()}
     merge = _qid(trailgear_run, "MERGE [StockLevel] AS tgt")
     assert final[merge]["assigned_engine"] == pg
     assert final[merge]["tied_engines"] == []
     report = _json(trailgear_run.artifact_root / trailgear_run.report["report"])
-    assert report["tied_queries"] == []
-    # #987: with no open tie, neither the engineering report nor the executive report states one.
-    from tests.e2e.deliverable_figures import pdf_page_texts
-
+    assert report["tied_queries"] == [
+        {"query_id": three_way, "assigned_engine": ddb, "tied_engines": [pg, ddb]}
+    ]
+    # #987: the open tie is stated as a pending choice, never as an unresolved tie.
     md = trailgear_run.deliverable("engineering-report.md").read_text()
-    pdf = " ".join(pdf_page_texts(str(trailgear_run.deliverable("executive-report.pdf"))))
-    for heading in ("Unresolved engine ties", "Pending engine choices"):
-        assert heading not in md
-        assert heading not in pdf
+    assert "Pending engine choices" in md
+    assert "Unresolved engine ties" not in md
 
 
 # ---------------------------------------------------------------------------

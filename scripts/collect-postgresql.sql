@@ -42,6 +42,17 @@
   \set query_limit_value 'NULL::bigint'
 \endif
 
+-- #1893: the window pg_stat_statements' counters cover is the time since it was last
+-- reset (pg_stat_statements_info.stats_reset, PostgreSQL 14+). Not the uptime: with
+-- pg_stat_statements.save on (the default) the counters survive a clean restart. Before
+-- 14 the view does not exist, the figure is NULL and the rates assume 24 hours.
+SELECT to_regclass('pg_stat_statements_info') IS NOT NULL AS has_pgss_info \gset
+\if :has_pgss_info
+  \set pgss_reset_age '(SELECT round(extract(epoch FROM now() - stats_reset)::numeric, 3) FROM pg_stat_statements_info)'
+\else
+  \set pgss_reset_age 'NULL::numeric'
+\endif
+
 WITH
 
 -- ===================== 1. Metadata =====================
@@ -294,8 +305,12 @@ queries_data AS (
       round(blk_read_time::numeric, 3) AS blk_read_time_ms,
       round(blk_write_time::numeric, 3) AS blk_write_time_ms,
       temp_blks_read,
-      temp_blks_written
-    FROM pg_stat_statements
+      temp_blks_written,
+      -- #1893: PostgreSQL 17's per-entry start (stats_since); NULL before 17, where the
+      -- row has no such column, and the rates use the stats reset age instead.
+      round(extract(epoch FROM now() - (to_jsonb(s) ->> 'stats_since')::timestamptz)::numeric, 3)
+        AS stats_since_age_seconds
+    FROM pg_stat_statements s
     WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
       AND calls >= CAST(:'min_executions' AS bigint)
     ORDER BY total_exec_time DESC
@@ -307,6 +322,7 @@ queries_data AS (
 global_stats_data AS (
   SELECT json_build_object(
     'uptime', extract(epoch FROM (now() - pg_postmaster_start_time()))::bigint::text,
+    'stats_reset_age_seconds', (:pgss_reset_age)::text,
     'questions', (SELECT sum(calls) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text,
     'threads_connected', (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database())::text,
     'threads_running', (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'active')::text,

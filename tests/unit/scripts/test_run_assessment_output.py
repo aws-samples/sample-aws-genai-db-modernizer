@@ -448,10 +448,16 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # DocumentDB score rises 78 -> 79 and breaks its tie with DynamoDB (78): dynamodb -1,
     # documentdb +1. The reality check consolidates it back into DynamoDB, so its final
     # engine is unchanged.
+    # #1893 (each statement's rate over its own observed window, not 24 hours):
+    # ``3dbc7d9a...`` (``SELECT meta_id FROM wp_postmeta``) runs at 23.8 calls/s over its
+    # 14.7-hour window (14.6 over 24 hours), past Aurora MySQL's simple-cache-read threshold
+    # (20), so the 20-point penalty sends it to DynamoDB: aurora_mysql -1, dynamodb +1.
+    # ``8c66eaee...`` (the wp_comments COUNT, 0.44 calls/s, 0.27 before) lifts DocumentDB
+    # 77 -> 79 over DynamoDB's 77 and is first-assigned there: dynamodb -1, documentdb +1.
     assert rc["before_distribution"] == {
         "dynamodb": 37,
-        "aurora_mysql": 59,
-        "documentdb": 10,
+        "aurora_mysql": 58,
+        "documentdb": 11,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

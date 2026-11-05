@@ -20,6 +20,8 @@ Only what the deliverable renderers read, under the job folder's own layout:
 
 The rest of the job (per-phase outputs, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
 
+The recorded run predates #1893: its call rates divide each statement's execution count by 24 hours. A run with the current code divides it by the statement's own first-to-last-seen window in the collection, so its rates, cache candidates and costs come from a different window than these (a deterministic run projects $749.21 a month; this report shows $512.58). Refreshing the sample for the next release brings the page in line. <!-- claim: tests/unit/shared/test_rate_window.py::test_the_observed_window_divides_the_count, tests/e2e/test_executive_summary_structure.py::test_the_summary_has_the_three_parts_with_the_facts_figures -->
+
 ## How it is used
 
 `scripts/build_docs_sample.py` copies this folder into a temporary artifact store and renders it with `scripts/run_report.py`, so the help site shows the recorded assessment through the current renderers: a wording or layout fix on main shows up on the page without a new run. A report written by an older release gets the figures it lacks from the same facts backfill every saved report goes through (`src.report.facts.report_facts`, ADR-032 Decision 4). `tests/unit/scripts/test_build_docs_sample.py` checks that this folder renders every deliverable with no errors and no warnings.

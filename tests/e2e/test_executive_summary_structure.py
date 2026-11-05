@@ -34,8 +34,11 @@ pytestmark = pytest.mark.deterministic
 # #1197 then bills DocumentDB reads from the collection-wide buffer-cache hit ratio the
 # collector now keeps (scaled by target over source memory, at least 1% billed as misses):
 # only discourse moves, by -$1.79 ($537.06 to $535.27); wordpress and trailgear are
-# unchanged.
-WHOLE_DOLLARS = {"wordpress": 513, "discourse": 535, "trailgear": 433}
+# unchanged. #1893 divides each statement's execution count by the window it covers
+# instead of 24 hours: wordpress $512.58 to $749.21 (Aurora MySQL's sized load, 96.5 to
+# 118.3 calls/s, takes the next instance size) and trailgear $433.15 to $432.19.
+# discourse is unchanged: a PostgreSQL collection with no stats reset time assumes 24 hours.
+WHOLE_DOLLARS = {"wordpress": 749, "discourse": 535, "trailgear": 432}
 
 
 def _report(run: PipelineResult) -> dict:

@@ -587,6 +587,10 @@ Version History:
   ``QueryGroupFacts.procedure_internal_queries``: how many queries the
   procedure-internal group holds (SQL Server statements on temporary tables or table
   variables, pinned by the utility pin).
+- 1.77 (2026-11-06, #1893): Added optional facts.rate_windows (RateWindowFacts): how
+  many collected statements' call rates used each window basis (observed, uptime,
+  stats_reset, assumed_24h) and the one sentence every deliverable prints about them.
+  Backward compatible: defaults to None.
 """
 
 from datetime import datetime
@@ -2031,6 +2035,47 @@ class RowCountFacts(BaseModel):
     )
 
 
+class RateWindowFacts(BaseModel):
+    """How many collected statements' call rates used each window basis (#1893), from
+    ``src.shared.rate_window.rate_window_facts``."""
+
+    statement_count: int = Field(0, ge=0, description="The collected statements")
+    observed_count: int = Field(
+        0,
+        ge=0,
+        description="Of those, the rates over the statement's own first to last seen window",
+    )
+    uptime_count: int = Field(0, ge=0, description="Of those, the rates over the server's uptime")
+    stats_reset_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of those, the rates over the time since PostgreSQL's pg_stat_statements was " "reset"
+        ),
+    )
+    assumed_24h_count: int = Field(
+        0,
+        ge=0,
+        description="Of those, the rates that assume the execution count covers 24 hours",
+    )
+    unrecorded_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of those, the statements with no basis recorded (a collector output written "
+            "before #1893, or a Performance Insights statement)"
+        ),
+    )
+    statement: str | None = Field(
+        None,
+        description=(
+            "The one sentence every deliverable prints after 'Call rates:': how many rates "
+            "used each basis, and that the costs assume each rate runs continuously; None "
+            "for a collection with no statements"
+        ),
+    )
+
+
 class RelationalGroupRow(BaseModel):
     """One "Queries on Aurora by table" row (#1410): a relational engine's own queries
     in one query group."""
@@ -2640,6 +2685,14 @@ class ReportFacts(BaseModel):
             "when the report has no cache_overlay"
         ),
     )
+    rate_windows: RateWindowFacts | None = Field(
+        None,
+        description=(
+            "How many collected statements' call rates used each window basis, stated in "
+            "every deliverable (#1893); None in a report rebuilt without the collection, or "
+            "written before"
+        ),
+    )
     row_counts: RowCountFacts | None = Field(
         None,
         description=(
@@ -2803,7 +2856,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.76",
+        default="1.77",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

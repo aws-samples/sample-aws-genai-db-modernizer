@@ -1452,6 +1452,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     # #615 (ADR-032): every customer-facing figure, computed once from the
     # fields above; the deliverables only format it. The collected views let
     # wave 1 state its tables and views apart (#578).
+    from src.shared.rate_window import rate_window_facts
     from src.shared.report_facts import compute_report_facts
     from src.shared.row_counts import row_count_facts
 
@@ -1508,6 +1509,15 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # #1636: the collection's row counts by basis, and the one sizing assumption the
         # deliverables state for the tables the source has no count for.
         row_counts=row_count_facts(schema.get("tables") or []) if data.collector else None,
+        # #1893: the window each statement's call rate used, and the one statement of the
+        # 24-hour assumption when any rate rests on it.
+        rate_windows=(
+            rate_window_facts(
+                ((data.collector or {}).get("queries") or {}).get("query_patterns") or []
+            )
+            if data.collector
+            else None
+        ),
     )
 
     return output_data

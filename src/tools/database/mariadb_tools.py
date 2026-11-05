@@ -9,7 +9,10 @@ MariaDB uses the same mysql CLI, performance_schema, and INFORMATION_SCHEMA
 but has different version numbering and feature availability.
 """
 
+import functools
+
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
+from src.shared.rate_window import statement_rate_fields
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.mysql_tools import MySQLRemoteCollector, _version_gte
 from src.tools.sql.query_type import statement_query_type
@@ -110,6 +113,8 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
 
         patterns = []
         reader = LiveQueryReader("mariadb", "mariadb_tools")
+        # #1893: read once, and only if a statement has no usable window of its own.
+        counters_window = functools.cache(self.stats_window)
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
@@ -125,8 +130,8 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "mariadb"),
                     "execution_count": exec_count,
-                    "frequency_per_hour": exec_count / 24,
-                    "calls_per_second": exec_count / (24 * 3600),
+                    # #1893: over the digest's FIRST_SEEN to LAST_SEEN, else the uptime.
+                    **statement_rate_fields(exec_count, first_seen, last_seen, counters_window),
                     "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                     "execution_time_ms_max": float(r.get("max_time_ms") or 0),

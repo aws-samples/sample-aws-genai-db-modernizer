@@ -13,11 +13,18 @@ SQL Server uses schemas (typically ``dbo``) and the contract supports it via
 ``Table.schema_name``.
 """
 
+import functools
 import hashlib
 import logging
 import re
 
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
+from src.shared.rate_window import (
+    ServerWindow,
+    first_row_figure,
+    server_window,
+    statement_rate_fields,
+)
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
@@ -450,6 +457,8 @@ class SQLServerRemoteCollector:
 
         patterns = []
         reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())
+        # #1893: read once, and only if a statement has no usable window of its own.
+        counters_window = functools.cache(self.stats_window)
         for r in raw:
             query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
@@ -492,8 +501,14 @@ class SQLServerRemoteCollector:
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "sqlserver"),
                     "execution_count": calls,
-                    "frequency_per_hour": calls / 24,
-                    "calls_per_second": calls / (24 * 3600),
+                    # #1893: over the plan's creation_time to last_execution_time, else
+                    # the server's uptime.
+                    **statement_rate_fields(
+                        calls,
+                        r.get("creation_time"),
+                        r.get("last_execution_time"),
+                        counters_window,
+                    ),
                     "execution_time_ms_avg": round(avg_ms, 3),
                     "execution_time_ms_min": round(min_ms, 3),
                     "execution_time_ms_max": round(max_ms, 3),
@@ -531,6 +546,19 @@ class SQLServerRemoteCollector:
             )
         reader.log_fallbacks()
         return patterns
+
+    def stats_window(self) -> ServerWindow | None:
+        """The window the plan cache's counters can cover (#1893): the server's uptime
+        (``sys.dm_os_sys_info.sqlserver_start_time``; the cache empties on a restart).
+        None when it can't be read."""
+        try:
+            rows = self._query(
+                "SELECT DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) AS uptime_seconds "
+                "FROM sys.dm_os_sys_info"
+            )
+        except Exception:  # noqa: BLE001 -- no uptime: the rates fall back to 24 hours
+            return None
+        return server_window(uptime_seconds=first_row_figure(rows, "uptime_seconds"))
 
     # -------------------------------------------------------------------
     # Global stats

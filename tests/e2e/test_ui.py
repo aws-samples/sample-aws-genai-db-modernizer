@@ -680,7 +680,8 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
     the engines that also read it and its cache, with the same counts. Collapsed when
     the page opens; a job with no table_mappings has no such section. On the designed
     wordpress job, wp_postmeta is owned by DynamoDB and also read by Aurora MySQL, and
-    wp_usermeta, which no query writes, is owned by Aurora MySQL."""
+    wp_users, which no query writes, is owned by Aurora MySQL (wp_usermeta until #1893,
+    whose reads all moved to Aurora MySQL; tests/e2e/test_table_owners.py)."""
     from src.shared.engine_names import display_engine
 
     designed = _designed_runs(all_runs)
@@ -730,10 +731,10 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
             )
             assert postmeta.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
             assert postmeta.locator('[data-cell="also-read-by"]').inner_text() == "Aurora MySQL"
-            usermeta = section.locator('[data-table="wordpress.wp_usermeta"]').locator(
+            users = section.locator('[data-table="wordpress.wp_users"]').locator(
                 "xpath=ancestor::tr"
             )
-            assert usermeta.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
+            assert users.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 

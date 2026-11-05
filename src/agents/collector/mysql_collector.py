@@ -967,6 +967,8 @@ def _build_queries(
             ),
             frequency_per_hour=p["frequency_per_hour"],
             calls_per_second=p.get("calls_per_second"),
+            rate_window_seconds=p.get("rate_window_seconds"),
+            rate_window_basis=p.get("rate_window_basis"),
             tables_accessed=p["tables_accessed"] or ["unknown"],
             execution_time_ms_avg=p.get("execution_time_ms_avg"),
             execution_time_ms_min=p.get("execution_time_ms_min"),
@@ -1074,6 +1076,8 @@ def _dict_to_query_pattern(d: dict, *, source_engine: str | None) -> QueryPatter
         query_type=d.get("query_type"),
         frequency_per_hour=d.get("frequency_per_hour", 0),
         calls_per_second=d.get("calls_per_second"),
+        rate_window_seconds=d.get("rate_window_seconds"),
+        rate_window_basis=d.get("rate_window_basis"),
         tables_accessed=d.get("tables_accessed") or ["unknown"],
         # Latency
         execution_time_ms_avg=d.get("execution_time_ms_avg"),

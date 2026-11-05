@@ -31,7 +31,13 @@ from src.storage.assignment_versioning import resolve_downstream_assignment_vers
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.deliverable_figures import norm, pdf_page_texts
 from tests.e2e.designed_run import UNSUPPORTED_CACHE_READ, run_designed_wordpress
-from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
+from tests.e2e.pipeline import (
+    REPO,
+    PipelineResult,
+    _run,
+    run_pipeline_from_file,
+    unzip_sample,
+)
 from tests.report_concision import section
 
 pytestmark = pytest.mark.deterministic
@@ -62,6 +68,10 @@ EXPECTED_RULES: dict[str, list[str]] = {
     # redesign for 5 queries.
     "trailgear": [
         "sync.wave",
+        # #1893: over its own observed window the ProductReview top-10 read scores 76 on
+        # Aurora PostgreSQL, DocumentDB and DynamoDB alike; DocumentDB does not survive the
+        # reality check, so the Aurora PostgreSQL/DynamoDB tie stays open.
+        "routing.tie_open",
         "routing.close_calls",
         "design.redesign",
         # #1362: the UserSession expiry delete DynamoDB serves poorly (22).
@@ -70,8 +80,11 @@ EXPECTED_RULES: dict[str, list[str]] = {
         "relational.gaps",
     ],
 }
-# The open risks each sample lists (analysis risks and migration risks).
-EXPECTED_OPEN = {"wordpress": 4, "discourse": 12, "trailgear": 13}
+# The open risks each sample lists (analysis risks and migration risks). #1893: wordpress
+# gains one HIGH analysis risk: over its own observed window `SELECT meta_id FROM wp_postmeta`
+# runs at 23.8 calls/s (14.6 over 24 hours), past Aurora MySQL's simple-cache-read threshold
+# (20), so it routes to DynamoDB and Aurora MySQL's finding is flagged on it.
+EXPECTED_OPEN = {"wordpress": 5, "discourse": 12, "trailgear": 14}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -301,7 +314,20 @@ def flagged(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
     query as terminal (no kept engine takes it) and holds another by a pin: the
     two kinds ``flagged_unservable`` lists, which no bundled sample produces."""
     root = tmp_path_factory.mktemp("risks-flagged")
-    result = run_pipeline("wordpress", root, "risks-flag")
+    # #1893: the stored 1.41 report below (OLD_1_41) was written when every call rate
+    # assumed a 24-hour window. Its job is rerun the same way, with the statements' first
+    # and last seen times and the uptime removed, so the rates, and the routing the two
+    # registers rest on, are that job's again (every rate is ``assumed_24h``).
+    raw = unzip_sample("wordpress", root / "input")
+    text = raw.read_text()
+    collection = json.loads(text[text.index("{") :])
+    for row in collection["queries"]:
+        row.pop("first_seen", None)
+        row.pop("last_seen", None)
+    (collection.get("global_stats") or {}).pop("uptime", None)
+    edited = raw.with_name("wordpress-24h-collection.json")
+    edited.write_text(json.dumps(collection))
+    result = run_pipeline_from_file(edited, "wordpress", root, "risks-flag")
     store = LocalArtifactStore(base_dir=str(root))
     version = resolve_downstream_assignment_version(store, "wordpress", "risks-flag")
     assignment = store.read_json(f"wordpress/risks-flag/assignment/v{version}/assignment.json")

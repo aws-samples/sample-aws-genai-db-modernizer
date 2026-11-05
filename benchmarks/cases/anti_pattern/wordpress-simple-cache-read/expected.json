@@ -1,0 +1,14 @@
+{
+  "case_id": "wordpress-simple-cache-read",
+  "stage": "anti_pattern",
+  "anti_pattern": "simple-cache-read",
+  "intent": "wordpress: whether queries show the `simple-cache-read` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-simple-cache-read.md), never from the pipeline output (#1084).",
+  "authored_by": "human",
+  "reviewed": false,
+  "queries": [
+    "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+    "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+    "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6"
+  ],
+  "expected": {}
+}

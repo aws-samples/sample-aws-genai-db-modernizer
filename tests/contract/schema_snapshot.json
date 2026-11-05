@@ -8708,6 +8708,44 @@
                         ]
                       }
                     },
+                    "rate_window_basis": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "enum",
+                            "values": [
+                              "assumed_24h",
+                              "observed",
+                              "stats_reset",
+                              "uptime"
+                            ]
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "rate_window_seconds": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "exclusiveMinimum": 0,
+                            "kind": "scalar",
+                            "type": "number"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "read_write_ratio_pct": {
                       "required": false,
                       "schema": {
@@ -9165,8 +9203,8 @@
         }
       }
     },
-    "schema_hash": "ac569a5179a7f402adbaca290b77d401fbac17bd59944b9ee7205d2785f4650f",
-    "version": "5.6"
+    "schema_hash": "0d70e37f10dccc2f5ba91f2e316fd23f28cade34af0c993d4f86cb596323184d",
+    "version": "5.7"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -26997,6 +27035,87 @@
                     ]
                   }
                 },
+                "rate_windows": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "assumed_24h_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "observed_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "statement": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "statement_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "stats_reset_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "unrecorded_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "uptime_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "reality_check_decisions": {
                   "required": false,
                   "schema": {
@@ -33098,8 +33217,8 @@
         }
       }
     },
-    "schema_hash": "70a543283294aad5938d7968bbe49d7d77acacfce52ad93827913c2c52788b55",
-    "version": "1.76"
+    "schema_hash": "f9000a70084acd7d334428efc72db4a4ef1552f52aad7e9502e2f751d84bca8d",
+    "version": "1.77"
   },
   "transformation_contract.StepContract": {
     "fields": {

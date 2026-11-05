@@ -339,9 +339,18 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     applies and 1% of its reads are billed): ``413c99e4`` (the wp_options autoload read)
     costs DocumentDB $0.08 a month instead of $8.20, so DocumentDB rises 78 -> 79 and
     leaves its tie with DynamoDB (78). DocumentDB first-assigns it and the check moves it
-    back to DynamoDB: the check moves 7 to Aurora MySQL and 3 to DynamoDB."""
+    back to DynamoDB: the check moves 7 to Aurora MySQL and 3 to DynamoDB.
 
-    FLAGGED = "3a74580e"
+    #1893 (each statement's rate over its own observed window, not 24 hours): ``8c66eaee``
+    (the wp_comments ``COUNT``) runs at 0.44 calls/s over its 18.4-hour window (0.27 over
+    24 hours); DocumentDB rises 77 -> 79 and leaves its tie with DynamoDB (77), so DocumentDB
+    first-assigns it and the check moves it to DynamoDB. ``3a74580e`` (the wp_usermeta read,
+    1.24 calls/s, 0.95 before) drops to DynamoDB 73, tied with Aurora MySQL, and the check's
+    tie goes to the source-compatible engine (``tie_break.break_tie``): it moves to Aurora
+    MySQL. The check moves 8 to Aurora MySQL and 3 to DynamoDB, and the flag goes on
+    ``413c99e4`` (the wp_options autoload read), a DynamoDB move since #1197."""
+
+    FLAGGED = "413c99e4"
 
     def test_one_flag_goes_to_the_best_kept_engine(self, tmp_path, tmp_path_factory):
         shared = _shared_external_run("wordpress", tmp_path_factory)
@@ -354,7 +363,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
         assert sorted(moved.values()).count("dynamodb") == 3
-        assert sorted(moved.values()).count("aurora_mysql") == 7
+        assert sorted(moved.values()).count("aurora_mysql") == 8
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 
@@ -396,10 +405,10 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         (decision,) = output["flag_decisions"]
         assert decision["outcome"] == "moved"
         assert decision["destination_engine"] == "aurora_mysql"
-        # Aurora MySQL's 73: the key-scoped class score (70) with wp_usermeta's other
-        # dimensions, unpenalised (#728), and the query's own cost (#494 slice 2), the
-        # score the routing snapshot records for it on Aurora MySQL.
-        assert decision["score_after"] == 73
+        # Aurora MySQL's 56: its base 76 less the 20-point penalty, the score the routing
+        # snapshot records for the wp_options autoload read on Aurora MySQL (#1893: the
+        # flagged query is no longer 3a74580e, whose Aurora MySQL score was 73).
+        assert decision["score_after"] == 56
         assert engine_of[flagged] == "aurora_mysql"
         for qid, target in moved.items():
             if qid != flagged:
