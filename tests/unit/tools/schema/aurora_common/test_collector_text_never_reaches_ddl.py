@@ -325,6 +325,13 @@ DDL_WRITERS = {
     "src/tools/transformation_contract/duckdb_backend.py",
     # The local graph store's own Cypher schema (table names from a fixed list), not SQL.
     "src/graph/store.py",
+    # Disposable source engines (#1943): the DDL and routine text it runs is the customer's
+    # own, loaded only into a throwaway server of the source's engine, as a role with no
+    # superuser, file or admin privilege (tests/unit/tools/database/test_disposable_engine.py:
+    # the privilege tests). Its own setup statements (roles, database) are module constants,
+    # and every identifier it builds goes through _parts (test_routine_names_are_checked_
+    # before_they_reach_sql); it never writes to Aurora.
+    "src/tools/database/disposable_engine.py",
 }
 _DDL_START = re.compile(
     r"^\s*(?:-- )?(?:CREATE|ALTER|DROP|GRANT|TRUNCATE|USE|SET search_path)(?: |$)"

@@ -410,6 +410,25 @@ make e2e-llm                           # or: ./ci/e2e-llm.sh both wordpress
 uv run pytest tests/contract/ -v
 ```
 
+The disposable-engine tests (`tests/unit/tools/database/test_disposable_engine.py`)
+run once for every PostgreSQL and MySQL major they find. `pgserver` (PostgreSQL 16)
+comes with the `dev` extra, and its binaries also cover the `initdb`/`postgres`
+path. Any other major comes from conda-forge: `conda install -c conda-forge
+postgresql=<major>` and `conda install -c conda-forge mysql-server=<major>` (or
+`micromamba`, one environment per major). Point `MODERNIZER_PG_BIN_<major>` (for
+example `MODERNIZER_PG_BIN_14`) at the environment's `bin` folder, and
+`MODERNIZER_MYSQLD_<major>` (for example `MODERNIZER_MYSQLD_8_0`) at its `mysqld`;
+a `postgres` or `mysqld` on `PATH` is found too, and an explicit argument wins over
+both. The MySQL tests are marked `integration`, so the gated run deselects them instead
+of skipping them. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_the_mysql_engine_tests_are_deselected_not_skipped_in_a_gated_run -->
+Run them as an ordinary user: a disposable engine refuses to start as root (an
+`EngineStartError`, not a missing engine), because the private socket folder cannot
+stay 0700 there. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_running_as_root_is_refused -->
+`MODERNIZER_DISPOSABLE_ENGINE_PASSWORD` sets the password of MySQL's `root`; the
+role that runs the routines always gets its own generated password. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_root_and_the_runner_never_share_a_password -->
+An engine that a crashed run left behind, with its folder, is stopped and removed by
+the next start once its owning process is gone. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_a_dead_owners_folder_is_swept_and_a_live_one_is_left -->
+
 `make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
 (`uv pip install -r src/atx_orchestrator/requirements-sdk.txt`; see
 `tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
