@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+
 from ci.main_tests import (
     changed_tests,
     functions_in,
@@ -14,6 +17,7 @@ from ci.main_tests import (
     not_run_reason,
     outcomes,
     parse_name_status,
+    plan,
 )
 
 BASE = """
@@ -262,3 +266,37 @@ def test_outcomes_read_every_report(tmp_path, capsys):
     (tmp_path / "2.xml").write_text(second)
     assert main(["report", str(tmp_path), "tests/a.py::test_p", "tests/b.py::test_q"]) == 0
     assert capsys.readouterr().out == "fail tests/a.py::test_p\npass tests/b.py::test_q\n"
+
+
+def test_plan_returns_every_changed_line(tmp_path, monkeypatch):
+    """``plan`` (what ``ci/hunk_revert.py`` reads) gives the ``changed`` lines,
+    ``skip`` and ``badmark`` included, on a scratch repository."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, env=env, capture_output=True, text=True, check=True
+        ).stdout
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (tmp_path / "README").write_text("x\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD").strip()
+    (tmp_path / "tests/e2e").mkdir(parents=True)
+    (tmp_path / "tests/e2e/test_e.py").write_text("def test_e():\n    pass\n")
+    (tmp_path / "tests/unit").mkdir()
+    (tmp_path / "tests/unit/test_u.py").write_text(
+        "import pytest\n\npytestmark = pytest.mark.passes_on_main\n\n\ndef test_u():\n    pass\n"
+    )
+    git("add", "-A")
+    git("commit", "-q", "-m", "feat")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    assert plan(base) == [
+        "skip tests/e2e/test_e.py end-to-end suite",
+        "badmark tests/unit/test_u.py",
+        "run tests/unit/test_u.py::test_u",
+    ]
