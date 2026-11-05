@@ -20,7 +20,9 @@ cannot read, and still without the list of moved queries (#285). It now holds:
   with ``moved_queries`` (one record per line);
 - ``executive_summary``: distributions, consolidation records, a per-engine
   unique-value summary (counts, not query id lists), patterns,
-  recommendations, absorption candidates and the assessment scope.
+  recommendations, absorption candidates, the assessment scope and the write
+  owners (``write_ownership``: which engine carries each written table's writes,
+  which engines read a copy of it, #1928).
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import json
 from collections import defaultdict
 from typing import Any
 
+from src.agents.referee.reality_check_writes import result_write_ownership
 from src.agents.schema_design.group_input import read_pages, render_group_input
 
 # SQL characters kept per moved query (the Bedrock validator's long-standing cut).
@@ -117,22 +120,28 @@ def build_reality_check_request(det: dict, absorption_candidates: list[str]) -> 
         reviewed.append(
             {**c, "moved_queries": [moved_query_record(q, query_map, signals) for q in ids]}
         )
+    summary: dict[str, Any] = {
+        "scope": {
+            "source_tables": len(collector.get("database_schema", {}).get("tables", [])),
+            "query_patterns": len(queries),
+            "engines_evaluated": sorted(det["before_distribution"]),
+        },
+        "before_distribution": det["before_distribution"],
+        "after_distribution": det["after_distribution"],
+        "consolidations": det["consolidations"],
+        "unique_value_assessment": _compact_unique_value(det["unique_value_assessment"]),
+        "architectural_patterns": det["architectural_patterns"],
+        "recommendations": det["recommendations"],
+        "absorption_candidates": absorption_candidates,
+    }
+    # #1928: who carries the writes, from the assignment (absent for one written
+    # before write groups existed).
+    ownership = result_write_ownership(det)
+    if ownership is not None:
+        summary["write_ownership"] = ownership
     return {
         "consolidation_validation": {"consolidations": reviewed},
-        "executive_summary": {
-            "scope": {
-                "source_tables": len(collector.get("database_schema", {}).get("tables", [])),
-                "query_patterns": len(queries),
-                "engines_evaluated": sorted(det["before_distribution"]),
-            },
-            "before_distribution": det["before_distribution"],
-            "after_distribution": det["after_distribution"],
-            "consolidations": det["consolidations"],
-            "unique_value_assessment": _compact_unique_value(det["unique_value_assessment"]),
-            "architectural_patterns": det["architectural_patterns"],
-            "recommendations": det["recommendations"],
-            "absorption_candidates": absorption_candidates,
-        },
+        "executive_summary": summary,
     }
 
 

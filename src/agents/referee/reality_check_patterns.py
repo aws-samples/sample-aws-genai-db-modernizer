@@ -162,19 +162,25 @@ def _detect_architectural_patterns(
             _pattern("CQRS", {"write_engine": primary, "read_engines": read_secondaries})
         )
 
+    # A copy is kept in sync from the engine that carries the writes when one does
+    # (#1928), not from the busiest engine.
+    writers = [e for e in active_engines if e in (write_engines or ())]
+    source = writers[0] if len(writers) == 1 else primary  # the one writer
+
     # Check for Materialized View pattern: one per search read model in use
-    for view in sorted(e for e in secondaries if e in VIEW_ENGINES):
+    for view in sorted(e for e in active_engines if e != source and e in VIEW_ENGINES):
         patterns.append(
-            _pattern("MATERIALIZED_VIEW", {"source_engine": primary, "view_engine": view})
+            _pattern("MATERIALIZED_VIEW", {"source_engine": source, "view_engine": view})
         )
 
     # If 3+ engines, suggest Polyglot Persistence
     if len(active_engines) >= 3:
         patterns.append(_pattern("POLYGLOT_PERSISTENCE", {"engines": list(active_engines.keys())}))
     elif len(active_engines) == 2 and primary not in NO_EVENT_SYNC_PRIMARY_ENGINES:
-        # Event sourcing when using non-serverless primary
+        # Event sourcing when using non-serverless primary, from the write owner.
+        targets = [e for e in active_engines if e != source]
         patterns.append(
-            _pattern("EVENT_SOURCING", {"source_engine": primary, "target_engines": secondaries})
+            _pattern("EVENT_SOURCING", {"source_engine": source, "target_engines": targets})
         )
 
     return patterns

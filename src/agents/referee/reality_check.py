@@ -64,6 +64,7 @@ from src.agents.referee.reality_check_patterns import (
     format_pattern_recommendation,
     patterns_for_assignment,
     refresh_patterns_and_recommendations,
+    write_engines_of,
 )
 from src.agents.referee.reality_check_place import _place_settled_queries
 from src.agents.referee.reality_check_records import _queries, consolidations_from_moves
@@ -92,7 +93,7 @@ from src.agents.referee.reality_check_settle import (
     _settle_committed_engines,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.agents.referee.write_groups import assignment_sources_of_truth
+from src.agents.referee.write_groups import assignment_sources_of_truth, saved_write_groups
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -450,8 +451,20 @@ def run_reality_check(
         engines_in_use=engines_in_use(collector_output),
     )
 
-    # Pass 3: Detect architectural patterns
-    patterns = _detect_architectural_patterns(revised, committed_engines, engine_queries)
+    # Pass 3: Detect architectural patterns. Which engines carry the writes comes from
+    # the assignment's write groups, as at write time (#1928): without them, CQRS named
+    # the busiest engine as taking every write, whoever carried them.
+    in_scope = [qa for qa in revised if qa.get("in_scope", True) and qa.get("assigned_engine")]
+    patterns = _detect_architectural_patterns(
+        revised,
+        committed_engines,
+        engine_queries,
+        (
+            write_engines_of(in_scope, saved_write_groups(assignment))
+            if "write_groups" in assignment
+            else None
+        ),
+    )
 
     # Pass 4: Build recommendations
     recommendations = _build_recommendations(

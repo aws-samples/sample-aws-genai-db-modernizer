@@ -13,6 +13,9 @@ an engine eliminated that keeps queries.
 :func:`finalize_executive_summary` runs once the records are final. It checks the
 summary with :func:`check_summary_against_records`: every engine the summary names
 as kept must keep queries, and every engine it names as eliminated must have none.
+:func:`check_summary_write_claims` checks what it says about writes against the
+final assignment's write owners (#1928): an engine named as carrying writes must
+carry some, and a synced copy must run from an engine that carries writes.
 On a contradiction the customer sees :func:`build_final_summary`, a short narrative
 built from the final records, and the LLM text is kept for audit, as synthesis does
 for its own summary (#205).
@@ -26,6 +29,8 @@ from __future__ import annotations
 
 import re
 
+from src.agents.referee.reality_check_writes import result_write_ownership
+from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, find_style_hits, replace_dashes
@@ -320,6 +325,143 @@ def check_summary_against_records(
     return findings
 
 
+# #1928: what a clause says about writes and synced copies. A write cue claims the
+# nearest engine in its clause as a writer; a copy cue makes the engine after
+# "from/on/by" (or before "Streams") the copy's source, and the other engines the
+# copy's readers.
+_WRITE_SPLIT = re.compile(r"[.;:!?()]|\b(?:while|whereas|but|although)\b", re.IGNORECASE)
+_WRITE_CUE = re.compile(r"\b(?:writes?|written|writer|write\s+operations)\b", re.IGNORECASE)
+_WRITE_NEGATION_BEFORE = re.compile(
+    r"\b(?:no|not|never|zero|without)\s+(?:[\w-]+\s+){0,2}$", re.IGNORECASE
+)
+_WRITE_EVERY_BEFORE = re.compile(r"\b(?:every|all)\s+(?:[\w-]+\s+){0,2}$", re.IGNORECASE)
+_COPY_CUE = re.compile(
+    r"\b(?:cop(?:y|ies)|replicas?|replicated|in\s+sync|synced|change\s+data\s+capture|cdc"
+    r"|change\s+streams?)\b",
+    re.IGNORECASE,
+)
+_COPY_SOURCE_BEFORE = re.compile(
+    r"\b(?:from|on|off|by|of)\s+(?:(?:the|a|an|amazon)\s+)*$", re.IGNORECASE
+)
+_STREAMS_AFTER = re.compile(r"^\s+streams?\b", re.IGNORECASE)
+CACHE_ENGINES = catalog.engine_ids(role="cache")
+
+
+def _engines_in(clause: str) -> list[re.Match]:
+    return [
+        m for m in _ENGINE_RE.finditer(clause) if not _HISTORY_BEFORE.search(clause[: m.start()])
+    ]
+
+
+def _write_claims(summary: str) -> dict[str, set[str]]:
+    """Engines the summary names as writers, sole writers, non-writers, copy sources
+    and copy readers.
+
+    A write cue is read over a statement split at sentence and contrast boundaries
+    only, so a list ("carries the joins, aggregations and transactional writes")
+    keeps its engine; the copy cues use the finer :func:`_clauses`.
+    """
+    claims: dict[str, set[str]] = {k: set() for k in ("writer", "sole", "none", "source", "reader")}
+    for statement in _WRITE_SPLIT.split(summary):
+        near = [
+            m for m in _engines_in(statement) if not _SOURCE_BEFORE.search(statement[: m.start()])
+        ]
+        for cue in _WRITE_CUE.finditer(statement) if near else ():
+            m = min(
+                near,
+                key=lambda e: (
+                    e.start() - cue.end() if e.start() >= cue.end() else cue.start() - e.end()
+                ),
+            )
+            engine = _engine_key(m)
+            before = statement[: cue.start()]
+            if _WRITE_NEGATION_BEFORE.search(before):
+                claims["none"].add(engine)
+                continue
+            claims["writer"].add(engine)
+            if _WRITE_EVERY_BEFORE.search(before):
+                claims["sole"].add(engine)
+    for clause in _clauses(summary):
+        if not _COPY_CUE.search(clause):
+            continue
+        for m in _engines_in(clause):
+            engine = _engine_key(m)
+            if _COPY_SOURCE_BEFORE.search(clause[: m.start()]) or _STREAMS_AFTER.match(
+                clause[m.end() :]
+            ):
+                claims["source"].add(engine)
+            elif engine not in claims["writer"]:
+                claims["reader"].add(engine)
+    return claims
+
+
+def check_summary_write_claims(summary: str, ownership: dict | None) -> list[str]:
+    """Contradictions between what ``summary`` says about writes and copies and
+    ``ownership`` (``reality_check_writes.write_ownership``); empty when consistent
+    or when the assignment records no write groups (``None``).
+
+    An engine named as carrying writes must carry some; one named as taking every
+    write must be the only writer; one named as taking none must have none; the
+    source of a synced copy must carry writes; and an engine named as reading a copy
+    must read a table another engine writes (a cache always holds a copy).
+    """
+    if ownership is None:
+        return []
+    writes: dict[str, int] = ownership.get("write_engines") or {}
+    copy_readers = {e for row in ownership.get("tables") or [] for e in row["replica_engines"]}
+    in_play = set(writes) | set(ownership.get("read_only_engines") or [])
+    claims = _write_claims(summary or "")
+    findings: list[str] = []
+
+    def total(engine: str) -> int:
+        return sum(writes.get(e, 0) for e in _family(engine, in_play))
+
+    def named(engine: str) -> str:
+        names = _family(engine, in_play)
+        return _join([display_engine(e) for e in names]) if names else display_engine(engine)
+
+    def where() -> str:
+        if not writes:
+            return "no engine carries a write"
+        listed = [
+            f"{display_engine(e)} ({n})"
+            for e, n in sorted(writes.items(), key=lambda i: (-i[1], i[0]))
+        ]
+        return f"the writes sit on {_join(listed)}"
+
+    for engine in sorted(claims["writer"] | claims["sole"]):
+        if (_family(engine, in_play) or engine in CACHE_ENGINES) and not total(engine):
+            findings.append(
+                f"The summary describes {named(engine)} as carrying writes, but the final "
+                f"assignment puts none on it: {where()}."
+            )
+    for engine in sorted(claims["sole"]):
+        others = {e for e in writes if e not in _family(engine, in_play)}
+        if total(engine) and others:
+            findings.append(
+                f"The summary describes {named(engine)} as taking every write, but {where()}."
+            )
+    for engine in sorted(claims["none"] - claims["writer"]):
+        if total(engine):
+            findings.append(
+                f"The summary describes {named(engine)} as taking no writes, but {where()}."
+            )
+    for engine in sorted(claims["source"]):
+        if _family(engine, in_play) and not total(engine):
+            findings.append(
+                f"The summary names {named(engine)} as the source of a synced copy, but the "
+                f"final assignment puts no write on it: {where()}."
+            )
+    for engine in sorted(claims["reader"] - claims["source"]):
+        real = [e for e in _family(engine, in_play) if e not in CACHE_ENGINES]
+        if real and not any(e in copy_readers for e in real):
+            findings.append(
+                f"The summary describes {named(engine)} as reading a synced copy, but no "
+                f"table it reads is written on another engine: {where()}."
+            )
+    return findings
+
+
 def build_final_summary(
     before_distribution: dict[str, int],
     after_distribution: dict[str, int],
@@ -408,6 +550,11 @@ def finalize_executive_summary(result: dict, eliminated: set[str] | None = None)
     findings = check_summary_against_records(
         summary_text, before, after, consolidations, eliminated
     )
+    # #1928: the summary states who carries the writes as the final assignment has it.
+    findings = [
+        *findings,
+        *check_summary_write_claims(summary_text, result_write_ownership(result)),
+    ]
     hits = sorted({f'"{h.term}"' for h in find_style_hits(summary_text, identifiers)})
     if hits:
         findings = [

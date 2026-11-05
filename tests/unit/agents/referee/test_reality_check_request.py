@@ -991,3 +991,27 @@ class TestTheValidatorAnswersThroughOneTool:
             "Respond with JSON only",
         ):
             assert old not in prompt and old not in system
+
+
+class TestWordpressRequestNamesTheWriteOwners:
+    """#1928: the bundled WordPress sample puts every write on one engine; the model's
+    input named the busiest engine as the one that takes every write."""
+
+    def test_patterns_name_the_engine_that_carries_the_writes(self, wordpress):
+        es = json.loads(wordpress["text"])["executive_summary"]
+        writers = set(es["write_ownership"]["write_engines"])
+        assert len(writers) == 1, es["write_ownership"]["write_engines"]
+        named = [
+            p["applies_to"].get("write_engine") or p["applies_to"].get("source_engine")
+            for p in es["architectural_patterns"]
+            if {"write_engine", "source_engine"} & set(p["applies_to"])
+        ]
+        assert named, es["architectural_patterns"]
+        assert set(named) == writers
+
+    def test_every_written_table_names_its_source_of_truth(self, wordpress):
+        ownership = json.loads(wordpress["text"])["executive_summary"]["write_ownership"]
+        (writer,) = ownership["write_engines"]
+        assert ownership["tables"]
+        assert {t["source_of_truth"] for t in ownership["tables"]} == {writer}
+        assert writer not in ownership["read_only_engines"]
