@@ -1,0 +1,18 @@
+# Routine check postgresql-routine-language (#1935). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Working with Trusted Language Extensions for PostgreSQL;
+# Extension versions for Amazon Aurora PostgreSQL (src/catalog/aurora_postgresql_extensions.toml).
+id = "postgresql-routine-language"
+feature = "A function or procedure in a language Aurora PostgreSQL does not run"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "blocks_move"
+reason = "Aurora PostgreSQL runs PL/pgSQL, SQL and the trusted languages it offers as extensions, but no untrusted language (plpythonu, plpython3u, plperlu, pltclu) and no C or internal function a customer loads, so this routine cannot be created on the target."
+fix_hint = "Rewrite the routine in PL/pgSQL or SQL, or in a trusted language Aurora PostgreSQL offers on the target version (PL/Perl, PL/Tcl, PL/v8, PL/CoffeeScript or PL/LiveScript)."
+docs = "Amazon Aurora User Guide, Working with Trusted Language Extensions for PostgreSQL; Extension versions for Amazon Aurora PostgreSQL"
+
+# Checks: Procedure.language. plpgsql and sql pass on every line; a trusted language passes
+# where the target line offers it as an extension; every other language fails.
+[match]
+languages = ["plpgsql", "sql"]
+trusted_extension_languages = ["plperl", "pltcl", "plv8", "plcoffee", "plls"]

@@ -1818,6 +1818,49 @@ Data types the conversion maps: informational. These types are converted to the 
 
 Documentation: AWS Schema Conversion Tool User Guide, data type mappings.
 
+## Routine checks: what stops a routine loading on the target
+
+Generated from `src/catalog/routine_checks/*.toml` (#1935; field definitions: `src/shared/catalog/routine_checks.py`). Each routine's CREATE statement and metadata are checked against every rule for its kind; the verdict lists each rule's outcome with its reason and fix hint, runs the metadata checks even when the statement does not parse, and never holds the routine's statement or its literals. <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_clean_function_passes_every_rule_with_its_reason_and_fix_hint, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_routine_that_fails_several_rules_lists_each_one, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_metadata_checks_still_run_when_the_statement_does_not_parse, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_verdict_never_holds_the_routine_text --> The target version line is the one the gap check's move lands on for the source's installed extensions. <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_routines_line_is_the_one_the_gap_checks_move_lands_on, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_target_line_follows_the_gap_checks_choice -->
+
+| Rule | Sources | Targets | Kinds | Impact | Checks |
+|---|---|---|---|---|---|
+| [`postgresql-routine-extension-not-offered`](#postgresql-routine-extension-not-offered) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Blocks the move | every extension the routine uses is offered on the target version line (`src/catalog/aurora_postgresql_extensions.toml`, by name) <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_every_extension_the_target_line_lacks_fails_and_is_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_an_extension_only_a_later_line_offers_fails_on_the_earlier_line --> |
+| [`postgresql-routine-language`](#postgresql-routine-language) | postgresql | Aurora PostgreSQL | function, procedure | Blocks the move | the metadata's language and the statement's LANGUAGE agree, and the language is `plpgsql` or `sql`, or one of `plperl`, `pltcl`, `plv8`, `plcoffee`, `plls` where the target version line offers it as an extension; any other language fails <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_plpgsql_and_sql_pass, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_untrusted_c_and_unknown_languages_fail_and_are_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_trusted_language_passes_only_where_the_target_line_offers_it, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_metadata_and_the_statements_language_must_agree --> |
+| [`postgresql-routine-superuser-security-definer`](#postgresql-routine-superuser-security-definer) | postgresql | Aurora PostgreSQL | function, procedure | Needs a rewrite | a SECURITY DEFINER routine whose owner is a superuser on the source <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_superusers_security_definer_routine_is_flagged, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes --> |
+| [`postgresql-routine-unparseable`](#postgresql-routine-unparseable) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Needs a rewrite | one CREATE FUNCTION, CREATE PROCEDURE or CREATE TRIGGER statement of the routine's kind that PostgreSQL's parser reads, its PL/pgSQL or SQL body included; text holding a NUL or one the parser cannot encode does not parse <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_parse_passes_each_routine_shape, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_body_that_does_not_parse_is_unparseable, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_statement_that_is_not_one_routine_of_its_kind_is_unparseable, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_nul_anywhere_is_unparseable_at_its_position, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_text_the_parser_cannot_encode_is_unparseable_and_raises_nothing --> |
+
+### postgresql-routine-extension-not-offered
+
+A routine that uses an extension the target Aurora PostgreSQL version does not offer: blocks the move. The routine depends on an extension that Aurora PostgreSQL does not offer on the target version line, so it cannot be created there.
+
+Fix: Replace what the extension provides with SQL or an extension the target version offers, move to a version line that offers it, or keep that logic outside the database.
+
+Documentation: Extension versions for Amazon Aurora PostgreSQL.
+
+### postgresql-routine-language
+
+A function or procedure in a language Aurora PostgreSQL does not run: blocks the move. Aurora PostgreSQL runs PL/pgSQL, SQL and the trusted languages it offers as extensions, but no untrusted language \(plpythonu, plpython3u, plperlu, pltclu\) and no C or internal function a customer loads, so this routine cannot be created on the target.
+
+Fix: Rewrite the routine in PL/pgSQL or SQL, or in a trusted language Aurora PostgreSQL offers on the target version \(PL/Perl, PL/Tcl, PL/v8, PL/CoffeeScript or PL/LiveScript\).
+
+Documentation: Amazon Aurora User Guide, Working with Trusted Language Extensions for PostgreSQL; Extension versions for Amazon Aurora PostgreSQL.
+
+### postgresql-routine-superuser-security-definer
+
+A SECURITY DEFINER routine owned by a superuser: needs a rewrite. A SECURITY DEFINER routine runs with its owner's privileges, and no Aurora PostgreSQL role is a superuser \(rds\_superuser is not one\), so on the target it runs with fewer privileges than on the source and can fail where it relied on superuser rights.
+
+Fix: Give the routine an owner role on the target with only the privileges it needs, check that nothing in it needs superuser rights, and set an explicit search\_path on it.
+
+Documentation: Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions; PostgreSQL documentation, CREATE FUNCTION.
+
+### postgresql-routine-unparseable
+
+A routine whose CREATE statement does not parse: needs a rewrite. PostgreSQL's own parser cannot read this routine's CREATE statement, or its PL/pgSQL or SQL body, as one statement of the routine's kind, so it cannot be loaded as collected.
+
+Fix: Re-collect the routine with pg\_get\_functiondef or pg\_get\_triggerdef, or correct the statement so it parses, then check it again.
+
+Documentation: PostgreSQL documentation, CREATE FUNCTION; CREATE PROCEDURE; CREATE TRIGGER.
+
 ## Write intents: serving a carried write the target's way
 
 Generated from `src/catalog/write_intents/*.toml` and `src/catalog/carried_writes.toml` (#1362; field definitions: `src/shared/catalog/write_intents.py`). A write group moves as one unit (ADR-031 Decision 1 Amendment 9), so it can carry a member whose own score on the group's engine is low. Below the floor, the member's intent is read from its parsed facts (`src/agents/referee/carried_writes.py`) and the designer input and the risk register name the engine's approach below; routing never reads it.

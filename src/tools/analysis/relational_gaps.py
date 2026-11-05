@@ -66,7 +66,7 @@ from src.shared.sql_spans import span_dialect, span_settings, with_span_settings
 from src.tools.sql.facade import SqlTokens, sql_tokens
 from src.tools.sql.normalize import quoted_mask
 
-__all__ = ["detect_relational_gaps", "normalized_data_type"]
+__all__ = ["detect_relational_gaps", "extension_landing_line", "normalized_data_type"]
 
 
 def normalized_data_type(data_type: Any) -> str:
@@ -521,6 +521,108 @@ def _installed_extensions(collector: Mapping[str, Any]) -> dict[str, str | None]
     return out
 
 
+_Line = tuple[tuple[int, ...], str, AuroraExtensionLine]
+
+
+@dataclass(frozen=True)
+class _Landing:
+    """Where a move with these extensions lands: the lines it can move to
+    (``candidates``), the source's own listed line (``own``) and the lowest candidate
+    that offers every extension (``chosen``, None when none does)."""
+
+    candidates: list[_Line]
+    own: _Line | None
+    chosen: _Line | None
+
+
+def _fits(
+    server: frozenset[str], entry: AuroraExtensionLine, name: str, version: str | None
+) -> bool:
+    if name not in entry.extensions:
+        return False
+    if name in server:
+        return True
+    have, top = extension_version(version), extension_version(entry.extensions[name])
+    return have is None or top is None or have <= top
+
+
+def _landing(
+    considered: Mapping[str, str | None],
+    offered: AuroraExtensionLines,
+    line: tuple[int, ...] | None,
+) -> _Landing | None:
+    """The line choice of :func:`_extension_findings` (see there), or None when the list
+    names no line."""
+    parsed = sorted(
+        (key, name, entry)
+        for name, entry in offered.lines.items()
+        if (key := parse_version_line("postgresql", name)) is not None
+    )
+    if not parsed:
+        return None
+    server = frozenset(offered.server_modules)
+    own = None
+    if line is None or line < parsed[0][0]:
+        candidates = parsed
+    elif line > parsed[-1][0]:
+        candidates = [parsed[-1]]
+    else:
+        candidates = [p for p in parsed if p[0] >= line]
+        own = next((p for p in parsed if p[0] == line), None)
+    chosen = next(
+        (c for c in candidates if all(_fits(server, c[2], n, v) for n, v in considered.items())),
+        None,
+    )
+    return _Landing(candidates, own, chosen)
+
+
+def _own_rule_extensions(
+    engine: str, target_engine: str, rules: Iterable[GapRule]
+) -> frozenset[str]:
+    """The extensions a gap rule of this move names (that rule's evidence, not the
+    generic extension rules')."""
+    return frozenset(
+        r.match.extension.lower()
+        for r in rules
+        if engine in r.source_engines and target_engine in r.targets and r.match.extension
+    )
+
+
+def extension_landing_line(
+    installed: Mapping[str, str | None] | None,
+    source_engine: str,
+    source_version: str | None,
+    target_engine: str,
+    *,
+    rules: Iterable[GapRule] | None = None,
+    extension_lines: Mapping[str, AuroraExtensionLines] | None = None,
+) -> str | None:
+    """The Aurora version line a ``source_engine`` source (the collector's engine, as
+    :func:`detect_relational_gaps` reads it) with these installed extensions
+    (pg_extension name -> version) moves to, as the gap check chooses it
+    (#1078): the lowest line, among the ones the source can move to, that offers every
+    installed extension at its version, extensions a rule of their own names (TimescaleDB,
+    Citus) aside. When no line offers them all: the source's own line when it is listed,
+    else the newest line it can move to. None when ``target_engine`` has no extension
+    list for ``source_engine``. ``rules`` and ``extension_lines`` default to the catalog's.
+    """
+    offered = (extension_lines if extension_lines is not None else aurora_extension_lines()).get(
+        target_engine
+    )
+    if offered is None or source_engine not in offered.source_engines:
+        return None
+    own_rules = _own_rule_extensions(
+        source_engine, target_engine, gap_rules() if rules is None else rules
+    )
+    considered = {str(n).strip().lower(): v for n, v in (installed or {}).items() if str(n).strip()}
+    considered = {n: v for n, v in considered.items() if n not in own_rules}
+    landing = _landing(considered, offered, parse_version_line(source_engine, source_version))
+    if landing is None:
+        return None
+    line = landing.chosen or landing.own or landing.candidates[-1]
+    return line[1]
+
+
 def _extension_findings(
     installed: Mapping[str, str | None] | None,
     offered: AuroraExtensionLines | None,
@@ -546,41 +648,18 @@ def _extension_findings(
     considered = {n: v for n, v in (installed or {}).items() if n not in own_rules}
     if offered is None or not considered:
         return out
-    parsed = sorted(
-        (key, name, entry)
-        for name, entry in offered.lines.items()
-        if (key := parse_version_line("postgresql", name)) is not None
-    )
-    if not parsed:
+    landing = _landing(considered, offered, line)
+    if landing is None:
         return out
     server = frozenset(offered.server_modules)
-
-    def fits(entry: AuroraExtensionLine, name: str, version: str | None) -> bool:
-        if name not in entry.extensions:
-            return False
-        if name in server:
-            return True
-        have, top = extension_version(version), extension_version(entry.extensions[name])
-        return have is None or top is None or have <= top
-
-    own = None
-    if line is None or line < parsed[0][0]:
-        candidates = parsed
-    elif line > parsed[-1][0]:
-        candidates = [parsed[-1]]
-    else:
-        candidates = [p for p in parsed if p[0] >= line]
-        own = next((p for p in parsed if p[0] == line), None)
-    chosen = next(
-        (c for c in candidates if all(fits(c[2], n, v) for n, v in considered.items())), None
-    )
+    own, chosen = landing.own, landing.chosen
     if chosen is not None:
         if own is not None and chosen[0] > own[0]:
             for name, version in considered.items():
-                if not fits(own[2], name, version):
+                if not _fits(server, own[2], name, version):
                     out["on_a_later_line"][name] = f"offered from Aurora PostgreSQL {chosen[1]}"
         return out
-    reference = [own[2]] if own is not None else [c[2] for c in candidates]
+    reference = [own[2]] if own is not None else [c[2] for c in landing.candidates]
     for name, version in considered.items():
         listed = [e.extensions[name] for e in reference if name in e.extensions]
         if not listed:
@@ -646,7 +725,7 @@ def detect_relational_gaps(
     offered = (extension_lines if extension_lines is not None else aurora_extension_lines()).get(
         str(target_engine)
     )
-    own_rules = frozenset(r.match.extension.lower() for r in applicable if r.match.extension)
+    own_rules = _own_rule_extensions(engine, str(target_engine), applicable)
     findings = _extension_findings(
         installed,
         offered if offered is not None and engine in offered.source_engines else None,

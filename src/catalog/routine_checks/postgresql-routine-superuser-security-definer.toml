@@ -1,0 +1,16 @@
+# Routine check postgresql-routine-superuser-security-definer (#1935). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions;
+# PostgreSQL documentation, CREATE FUNCTION, Writing SECURITY DEFINER Functions Safely.
+id = "postgresql-routine-superuser-security-definer"
+feature = "A SECURITY DEFINER routine owned by a superuser"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "A SECURITY DEFINER routine runs with its owner's privileges, and no Aurora PostgreSQL role is a superuser (rds_superuser is not one), so on the target it runs with fewer privileges than on the source and can fail where it relied on superuser rights."
+fix_hint = "Give the routine an owner role on the target with only the privileges it needs, check that nothing in it needs superuser rights, and set an explicit search_path on it."
+docs = "Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions; PostgreSQL documentation, CREATE FUNCTION"
+
+# Checks: SECURITY DEFINER (prosecdef) with an owner that is a superuser (pg_roles.rolsuper).
+[match]
+security_definer_owned_by_superuser = true

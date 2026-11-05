@@ -1,0 +1,16 @@
+# Routine check postgresql-routine-unparseable (#1935). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL documentation, CREATE FUNCTION, CREATE PROCEDURE, CREATE TRIGGER.
+id = "postgresql-routine-unparseable"
+feature = "A routine whose CREATE statement does not parse"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure", "trigger"]
+impact = "needs_rewrite"
+reason = "PostgreSQL's own parser cannot read this routine's CREATE statement, or its PL/pgSQL or SQL body, as one statement of the routine's kind, so it cannot be loaded as collected."
+fix_hint = "Re-collect the routine with pg_get_functiondef or pg_get_triggerdef, or correct the statement so it parses, then check it again."
+docs = "PostgreSQL documentation, CREATE FUNCTION; CREATE PROCEDURE; CREATE TRIGGER"
+
+# Checks: one CREATE FUNCTION, CREATE PROCEDURE or CREATE TRIGGER statement (the routine's
+# kind) that parses, with its PL/pgSQL or SQL body.
+[match]
+parses = true
