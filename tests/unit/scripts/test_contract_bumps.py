@@ -635,3 +635,23 @@ def test_the_merge_queue_refuses_a_pending_bump() -> None:
     assert '--against "$base"' in step["run"] and "HEAD^1" in step["run"]
     assert "merge_group.base_sha" in step["env"]["MERGE_GROUP_BASE"]
     assert job["steps"][0]["with"]["fetch-depth"] == 2
+
+
+@pytest.mark.passes_on_main
+def test_a_stacked_branch_resolves_against_the_stack_base_not_main() -> None:
+    """#1846: a branch stacked on a resolved PR carries its version (1.3). Compared with
+    main (1.2) the pending file next to it reads as a hand bump; compared with the stack
+    base (1.3) it resolves to 1.4. A hand bump on top of the stack still fails."""
+    stack_base = MODULE.replace('default="1.2"', 'default="1.3"').replace(
+        "- 1.2 (2026-03-01, #8): Added ``c``.\n",
+        "- 1.2 (2026-03-01, #8): Added ``c``.\n- 1.3 (2026-04-01, #9): Added ``e``.\n",
+    )
+    on_stack = stack_base
+    (vs_main,) = _failures([_bump()], head=on_stack, base=MODULE)
+    assert "moved the version by hand" in vs_main.message
+    assert _resolve([_bump()], head=on_stack, base=stack_base)[1][0].after == "1.4"
+    hand_bumped = stack_base.replace('default="1.3"', 'default="1.4"').replace(
+        "Added ``e``.\n", "Added ``e``.\n- 1.4 (2026-04-02, #10): Added ``f``.\n"
+    )
+    (still,) = _failures([_bump()], head=hand_bumped, base=stack_base)
+    assert "moved the version by hand" in still.message

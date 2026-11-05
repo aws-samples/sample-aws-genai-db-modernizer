@@ -5,6 +5,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,8 +21,11 @@ from ci.pre_merge import (
     parse_merge_tree,
     pending_bumps,
     pick_remote,
+    pick_stack_base,
+    stack_notice,
 )
 
+PRE_MERGE_PY = Path(__file__).resolve().parents[3] / "ci" / "pre_merge.py"
 PUBLIC = "https://github.com/aws-samples/sample-aws-genai-db-modernizer"
 
 
@@ -623,3 +630,239 @@ def test_quick_runs_the_version_pin_check_on_what_the_branch_touched():
     assert 'scripts/check_version_pins.py ${pins_args[@]+"${pins_args[@]}"}' in step
     # The full run keeps every candidate test: --base is set only under --quick.
     assert step.index('if [ "$quick" -eq 1 ]') < step.index("pins_args=(--base")
+
+
+# --- stacked branches (#1846) ------------------------------------------------------
+
+
+def _prs(*rows, draft=False, fork=False):
+    return [
+        {
+            "number": n,
+            "headRefName": ref,
+            "headRefOid": oid,
+            "isDraft": draft,
+            "isCrossRepository": fork,
+        }
+        for n, ref, oid in rows
+    ]
+
+
+def test_stack_notice_names_the_pull_request_twice():
+    assert stack_notice(1637) == "stacked on #1637: re-check after #1637 merges"
+
+
+def test_a_branch_carrying_another_pr_head_is_stacked_on_it():
+    prs = _prs((1637, "fix/a", "c2"), (1640, "fix/b", "c4"))
+    assert pick_stack_base(["c1", "c2", "c3", "c4"], prs, "fix/b", 1640) == (1637, "c2")
+
+
+def test_the_nearest_of_several_carried_pull_requests_is_the_base():
+    prs = _prs((10, "a", "c1"), (11, "b", "c3"), (12, "own", "c4"))
+    assert pick_stack_base(["c1", "c2", "c3", "c4"], prs, "own", 12) == (11, "c3")
+
+
+@pytest.mark.parametrize(
+    ("ahead", "prs", "own_ref", "own_number"),
+    [
+        (["c1", "c2"], [], "own", 5),  # no other open pull request
+        (["c1", "c2"], _prs((7, "other", "zz")), "own", 5),  # its head is not carried
+        ([], _prs((7, "other", "c9")), "own", 5),  # nothing ahead of main
+        (["c1", "c2"], _prs((5, "own", "c2")), "own", 5),  # only its own pull request
+        (["c1", "c2"], _prs((6, "own", "c1")), "own", None),  # its own earlier push, by name
+        (["c1", "c2"], _prs((5, "renamed", "c1")), "own", 5),  # its own pull request, by number
+        (["c1"], [{"number": 7, "headRefName": "x", "headRefOid": ""}], "own", 5),
+    ],
+)
+def test_a_branch_that_carries_no_other_pr_is_not_stacked(ahead, prs, own_ref, own_number):
+    assert pick_stack_base(ahead, prs, own_ref, own_number) is None
+
+
+@pytest.mark.parametrize("flags", [{"draft": True}, {"fork": True}, {"draft": True, "fork": True}])
+def test_a_draft_or_fork_pr_is_never_the_stack_base(flags):
+    """A throwaway pull request (a fork's, or a draft) must not make the contract diff
+    inside its head commit skip the check on a branch that merges it in."""
+    prs = _prs((1999, "dummy", "d1"), **flags)
+    assert pick_stack_base(["a1", "a2", "b1", "d1", "merge"], prs, "own", 5) is None
+    # The same pull request, open and from this repository, is the base.
+    assert pick_stack_base(["a1", "d1", "merge"], _prs((1999, "dummy", "d1")), "own", 5) == (
+        1999,
+        "d1",
+    )
+
+
+def test_an_ineligible_pr_does_not_hide_an_eligible_one_further_down():
+    prs = _prs((1, "a", "a2")) + _prs((2, "dummy", "d1"), draft=True)
+    assert pick_stack_base(["a1", "a2", "d1"], prs, "own", 5) == (1, "a2")
+
+
+def test_a_pr_missing_the_draft_or_fork_fields_is_not_trusted():
+    prs = [{"number": 3, "headRefName": "a", "headRefOid": "a1"}]
+    assert pick_stack_base(["a1"], prs, "own", 5) is None
+
+
+def test_a_stacked_on_pr_that_moved_on_is_not_a_stack():
+    """Its new head is not among the branch's commits, so main is the base again."""
+    assert pick_stack_base(["a1", "b1"], _prs((1, "a", "a2")), "own", 5) is None
+
+
+FAKE_GH = """#!/bin/sh
+case "$1 $2" in
+  "pr view") echo '{"number": 1640}' ;;
+  "pr list") cat "$FAKE_GH_PRS" ;;
+  "api repos/o/r/compare/main...HEAD1") echo '{"commits": [{"sha": "c1"}, {"sha": "c2"}]}' ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+def _run_stacked(tmp_path, args, prs, env_extra=None, with_gh=True):
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    if with_gh:
+        gh = bindir / "gh"
+        gh.write_text(FAKE_GH)
+        gh.chmod(0o755)
+    (tmp_path / "prs.json").write_text(json.dumps(prs))
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        "FAKE_GH_PRS": str(tmp_path / "prs.json"),
+        **(env_extra or {}),
+    }
+    return subprocess.run(
+        [sys.executable, str(PRE_MERGE_PY), "stacked", *args],
+        cwd=tmp_path / "repo" if (tmp_path / "repo").exists() else tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _git_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*a):
+        return subprocess.run(
+            ["git", "-c", "user.email=t@e.x", "-c", "user.name=t", *a],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    (repo / "f").write_text("0")
+    git("add", "f")
+    git("commit", "-qm", "root")
+    git("checkout", "-q", "-b", "fix/own")
+    shas = []
+    for i in (1, 2):
+        (repo / "f").write_text(str(i))
+        git("commit", "-qam", f"c{i}")
+        shas.append(git("rev-parse", "HEAD"))
+    return shas
+
+
+def test_the_stacked_command_prints_the_pr_whose_head_the_branch_carries(tmp_path):
+    first, second = _git_repo(tmp_path)
+    prs = _prs((1637, "fix/base", first), (1640, "fix/own", second))
+    got = _run_stacked(tmp_path, ["--main-ref", "main"], prs)
+    assert got.stdout.strip() == f"stacked 1637 {first}"
+    # The shell script's notice comes from the same function.
+    notice = subprocess.run(
+        [sys.executable, str(PRE_MERGE_PY), "stack-notice", "1637"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert notice.stdout.strip() == "stacked on #1637: re-check after #1637 merges"
+
+
+def test_the_stacked_command_prints_nothing_when_no_pr_is_carried(tmp_path):
+    first, second = _git_repo(tmp_path)
+    got = _run_stacked(tmp_path, ["--main-ref", "main"], _prs((1640, "fix/own", second)))
+    assert got.returncode == 0 and got.stdout == ""
+
+
+def test_the_stacked_command_fails_open_without_gh(tmp_path):
+    _git_repo(tmp_path)
+    got = _run_stacked(tmp_path, ["--main-ref", "main"], [], with_gh=False)
+    assert got.returncode == 0 and got.stdout == ""
+
+
+def test_the_stacked_command_reads_the_commits_ahead_from_the_api_in_ci(tmp_path):
+    prs = _prs((1637, "fix/base", "c1"), (1640, "fix/own", "c2"))
+    got = _run_stacked(
+        tmp_path,
+        ["--api-repo", "o/r", "--head-sha", "HEAD1", "--head-ref", "fix/own", "--number", "1640"],
+        prs,
+    )
+    assert got.stdout.strip() == "stacked 1637 c1"
+
+
+# The false positive of #1640: the stacked branch carries the base's resolved 1.1 and a
+# pending file. Against main (1.0) the pair reads as a hand bump; against the base's head
+# (1.1) it is the resolved state. A hand bump on top of the stack still differs from it.
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    ("compare_text_version", "head", "level", "text"),
+    [
+        ("1.0", "1.1", "error", "keep one"),  # compared with main: the false positive
+        ("1.1", "1.1", "ok", "pending minor bump declared"),  # compared with the stack base
+        ("1.1", "1.2", "error", "keep one"),  # a real hand bump on the stack still fails
+    ],
+)
+def test_check_contract_on_a_stacked_branch_compares_with_the_stack_base(
+    compare_text_version, head, level, text
+):
+    def module(v):
+        return f'contract_version: str = Field(default="{v}")'
+
+    got_level, message = check_contract(
+        "src/contracts/x.py",
+        module(compare_text_version),
+        module(compare_text_version),
+        module(head),
+        pending="minor",
+    )
+    assert got_level == level and text in message
+
+
+def test_the_ci_contract_step_looks_for_a_stack_without_the_pull_request_payload():
+    text = (PRE_MERGE_PY.parents[1] / ".github/workflows/ci.yml").read_text()
+    step = text[text.index("- name: Check pending contract bumps") :]
+    step = step[: step.index("- name: Check no test pins")]
+    assert "ci/pre_merge.py stacked --api-repo" in step
+    assert "ci/pre_merge.py stack-notice" in step
+    assert "HEAD^2" in step  # the pull request's own head, not event.pull_request
+    assert "event.pull_request" not in step  # the payload a merge group lacks
+    assert "stack-caveat" in step and "::warning::" in step
+    assert 'GH_TOKEN="$DETECT_TOKEN" uv run python ci/pre_merge.py stacked' in step
+    assert "\n          GH_TOKEN:" not in text  # the token is not in the step's env
+
+
+def test_pre_merge_sh_compares_the_contract_checks_with_the_stack_base():
+    script = (PRE_MERGE_PY.parent / "pre_merge.sh").read_text()
+    assert 'helper stacked --main-ref "$base"' in script
+    assert 'helper contracts "$compare_ref"' in script
+    assert 'merge-base HEAD "$compare_ref"' in script
+    assert "resolve_contract_versions.py --base $compare_ref" in script
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("compare", ["1.0", "1.1"])
+def test_a_plain_hand_bump_is_allowed_against_main_and_against_a_stack_base(compare):
+    """What the stacked comparison does not add: a version higher than the compared
+    commit's, with no pending file, is ok (a contract the resolver cannot edit is bumped by
+    hand, and the message offers it). The docs claim no more than this."""
+
+    def module(v):
+        return f'contract_version: str = Field(default="{v}")'
+
+    level, message = check_contract(
+        "src/contracts/x.py", module(compare), module(compare), module("1.5")
+    )
+    assert level == "ok" and "higher than" in message

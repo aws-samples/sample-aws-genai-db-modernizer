@@ -105,14 +105,35 @@ else
   fi
 fi
 
-# d. Contract versions.
+# d. Contract versions. A branch stacked on another open pull request carries that pull
+# request's resolved version (#1846): compare with its head, not main, or the resolved bump
+# reads as a hand bump. Only an open, non-draft pull request from this repository whose head
+# commit the branch carries counts as the stack. The comparison enforces what it enforces against
+# main: a pending file next to a hand-written version fails, and so does a shape change with
+# neither a version move nor a pending bump; a plain hand bump passes, as it does against main.
+# A problem inherited from the stacked-on pull request is not checked here (its own check and the
+# merge queue catch it). This compares the branch tip; CI compares its merge commit with main.
 changed="$(git diff --name-only "$base...HEAD")"
-contracts="$(printf '%s\n' "$changed" | grep -E '^src/contracts/[^/]+\.py$' || true)"
+compare_ref="$base"
+stack_n=""
+if stack_out="$(helper stacked --main-ref "$base" 2>/dev/null)" && [ -n "$stack_out" ]; then
+  read -r _ stack_n stack_oid <<<"$stack_out"
+  if git cat-file -e "$stack_oid^{commit}" 2>/dev/null || git fetch -q "$remote" "$stack_oid" 2>/dev/null; then
+    compare_ref="$stack_oid"
+    note "info contracts: $(helper stack-notice "$stack_n") (versions are compared with its head ${stack_oid:0:9}, not $base)"
+    note "info contracts: $(helper stack-caveat "$stack_n")"
+  else
+    note "warn contracts: stacked on #$stack_n but its head $stack_oid cannot be fetched; comparing with $base"
+    stack_n=""
+  fi
+fi
+contract_changed="$(git diff --name-only "$compare_ref...HEAD")"
+contracts="$(printf '%s\n' "$contract_changed" | grep -E '^src/contracts/[^/]+\.py$' || true)"
 if [ -z "$contracts" ]; then
   note "ok   contracts: no contract file changed"
 else
   # shellcheck disable=SC2086 # one path per word is intended
-  if contract_out="$(helper contracts "$base" $contracts)"; then
+  if contract_out="$(helper contracts "$compare_ref" $contracts)"; then
     note "ok   contracts: versions checked ($(printf '%s\n' "$contracts" | wc -l | tr -d ' ') file(s))"
     printf '%s\n' "$contract_out" | sed 's/^/       /'
   else
@@ -123,12 +144,12 @@ fi
 # Pending bumps (ADR-008 Decision 8): fine while the PR is open, refused by the merge queue.
 pending="$(helper pending)"
 if [ -n "$pending" ]; then
-  note "warn contracts: $(printf '%s\n' "$pending" | wc -l | tr -d ' ') pending bump(s); after the last rebase, before the merge queue, run: uv run python scripts/resolve_contract_versions.py --base $base"
+  note "warn contracts: $(printf '%s\n' "$pending" | wc -l | tr -d ' ') pending bump(s); after the last rebase, before the merge queue, run: uv run python scripts/resolve_contract_versions.py --base $compare_ref"
   printf '%s\n' "$pending" | sed 's/^/       /'
 fi
 # Every contract change since the merge base moves its version or has a pending bump,
 # even when the branch regenerated its own snapshot (ADR-008 Decision 8).
-if against_out="$(uv run python scripts/resolve_contract_versions.py --check --against "$(git merge-base HEAD "$base")" 2>&1)"; then
+if against_out="$(uv run python scripts/resolve_contract_versions.py --check --against "$(git merge-base HEAD "$compare_ref")" 2>&1)"; then
   note "ok   contracts: every contract change since the merge base is versioned or declared"
 else
   fail "contracts: a contract changed without a version bump or a pending bump"

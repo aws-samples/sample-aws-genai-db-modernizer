@@ -17,6 +17,12 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
   ``contract_version`` with the one on BASE_REF (exit 1 on a version problem).
 * ``pending``: list the pending contract bumps HEAD carries
   (``src/contracts/pending/*.toml``, ADR-008 Decision 8), one ``contract kind`` per line.
+* ``stacked --main-ref REF`` (local) or ``stacked --api-repo OWNER/NAME --head-sha SHA
+  --head-ref NAME [--number N] [--main-name main]`` (CI): when the branch carries the commits of
+  another open pull request (it is stacked on it), print ``stacked N OID`` for that pull request
+  and its head commit, else nothing (#1846). The contract checks then compare with OID, not main.
+* ``stack-notice N``: print the "stacked on #N: re-check after #N merges" line;
+  ``stack-caveat N`` prints what the stacked comparison does not check.
 * ``adr BASE_REF``: a branch that changes ``src/agents/referee/`` or ``src/shared/`` edits
   an ADR or says ``No ADR change: <reason>`` in a commit message or the pull request
   body (``PR_BODY_FILE``, #1154; exit 1 when it does neither).
@@ -32,12 +38,15 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
 import subprocess  # nosec B404 -- runs git with fixed argv
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 try:  # as ``ci.pre_merge`` (tests) or as a script run from ci/ (pre_merge.sh)
     from ci.pr_evidence import _BULLET, _visible
@@ -169,6 +178,54 @@ def check_contract(
     )
 
 
+def stack_notice(number: int) -> str:
+    """The line the contract checks print when they compare with a stacked-on pull request."""
+    return f"stacked on #{number}: re-check after #{number} merges"
+
+
+def stack_caveat(number: int) -> str:
+    """What the stacked comparison does not check, printed beside the notice."""
+    return (
+        f"a hand bump or a missing bump inherited from #{number} is not checked here: "
+        f"#{number}'s own check and the merge queue (which compares with main) catch it"
+    )
+
+
+def pick_stack_base(
+    ahead: list[str],
+    prs: list[dict],
+    own_ref: str | None = None,
+    own_number: int | None = None,
+) -> tuple[int, str] | None:
+    """The open pull request this branch is stacked on, as ``(number, head commit)``, or None.
+
+    ``ahead`` is the branch's commits that main lacks, oldest first; ``prs`` are the open
+    pull requests (``number``, ``headRefName``, ``headRefOid``). A pull request whose head
+    commit is among ``ahead`` is one the branch carries; the one nearest the branch's tip is
+    the base. Only a pull request that is open, not a draft and from this repository (not a
+    fork) counts: anyone can open a throwaway pull request, and a branch that merges in its
+    head must not have the contract diff inside it skipped. The branch's own pull request,
+    found by number or head name, is never the base.
+    A pull request whose head has moved on since the branch took it no longer counts (its new
+    head is not among the commits), so the branch is compared with main.
+    """
+    others = [
+        p
+        for p in prs
+        if p.get("number") != own_number
+        and (own_ref is None or p.get("headRefName") != own_ref)
+        and p.get("headRefOid")
+        and p.get("isDraft") is False
+        and p.get("isCrossRepository") is False
+    ]
+    position = {sha: i for i, sha in enumerate(ahead)}
+    carried = [p for p in others if p["headRefOid"] in position]
+    if not carried:
+        return None
+    nearest = max(carried, key=lambda p: position[p["headRefOid"]])
+    return nearest["number"], nearest["headRefOid"]
+
+
 def pending_bumps(texts: dict[str, str]) -> list[tuple[str, str]]:
     """``(contract, kind)`` for each pending file text, by file name; unreadable
     files are reported as ``(name, "invalid")``."""
@@ -236,6 +293,75 @@ def _contracts(base_ref: str, files: list[str]) -> int:
         if level == "error":
             worst = 1
     return worst
+
+
+def _gh_json(*args: str) -> Any:
+    try:
+        proc = subprocess.run(  # nosec B603 B607 -- fixed argv
+            ["gh", *args], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def _stacked(argv: list[str]) -> int:
+    """Print ``stacked N OID`` when the branch is stacked on an open pull request (#1846).
+
+    Fails open: with no ``gh``, no login or no network it prints nothing, so the contract
+    checks compare with main as before.
+    """
+    parser = argparse.ArgumentParser(prog="pre_merge.py stacked")
+    parser.add_argument("--main-ref", help="local: main's git ref (e.g. origin/main)")
+    parser.add_argument("--api-repo", help="CI: OWNER/NAME, read through the GitHub API")
+    parser.add_argument("--head-sha", help="CI: the pull request's head commit")
+    parser.add_argument("--head-ref", help="CI: the pull request's head branch")
+    parser.add_argument("--number", type=int, help="CI: the pull request's number")
+    parser.add_argument("--main-name", default="main")
+    args = parser.parse_args(argv)
+    own_ref, own_number = args.head_ref, args.number
+    if args.api_repo:
+        if not args.head_sha:
+            parser.error("--api-repo needs --head-sha")
+        compare = _gh_json(
+            "api", f"repos/{args.api_repo}/compare/{args.main_name}...{args.head_sha}"
+        )
+        if not isinstance(compare, dict):
+            return 0
+        ahead = [c["sha"] for c in compare.get("commits", [])]
+        repo_args = ["--repo", args.api_repo]
+    else:
+        if not args.main_ref:
+            parser.error("give --main-ref or --api-repo")
+        rev = _git_out("rev-list", "--reverse", f"{args.main_ref}..HEAD")
+        ahead = rev.split() if rev else []
+        repo_args = []
+        own_ref = own_ref or _git_out("rev-parse", "--abbrev-ref", "HEAD")
+        mine = _gh_json("pr", "view", "--json", "number")
+        if isinstance(mine, dict):
+            own_number = mine.get("number")
+    prs = _gh_json(
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "300",
+        "--json",
+        "number,headRefName,headRefOid,isDraft,isCrossRepository",
+        *repo_args,
+    )
+    if not isinstance(prs, list):
+        return 0
+    found = pick_stack_base(ahead, prs, own_ref, own_number)
+    if found:
+        print(f"stacked {found[0]} {found[1]}")
+    return 0
 
 
 # Behaviour that the ADRs describe (#1154). Tests and docs under these names do not count.
@@ -504,6 +630,14 @@ def main(argv: list[str]) -> int:
         for contract, kind in _head_pending():
             print(f"{contract} {kind}")
         return 0
+    if cmd == "stack-notice" and rest:
+        print(stack_notice(int(rest[0])))
+        return 0
+    if cmd == "stack-caveat" and rest:
+        print(stack_caveat(int(rest[0])))
+        return 0
+    if cmd == "stacked":
+        return _stacked(rest)
     if cmd == "hooks":
         return _hooks()
     if cmd == "adr" and rest:
