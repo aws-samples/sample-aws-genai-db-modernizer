@@ -350,9 +350,10 @@ class SQLServerRemoteCollector:
         (rds_configuration, rds_is_db_writable, etc.) is filtered via a
         ``NOT LIKE`` allow-list on the query text.
         """
-        # CONVERT(NVARCHAR(MAX), ...) keeps the query text on a single line for
-        # tab-separated parsing; CHAR(13)/CHAR(10)/CHAR(9) are stripped explicitly,
-        # as the offline script does, to avoid embedded line breaks and tabs.
+        # sqlcmd's output is one row per line, tab-separated, so the query text is
+        # sent with its backslashes, CR, LF and tabs written as \\, \r, \n and \t,
+        # and _decode_query_text restores them: a line break that ends a -- comment
+        # stays one (#1874).
         limit, min_executions = capture_settings(limit, min_executions)
         # No cap (the default, #384): every statement that ran often enough.
         top_clause = f"TOP {limit}" if limit is not None else ""
@@ -397,14 +398,15 @@ class SQLServerRemoteCollector:
                         qs.max_elapsed_time,
                         qs.creation_time,
                         qs.last_execution_time,
-                        REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(
                             SUBSTRING(st.text,
                                 (qs.statement_start_offset/2)+1,
                                 ((CASE qs.statement_end_offset
                                     WHEN -1 THEN DATALENGTH(st.text)
                                     ELSE qs.statement_end_offset
                                     END - qs.statement_start_offset)/2) + 1),
-                            CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
+                            '\\', '\\\\'), CHAR(13), '\\r'), CHAR(10), '\\n'), CHAR(9), '\\t')
+                            AS query_text,
                         ROW_NUMBER() OVER (
                             PARTITION BY qs.query_hash
                             ORDER BY qs.total_elapsed_time DESC, qs.plan_handle, qs.statement_start_offset
@@ -440,9 +442,11 @@ class SQLServerRemoteCollector:
         patterns = []
         reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())
         for r in raw:
-            query_text = str(r.get("query_text") or "").strip()
+            query_text = _decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
-            query_id = str(r.get("query_id") or _hash(query_text))
+            # The text-hash fallback hashes the text with its line breaks and tabs as
+            # spaces, as the query read before #1874, so no query_id changes.
+            query_id = str(r.get("query_id") or _hash(_flattened(query_text)))
             shape = reader.fields(query_id, query_text)
 
             total_elapsed_us = float(r.get("total_elapsed_time") or 0)
@@ -639,6 +643,26 @@ def _extract_sort_columns(sql: str) -> list[str] | None:
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+_ESCAPED = {"\\": "\\", "r": "\r", "n": "\n", "t": "\t"}
+_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
+
+
+def _decode_query_text(text: str) -> str:
+    """The statement ``collect_query_patterns``'s SQL encoded (#1874).
+
+    The SQL writes each backslash as ``\\\\`` first, then CR, LF and tab as ``\\r``,
+    ``\\n`` and ``\\t``, so reading the escapes left to right gives the text back. A
+    backslash before any other character, or a last one cut off by the output's width,
+    is kept as it is.
+    """
+    return _ESCAPE_RE.sub(lambda m: _ESCAPED.get(m.group(1), m.group(0)), text)
+
+
+def _flattened(text: str) -> str:
+    """``text`` with CR, LF and tab as spaces: the form the live query read before #1874."""
+    return text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
 
 
 def _normalize_index_type(raw: object) -> str:
