@@ -26,7 +26,9 @@ __all__ = [
     "DmsSizingTable",
     "EngineRules",
     "GateRules",
+    "LobInstanceClass",
     "LobRules",
+    "NotMovedRules",
     "SizingRow",
     "dms_sizing",
     "load_dms_sizing",
@@ -59,6 +61,21 @@ class SizingRow(BaseModel):
         return self
 
 
+class LobInstanceClass(BaseModel):
+    """A replication instance class and the largest LobMaxSize it holds (#1918)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    instance_class: str = Field(pattern=r"^dms\.[a-z0-9]+\.[a-z0-9]+$")
+    memory_gib: int = Field(ge=1)
+    # The largest task-wide LobMaxSize it holds, and the largest limit one table may have of its
+    # own (a table-settings rule) while the task runs at most at max_lob_kb.
+    max_lob_kb: int = Field(ge=1, le=102400)
+    max_table_lob_kb: int = Field(ge=1, le=102400)
+    included_storage_gb: int = Field(ge=0)
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
 class LobRules(BaseModel):
     """When a table's LOB columns run in limited LOB mode, and at what size."""
 
@@ -71,6 +88,22 @@ class LobRules(BaseModel):
     unbounded_varchar_max_bytes: int = Field(ge=1)
     why: str = Field(min_length=1, pattern=_ONE_LINE)
     scalars_why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # Source dialects whose step 1 task never runs in full LOB mode (#1918): their tables with
+    # an unknown or larger LOB size run in limited mode at undeclared_max_kb, and the source
+    # endpoint fails the task on a larger value (FailTasksOnLobTruncation).
+    limited_only: tuple[str, ...] = ()
+    undeclared_max_kb: int = Field(ge=1, le=102400)
+    limited_only_why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # Measured sizes (#1918): bytes DMS counts per stored byte of a character LOB, the
+    # headroom factor and the KB step LobMaxSize is rounded up to.
+    measured_bytes_per_character: int = Field(ge=1, le=4)
+    measured_headroom: float = Field(ge=1)
+    measured_round_kb: int = Field(ge=1)
+    measured_why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # Why a table above the task's LobMaxSize gets its own limit (a table-settings rule, #1918).
+    table_settings_why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # The class each LobMaxSize needs, smallest first (memory and max_lob_kb both increase).
+    instance_classes: tuple[LobInstanceClass, ...] = Field(min_length=1)
     # Source dialect -> lower-case base type names DMS reads as a LOB.
     types: dict[str, tuple[str, ...]]
     # Source dialect -> base type names known to map to a non-LOB type. A dialect listed here
@@ -87,6 +120,21 @@ class LobRules(BaseModel):
                     )
                 if len(set(names)) != len(names):
                     raise ValueError(f"lob.{section}.{dialect}: a type is listed twice")
+        for before, after in zip(self.instance_classes, self.instance_classes[1:], strict=False):
+            if not (
+                after.memory_gib > before.memory_gib
+                and after.max_lob_kb > before.max_lob_kb
+                and after.max_table_lob_kb >= before.max_table_lob_kb
+            ):
+                raise ValueError(
+                    f"lob.instance_classes: {after.instance_class} must have more memory, a "
+                    f"larger max_lob_kb and at least the max_table_lob_kb of {before.instance_class}"
+                )
+        for c in self.instance_classes:
+            if c.max_table_lob_kb < c.max_lob_kb:
+                raise ValueError(
+                    f"lob.instance_classes: {c.instance_class}'s max_table_lob_kb is below its max_lob_kb"
+                )
         for dialect, names in self.scalars.items():
             if both := sorted(set(names) & set(self.types.get(dialect, ()))):
                 raise ValueError(f"lob.scalars.{dialect}: {both} also listed as LOB types")
@@ -100,6 +148,19 @@ class EngineRules(BaseModel):
 
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
+class NotMovedRules(BaseModel):
+    """Source types DMS does not migrate: step 1 creates their tables but does not move them (#1918)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    postgresql: tuple[str, ...] = ()
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+    def types(self, dialect: str | None) -> tuple[str, ...]:
+        """The lower-case base types of ``dialect`` DMS does not migrate (none for others)."""
+        return self.postgresql if dialect == "postgresql" else ()
 
 
 class GateRules(BaseModel):
@@ -118,6 +179,7 @@ class DmsSizingTable(BaseModel):
     engine: EngineRules
     gate: GateRules
     lob: LobRules
+    not_moved: NotMovedRules
 
     @model_validator(mode="after")
     def _ordered(self) -> DmsSizingTable:

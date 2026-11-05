@@ -16,7 +16,14 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.contracts.data_movement_plan import DmsSizing, LobTable, UnboundedVarchar
-from src.shared.catalog.dms_sizing import DmsSizingTable, LobRules, SizingRow, dms_sizing
+from src.shared.catalog.dms_sizing import (
+    DmsSizingTable,
+    LobInstanceClass,
+    LobRules,
+    NotMovedRules,
+    SizingRow,
+    dms_sizing,
+)
 from src.shared.catalog.gaps import aurora_version_lines, parse_version_line
 
 WRITE_QUERY_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
@@ -181,7 +188,160 @@ def _table_columns(
     return out
 
 
+# How a LobTable reason sized from the collection's measured values starts (#1918).
+MEASURED = "Measured:"
 UNKNOWN_TYPE_REASON = "type not known to map to a non-LOB DMS type (full LOB mode is the safe side)"
+# DMS's largest LobMaxSize, in KB.
+DMS_MAX_LOB_KB = 102400
+# How to measure a PostgreSQL LOB column's longest value, in bytes (as the collection does).
+MEASURE_LOB = "SELECT max(octet_length(<column>::text)) FROM <table>"
+
+
+def _limited_only(
+    table_id: str, names: list[str], unknown: list[str], known_kb: list[int], lob: LobRules
+) -> LobTable:
+    """A table of a dialect that never runs full LOB mode, whose LOB size is not declared (or is
+    above the limit): limited mode at the catalog's size, or its declared size when larger."""
+    size = min(max([lob.undeclared_max_kb, *known_kb]), DMS_MAX_LOB_KB)
+    why = (f"{', '.join(sorted(unknown))} {'has' if len(unknown) == 1 else 'have'} a type not known to map "
+           "to a non-LOB DMS type, read as a LOB" if unknown
+           else "A LOB column has no declared maximum size (or one above the limit)")  # fmt: skip
+    return LobTable(table=table_id, mode="limited", columns=names, max_size_kb=size, reason=(
+        f"{why}; this source never runs full LOB mode (it writes a NULL LOB as an empty value, #1918), "
+        f"so the table runs in limited LOB mode at {size} KB. The collection did not measure its values, and "
+        f"a larger value is truncated: before the full load, measure {MEASURE_LOB} per column and raise "
+        f"LobMaxSize if needed (2 bytes per byte of a character LOB), or collect again."))  # fmt: skip
+
+
+def _lob_columns(
+    columns: Iterable[Mapping[str, Any]], family: str, types: set[str]
+) -> list[tuple[str, str, Any]]:
+    """(name, base type, measured max_value_bytes) of each LOB-typed column, sorted by name."""
+    out = []
+    for c in columns:
+        base = _base_type(str(c.get("data_type") or ""), family)
+        if base in types:
+            out.append((str(c["column_name"]), base, c.get("max_value_bytes")))
+    return sorted(out)
+
+
+def measured_lob_kb(value_bytes: int, base: str, family: str, rules: LobRules | None = None) -> int:
+    """LobMaxSize in KB for a measured longest value (#1918): bytes DMS counts (a character LOB
+    at ``measured_bytes_per_character`` per stored byte), times the headroom, rounded up to
+    ``measured_round_kb``; never below ``undeclared_max_kb`` nor above DMS's maximum."""
+    lob = rules or dms_sizing().lob
+    per_byte = 1 if base in _BINARY_LOBS.get(family, ()) else lob.measured_bytes_per_character
+    need = math.ceil(value_bytes * per_byte * lob.measured_headroom / 1024)
+    if need <= lob.undeclared_max_kb:
+        return lob.undeclared_max_kb
+    return min(math.ceil(need / lob.measured_round_kb) * lob.measured_round_kb, DMS_MAX_LOB_KB)
+
+
+def _measured_table(
+    table_id: str, columns: list[Any], family: str, types: set[str], lob: LobRules
+) -> LobTable | None:
+    """Limited mode at the size the collection measured, when every LOB column was measured."""
+    lobs = _lob_columns(columns, family, types)
+    if not lobs or any(m is None for _, _, m in lobs):
+        return None
+    name, base, longest = max(lobs, key=lambda c: measured_lob_kb(int(c[2]), c[1], family, lob))
+    size = measured_lob_kb(int(longest), base, family, lob)
+    return LobTable(table=table_id, mode="limited", columns=[n for n, _, _ in lobs], max_size_kb=size, reason=(
+        f"{MEASURED} the longest LOB value is {int(longest)} bytes ({name}); the table runs in limited "
+        f"LOB mode at {size} KB. {lob.measured_why} A larger value is truncated, so measure again "
+        "before the full load if the data grew."))  # fmt: skip
+
+
+def unmeasured_lob_tables(lob_tables: Iterable[LobTable], dialect: str | None) -> list[str]:
+    """The LOB tables of a ``limited_only`` dialect whose size the collection did not measure
+    (an older collection, a table above ``lob_scan_max_mb``, or a column type it does not
+    measure), sorted; none for other dialects."""
+    if _LOB_FAMILY.get(dialect or "", dialect or "") not in dms_sizing().lob.limited_only:
+        return []
+    return sorted(t.table for t in lob_tables if not t.reason.startswith(MEASURED))
+
+
+def lob_size_note(unmeasured: list[str], lob_max_size_kb: int) -> str | None:
+    """The plan's finding when LOB sizes were not measured: the task's size is not checked
+    against them, and a larger value is truncated."""
+    if not unmeasured:
+        return None
+    n = len(unmeasured)
+    return (f"{n} step 1 {'table has' if n == 1 else 'tables have'} a LOB column the collection did not "
+            f"measure ({_named(unmeasured)}), so the task's {lob_max_size_kb} KB LobMaxSize is not checked "
+            f"against {'it' if n == 1 else 'them'} and a larger value is truncated: collect again with "
+            f"scripts/collect-postgresql.sql (it records each LOB column's longest value) and write the "
+            f"plan again, or measure {MEASURE_LOB} per column.")  # fmt: skip
+
+
+def size_for_lob(
+    sizing: DmsSizing,
+    lob_max_size_kb: int,
+    dialect: str | None,
+    rules: LobRules | None = None,
+    *,
+    table: str | None = None,
+    task_kb: int | None = None,
+) -> DmsSizing:
+    """The sizing with the replication instance the largest LOB limit needs (#1918): the larger of
+    the sizing row's class and the catalog's first class that holds it. ``lob_max_size_kb`` is
+    the task's LobMaxSize, or, with ``table``, that table's own limit (its ``table-settings``
+    rule; the task runs at ``task_kb``). Only for a ``limited_only`` dialect; others are returned
+    as they are."""
+    lob = rules or dms_sizing().lob
+    if _LOB_FAMILY.get(dialect or "", dialect or "") not in lob.limited_only:
+        return sizing
+    classes = list(lob.instance_classes)
+
+    def limit(c: LobInstanceClass) -> int:
+        """The largest limit of this kind the class holds: a table's own, or the task's."""
+        return c.max_table_lob_kb if table else c.max_lob_kb
+
+    def holds(c: LobInstanceClass) -> bool:
+        return limit(c) >= lob_max_size_kb and c.max_lob_kb >= (task_kb or 0)
+
+    need = next((c for c in classes if holds(c)), classes[-1])
+    order = [c.instance_class for c in classes]
+    current = sizing.instance_class
+    what = (f"The {lob_max_size_kb} KB LOB limit of {table} (its own table-settings rule; the task's "
+            f"LobMaxSize is {task_kb} KB)" if table else f"The task's LobMaxSize of {lob_max_size_kb} KB")  # fmt: skip
+    kind = "a table's own limit" if table else "a task-wide LobMaxSize"
+    if current in order and order.index(current) >= order.index(need.instance_class):
+        return sizing.model_copy(update={"reason": (
+            f"{sizing.reason} {what} fits {current} "
+            f"({kind} up to {limit(classes[order.index(current)])} KB).")})  # fmt: skip
+    reason = (f"{sizing.reason} {what} needs {need.instance_class} "
+              f"({kind} up to {limit(need)} KB): {need.why} So the class is raised from {current}.")  # fmt: skip
+    note = sizing.note
+    if not holds(need):
+        reason = (f"{sizing.reason} {what} is above every class in "
+                  f"the catalog; the largest, {need.instance_class}, holds {kind} of {limit(need)} KB.")  # fmt: skip
+        note = (f"A LOB limit of {lob_max_size_kb} KB is above what the catalog's classes hold: size the "
+                "replication instance with the customer's team, or move the table with the largest "
+                "values apart, before the full load.")  # fmt: skip
+    return sizing.model_copy(update={
+        "instance_class": need.instance_class, "included_storage_gb": need.included_storage_gb,
+        "allocated_storage_gb": max(sizing.allocated_storage_gb, need.included_storage_gb),
+        "reason": reason, "note": note})  # fmt: skip
+
+
+def not_moved_columns(
+    columns: Iterable[Mapping[str, Any]], dialect: str | None, rules: NotMovedRules | None = None
+) -> list[str]:
+    """The columns of a type DMS does not migrate (``[not_moved]``, #1918), sorted: their table
+    is created by step 1's DDL but not moved by its task."""
+    names = set((rules or dms_sizing().not_moved).types(dialect))
+    if not names:
+        return []
+    family = _LOB_FAMILY.get(dialect or "", dialect or "")
+    out = []
+    for c in columns:
+        text = str(c.get("data_type") or "").strip().lower()
+        base = text.lstrip("_").removesuffix("[]") if family == "postgresql" else text
+        match = _BASE_TYPE.match(base)
+        if match and match.group(0) in names:
+            out.append(str(c["column_name"]))
+    return sorted(out)
 
 
 def lob_plan(
@@ -193,7 +353,9 @@ def lob_plan(
     """(the task's LOB size in KB, the listed tables' LOB mode); tables without LOBs are not listed.
 
     A dialect with a scalar list (PostgreSQL) treats a type in neither list as a LOB of unknown
-    size. Raises ValueError for a table the collector does not have."""
+    size. A ``limited_only`` dialect (PostgreSQL) never runs a table in full LOB mode: an unknown
+    or larger size runs limited at ``undeclared_max_kb`` (#1918). Raises ValueError for a table
+    the collector does not have."""
     lob = rules or dms_sizing().lob
     family = _LOB_FAMILY.get(dialect or "", dialect or "")
     types = set(lob.types.get(family, ()))
@@ -210,10 +372,20 @@ def lob_plan(
                 found.append((str(c["column_name"]), None))
         if not found:
             continue
+        if family in lob.limited_only and not unknown:
+            measured = _measured_table(table_id, columns, family, types, lob)
+            if measured is not None:
+                out.append(measured)
+                continue
         found.sort()
         names = [n for n, _ in found]
         sizes = [b for _, b in found]
-        if unknown:
+        known_kb = [math.ceil(int(b) / 1024) for b in sizes if b is not None]
+        if family in lob.limited_only and (
+            unknown or len(known_kb) < len(sizes) or max(known_kb) > lob.limited_max_kb
+        ):
+            out.append(_limited_only(table_id, names, unknown, known_kb, lob))
+        elif unknown:
             out.append(LobTable(table=table_id, mode="full", columns=names, reason=(
                 f"{', '.join(sorted(unknown))}: {UNKNOWN_TYPE_REASON}.")))  # fmt: skip
         elif any(b is None for b in sizes):
@@ -231,8 +403,67 @@ def lob_plan(
                     f"A LOB column declares up to {largest_kb} KB (character columns counted at "
                     f"{_BYTES_PER_CHARACTER} bytes per character), above the {lob.limited_max_kb} KB "
                     f"limit, so full LOB mode moves every value whole.")))  # fmt: skip
-    limited = [t.max_size_kb for t in out if t.mode == "limited" and t.max_size_kb]
-    return (max(limited) if limited else lob.default_max_kb), out
+    by_id = {t["table_id"]: t for t in (collector.get("database_schema") or {}).get("tables") or []}
+    unkeyed = {t.table for t in out if not by_id[t.table].get("primary_key")}
+    return task_lob_kb(out, unkeyed, dialect, lob), out
+
+
+def task_lob_kb(
+    lob_tables: Iterable[LobTable],
+    unkeyed: Iterable[str] = (),
+    dialect: str | None = "postgresql",
+    rules: LobRules | None = None,
+) -> int:
+    """The task's LobMaxSize in KB from its limited LOB tables' sizes.
+
+    A ``limited_only`` dialect (PostgreSQL, #1918) runs the task at the largest table size up to
+    ``undeclared_max_kb``, or, when every LOB table needs more, the smallest: limited LOB mode allocates
+    LobMaxSize per LOB column of every buffered row, so a task-wide size taken from one table
+    costs memory for all of them. A table above it gets its own limit (:func:`table_lob_limits`),
+    except one without a primary key (DMS takes LOB settings only on a keyed table), whose size
+    stays task-wide. Other dialects take the largest size. No LOB table: ``default_max_kb``."""
+    lob = rules or dms_sizing().lob
+    tables = [t for t in lob_tables if t.mode == "limited" and t.max_size_kb]
+    sizes = [int(t.max_size_kb or 0) for t in tables]
+    if not sizes:
+        return lob.default_max_kb
+    if _LOB_FAMILY.get(dialect or "", dialect or "") not in lob.limited_only:
+        return max(sizes)
+    within = [k for k in sizes if k <= lob.undeclared_max_kb]
+    base = max(within) if within else min(sizes)
+    keyless = set(unkeyed)
+    return max([base, *(int(t.max_size_kb or 0) for t in tables if t.table in keyless)])
+
+
+def table_lob_limits(lob_tables: Iterable[LobTable], task_kb: int) -> list[LobTable]:
+    """The limited LOB tables whose size is above the task's LobMaxSize, sorted by table: each
+    gets a ``table-settings`` rule with ``lob-settings`` (mode ``limited``, ``bulk-max-size`` its
+    size in KB), which overrides the task's LOB settings for that table only (#1918)."""
+    return sorted((t for t in lob_tables if t.mode == "limited" and (t.max_size_kb or 0) > task_kb),
+                  key=lambda t: t.table)  # fmt: skip
+
+
+def task_lob_mode(
+    dialect: str | None,
+    lob_tables: Iterable[LobTable],
+    lob_max_size_kb: int,
+    rules: LobRules | None = None,
+) -> tuple[bool, int]:
+    """(FullLobMode, LobMaxSize in KB) of step 1's task from its moved tables' LOB modes: full
+    LOB mode when one of them is full, unless the dialect never runs it (``limited_only``,
+    #1918); then a full table, as a plan written before #1918 has, runs limited at
+    ``undeclared_max_kb``."""
+    lob = rules or dms_sizing().lob
+    full = any(t.mode == "full" for t in lob_tables)
+    if _LOB_FAMILY.get(dialect or "", dialect or "") not in lob.limited_only:
+        return full, lob_max_size_kb
+    return False, max(lob_max_size_kb, lob.undeclared_max_kb) if full else lob_max_size_kb
+
+
+def fails_on_lob_truncation(dialect: str | None, rules: LobRules | None = None) -> bool:
+    """Whether the source endpoint stops the task on a LOB above LobMaxSize (``limited_only``)."""
+    lob = rules or dms_sizing().lob
+    return _LOB_FAMILY.get(dialect or "", dialect or "") in lob.limited_only
 
 
 def unbounded_varchar(

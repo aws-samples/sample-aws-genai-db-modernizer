@@ -322,11 +322,19 @@ class LobTable(BaseModel):
     table: str = Field(..., description="Source table id (schema.table)")
     mode: Literal["limited", "full"] = Field(
         ...,
-        description="limited: every LOB column declares a maximum within the catalog's limit; full otherwise",
+        description=(
+            "limited: every LOB column declares a maximum within the catalog's limit, or the "
+            "source never runs full LOB mode (PostgreSQL, #1918); full otherwise"
+        ),
     )
     columns: list[str] = Field(default_factory=list, description="Its LOB columns, sorted")
     max_size_kb: int | None = Field(
-        None, ge=1, description="The largest declared LOB size in KB (limited mode only)"
+        None,
+        ge=1,
+        description=(
+            "The LOB size in KB (limited mode only): the largest declared one, or the catalog's "
+            "size when a PostgreSQL LOB declares none"
+        ),
     )
     reason: str = Field("", description="Why this mode: the sizes it was judged on, in bytes")
 

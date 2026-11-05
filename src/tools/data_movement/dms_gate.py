@@ -454,6 +454,8 @@ def parity_check(
     for sk in inputs.skipped:
         exceptions.append(GateException(table=sk.table_id, kind="skipped_rule", reason=sk.reason or "blocked",
                                         rows_loaded=rows_of(sk.table_id)))  # fmt: skip
+    for nm in inputs.not_moved:
+        exceptions.append(GateException(table=nm.table_id, kind="not_moved", reason=nm.reason))
     exceptions.sort(key=lambda e: (e.table, e.kind, e.column or ""))
     tables.sort(key=lambda t: t.table)
     if keyed:

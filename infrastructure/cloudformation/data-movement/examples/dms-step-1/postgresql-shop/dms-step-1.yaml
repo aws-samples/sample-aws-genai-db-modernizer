@@ -292,6 +292,7 @@ Resources:
           - Arn
         CaptureDdls: false
         HeartbeatEnable: true
+        FailTasksOnLobTruncation: true
       DatabaseName:
         Ref: SourceDatabaseName
       ExtraConnectionAttributes:
@@ -365,9 +366,9 @@ Resources:
         {
           "TargetMetadata": {
             "SupportLobs": true,
-            "FullLobMode": true,
+            "FullLobMode": false,
             "LobChunkSize": 64,
-            "LimitedSizeLobMode": false,
+            "LimitedSizeLobMode": true,
             "LobMaxSize": 64,
             "BatchApplyEnabled": false
           },

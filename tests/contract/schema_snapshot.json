@@ -5299,6 +5299,23 @@
                                 ]
                               }
                             },
+                            "max_value_bytes": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
                             "normalized_data_type": {
                               "required": false,
                               "schema": {
@@ -9317,8 +9334,8 @@
         }
       }
     },
-    "schema_hash": "7709b3a02f3baeb8ca5764a218eadd6e02f004136088b80a755c5cbb7c02703c",
-    "version": "5.9"
+    "schema_hash": "7bc7f628e62d5776b665f44b36acd035909cae6d900be52cf89feaf16d455b48",
+    "version": "5.10"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -11587,6 +11604,7 @@
                   "kind": "enum",
                   "values": [
                     "keyless_lob",
+                    "not_moved",
                     "skipped_rule",
                     "table",
                     "unsupported_field",
@@ -11808,8 +11826,8 @@
         }
       }
     },
-    "schema_hash": "e2e5826bc20e761a5aa1e55573fb4607a7b0c1e2322867ff123bb7642230c1f1",
-    "version": "1.0"
+    "schema_hash": "e0b0662b0b2545eb8e3972f56cd407a5ffd334b9e9d9e6d3eeac325b7ec2e09b",
+    "version": "1.1"
   },
   "dms_preflight.DmsPreflight": {
     "fields": {
@@ -33741,6 +33759,13 @@
                   ]
                 }
               },
+              "moves_rows": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "boolean"
+                }
+              },
               "primary_key": {
                 "required": false,
                 "schema": {
@@ -33907,8 +33932,8 @@
         }
       }
     },
-    "schema_hash": "214a63e2fdff1964612897a2a5b94179db576b24a2199017efecc09e8c1ddf7c",
-    "version": "1.0"
+    "schema_hash": "a4928e3192951fad00ee6bec18d9bb22030f0111fcbdfc134afeeb7cb10fc1a0",
+    "version": "1.1"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

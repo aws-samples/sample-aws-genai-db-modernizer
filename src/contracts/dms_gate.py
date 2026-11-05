@@ -15,6 +15,9 @@ on ``pass`` for the same ``contract_sha256``.
 
 Version History:
 - 1.0 (2026-11-03, #1800): Initial version.
+- 1.1 (2026-11-07, #1918): Added the ``not_moved`` exception kind: a table step 1
+  creates but its DMS task does not move, with the reason and what to rebuild after
+  cutover.
 """
 
 from datetime import datetime
@@ -71,13 +74,15 @@ class GateException(BaseModel):
     ``NOT_VALIDATED`` reason. ``keyless_lob`` is a keyless table with LOB columns (DMS
     supports LOB data types only on tables with a primary key, so values can be lost).
     ``unsupported_field`` is a moved column no operation can express; ``skipped_rule`` is
-    a contract table the step does not move because an error finding blocks it.
+    a contract table the step does not move because an error finding blocks it;
+    ``not_moved`` is a table the step creates but its task does not move (a type DMS does
+    not migrate, #1918), with the contract's reason and what to rebuild after cutover.
     """
 
     table: str = Field(..., description="Source table id (schema.table)")
-    kind: Literal["table", "view", "keyless_lob", "unsupported_field", "skipped_rule"] = Field(
-        ..., description="What is being named"
-    )
+    kind: Literal[
+        "table", "view", "keyless_lob", "unsupported_field", "skipped_rule", "not_moved"
+    ] = Field(..., description="What is being named")
     column: str | None = Field(None, description="The column, for unsupported_field only")
     reason: str = Field(
         NOT_VALIDATED, min_length=1, description="Plain reason; fixed for table and view"
@@ -99,7 +104,7 @@ class DmsGate(BaseModel):
     """Step 1's gate result (#1800)."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(..., description="The assessment job")
     database_name: str = Field(..., description="The source database")
