@@ -317,13 +317,15 @@ def cmd_build(args, clients) -> None:
     user, pw = base64.b64decode(token["authorizationToken"]).decode().split(":", 1)
     # Fixed argv, shell=False; builder is docker/finch and all args are trusted
     # constants or ECR-issued values, so there is no shell-injection surface.
-    subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
+    subprocess.run(  # nosec B603 -- fixed argv, shell=False, trusted builder/ECR values
+        # nosemgrep: dangerous-subprocess-use-tainted-env-args -- reported on the argv line: fixed argv, shell=False, trusted builder/ECR values
         [builder, "login", "--username", user, "--password-stdin", registry],
         input=pw.encode(),
         check=True,
         env=run_env,
     )
-    subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
+    subprocess.run(  # nosec B603 -- fixed argv, shell=False, trusted builder/ECR values
+        # nosemgrep: dangerous-subprocess-use-tainted-env-args -- reported on the argv line: fixed argv, shell=False, trusted builder/ECR values
         [
             builder,
             "build",
@@ -338,9 +340,12 @@ def cmd_build(args, clients) -> None:
         check=True,
         env=run_env,
     )
-    subprocess.run(
-        [builder, "push", f"{image}:{tag}"], check=True, env=run_env
-    )  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
+    subprocess.run(  # nosec B603 -- fixed argv, shell=False, trusted builder/ECR values
+        # nosemgrep: dangerous-subprocess-use-tainted-env-args -- reported on the argv line: fixed argv, shell=False, trusted builder/ECR values
+        [builder, "push", f"{image}:{tag}"],
+        check=True,
+        env=run_env,
+    )
 
     # Resolve the pushed digest so callers can pin by digest (what v2 does).
     desc = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}])

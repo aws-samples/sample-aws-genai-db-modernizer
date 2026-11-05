@@ -641,7 +641,7 @@ it does not ship a running service.
 | `lint`                | commit messages and the lint tier (`./ci/lint.sh`: ruff, black, isort, mypy, command/skill reference validation, the generated-file checks) |
 | `test-shard`, `test`  | unit, contract, property and graph tests (`./ci/test.sh`), sharded, then one gate job |
 | `e2e-shard`, `e2e`    | the deterministic end-to-end pipeline run, HTML/PDF checks, UI smoke test (`./ci/e2e.sh`), sharded, then one gate job |
-| `security`            | Gitleaks secret scan, Bandit, Semgrep, cfn-lint and Checkov on the surviving CloudFormation templates, Checkov on both Dockerfiles |
+| `security`            | `ci/security.sh` over every tracked file (Semgrep with the rules `ci/security.toml` pins, Gitleaks, Bandit) <!-- claim: tests/unit/ci/test_security_parity.py::test_the_github_security_job_runs_the_script_on_the_whole_tree -->, cfn-lint and Checkov on the surviving CloudFormation templates, Checkov on both Dockerfiles |
 | `validate-contracts`  | Pydantic contract validation, the snapshot tests and the version-pin check |
 | `ui-build`            | React unit tests (`npm run test:ci`) and a production build              |
 

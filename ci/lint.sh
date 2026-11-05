@@ -4,9 +4,15 @@
 
 # Lint and type-check, same commands as the pre-commit hooks.
 source "$(dirname "$0")/lib.sh"
-log "ruff";  uv run ruff check src/ tests/
-log "black"; uv run black --check --line-length=100 src/ tests/
-log "isort"; uv run isort --profile=black --line-length=100 --check-only src/ tests/
+# The tracked Python files the pre-commit black, isort and ruff hooks select, read from their
+# patterns, so this and the hooks check the same files on any checkout (#1844;
+# tests/unit/ci/test_security_parity.py).
+py_list="$(uv run python ci/python_files.py)"
+PY_FILES=()
+while IFS= read -r f; do PY_FILES+=("$f"); done <<<"$py_list"
+log "ruff";  uv run ruff check "${PY_FILES[@]}"
+log "black"; uv run black --check --line-length=100 "${PY_FILES[@]}"
+log "isort"; uv run isort --profile=black --line-length=100 --check-only "${PY_FILES[@]}"
 log "mypy";  uv run mypy src/
 log "license headers"; uv run python scripts/license_headers.py --check
 log "commands"; uv run python scripts/validate_skills.py

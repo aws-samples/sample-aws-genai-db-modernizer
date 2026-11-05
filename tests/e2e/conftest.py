@@ -346,6 +346,7 @@ def api(all_runs: list[PipelineResult]) -> Iterator[str]:
     log_path = _log_path("api.log")
     log_file = log_path.open("w")
     proc = subprocess.Popen(  # nosec B603 -- fixed argv, this repo's own API server
+        # nosemgrep: dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False; the only env value is E2E_API_PORT, parsed with int()
         [sys.executable, "-m", "uvicorn", "src.api.main:app", "--port", str(API_PORT)],
         cwd=REPO,
         env=env,
@@ -379,6 +380,7 @@ def ui(api: str) -> Iterator[str]:
         # (installed by `npm ci`) is what we actually want to run.
         # Loopback only, as scripts/start_local_ui.py serves it: a bare port makes
         # `serve` listen on every interface.
+        # nosemgrep: dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False; the only env value is E2E_UI_PORT, parsed with int()
         [str(serve_bin), "-s", "build", "-l", f"tcp://127.0.0.1:{UI_PORT}", "--no-clipboard"],
         cwd=REPO / "src" / "ui",
         stdout=log_file,

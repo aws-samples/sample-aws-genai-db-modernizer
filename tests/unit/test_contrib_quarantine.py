@@ -222,7 +222,6 @@ _SKIPPING_HOOKS = {
     "isort",
     "ruff",
     "mypy",
-    "bandit",
     "markdownlint",
     "validate-json-schemas",
 }

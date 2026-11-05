@@ -16,8 +16,9 @@ installed in the current (locked) environment and exits non-zero on any
 mismatch, with the one-line fix. Run it in CI and as a pre-commit hook so the
 drift cannot land.
 
-Only the linters that BOTH systems run are checked: black, isort, ruff, mypy,
-bandit. General-purpose hooks (whitespace, secrets, etc.) have no CI counterpart
+Only the linters that BOTH systems run are checked: black, isort, ruff, mypy.
+Bandit is not: the pre-commit hook and CI both run it through ci/security.sh,
+from uv.lock (#1844). General-purpose hooks (whitespace, secrets, etc.) have no CI counterpart
 and are ignored.
 """
 
@@ -37,7 +38,6 @@ _REPO_TO_DIST = {
     "pycqa/isort": "isort",
     "astral-sh/ruff-pre-commit": "ruff",
     "pre-commit/mirrors-mypy": "mypy",
-    "PyCQA/bandit": "bandit",
 }
 
 

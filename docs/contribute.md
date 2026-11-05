@@ -33,7 +33,7 @@ Commands live in [`.claude/commands/`](https://github.com/aws-samples/sample-aws
 
 | Tier | Command | What it checks |
 | --- | --- | --- |
-| Lint | `make lint` (all pre-commit hooks, including markdownlint); `./ci/lint.sh` (ruff, black, isort, mypy, the command validator, the generated-file checks) | style, types, docs, command references |
+| Lint | `make lint` (all pre-commit hooks, including markdownlint); `./ci/lint.sh` (ruff, black, isort, mypy, the command validator, the generated-file checks); `./ci/security.sh` (semgrep with pinned rules, gitleaks, Bandit) <!-- claim: tests/unit/ci/test_security_parity.py::test_semgrep_engine_and_rule_sources_are_pinned --> | style, types, docs, command references, security findings |
 | Unit/contract | `make test` / `./ci/test.sh -q` | unit, contract, property, graph; no network |
 | Deterministic e2e | `make e2e` / `./ci/e2e.sh` | full pipeline on both samples, the rendered deliverables (executive PDF, engineering report), UI smoke test, the built help site |
 | Headless LLM e2e | `make e2e-llm` | a real `/modernize --auto` run against a model, same deliverable checks plus a rubric judge |
