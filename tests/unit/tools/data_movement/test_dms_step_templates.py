@@ -10,6 +10,7 @@ import json
 import re
 
 import pytest
+import yaml
 
 from src.contracts.data_movement_plan import UnboundedVarchar
 from src.contracts.lineage_ops import UnsupportedOp
@@ -394,6 +395,24 @@ def test_the_engine_version_pattern_full_matches_a_version_only(value, ok):
         "AllowedPattern"
     ]
     assert bool(re.fullmatch(pattern, value)) is ok
+
+
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+def test_the_table_mappings_are_compact_one_rule_per_line_in_a_yaml_block(engine):
+    # A few hundred tables pretty-printed passed CloudFormation's inline limit (#1915).
+    inputs = make_step1_inputs(engine)
+    mappings = table_mappings(inputs)
+    text = render_dms_template(inputs)["Resources"]["ReplicationTask"]["Properties"][
+        "TableMappings"
+    ]
+    assert json.loads(text) == json.loads(json.dumps(mappings, indent=2)) == mappings
+    lines = text.splitlines()
+    assert len(lines) == len(mappings["rules"]) + 2 and not [x for x in lines if x != x.lstrip()]
+    assert all('"rule-type":"selection"' in x for x in lines[1:-1]) and '"filters"' not in text
+    dumped = dump_template(render_dms_template(inputs))
+    assert "TableMappings: |-\n" in dumped
+    reloaded = yaml.safe_load(dumped)["Resources"]["ReplicationTask"]["Properties"]
+    assert reloaded["TableMappings"] == text
 
 
 def test_the_compiled_json_is_byte_stable():

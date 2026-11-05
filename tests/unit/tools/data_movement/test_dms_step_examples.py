@@ -9,6 +9,7 @@ import json
 import re
 
 import pytest
+import yaml
 from cfnlint.api import ManualArgs, lint
 
 from scripts import render_dms_step as script
@@ -41,14 +42,17 @@ def test_example_templates_pass_cfn_lint(example):
         assert _cfn_lint((example / name).read_text()) == [], name
 
 
+@pytest.mark.passes_on_main  # reads the parsed mappings, whatever their JSON layout (#1915)
 @pytest.mark.parametrize("example", script.example_dirs(), ids=lambda p: p.name)
 def test_example_mappings_list_exactly_the_contract_tables(example):
     rules = json.loads((example / "input.json").read_text())["contract"]["rules"]
     text = (example / DMS_TEMPLATE).read_text()
-    for r in rules:
-        assert f'"table-name": "{r["source_table"].rpartition(".")[2]}"' in text
-    assert text.count('"rule-type": "selection"') == len(rules)
-    assert '"rule-type": "transformation"' not in text and '"%"' not in text
+    task = yaml.safe_load(text)["Resources"]["ReplicationTask"]["Properties"]
+    mapped = json.loads(task["TableMappings"])["rules"]
+    assert [m["object-locator"]["table-name"] for m in mapped] == [
+        r["source_table"].rpartition(".")[2] for r in rules
+    ]
+    assert {m["rule-type"] for m in mapped} == {"selection"} and '"%"' not in text
 
 
 def test_the_postgresql_example_recommends_replica_identity_for_every_table():

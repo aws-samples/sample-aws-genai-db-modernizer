@@ -25,7 +25,9 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   may not make them leaves the lag null.
 - ``deploy --approve`` (create and show a change set), ``execute --change-set <name> --approve``,
   ``test --approve`` (test both endpoints), ``start --approve`` (start the task): AWS writes,
-  refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``.
+  refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``. A template over
+  CloudFormation's inline limit goes to the inputs file's ``template_bucket`` first (deploy
+  uploads ``<stack name>/dms-step-1.yaml`` there and creates the change set from its URL).
 - ``stop --approve`` (stop the task and wait until it has stopped) and ``teardown --approve``
   (delete the step's stack once its task is not running, and wait until it is gone): the writes
   that end the step (#1896), with the same refusals. Both are no-ops when there is nothing left
@@ -36,7 +38,9 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
 The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under the artifact
 root) holds ids and ARNs only, never a secret's value: an unknown key, such as ``password``,
 is refused. Calls use the ambient credentials, or ``read_profile`` (preflight, gate, status)
-and ``write_profile`` (deploy, execute, test, start) from the file. No secret is ever read.
+and ``write_profile`` (deploy, execute, test, start) from the file. The only clients are
+CloudFormation, DMS, S3 (that one upload) and STS (the caller's account, so the upload
+names the bucket's expected owner). No secret is ever read.
 
 Usage:
     uv run python scripts/run_dms_step.py summary --job-id <id> --db <db>
@@ -77,7 +81,7 @@ ENDING = ("stop", "teardown")
 WRITES = ("deploy", "execute", "test", "start", *ENDING)
 READS = ("preflight", "gate", "status")
 LOCAL = ("steps", "summary", "plan")
-MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit
+MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 PENDING_VALIDATION = {"Pending records", "Pending validation", "Pending revalidation"}
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -149,6 +153,8 @@ _KMS = r"^$|" + _ARN + r"kms:[a-z0-9-]+:\d{12}:key/[A-Za-z0-9-]+$"
 _NAME = r"^[A-Za-z0-9_.-]+$"
 # AWS CLI profile names may hold + = , . @ / : (e.g. "team+account-ReadOnly"); no spaces or quotes.
 _PROFILE = r"^[A-Za-z0-9_.+=,@/:-]{1,128}$"
+# An S3 bucket name without dots: the template URL is virtual-hosted, and a dotted name breaks TLS.
+_BUCKET = r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
 
 
 class MoveInputs(BaseModel):
@@ -179,6 +185,7 @@ class MoveInputs(BaseModel):
     read_profile: str | None = Field(None, pattern=_PROFILE)
     write_profile: str | None = Field(None, pattern=_PROFILE)
     confirmed_checks: list[str] = Field(default_factory=list)
+    template_bucket: str | None = Field(None, pattern=_BUCKET)
 
     def model_post_init(self, _context: Any) -> None:
         unknown = sorted(set(self.confirmed_checks) - set(CHECK_ORDER))
@@ -199,6 +206,8 @@ class MoveInputs(BaseModel):
 class MoveClients:
     cloudformation: Any
     dms: Any
+    s3: Any | None
+    sts: Any | None
 
 
 @dataclass
@@ -390,6 +399,8 @@ def deploy_plan(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str
                "--capabilities", "CAPABILITY_IAM", "--region", inputs.region, "--parameter-overrides",
                *(f"{k}={v}" for k, v in params.items()),
                "--tags", *(f"{t['Key']}={t['Value']}" for t in stack_tags(job_id))]  # fmt: skip
+    if inputs.template_bucket and len(body.encode()) > MAX_TEMPLATE_BODY:
+        command += ["--s3-bucket", inputs.template_bucket]
     return {"status": "ready", "stack_name": name, "region": inputs.region, "template": str(path),
             "template_bytes": len(body.encode()), "parameters": params,
             "command": shlex.join(command)}  # fmt: skip
@@ -715,10 +726,11 @@ def deploy(
     """Create a change set for the stack and describe it; nothing is executed."""
     plan = deploy_plan(root, db, job_id, inputs)
     _, body, _ = _template(root, db, job_id)
-    if plan["template_bytes"] > MAX_TEMPLATE_BODY:
+    large = plan["template_bytes"] > MAX_TEMPLATE_BODY
+    if large and not inputs.template_bucket:
         raise MoveError(f"{TEMPLATE} is {plan['template_bytes']} bytes, above CloudFormation's "
-                        f"{MAX_TEMPLATE_BODY}-byte inline limit: deploy it yourself with "
-                        "`aws cloudformation deploy --s3-bucket <bucket>` and the plan's parameters")  # fmt: skip
+                        f"{MAX_TEMPLATE_BODY}-byte inline limit: set template_bucket in the inputs "
+                        "file to an S3 bucket you own in the stack's region, and deploy again")  # fmt: skip
     name = plan["stack_name"]
     stack = _stack(clients, name)
     if stack is not None and stack["StackStatus"].endswith("_IN_PROGRESS"):
@@ -727,8 +739,11 @@ def deploy(
         )
     kind = "CREATE" if stack is None or stack["StackStatus"] == "REVIEW_IN_PROGRESS" else "UPDATE"
     change_set = f"move-step-1-{now().strftime('%Y%m%d%H%M%S')}"
+    template: dict[str, str] = {"TemplateBody": body}
+    if large:
+        template = {"TemplateURL": _upload(clients, inputs, name, body)}
     clients.cloudformation.create_change_set(
-        StackName=name, ChangeSetName=change_set, ChangeSetType=kind, TemplateBody=body,
+        StackName=name, ChangeSetName=change_set, ChangeSetType=kind, **template,
         Capabilities=["CAPABILITY_IAM"], Tags=stack_tags(job_id),
         Parameters=[{"ParameterKey": k, "ParameterValue": v} for k, v in plan["parameters"].items()],
     )  # fmt: skip
@@ -754,6 +769,15 @@ def deploy(
                for c in described.get("Changes") or [] if "ResourceChange" in c]  # fmt: skip
     return {"status": "change_set_ready", "stack_name": name, "change_set_name": change_set,
             "change_set_type": kind, "parameters": plan["parameters"], "changes": changes}  # fmt: skip
+
+
+def _upload(clients: MoveClients, inputs: MoveInputs, name: str, body: str) -> str:
+    """Put the template, and nothing else, in the customer's bucket; return its URL."""
+    bucket, key = str(inputs.template_bucket), f"{name}/{TEMPLATE}"
+    account = clients.sts.get_caller_identity()["Account"]
+    clients.s3.put_object(Bucket=bucket, Key=key, Body=body.encode(),
+                          ServerSideEncryption="AES256", ExpectedBucketOwner=account)  # fmt: skip
+    return f"https://{bucket}.s3.{inputs.region}.amazonaws.com/{key}"
 
 
 def execute(clients: MoveClients, name: str, change_set: str) -> dict[str, Any]:
@@ -1129,9 +1153,11 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             from src.tools.aws.credentials import AWSCredentialManager
 
             cred = AWSCredentialManager(region=inputs.region)
-            clients = MoveClients(
-                cloudformation=cred.client("cloudformation"), dms=cred.client("dms")
-            )
+            uploads = args.command == "deploy"  # only deploy may upload a large template
+            clients = MoveClients(cloudformation=cred.client("cloudformation"),
+                                  dms=cred.client("dms"),
+                                  s3=cred.client("s3") if uploads else None,
+                                  sts=cred.client("sts") if uploads else None)  # fmt: skip
             if args.command == "status":
                 cloudwatch = cred.client("cloudwatch")
         name = stack_name(inputs, job_id)

@@ -83,8 +83,11 @@ def _run(tmp_path, command, *extra, clients=None, capsys):
     return code, json.loads(capsys.readouterr().out.splitlines()[-1])  # the result line is last
 
 
-def _clients(cred: StubbedCredMgr) -> script.MoveClients:
-    return script.MoveClients(cloudformation=cred.client("cloudformation"), dms=cred.client("dms"))
+def _clients(cred: StubbedCredMgr, uploads: bool = False) -> script.MoveClients:
+    """The clients main() builds: S3 and STS only for a deploy that may upload a template."""
+    return script.MoveClients(cloudformation=cred.client("cloudformation"), dms=cred.client("dms"),
+                              s3=cred.client("s3") if uploads else None,
+                              sts=cred.client("sts") if uploads else None)  # fmt: skip
 
 
 def _stack(cred, status="CREATE_COMPLETE", outputs=OUTPUTS, job_tag=None, name=STACK):
@@ -320,8 +323,9 @@ def test_reads_under_the_sandbox_still_refuse_an_inputs_path_outside_the_repo(
     assert code == 1 and "--inputs" in json.loads(capsys.readouterr().out)["message"]
 
 
-def test_only_cloudformation_and_dms_clients_exist_so_no_secret_is_read() -> None:
-    assert [f.name for f in dataclasses.fields(script.MoveClients)] == ["cloudformation", "dms"]
+def test_only_cloudformation_dms_s3_and_sts_clients_exist_so_no_secret_is_read() -> None:
+    assert [f.name for f in dataclasses.fields(script.MoveClients)] == [
+        "cloudformation", "dms", "s3", "sts"]  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
     assert "get_secret_value" not in source and 'client("secretsmanager")' not in source
 
@@ -374,6 +378,93 @@ def test_deploy_refuses_a_stack_that_is_still_changing(tmp_path, capsys):
     _stack(cred, status="CREATE_IN_PROGRESS")
     code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
     assert code == 1 and "CREATE_IN_PROGRESS" in out["message"]
+
+
+def _large_template(tmp_path: Path, **inputs) -> bytes:
+    """Pad the rendered template past the inline limit with a YAML comment; return its bytes."""
+    _job(tmp_path, **inputs)
+    path = tmp_path / "shop" / "job1" / "data-movement" / "step-1" / "dms-step-1.yaml"
+    path.write_text(path.read_text() + "# " + "x" * script.MAX_TEMPLATE_BODY + "\n")
+    return path.read_bytes()
+
+
+def _change_set_ready(cfn, template: dict[str, object]) -> None:
+    cfn.add_response("create_change_set", {"Id": "cs-arn"}, {
+        "StackName": STACK, "ChangeSetName": ANY, "ChangeSetType": "CREATE", **template,
+        "Capabilities": ["CAPABILITY_IAM"], "Parameters": ANY, "Tags": ANY})  # fmt: skip
+    cfn.add_response("describe_change_set", {"Status": "CREATE_COMPLETE", "Changes": []},
+                     {"StackName": STACK, "ChangeSetName": ANY})  # fmt: skip
+
+
+def test_deploy_uploads_a_large_template_to_the_bucket_and_creates_the_change_set_from_its_url(
+    tmp_path, capsys
+):
+    body = _large_template(tmp_path, template_bucket="my-templates")
+    cred = StubbedCredMgr()
+    _no_stack(cred)
+    cred.stub("sts").add_response("get_caller_identity", {"Account": ACCOUNT}, {})
+    cred.stub("s3").add_response("put_object", {}, {
+        "Bucket": "my-templates", "Key": f"{STACK}/dms-step-1.yaml", "Body": body,
+        "ServerSideEncryption": "AES256", "ExpectedBucketOwner": ACCOUNT})  # fmt: skip
+    url = f"https://my-templates.s3.{REGION}.amazonaws.com/{STACK}/dms-step-1.yaml"
+    _change_set_ready(cred.stub("cloudformation"), {"TemplateURL": url})
+    code, out = _run(
+        tmp_path, "deploy", "--approve", clients=_clients(cred, uploads=True), capsys=capsys
+    )
+    assert code == 0 and out["status"] == "change_set_ready"
+    for stubber in cred.stubbers.values():
+        stubber.assert_no_pending_responses()
+
+
+def test_deploy_keeps_a_small_template_inline_even_with_a_bucket(tmp_path, capsys):
+    _job(tmp_path, template_bucket="my-templates")
+    body = (tmp_path / "shop" / "job1" / "data-movement" / "step-1" / "dms-step-1.yaml").read_text()
+    cred = StubbedCredMgr()
+    _no_stack(cred)
+    _change_set_ready(cred.stub("cloudformation"), {"TemplateBody": body})
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["status"] == "change_set_ready"
+    assert "--s3-bucket" not in _run(tmp_path, "plan", capsys=capsys)[1]["command"]
+    for stubber in cred.stubbers.values():
+        stubber.assert_no_pending_responses()  # no sts or s3 call was queued or made
+
+
+def test_deploy_of_a_large_template_without_a_bucket_names_template_bucket_and_calls_nothing(
+    tmp_path, capsys
+):
+    _large_template(tmp_path)
+    cred = StubbedCredMgr()
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 1 and "template_bucket" in out["message"] and "inline limit" in out["message"]
+    for stubber in cred.stubbers.values():
+        stubber.assert_no_pending_responses()  # a stubbed client fails on any unqueued call
+
+
+def test_plan_of_a_large_template_with_a_bucket_shows_the_s3_bucket_option(tmp_path, capsys):
+    _large_template(tmp_path, template_bucket="my-templates")
+    code, out = _run(tmp_path, "plan", capsys=capsys)
+    assert code == 0 and out["command"].endswith("--s3-bucket my-templates")
+
+
+@pytest.mark.passes_on_main  # the sandbox refuses every deploy before it reads the inputs
+def test_the_upload_is_refused_under_the_ci_sandbox_before_any_aws_call(capsys, monkeypatch):
+    monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+    cred = StubbedCredMgr()
+    code = script.main(["deploy", "--job-id", "job1", "--db", "shop", "--artifact-root",
+                        str(REPO_ROOT / "artifacts"), "--approve"], clients=_clients(cred))  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1 and "refused under MODERNIZER_CI_SANDBOX=1" in out["message"]
+    for stubber in cred.stubbers.values():
+        stubber.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize("bucket", ["My-Bucket", "a.b.c", "ab", "-bucket", "s3://bucket"])
+def test_a_template_bucket_that_is_not_a_plain_bucket_name_is_refused(tmp_path, capsys, bucket):
+    _job(tmp_path, template_bucket="my-templates-1")
+    assert _run(tmp_path, "plan", capsys=capsys)[0] == 0
+    _job(tmp_path, template_bucket=bucket)
+    code, out = _run(tmp_path, "plan", capsys=capsys)
+    assert code == 1 and "template_bucket" in out["message"]
 
 
 def test_execute_runs_only_an_available_change_set(tmp_path, capsys):
