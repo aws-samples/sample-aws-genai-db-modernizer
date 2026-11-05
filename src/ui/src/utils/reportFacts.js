@@ -49,6 +49,14 @@ export function resolvedRisksBySeverityText(synthesis, t) {
     .join(', ');
 }
 
+// #1876: the procedure-internal statements (facts.query_group_counts.
+// procedure_internal_queries); 0 when the facts block has none.
+export function procedureInternalQueryCountOf(synthesis) {
+  const counts = factsOf(synthesis) && factsOf(synthesis).query_group_counts;
+  const n = counts && counts.procedure_internal_queries;
+  return typeof n === 'number' ? n : 0;
+}
+
 // "Trade-offs (12)": the trade-offs that still apply (facts.trade_off_count).
 export function tradeOffCountOf(synthesis, shownTradeOffs) {
   const n = factsOf(synthesis) && factsOf(synthesis).trade_off_count;

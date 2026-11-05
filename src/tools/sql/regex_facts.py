@@ -747,6 +747,70 @@ def output_into_targets(query_text: str, source_engine: str | None = None) -> tu
     return tuple(dict.fromkeys(out))
 
 
+# A SQL Server temp table (``#t``, ``##t``, also written ``tempdb..#t``) or table
+# variable (``@t``) named where a statement reads, writes, creates or drops a table
+# (#1876): FROM, JOIN, INTO (an ``OUTPUT ... INTO @t`` too), UPDATE, DELETE, a MERGE's
+# target and its USING source, and ``CREATE``/``DROP``/``TRUNCATE TABLE`` (the
+# ``IF OBJECT_ID('tempdb..#t') IS NOT NULL DROP TABLE #t`` guard reaches this fallback).
+# ``FETCH ... INTO @a`` and ``SELECT ... INTO @v`` outside SQL Server name variables, not
+# tables: a FETCH's INTO is skipped, and only the tsql dialect reads these at all.
+_TEMP_OBJECT_RE = re.compile(
+    r"(?<![\w@$#])(?P<verb>FETCH\b[^;]*?\bINTO|FROM|JOIN|INTO|UPDATE|USING|MERGE(?:\s+INTO)?|"
+    r"DELETE(?:\s+FROM)?|(?:CREATE|DROP|TRUNCATE)\s+TABLE(?:\s+IF\s+EXISTS)?)\s+"
+    r"(?:tempdb\s*\.\s*(?:\w+\s*)?\.\s*)?(?P<name>##?\w+|@\w+)",
+    re.IGNORECASE,
+)
+
+
+def _is_tsql(source_engine: str | None) -> bool:
+    return (source_engine or "").strip().lower() in ("tsql", "sqlserver")
+
+
+def regex_temp_objects(query_text: str, source_engine: str | None = None) -> tuple[str, ...]:
+    """The SQL Server temp tables and table variables a statement reads or writes,
+    lower-cased with their ``#``/``@``, in first-seen order (the fallback of
+    ``SqlFacts.temp_objects``, #1876). Empty for any other dialect."""
+    if not _is_tsql(source_engine):
+        return ()
+    text = scan_sql(query_text or "", source_engine)
+    out = [
+        m.group("name").lower()
+        for m in _TEMP_OBJECT_RE.finditer(text)
+        if not m.group("verb").upper().startswith("FETCH")
+    ]
+    return tuple(dict.fromkeys(out))
+
+
+# SQL Server's built-in row sources: they read the statement's own values, never a
+# table (#1876). Any other function in a FROM, JOIN or APPLY is a table-valued function.
+TSQL_BUILTIN_ROW_SOURCES = frozenset({"openjson", "string_split", "openxml", "generate_series"})
+
+# A table-valued function where a statement reads rows (``FROM dbo.fn(...)``, ``CROSS
+# APPLY dbo.fn_Split(...)``), and not an old-style table hint (``FROM t (NOLOCK)``).
+_ROW_FUNCTION_RE = re.compile(
+    r"(?<![\w@$#])(?:FROM|JOIN|APPLY)\s+(?:\w+\s*\.\s*)*(?P<fn>\w+)\s*\("
+    r"(?!\s*(?:NOLOCK|READUNCOMMITTED|UPDLOCK|HOLDLOCK|ROWLOCK|TABLOCKX?|NOWAIT|INDEX)\b)",
+    re.IGNORECASE,
+)
+_EXEC_RE = re.compile(r"(?<![\w@$#])EXEC(?:UTE)?\b", re.IGNORECASE)
+
+
+def regex_routine_source(query_text: str, source_engine: str | None = None) -> bool:
+    """Whether a SQL Server statement takes rows from a table-valued function or a
+    procedure: a function in FROM, JOIN or APPLY that is not a built-in row source, or an
+    ``EXEC`` (``INSERT INTO #t EXEC dbo.p``) (the fallback of ``SqlFacts.routine_source``,
+    #1876). False for any other dialect."""
+    if not _is_tsql(source_engine):
+        return False
+    text = scan_sql(query_text or "", source_engine)
+    if _EXEC_RE.search(text):
+        return True
+    return any(
+        m.group("fn").lower() not in TSQL_BUILTIN_ROW_SOURCES
+        for m in _ROW_FUNCTION_RE.finditer(text)
+    )
+
+
 def _is_update(match: re.Match[str]) -> bool:
     return match.group(0).lstrip().lower().startswith("update")
 

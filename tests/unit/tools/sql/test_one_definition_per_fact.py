@@ -626,6 +626,8 @@ PROBES: list[tuple[str, str]] = [
     ("SELECT * FROM t FOR JSON PATH", "sqlserver"),
     ("WITH w AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM w", "postgresql"),
     ("/* job */ TRUNCATE t", "postgresql"),
+    ("SELECT COUNT(*) FROM #PageIndex", "sqlserver"),
+    ("INSERT INTO @t SELECT * FROM dbo.fn_GetUsers(@x)", "sqlserver"),
 ]
 
 
@@ -694,6 +696,11 @@ RELATED_FACTS: dict[frozenset[str], str] = {
         "statement writes, write_targets which tables (#992), and it is empty for CALL or COPY"
     ),
     frozenset({"where_word", "keyed_after_where"}): "a keyed read is a WHERE with an equality",
+    frozenset({"routine_source", "stored_routine_keyword"}): (
+        "both see a SQL Server EXEC, but stored_routine_keyword is a statement that is a routine "
+        "call or definition, and routine_source a statement that takes rows from a "
+        "table-valued function or a procedure (INSERT INTO #t EXEC, CROSS APPLY dbo.fn, #1876)"
+    ),
 }
 
 # Two facts whose true sets overlap at least this much (Jaccard) are one idea

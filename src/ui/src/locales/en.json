@@ -417,6 +417,8 @@
   "analysis-results.aurora-design.queries-header": "{{count}} query on Aurora",
   "analysis-results.aurora-design.queries-header_other": "{{count}} queries on Aurora",
   "analysis-results.aurora-design.no-queries": "No queries were routed to this engine by the assignment.",
+  "analysis-results.aurora-design.procedure-internal_one": "{{count}} statement is procedure-internal: it works on temporary tables or table variables, so it is kept with the utility statements and not routed on its own. Its reason says whether its rows come from a function or procedure.",
+  "analysis-results.aurora-design.procedure-internal_other": "{{count}} statements are procedure-internal: they work on temporary tables or table variables, so they are kept with the utility statements and not routed on their own. Each one's reason says whether its rows come from a function or procedure.",
   "analysis-results.aurora-design.source-table-header": "{{table}} ({{count}})",
   "analysis-results.aurora-design.col-query": "Query",
   "analysis-results.aurora-design.col-type": "Type",

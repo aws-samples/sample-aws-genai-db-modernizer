@@ -369,6 +369,7 @@ def test_query_group_facts_cover_every_group() -> None:
         "relational_rows": [],
         "relational_query_counts": {},
         "ungrouped_queries": [],
+        "procedure_internal_queries": 0,
     }
     pg = "aurora_postgresql"
 
@@ -395,24 +396,32 @@ def test_query_group_facts_cover_every_group() -> None:
                     "access_patterns": [ap(["u"], 50.0)],
                 },
                 {"engines": []},
+                {
+                    "group_name": "Procedure-internal statements",
+                    "engines": [pg],
+                    "access_patterns": [ap(["p1", "p2"], 99.0), ap(["p2"], 1.0)],
+                },
             ]
         }
     )
     assert facts == {
-        "group_count": 4,
+        "group_count": 5,
         "listed_group_count": 1,
-        "relational_only_group_count": 3,
+        "relational_only_group_count": 4,
         "relational_only_engines": [pg],
         "listed_group_indexes": [2],
-        # Busiest first by the engine's own calls/s; the utility group last.
+        # Busiest first by the engine's own calls/s; the blame groups last.
         "relational_rows": [
             {"engine": pg, "group_index": 2, "query_count": 1, "calls_per_second": 3.0},
             {"engine": pg, "group_index": 0, "query_count": 2, "calls_per_second": 1.0},
+            {"engine": pg, "group_index": 5, "query_count": 2, "calls_per_second": 100.0},
             {"engine": pg, "group_index": 3, "query_count": 1, "calls_per_second": 50.0},
         ],
-        "relational_query_counts": {pg: 4},
+        "relational_query_counts": {pg: 6},
         # No query_pattern_groups: no in-scope query list to check against.
         "ungrouped_queries": [],
+        # The procedure-internal group's queries, each once (#1876).
+        "procedure_internal_queries": 2,
     }
 
 

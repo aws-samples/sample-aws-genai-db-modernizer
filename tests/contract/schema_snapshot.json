@@ -26359,6 +26359,14 @@
                               "kind": "array"
                             }
                           },
+                          "procedure_internal_queries": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
                           "relational_only_engines": {
                             "required": false,
                             "schema": {
@@ -32913,8 +32921,8 @@
         }
       }
     },
-    "schema_hash": "e367ec30803e61e93719e9c1e7343f8923d232aedcb4428982b95e126e1161bd",
-    "version": "1.75"
+    "schema_hash": "70a543283294aad5938d7968bbe49d7d77acacfce52ad93827913c2c52788b55",
+    "version": "1.76"
   },
   "transformation_contract.StepContract": {
     "fields": {

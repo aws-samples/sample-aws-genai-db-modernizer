@@ -432,6 +432,10 @@ class SQLServerRemoteCollector:
                       AND st.text NOT LIKE '%sys.configurations%'
                       AND st.text NOT LIKE '%sys.databases%'
                       AND st.text NOT LIKE '%sys.dm_%'
+                      -- SQL Server's own Query Store / automatic tuning code (#1876).
+                      -- st.text is the whole batch or module: every statement of one
+                      -- that reads sys.plan_persist_* goes (the reach of '%sys.dm_%').
+                      AND st.text NOT LIKE '%sys.plan[_]persist[_]%'
                 ) v
                 GROUP BY v.query_hash
             ) g

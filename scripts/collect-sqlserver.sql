@@ -205,6 +205,12 @@ SET @queries = (
               AND st.text NOT LIKE '%sys.configurations%'
               AND st.text NOT LIKE '%sys.databases%'
               AND st.text NOT LIKE '%sys.dm_%'
+              -- SQL Server's own Query Store / automatic tuning code (#1876): its
+              -- batches read the internal sys.plan_persist_* tables. st.text is the
+              -- whole batch or module, so every statement of a batch, procedure or
+              -- trigger that reads them goes, an application's too (the reach of
+              -- '%sys.dm_%' above). Not yet checked against a live server.
+              AND st.text NOT LIKE '%sys.plan[_]persist[_]%'
         ) v
         GROUP BY v.query_hash, v.statement_dbid
         HAVING SUM(v.execution_count) >= @min_executions

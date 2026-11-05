@@ -322,6 +322,18 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         ),
     ),
     SqlDetector(
+        f"{_UTILITY}:is_procedure_internal_statement",
+        lambda text, dialect: utility_statements.is_procedure_internal_statement(
+            text, _query(text, dialect)["tables_accessed"], SourceScope(engine=dialect)
+        ),
+    ),
+    SqlDetector(
+        f"{_UTILITY}:procedure_internal_reason",
+        lambda text, dialect: utility_statements.procedure_internal_reason(
+            text, _query(text, dialect)["tables_accessed"], SourceScope(engine=dialect)
+        ),
+    ),
+    SqlDetector(
         f"{_UTILITY}:is_sequence_fetch",
         lambda text, dialect: utility_statements.is_sequence_fetch(text),
     ),
@@ -560,6 +572,10 @@ NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_FACADE}:query_readings": "sql_facts and access_facts from one parse",
     f"{_FACADE}:regex_answer": "table_references' regex fallback, reached through it",
     f"{_FACADE}:regex_reading": "read_sql's regex fallback, reached through sql_facts",
+    f"{_FACADE}:temp_object_name": (
+        "classifies one sqlglot table node (#1876); reached through sql_facts and "
+        "table_references"
+    ),
     f"{_QUERY_FACTS}:query_facts": "the cached QueryFacts; each fact is registered",
     f"{_QUERY_FACTS}:read_timestamp_column": "QueryFacts.timestamp_column's schema step",
     f"{_QUERY_FACTS}:is_timestamp_type": "reads a column's collected type, not SQL",
@@ -611,6 +627,8 @@ for _fn in (
     "regex_write_targets",
     "regex_append_targets",
     "regex_range_predicate",
+    "regex_temp_objects",
+    "regex_routine_source",
 ):
     NOT_SQL_DETECTORS[f"{_REGEX}:{_fn}"] = _REGEX_FALLBACK_REASON
 for _fn, _reader in (

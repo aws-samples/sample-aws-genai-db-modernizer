@@ -661,6 +661,7 @@ _TOP_GROUPS_PER_ENGINE = 5
 _GROUPS_NEVER_TOP = frozenset(
     {
         "Utility and session statements",
+        "Procedure-internal statements",  # #1876
         "No source table",
         "Table not identified by the collector",
     }
