@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from src.contracts.collector_output import Table
 from src.contracts.lineage_ops import UnsupportedOp
-from src.contracts.transformation_contract import Finding, Rule, Severity, StepContract
+from src.contracts.transformation_contract import NOT_MOVED, Finding, Rule, Severity, StepContract
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.contract_versioning import load_contract
-from src.tools.data_movement.plan import JobInputs, _aurora_wave
+from src.tools.data_movement.dms_sizing import not_moved_columns
+from src.tools.data_movement.plan import JobInputs, _aurora_wave, dialect_of
 from src.tools.transformation_contract.step1 import (
     TargetTable,
     _load_collector,
@@ -42,7 +44,10 @@ def _has_key(table: Table) -> bool:
 
 
 def _rule_findings(
-    rule: Rule, tables: dict[str, Table], targets: dict[str, TargetTable]
+    rule: Rule,
+    tables: dict[str, Table],
+    targets: dict[str, TargetTable],
+    source_dialect: str | None = None,
 ) -> list[Finding]:
     tid = rule.source_table
     t = tables.get(tid)
@@ -107,23 +112,39 @@ def _rule_findings(
         )
     if not _has_key(t):
         out.append(_f("no_key", "warning", NO_KEY_MESSAGE, tid))
+    out.extend(_not_moved(t, source_dialect))
     return out
+
+
+def _not_moved(t: Table, dialect: str | None) -> list[Finding]:
+    """A warning per column of a type DMS does not migrate (#1918): the table is not moved."""
+    columns = not_moved_columns([c.model_dump() for c in t.columns], dialect)
+    why = dms_sizing().not_moved.why
+    return [
+        _f(NOT_MOVED, "warning", f"{why}: step 1 creates {t.table_name} and does not move its rows "
+           f"({name} is {next(c.data_type for c in t.columns if c.column_name == name)})", t.table_id, name)
+        for name in columns
+    ]  # fmt: skip
 
 
 def _checked(rule: Rule, findings: list[Finding]) -> Rule:
     blocked = any(f.severity == "error" for f in findings)
+    moves = not any(f.code == NOT_MOVED for f in findings)
     return rule.model_copy(
-        update={"findings": findings, "status": "blocked" if blocked else "valid"}
-    )
+        update={"findings": findings, "status": "blocked" if blocked else "valid",
+                "moves_rows": moves}
+    )  # fmt: skip
 
 
-def _revalidated(rule: Rule, tables: dict[str, Table], targets: dict[str, TargetTable]) -> Rule:
+def _revalidated(
+    rule: Rule, tables: dict[str, Table], targets: dict[str, TargetTable], dialect: str | None
+) -> Rule:
     if not any(f.code in _KEPT for f in rule.findings):
-        return _checked(rule, _rule_findings(rule, tables, targets))
+        return _checked(rule, _rule_findings(rule, tables, targets, dialect))
     # A kept rule has no fields to re-check, but its table may have left the collection.
     kept = list(rule.findings)
     if rule.source_table not in tables:
-        kept += _rule_findings(rule, tables, targets)
+        kept += _rule_findings(rule, tables, targets, dialect)
     unique: dict[str, Finding] = {}
     for f in kept:
         unique.setdefault(f.code, f)
@@ -137,7 +158,9 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     collector = _load_collector(inputs)
     tables = {t.table_id: t for t in collector.database_schema.tables}
     targets = target_tables(inputs, contract.target.engine, collector)
-    rules = [_revalidated(r, tables, targets) for r in contract.rules]
+    source = (inputs.collector.get("metadata") or {}).get("source_database") or {}
+    dialect = dialect_of(str(source.get("engine") or "").lower())
+    rules = [_revalidated(r, tables, targets, dialect) for r in contract.rules]
     waves = sorted(inputs.report.get("migration_waves") or [], key=lambda w: int(w["wave"]))
     wave = (_aurora_wave(waves) if waves else None) or {}
     ruled = {r.source_table for r in rules} | set(contract.views)

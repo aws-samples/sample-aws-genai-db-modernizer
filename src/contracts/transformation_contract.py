@@ -15,6 +15,9 @@ Version History:
 - 1.0 (2026-11-03, #1762): Initial version: step, wave and its shape, target,
   depends_on, status with its reason, rule and unsupported counts, views, and rules
   with their fields, status and findings.
+- 1.1 (2026-11-07, #1918): Added optional ``Rule.moves_rows`` (default true): false when
+  step 1 creates the table but DMS does not move its rows (a tsvector column), with a
+  ``not_moved`` warning finding.
 """
 
 from typing import Literal
@@ -33,6 +36,8 @@ from .lineage_ops import (
 InputSchema = Literal["collector", "step-1"]
 StepStatus = Literal["valid", "has_blocked_rules", "no_relational_anchor", "staged_move_pending"]
 RuleStatus = Literal["valid", "blocked"]
+# The finding code of a rule whose table the step creates but does not move (#1918).
+NOT_MOVED = "not_moved"
 Severity = Literal["error", "warning"]
 TableClass = Literal["stays", "leaves", "replicated_out", "unread"]
 
@@ -107,6 +112,17 @@ class Rule(BaseModel):
     fields: list[FieldRule] = Field(default_factory=list)
     status: RuleStatus = "valid"
     findings: list[Finding] = Field(default_factory=list)
+    # Left out of the dump when true, so a contract with no such rule keeps the bytes (and the
+    # SHA-256 a plan pins) it had before the field existed.
+    moves_rows: bool = Field(
+        True,
+        exclude_if=lambda moves: moves is True,
+        description=(
+            "False when the step creates the target table but does not move its rows: a "
+            "column of a type the mover does not migrate (DMS and tsvector, #1918); a "
+            "not_moved warning finding says why and what to rebuild after cutover"
+        ),
+    )
 
     @model_validator(mode="after")
     def _own_row(self) -> "Rule":
@@ -128,12 +144,20 @@ class Rule(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _not_moved_says_why(self) -> "Rule":
+        if not self.moves_rows and not any(f.code == NOT_MOVED for f in self.findings):
+            raise ValueError(
+                f"{self.source_table}: a rule that moves no rows needs a {NOT_MOVED} finding"
+            )
+        return self
+
 
 class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(

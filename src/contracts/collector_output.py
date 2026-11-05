@@ -91,6 +91,9 @@ Version History:
   ``sys.dm_exec_sql_text(sql_handle).objectid``, in the offline script and the live
   collector), so routing can place a statement on temporary objects with its procedure
   (#1891). Backward compatible: defaults to None (not recorded).
+- 5.10 (2026-11-07, #1918): Added optional ``Column.max_value_bytes``: the longest
+  stored value of a LOB column in bytes, measured by the PostgreSQL collection script,
+  which sizes the step 1 DMS LobMaxSize.
 """
 
 import re
@@ -465,6 +468,14 @@ class Column(BaseModel):
         None, description="Normalized data type for cross-database comparison"
     )
     max_length: int | None = Field(None, ge=0, description="Maximum length for string types")
+    max_value_bytes: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The longest stored value in bytes (UTF-8 octets; a bytea's raw length), measured "
+            "by the collection for a LOB column (PostgreSQL, #1918); None when not measured"
+        ),
+    )
     numeric_precision: int | None = Field(
         None,
         ge=0,
@@ -1260,7 +1271,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.9",
+        default="5.10",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
