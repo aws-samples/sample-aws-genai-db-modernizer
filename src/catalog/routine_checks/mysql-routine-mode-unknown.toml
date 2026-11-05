@@ -1,0 +1,16 @@
+# Routine check mysql-routine-mode-unknown (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, Server SQL Modes (Full List of SQL Modes, Combination SQL Modes).
+id = "mysql-routine-mode-unknown"
+feature = "An sql_mode MySQL 8.0 does not have"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine's sql_mode names a mode MySQL 8.0 does not have (for example a MariaDB mode), so setting it fails and the routine cannot be created under its own sql_mode."
+fix_hint = "Replace the mode with its MySQL equivalent, or drop it, and check the routine still behaves the same."
+docs = "MySQL 8.0 Reference Manual, Server SQL Modes"
+
+# The modes MySQL 8.0 knows; the modes another sql_mode rule names are known too.
+[match]
+unknown_sql_modes = true
+known_sql_modes = ["ALLOW_INVALID_DATES", "ANSI_QUOTES", "ERROR_FOR_DIVISION_BY_ZERO", "HIGH_NOT_PRECEDENCE", "IGNORE_SPACE", "NO_AUTO_VALUE_ON_ZERO", "NO_BACKSLASH_ESCAPES", "NO_DIR_IN_CREATE", "NO_ENGINE_SUBSTITUTION", "NO_UNSIGNED_SUBTRACTION", "NO_ZERO_DATE", "NO_ZERO_IN_DATE", "ONLY_FULL_GROUP_BY", "PIPES_AS_CONCAT", "REAL_AS_FLOAT", "STRICT_ALL_TABLES", "STRICT_TRANS_TABLES", "TIME_TRUNCATE_FRACTIONAL", "ANSI", "TRADITIONAL"]

@@ -1,0 +1,16 @@
+# Routine check mysql-routine-restricted-session-variable (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, System Variable Privileges (restricted session variables); Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-restricted-session-variable"
+feature = "Setting a restricted session system variable"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "Setting the session value of this system variable is restricted: it needs SESSION_VARIABLES_ADMIN, SYSTEM_VARIABLES_ADMIN or SUPER, which the Aurora MySQL administrative role (rds_superuser_role) does not include, so the statement fails when the routine runs."
+fix_hint = "Remove the SET, or set the value in the DB cluster or DB parameter group when every session needs it."
+docs = "MySQL 8.0 Reference Manual, System Variable Privileges; Amazon Aurora User Guide, Role-based privilege model"
+
+# Restricted session variables a routine is known to set; sql_log_bin has its own rule. MySQL's
+# manual lists every restricted variable, and a variable missing here is not checked.
+[match]
+set_variables = ["binlog_format", "binlog_row_image", "binlog_row_value_options", "gtid_next", "sql_log_off", "pseudo_thread_id"]

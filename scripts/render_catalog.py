@@ -589,6 +589,10 @@ _ROUTINE_CHECK_TEXT = {
         "cursors, then handlers"
     ),
     "handler": "every handler is CONTINUE or EXIT and names valid, declared, distinct conditions",
+    "dynamic_sql": (
+        "a PREPARE from a user variable, whose text at run time no check can see (the string "
+        "literals the routine assigns to it are checked)"
+    ),
 }
 _ROUTINE_CHECK_CLAIMS = {
     "parse": (
@@ -612,6 +616,34 @@ _ROUTINE_CHECK_CLAIMS = {
         _ROUTINE_TESTS + "test_a_superusers_security_definer_routine_is_flagged",
         _ROUTINE_TESTS + "test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes",
     ),
+}
+
+
+# The MySQL checker's tests behind each MySQL rule's row (#1936).
+_MYSQL_ROUTINE_TESTS = "tests/unit/tools/routines/test_mysql_routine_checks.py::"
+_MYSQL_ROUTINE_CHECK_CLAIMS = {
+    "parse": (
+        _MYSQL_ROUTINE_TESTS + "test_bodies_that_do_not_close_are_unparseable",
+        _MYSQL_ROUTINE_TESTS + "test_headers_that_do_not_read_are_unparseable",
+    ),
+    "declare_order": (_MYSQL_ROUTINE_TESTS + "test_declare_order",),
+    "handler": (_MYSQL_ROUTINE_TESTS + "test_invalid_handlers",),
+    "definer": (
+        _MYSQL_ROUTINE_TESTS + "test_the_definer_check",
+        _MYSQL_ROUTINE_TESTS
+        + "test_sql_security_invoker_skips_the_definer_check_only_for_procedures_and_functions",
+    ),
+    "statement": (
+        _MYSQL_ROUTINE_TESTS + "test_super_only_statements",
+        _MYSQL_ROUTINE_TESTS + "test_more_privileged_statements",
+        _MYSQL_ROUTINE_TESTS + "test_dynamic_sql",
+    ),
+    "sql_mode": (
+        _MYSQL_ROUTINE_TESTS + "test_sql_modes",
+        _MYSQL_ROUTINE_TESTS
+        + "test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules",
+    ),
+    "dynamic_sql": (_MYSQL_ROUTINE_TESTS + "test_dynamic_sql",),
 }
 
 
@@ -640,12 +672,17 @@ def _routine_check_text(rule: RoutineCheckRule) -> str:
         if match.statement_starts:
             parts.append("a body statement that starts with " + _codes(match.statement_starts))
         if match.statement_contains:
-            parts.append("a body statement that contains " + _codes(match.statement_contains))
+            text = "a body statement that contains " + _codes(match.statement_contains)
+            if match.statement_exceptions:
+                text += " (not " + _codes(match.statement_exceptions) + ")"
+            parts.append(text)
         if match.set_scopes:
             parts.append("a SET of a " + _codes(match.set_scopes) + " variable")
         if match.set_variables:
             parts.append("a SET of " + _codes(match.set_variables))
-        return "; ".join(parts)
+        if match.function_calls:
+            parts.append("a call to " + _codes(match.function_calls))
+        return "; ".join(parts) + "; a prepared statement's literal text counts too"
     if match.check == "sql_mode":
         if match.unknown_sql_modes:
             return "a stored sql_mode holding a mode no other rule names and MySQL does not list"
@@ -664,10 +701,12 @@ def _routine_check_text(rule: RoutineCheckRule) -> str:
 
 
 def _routine_check_claim(rule: RoutineCheckRule) -> str:
-    """The claim marker of a PostgreSQL rule's row; another engine's checker names its own."""
-    if rule.source_engines != ("postgresql",):
-        return ""
-    return _claim(_ROUTINE_CHECK_CLAIMS[rule.match.check])
+    """The claim marker of a rule's row: its engine's checker tests for its check."""
+    if rule.source_engines == ("postgresql",):
+        return _claim(_ROUTINE_CHECK_CLAIMS[rule.match.check])
+    if rule.source_engines == ("mysql",):
+        return _claim(_MYSQL_ROUTINE_CHECK_CLAIMS[rule.match.check])
+    return ""
 
 
 def render_routine_checks_md(

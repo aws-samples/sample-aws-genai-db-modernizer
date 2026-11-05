@@ -1,0 +1,14 @@
+# Routine check mysql-routine-kill (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, KILL Statement; Amazon Aurora User Guide, Role-based privilege model; Aurora MySQL stored procedure reference (mysql.rds_kill).
+id = "mysql-routine-kill"
+feature = "Ending another session or query with KILL"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "behaves_differently"
+reason = "KILL ends another user's connection or query only with CONNECTION_ADMIN, which on Aurora MySQL a user has only through rds_superuser_role or an explicit grant, so the statement fails when the routine runs as any other user."
+fix_hint = "Call mysql.rds_kill or mysql.rds_kill_query instead, or make sure the user the routine runs as holds CONNECTION_ADMIN."
+docs = "MySQL 8.0 Reference Manual, KILL Statement; Amazon Aurora User Guide, Role-based privilege model; Aurora MySQL stored procedure reference"
+
+[match]
+statement_starts = ["KILL"]
