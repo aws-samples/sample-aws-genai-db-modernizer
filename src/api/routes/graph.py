@@ -306,9 +306,10 @@ _sidecars = job_graph.sidecars
 
 
 def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool = False) -> None:
-    """Make ``path`` hold this job's graph: local file -> store download -> build+upload.
+    """Make ``path`` hold this job's graph: local file -> store download -> the CLI copy
+    ``run_report.py`` prebuilt (#1911) -> build+upload.
 
-    A local or downloaded graph is used only when it was built from the job's
+    A local, downloaded or adopted graph is used only when it was built from the job's
     current effective assignment version; otherwise it is rebuilt (#819).
     When that version can't be read, or a rebuild for this job is in back-off
     (#848), a current-revision graph is used as it is.
@@ -326,6 +327,8 @@ def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool
         version=version,
         digest=digest,
         download=lambda target: _services()[2].download_if_exists(db_name, job_id, target),
+        # The copy run_report.py built at the end of the run (#1911): a file copy, not a build.
+        adopt=lambda target: job_graph.adopt_cli_copy(target, version, digest),
         # Cache miss or unusable download: build fresh, then upload (self-healing).
         build=lambda: _build_graph_file(db_name, job_id, path),
     )
@@ -418,7 +421,11 @@ def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> boo
         ):
             return False
         with cache.exclusive(db_name, job_id) as path:
-            if not _is_populated_file(path, version, digest):
+            if not _is_populated_file(path, version, digest) and not (
+                # A run that just ended prebuilt the copy (#1911): take it, not a rebuild.
+                job_graph.adopt_cli_copy(path, version, digest)
+                and _is_populated_file(path, version, digest)
+            ):
                 logger.info(
                     "graph for %s/%s is behind assignment v%s: rebuilding",
                     db_name,

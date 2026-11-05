@@ -64,9 +64,11 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    uv run python scripts/run_report.py --job-id {job_id} --db {database_name}
    ```
 
-   Prints `status`, `report`, `deliverables_dir`, `deliverables` and `errors`. On
+   Prints `status`, `report`, `graph`, `deliverables_dir`, `deliverables` and `errors`. On
    `partial` tell the user what `errors` says, then continue; on `error` (no
-   synthesis report, or rendering failed) stop and report it.
+   synthesis report, or rendering failed) stop and report it. `graph` says whether
+   the job's context graph was built for the results page (`built`, `skipped` when a
+   current one was there, `failed`); a `failed` graph never stops the run. <!-- claim: tests/graph/test_prebuilt_graph.py::test_run_report_prebuilds_the_jobs_graph, tests/graph/test_prebuilt_graph.py::test_a_graph_failure_never_fails_the_report, tests/graph/test_prebuilt_graph.py::test_a_second_report_skips_a_current_graph -->
 
 5. **Present report**
    Print the report from the facts in `report.json`, then quote it verbatim in your chat

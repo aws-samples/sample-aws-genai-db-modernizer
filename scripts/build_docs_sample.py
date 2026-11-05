@@ -302,7 +302,8 @@ def render_sample_run(run_dir: Path, artifact_root: Path) -> dict[str, Any]:
     job_id = validate_job_id(report.get("job_id"))
     job_dir = artifact_root / db / job_id
     shutil.copytree(run_dir, job_dir, ignore=shutil.ignore_patterns(SAMPLE_RUN_README))
-    result = run_report(job_id, db, str(artifact_root), None)
+    # The help site needs no graph: its artifact store is thrown away (#1911).
+    result = run_report(job_id, db, str(artifact_root), None, graph=False)
     if result.get("status") != "complete":
         raise RuntimeError(
             f"the sample run did not render completely: {result.get('message') or result.get('errors')}"
