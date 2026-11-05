@@ -837,14 +837,18 @@ def _common_prefix(names: list[str]) -> str:
 def _table_keys(tables: set[str], database_name: str) -> dict[str, set[str]]:
     """Map canonical compact keys to the source tables they name.
 
-    Each table is matched as ``<db>.<name>``, ``<name>`` and the humanised stem with the
+    Each table is matched as ``<db>.<name>``, ``<name>`` (a schema-qualified id's bare
+    table name too, ``public.topics`` -> ``topics``) and the humanised stem with the
     shared naming prefix removed (``wp_postmeta`` -> ``post meta`` / ``postmeta``).
     """
     names = {t: _strip_db(t, database_name) for t in sorted(tables)}
     prefix = _common_prefix(list(names.values()))
     keys: dict[str, set[str]] = {}
     for table, name in names.items():
-        variants = {name, f"{database_name}.{name}" if database_name else name}
+        # A PostgreSQL id leads with its schema, not the database (``public.topics``,
+        # #1903): its bare name is a mention of it too.
+        bare = name.rsplit(".", 1)[-1]
+        variants = {name, bare, f"{database_name}.{name}" if database_name else name}
         if prefix:
             variants.add(name[len(prefix) :])
         for v in variants:

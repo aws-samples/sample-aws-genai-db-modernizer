@@ -104,7 +104,7 @@ class TestOutputUnchanged:
         parsed = parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)
         # The regex's own reading, phantoms included; every query is still
         # listed, as a facade_error fallback that agrees by construction.
-        assert parsed["queries"][1]["tables_accessed"] == ["shop.posts", "topics.id"]
+        assert parsed["queries"][1]["tables_accessed"] == ["public.posts", "topics.id"]
         assert shadow.queries == len(QUERIES)
         assert shadow.disagree == 0
         assert shadow.fallbacks == [
@@ -131,8 +131,8 @@ class TestDisagreements:
         "qid,regex_only,facade_only,category",
         [
             ("q1", ["topics.id"], [], "is_distinct_from"),
-            ("q2", [], ["shop.users"], "delete_using"),
-            ("q3", [], ["shop.topics"], "comma_join"),
+            ("q2", [], ["public.users"], "delete_using"),
+            ("q3", [], ["public.topics"], "comma_join"),
             ("q4", ["chat"], [], "comment_text"),
             ("q5", ["CURRENT_TIMESTAMP"], [], "from_in_function"),
         ],

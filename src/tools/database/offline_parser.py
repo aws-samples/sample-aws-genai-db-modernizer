@@ -315,6 +315,7 @@ def _parse_offline_collection(
     # here and in the builder (#1572).
     collected = collected_database_name(metadata, data.get("queries") or [], database_name)
     db_name = collected or "unknown"
+    source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     known_table_names: set[str] = set()
     table_schemas: dict[str, set[str]] = {}
     tables = []
@@ -323,7 +324,8 @@ def _parse_offline_collection(
     raw_tables, sample_rows_dropped = without_sample_rows(data.get("tables") or [])
     for t in raw_tables:
         tbl_name = t["table_name"]
-        table_id = t.get("table_id") or f"{db_name}.{tbl_name}"
+        qualifier = offline_table_qualifier(source_engine, t.get("schema_name"), db_name)
+        table_id = t.get("table_id") or f"{qualifier}.{tbl_name}"
         known_table_names.add(tbl_name)
         if t.get("schema_name"):
             table_schemas.setdefault(tbl_name, set()).add(str(t["schema_name"]))
@@ -364,7 +366,6 @@ def _parse_offline_collection(
         )
         sample_rows_note = {"sample_rows_dropped": sample_rows_dropped}
 
-    source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     return {
         **other_db_note,
         **sample_rows_note,
@@ -763,6 +764,48 @@ def _known_table_name(
     return matches[0] if len(matches) == 1 else None
 
 
+POSTGRES_DEFAULT_SCHEMA = "public"
+
+
+def _is_postgres(source_engine: str | None) -> bool:
+    return normalize_engine(source_engine) == "postgresql"
+
+
+def offline_table_qualifier(source_engine: str | None, schema_name: object, db_name: str) -> str:
+    """The qualifier of an offline table's id: ``<qualifier>.<table>`` (#1903).
+
+    A PostgreSQL table is named after its own schema (``public.topics``), as the live
+    collector names it: ``collect-postgresql.sql`` reports each table's
+    ``schema_name``, and a table without one (a collection written by hand) is in
+    ``public``, where PostgreSQL's default ``search_path`` finds a bare name. Every
+    other engine keeps the database (MySQL's database is its schema; SQL Server's and
+    Oracle's ids stay ``<database>.<table>``, #382).
+    """
+    if _is_postgres(source_engine):
+        return str(schema_name or "").strip() or POSTGRES_DEFAULT_SCHEMA
+    return db_name
+
+
+def _bare_table_id(
+    table: str, db_name: str, table_schemas: Mapping[str, set[str]], source_engine: str = ""
+) -> str | None:
+    """The id of collected table ``table`` for a reference that names no schema.
+
+    ``<database>.<table>`` outside PostgreSQL. A PostgreSQL table in one schema is
+    that schema's; a name collected in several is ``public``'s when ``public`` is one
+    of them (the default ``search_path``), else ambiguous (None) (#1903).
+    """
+    if not _is_postgres(source_engine):
+        return f"{db_name}.{table}"
+    schemas = sorted({s for s in table_schemas.get(table, ()) if s})
+    if len(schemas) <= 1:
+        own = schemas[0] if schemas else None
+        return f"{offline_table_qualifier(source_engine, own, db_name)}.{table}"
+    if POSTGRES_DEFAULT_SCHEMA in schemas:
+        return f"{POSTGRES_DEFAULT_SCHEMA}.{table}"
+    return None
+
+
 def _resolve_qualified_table(
     qualifiers: list[str],
     table: str,
@@ -771,13 +814,14 @@ def _resolve_qualified_table(
     table_schemas: Mapping[str, set[str]],
     case_folded: Mapping[str, tuple[str, ...]] | None = None,
     exact_names: frozenset[str] = frozenset(),
+    source_engine: str = "",
 ) -> str:
     """The table id for a qualified reference ``[database.]schema.table`` (#653).
 
-    ``_build_tables`` keys every offline table as ``<database>.<table>``, whatever
-    schema the collection reports for it, so ``[Audit].[EventLog]`` has to become
-    ``trailgear.EventLog`` to match its own table recommendation. The qualifier must
-    name that table's own schema (compared case-insensitively, as SQL Server and
+    ``_build_tables`` keys every offline table outside PostgreSQL as
+    ``<database>.<table>``, whatever schema the collection reports for it, so
+    ``[Audit].[EventLog]`` has to become ``trailgear.EventLog`` to match its own
+    table recommendation. The qualifier must name that table's own schema (compared case-insensitively, as SQL Server and
     unquoted PostgreSQL/Oracle names do) or the database itself (MySQL's
     ``db.table``); a table the collection reports no schema for accepts any
     qualifier. A T-SQL three-part name ``database.schema.table`` resolves the same
@@ -792,6 +836,10 @@ def _resolve_qualified_table(
     Table names match exactly, or case-insensitively where the engine compares
     them that way (``case_folded``, see ``_known_table_name``, #742); the id
     uses the collection's own spelling.
+
+    A PostgreSQL table's id is ``<schema>.<table>`` (#1903), so there the qualifier
+    picks the table among its schemas: ``audit.events`` is the ``audit`` table even
+    when ``public`` has one of that name too.
     """
     written = ".".join([*qualifiers, table])
     known = _known_table_name(table, known_table_names, case_folded, exact_names)
@@ -803,6 +851,13 @@ def _resolve_qualified_table(
             return written
         qualifiers = qualifiers[1:]
     qualifier = qualifiers[0].lower()
+    if _is_postgres(source_engine):
+        spelled = {s.lower(): s for s in table_schemas.get(table, ()) if s}
+        if qualifier in spelled:
+            return f"{spelled[qualifier]}.{table}"
+        if not spelled or qualifier == db_name.lower():
+            return _bare_table_id(table, db_name, table_schemas, source_engine) or written
+        return written
     schemas = {s.lower() for s in table_schemas.get(table, ())}
     if len(schemas) > 1:
         logger.info(
@@ -824,6 +879,7 @@ def _resolve_table_ids(
     table_schemas: Mapping[str, set[str]],
     case_folded: Mapping[str, tuple[str, ...]] | None = None,
     exact_names: frozenset[str] = frozenset(),
+    source_engine: str = "",
 ) -> list[str]:
     """Resolve ``(qualifiers, table)`` references to collection table ids.
 
@@ -832,7 +888,8 @@ def _resolve_table_ids(
     waves already treat it as an engine object
     (``table_resolution.is_engine_system_object``). A qualified
     reference goes through ``_resolve_qualified_table`` (#653), a bare name the
-    collection knows becomes ``<database>.<table>``, and anything else is kept as
+    collection knows becomes its table id (``_bare_table_id``: ``<database>.<table>``,
+    or ``<schema>.<table>`` for PostgreSQL, #1903), and anything else is kept as
     written. A qualified and a bare reference to one table resolve to the same id,
     so duplicates collapse in first-seen order; no reference at all is
     ``["unknown"]``. ``case_folded`` (from ``_case_folded_names``) lets a name
@@ -854,13 +911,16 @@ def _resolve_table_ids(
                     table_schemas,
                     case_folded,
                     exact_names,
+                    source_engine,
                 )
             )
-        # Prefix with db_name if the bare-name table is known
+        # A bare name the collection knows is that table's id
         elif (
             known := _known_table_name(table, known_table_names, case_folded, exact_names)
         ) is not None:
-            tables_accessed.append(f"{db_name}.{known}")
+            tables_accessed.append(
+                _bare_table_id(known, db_name, table_schemas, source_engine) or table
+            )
         else:
             tables_accessed.append(table)
     tables_accessed = list(dict.fromkeys(tables_accessed))
@@ -913,6 +973,7 @@ def _facade_table_ids(
         table_schemas,
         case_folded,
         _quoted_names(refs, source_engine),
+        source_engine,
     )
     return ids, refs, reading
 
@@ -983,6 +1044,7 @@ def _shadow_table_refs(
             table_schemas,
             case_folded,
             _quoted_names(refs, source_engine),
+            source_engine,
         )
         shadow.record(query_id, query_text, regex_ids, list(facade_ids), refs)
     except Exception:  # noqa: BLE001 -- the cross-check only observes
@@ -1112,13 +1174,21 @@ def _rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
     case_folded = _case_folded_names(known, source_engine)
 
     def table_id(resolved: str) -> str:
+        # The parser qualifies a known table with the database, or, for PostgreSQL,
+        # with its schema (#1903); an output saved before then, or another builder's,
+        # may key the same table otherwise (``discourse.topics``, ``public.topics``).
         if resolved in table_ids:
             return resolved
-        prefix = f"{db_name}."
-        if resolved.startswith(prefix):
-            ids = ids_by_name.get(resolved[len(prefix) :], [])
-            if len(ids) == 1:
-                return ids[0]
+        qualifier, _, name = resolved.rpartition(".")
+        ids = ids_by_name.get(name, [])
+        own = (
+            {db_name.lower(), POSTGRES_DEFAULT_SCHEMA}
+            if _is_postgres(source_engine)
+            else {db_name.lower()}
+        )
+        own |= {s.lower() for s in schemas.get(name, ())}
+        if len(ids) == 1 and qualifier.lower() in own:
+            return ids[0]
         return resolved
 
     rows: list[dict] = []

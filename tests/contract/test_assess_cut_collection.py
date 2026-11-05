@@ -884,7 +884,7 @@ def test_a_statement_over_tables_the_collection_lacks_is_unplaced_with_its_reaso
     """PostgreSQL: system catalog reads read tables the collection does not hold; COMMIT
     reads none."""
     whole = _whole_sample("discourse")
-    cut = cut_collection(whole, table_ids=["discourse.users"])
+    cut = cut_collection(whole, table_ids=["public.users"])
     reasons = {u.query_id: u.reason for u in cut.scope.unplaced_statements}
     texts = {s.query_id: s.query_text or "" for s in whole.statements}
     catalog = next(q for q, t in texts.items() if "FROM pg_type as t" in t)
@@ -895,6 +895,20 @@ def test_a_statement_over_tables_the_collection_lacks_is_unplaced_with_its_reaso
     collected = {t.table_id for t in whole.summary.table_facts} | {"badge_posts"}
     tables = {s.query_id: s.tables for s in whole.statements}
     assert all(not collected & set(tables[q]) for q in reasons)
+
+
+def test_a_postgresql_table_id_keyed_by_the_database_still_cuts() -> None:
+    """#1903: an offline PostgreSQL table is named after its schema (``public.users``);
+    the ``<database>.<table>`` id a caller used before then names the same table."""
+    whole = _whole_sample("discourse")
+    assert "public.users" in {t.table_id for t in whole.summary.table_facts}
+
+    old = cut_collection(whole, table_ids=["discourse.users"])
+
+    assert old.table_ids == ["public.users"]
+    assert old.query_ids == cut_collection(whole, table_ids=["public.users"]).query_ids
+    with pytest.raises(UnknownTableError):
+        cut_collection(whole, table_ids=["other.users"])
 
 
 def test_a_part_can_place_a_statement_the_cut_cannot() -> None:

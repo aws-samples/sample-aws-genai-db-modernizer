@@ -247,6 +247,7 @@ def cut_collection(
     tables = _tables(source)
     views = _view_tables(source, tables)
     placeable = {str(t["table_id"]) for t in tables} | set(views)
+    kept = _legacy_ids_mapped(kept, placeable, source)
     unknown = sorted(kept - placeable)
     if unknown:
         raise UnknownTableError(unknown)
@@ -306,6 +307,26 @@ def cut_collection(
         scope=_scope(result, kept, query_ids, whole, dropped_keys, unplaced, given, patterns),
         collection=out,
     )
+
+
+def _legacy_ids_mapped(kept: set[str], placeable: set[str], source: Mapping[str, Any]) -> set[str]:
+    """``kept`` with each ``<database>.<table>`` id a PostgreSQL collection no longer holds
+    mapped to the one table of that name: an offline PostgreSQL table is named after its
+    schema since #1903 (``public.users``, was ``discourse.users``)."""
+    meta = (source.get("metadata") or {}).get("source_database") or {}
+    database = str(meta.get("database_name") or "")
+    if str(meta.get("engine") or "").lower() not in ("postgresql", "postgres") or not database:
+        return kept
+    by_name: dict[str, list[str]] = {}
+    for table_id in placeable:
+        by_name.setdefault(table_id.rpartition(".")[2], []).append(table_id)
+    out = set()
+    for table_id in kept:
+        qualifier, _, name = table_id.rpartition(".")
+        ids = by_name.get(name, [])
+        legacy = table_id not in placeable and qualifier == database and len(ids) == 1
+        out.add(ids[0] if legacy else table_id)
+    return out
 
 
 def _table_ids(table_ids: Any) -> set[str]:

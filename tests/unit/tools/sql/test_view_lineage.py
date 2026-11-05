@@ -358,9 +358,11 @@ def test_mysql_and_postgresql_views_resolve_on_the_same_path(engine: str, defini
     views = {"vw_users": definition, "vw_none": None}
     queries = {"q": "SELECT * FROM vw_users WHERE UserId = 1", "n": "SELECT * FROM vw_none"}
     out = _output(engine, views=views, queries=queries)
+    # #1903: a PostgreSQL table is named after its schema, a MySQL one after the database.
+    qualifier = "dbo" if engine == "postgresql" else "shop"
     assert {t.lower() for t in _query(out, "q")["tables_accessed"]} == {
-        "shop.users",
-        "shop.userportals",
+        f"{qualifier}.users",
+        f"{qualifier}.userportals",
     }
     assert _query(out, "q")["join_count"] == 1
     assert _view(out, "vw_none")["lineage_reason"] == NO_DEFINITION
@@ -482,7 +484,7 @@ def test_an_unqualified_self_name_in_a_view_is_the_table_it_reads() -> None:
     out = build_offline_collector_output(parsed, job_id="j", database_name="shop", s3_key="k")
     (view,) = out["database_schema"]["views"]
     assert view["lineage_status"] == "resolved"
-    assert view["referenced_tables"] == ["shop.users"]
+    assert view["referenced_tables"] == ["public.users"]
 
 
 def test_the_resolved_text_is_redacted_like_a_query_text() -> None:

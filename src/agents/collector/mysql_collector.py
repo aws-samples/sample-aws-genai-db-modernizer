@@ -87,6 +87,7 @@ from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
 from src.tools.database.mysql_tools import MySQLRemoteCollector
+from src.tools.database.offline_parser import offline_table_qualifier
 from src.tools.sql.query_tags import QueryTags
 from src.tools.sql.redact import redact_values
 from src.tools.sql.view_lineage import apply_view_lineage
@@ -792,18 +793,21 @@ def _build_tables(
             for fk in t.get("foreign_keys", [])
         ] or None
 
+        # #1903: a PostgreSQL table is named after its own schema (public.topics),
+        # every other engine's after the database (#382 scope).
+        qualifier = offline_table_qualifier(source_engine, t.get("schema_name"), db_name)
         tables.append(
             Table(
-                table_id=f"{db_name}.{name}",
+                table_id=f"{qualifier}.{name}",
                 table_name=name,
                 # #381: prefer the raw table's own schema_name (SQL Server/Oracle
                 # collector scripts report the real per-table schema, e.g. "Sales",
                 # "dbo", "HR" — see collect-sqlserver.sql/collect-oracle.sql) over the
                 # database name. MySQL/MariaDB (no separate schema concept; their
                 # information_schema.SCHEMA_NAME *is* the database name) and any
-                # collection that reports none fall back to db_name, same as before.
-                # table_id is unaffected -- still f"{db_name}.{name}" (#382 scope).
-                schema_name=t.get("schema_name") or db_name,
+                # collection that reports none fall back to the id's qualifier: db_name,
+                # same as before, or public for a PostgreSQL table (#1903).
+                schema_name=t.get("schema_name") or qualifier,
                 # #1636: None when the source has no count, never a 0 standing in for it.
                 **read_row_count(t, source_engine, engine_major=engine_major).fields(),
                 size_mb=read_size_mb(t, source_engine),

@@ -706,7 +706,7 @@ class TestSequenceReads:
         text, tables = _collected(
             'SELECT last_value FROM "Invoice_Seq"', known=frozenset({"Invoice_Seq"})
         )
-        assert tables == ["discourse.Invoice_Seq"]
+        assert tables == ["public.Invoice_Seq"]
         assert is_utility_statement(text, tables) is False
 
     @pytest.mark.parametrize(
@@ -718,7 +718,7 @@ class TestSequenceReads:
     )
     def test_writes_to_a_schema_table_named_like_a_sequence_stay_application_access(self, sql):
         text, tables = _collected(sql, known=frozenset({"invoice_seq"}))
-        assert tables == ["discourse.invoice_seq"]
+        assert tables == ["public.invoice_seq"]
         assert is_utility_statement(text, tables) is False
 
     @pytest.mark.parametrize("source_engine", ["mysql", "sqlserver", "oracle"])

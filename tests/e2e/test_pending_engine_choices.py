@@ -117,7 +117,7 @@ def test_every_open_tie_is_in_exactly_one_choice_per_table(plain: dict) -> None:
             "unrounded_score",
         )
     # Fewer decisions than queries: the ties sit on a few tables (#1003).
-    assert {c["table"] for c in choices} >= {"discourse.theme_fields", "discourse.incoming_emails"}
+    assert {c["table"] for c in choices} >= {"public.theme_fields", "public.incoming_emails"}
 
 
 @pytest.mark.deterministic
@@ -138,7 +138,7 @@ def test_the_deliverables_present_one_choice_per_table(
 @pytest.mark.deterministic
 def test_a_table_pick_settles_that_table_only(decided: dict) -> None:
     pick = decided["chose"]
-    assert pick["picked"] == {"discourse.theme_fields": "documentdb"} and pick["decided"] == []
+    assert pick["picked"] == {"public.theme_fields": "documentdb"} and pick["decided"] == []
     qas = {qa["query_id"]: qa for qa in decided["after_pick"]["query_assignments"]}
     was_tied = {
         qa["query_id"] for qa in decided["before"]["query_assignments"] if qa["tied_engines"]
@@ -146,12 +146,12 @@ def test_a_table_pick_settles_that_table_only(decided: dict) -> None:
     theme = [
         qa
         for qid, qa in qas.items()
-        if qid in was_tied and qa["source_tables"] == ["discourse.theme_fields"]
+        if qid in was_tied and qa["source_tables"] == ["public.theme_fields"]
     ]
     assert theme and {qa["assigned_engine"] for qa in theme} == {"documentdb"}
     assert all(qa["customer_override"] and not qa["tied_engines"] for qa in theme)
     remaining = {c["choice"] for c in pick["pending_choices"]}
-    assert "discourse.theme_fields" not in remaining and remaining
+    assert "public.theme_fields" not in remaining and remaining
     assert decided["after_pick"]["auto_decided_choices"] == []
     assert (decided["after_pick"]["status"], decided["after_pick"]["source"]) == (
         "customer_modified",
@@ -169,7 +169,7 @@ def test_decide_for_me_settles_every_other_choice_by_the_documented_rule(
     assert rest["pending_choices"] == []
     by_choice = {c["choice_id"]: c for c in plain["pending_engine_choices"]}
     expected = {cid: c["decide_for_me_engine"] for cid, c in by_choice.items()}
-    expected.pop("discourse.theme_fields")
+    expected.pop("public.theme_fields")
     assert {d["choice"]: d["engine"] for d in rest["decided"]} == expected
     after = decided["after_auto"]
     # Decided by the rule: the version is not a customer edit (#1003).
