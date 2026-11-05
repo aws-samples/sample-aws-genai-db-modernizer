@@ -423,8 +423,9 @@ BEGIN
     -- table_name. Non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.) are
     -- DB-level and can't map to Trigger.table_id + Trigger.event_type
     -- contract enums.
-    -- Normalize compound events like 'INSERT OR UPDATE OR DELETE' to the
-    -- first matching keyword. Normalize TRIGGER_TYPE like 'BEFORE EACH ROW'
+    -- event_type is the first matching keyword of a compound event like
+    -- 'INSERT OR UPDATE OR DELETE'; events keeps all of it (#1651).
+    -- Normalize TRIGGER_TYPE like 'BEFORE EACH ROW'
     -- or 'AFTER STATEMENT' to the BEFORE/AFTER/INSTEAD OF prefix.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"triggers": [');
@@ -443,7 +444,8 @@ BEGIN
                 WHEN UPPER(TRIGGERING_EVENT) LIKE '%INSERT%' THEN 'INSERT'
                 WHEN UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%' THEN 'UPDATE'
                 WHEN UPPER(TRIGGERING_EVENT) LIKE '%DELETE%' THEN 'DELETE'
-            END
+            END,
+            'events' VALUE TRIGGERING_EVENT
         ) AS j
         FROM ALL_TRIGGERS
         WHERE OWNER = v_owner

@@ -5852,6 +5852,20 @@
                             ]
                           }
                         },
+                        "events": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "enum",
+                              "values": [
+                                "DELETE",
+                                "INSERT",
+                                "UPDATE"
+                              ]
+                            },
+                            "kind": "array"
+                          }
+                        },
                         "execution_stats": {
                           "required": false,
                           "schema": {
@@ -9151,8 +9165,8 @@
         }
       }
     },
-    "schema_hash": "bab23cf7296dce813c61f6b60e7a7c34e1a4884d3b43630aee939873ab044e21",
-    "version": "5.5"
+    "schema_hash": "ac569a5179a7f402adbaca290b77d401fbac17bd59944b9ee7205d2785f4650f",
+    "version": "5.6"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

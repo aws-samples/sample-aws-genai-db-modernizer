@@ -33,6 +33,7 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _parse_ddl_raw,
 )
+from src.agents.collector.routine_rows import dml_trigger, log_skipped_triggers
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -53,6 +54,8 @@ from src.contracts.collector_output import (
     SourceDatabase,
     Table,
     Trigger,
+    TriggerEventType,
+    TriggerTiming,
     View,
 )
 from src.shared.contract_versioning import load_contract
@@ -487,18 +490,30 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
 
 
 def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
+    """Every DML trigger with its timing and events in any spelling (#1651); one with no
+    DML event, no known timing or no table is skipped, as on the offline path."""
     if not raw:
         return None
-    return [
-        Trigger(
-            trigger_id=f"{t.get('schema_name', 'dbo')}.{t.get('trigger_name', '')}",
-            trigger_name=t.get("trigger_name", ""),
-            table_id=f"{t.get('schema_name', 'dbo')}.{t.get('table_name', '')}",
-            event_type=t.get("event_type", "INSERT"),
-            timing=t.get("timing", "AFTER"),
+    result = []
+    skipped: list[dict] = []
+    for t in raw:
+        shape = dml_trigger(t)
+        if shape is None:
+            skipped.append(t)
+            continue
+        events, timing = shape
+        result.append(
+            Trigger(
+                trigger_id=f"{t.get('schema_name', 'dbo')}.{t.get('trigger_name', '')}",
+                trigger_name=t.get("trigger_name", ""),
+                table_id=f"{t.get('schema_name', 'dbo')}.{t.get('table_name', '')}",
+                event_type=TriggerEventType(events[0]),
+                events=[TriggerEventType(e) for e in events],
+                timing=TriggerTiming(timing),
+            )
         )
-        for t in raw
-    ]
+    log_skipped_triggers(logger, skipped)
+    return result or None
 
 
 def _build_queries(raw: list[dict]) -> Queries:

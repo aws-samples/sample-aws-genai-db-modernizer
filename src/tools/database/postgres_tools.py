@@ -284,16 +284,24 @@ class PostgreSQLRemoteCollector:
             SELECT
                 t.tgname AS trigger_name,
                 c.relname AS table_name,
-                CASE t.tgtype & 2 WHEN 2 THEN 'BEFORE' ELSE 'AFTER' END AS timing,
-                CASE t.tgtype & 28
-                    WHEN 4 THEN 'INSERT' WHEN 8 THEN 'DELETE'
-                    WHEN 16 THEN 'UPDATE' ELSE 'MULTIPLE'
-                END AS event_type,
+                n.nspname AS schema_name,
+                CASE t.tgtype & 66
+                    WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER'
+                END AS timing,
+                -- every event, as the offline script writes them (#1651)
+                concat_ws(' OR ',
+                    CASE WHEN t.tgtype & 4 <> 0 THEN 'INSERT' END,
+                    CASE WHEN t.tgtype & 16 <> 0 THEN 'UPDATE' END,
+                    CASE WHEN t.tgtype & 8 <> 0 THEN 'DELETE' END,
+                    CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END) AS event_type,
                 CASE t.tgtype & 1 WHEN 1 THEN 'ROW' ELSE 'STATEMENT' END AS for_each
             FROM pg_trigger t
             JOIN pg_class c ON t.tgrelid = c.oid
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE n.nspname = 'public' AND NOT t.tgisinternal
+              -- one row for a partitioned table's trigger, not one per partition
+              -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
+              AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
             ORDER BY c.relname, t.tgname
         """)
 
