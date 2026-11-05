@@ -658,8 +658,8 @@ class TestTableNameCase:
     @pytest.mark.parametrize(
         "engine,sql,known,expected",
         [
-            ("postgresql", "SELECT * FROM Topics", {"topics"}, "trailgear.topics"),
-            ("postgresql", "SELECT * FROM public.TOPICS", {"topics"}, "trailgear.topics"),
+            ("postgresql", "SELECT * FROM Topics", {"topics"}, "public.topics"),
+            ("postgresql", "SELECT * FROM public.TOPICS", {"topics"}, "public.topics"),
             ("oracle", "SELECT * FROM orders", {"ORDERS"}, "trailgear.ORDERS"),
             ("oracle", "SELECT * FROM app.Orders", {"ORDERS"}, "trailgear.ORDERS"),
             ("db2", "SELECT * FROM orders", {"ORDERS"}, "trailgear.ORDERS"),
@@ -689,8 +689,8 @@ class TestTableNameCase:
             # only matches exactly (#925 review).
             ("postgresql", 'SELECT * FROM "Topics"', {"topics"}, "Topics"),
             ("postgresql", 'SELECT * FROM "public"."Topics"', {"topics"}, "public.Topics"),
-            ("postgresql", 'SELECT * FROM "topics"', {"topics"}, "trailgear.topics"),
-            ("postgresql", 'SELECT * FROM "Topics"', {"Topics", "topics"}, "trailgear.Topics"),
+            ("postgresql", 'SELECT * FROM "topics"', {"topics"}, "public.topics"),
+            ("postgresql", 'SELECT * FROM "Topics"', {"Topics", "topics"}, "public.Topics"),
             ("oracle", 'SELECT * FROM "orders"', {"ORDERS"}, "orders"),
             ("oracle", 'SELECT * FROM app."Orders"', {"ORDERS"}, "app.Orders"),
             ("oracle", 'SELECT * FROM "ORDERS"', {"ORDERS"}, "trailgear.ORDERS"),
@@ -709,7 +709,7 @@ class TestTableNameCase:
     def test_an_unquoted_name_next_to_its_quoted_twin_still_folds(self):
         sql = 'SELECT * FROM "Topics" t JOIN posts p ON p.topic_id = t.id'
         known = {"topics", "posts"}
-        assert self._tables(sql, "postgresql", known) == ["Topics", "trailgear.posts"]
+        assert self._tables(sql, "postgresql", known) == ["Topics", "public.posts"]
 
     @pytest.mark.parametrize("engine", ["postgresql", "oracle", "db2"])
     def test_an_ambiguous_name_stays_as_written_outside_sql_server(self, engine):

@@ -71,5 +71,5 @@ def test_discourse_user_badges_counts_its_cte_writes(discourse_run: PipelineResu
     collector = _collector(discourse_run)
     groups = collector_write_groups(collector)
     counts = _write_counts(collector)
-    assert counts["discourse.user_badges"] == len(groups["discourse.user_badges"])
-    assert counts["discourse.topic_links"] == len(groups["discourse.topic_links"])
+    assert counts["public.user_badges"] == len(groups["public.user_badges"])
+    assert counts["public.topic_links"] == len(groups["public.topic_links"])

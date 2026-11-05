@@ -59,7 +59,9 @@ def _without_metadata_name(raw: dict[str, Any]) -> dict[str, Any]:
 def test_a_matching_name_keys_tables_by_it(name: str) -> None:
     db = database_name(name)
     out = _collector(sample_collection(name), db, tell_parser=False)
-    assert all(i.startswith(f"{db}.") for i in _ids(out))
+    # #1903: a PostgreSQL sample's tables are named after their schema (public).
+    pg = out["metadata"]["source_database"]["engine"] == "postgresql"
+    assert all(i.startswith("public." if pg else f"{db}.") for i in _ids(out))
     assert _resolved(out) and _resolved(out) <= _ids(out)
 
 

@@ -46,25 +46,25 @@ def _tables(queries: list[str], engine: str = "postgresql") -> list[list[str]]:
         # IS DISTINCT FROM is a comparison, not a FROM clause (22 discourse queries).
         (
             "SELECT * FROM posts p WHERE p.topic_id IS DISTINCT FROM topics.id",
-            ["shop.posts"],
+            ["public.posts"],
         ),
         # A word in a comment is not a table.
         (
             "SELECT id FROM users -- users that are allowed to join chat",
-            ["shop.users"],
+            ["public.users"],
         ),
         # DELETE ... USING names real tables.
         (
             "DELETE FROM bookmarks b USING topics t, posts p WHERE b.topic_id = t.id",
-            ["shop.bookmarks", "shop.topics", "shop.posts"],
+            ["public.bookmarks", "public.topics", "public.posts"],
         ),
         # Every table of a comma join, not only the first.
         (
             "SELECT * FROM posts, topics WHERE posts.topic_id = topics.id",
-            ["shop.posts", "shop.topics"],
+            ["public.posts", "public.topics"],
         ),
         # EXTRACT(x FROM ...) is a function argument.
-        ("SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) FROM orders", ["shop.orders"]),
+        ("SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) FROM orders", ["public.orders"]),
     ],
 )
 def test_postgresql_regex_misreads_are_gone(sql, expected):
@@ -78,8 +78,10 @@ def test_dual_is_not_a_table():
 
 def test_copy_from_stdin_resolves_to_the_table():
     # #777: the regex read COPY ... FROM STDIN as a table named STDIN.
-    assert _tables(["COPY wp_posts FROM STDIN"]) == [["shop.wp_posts"]]
-    assert _tables(["COPY public.wp_posts (id, title) FROM STDIN WITH CSV"]) == [["shop.wp_posts"]]
+    assert _tables(["COPY wp_posts FROM STDIN"]) == [["public.wp_posts"]]
+    assert _tables(["COPY public.wp_posts (id, title) FROM STDIN WITH CSV"]) == [
+        ["public.wp_posts"]
+    ]
 
 
 def _parsed(queries: list[str], engine: str) -> list[dict]:
@@ -100,19 +102,21 @@ def test_a_bulk_load_is_a_write_to_its_table_on_both_dialects(sql, engine):
     # #777: LOAD DATA resolved to a table named TABLE, and both forms were
     # typed OTHER. They load rows into the table, so they are writes to it.
     (query,) = _parsed([sql], engine)
-    assert query["tables_accessed"] == ["shop.wp_posts"]
+    # #1903: a PostgreSQL table is named after its schema, a MySQL one after its database.
+    qualifier = "public" if engine == "postgresql" else "shop"
+    assert query["tables_accessed"] == [f"{qualifier}.wp_posts"]
     assert query["query_type"] == "INSERT"
 
 
 def test_a_copy_export_is_not_a_write():
     (query,) = _parsed(["COPY wp_posts TO STDOUT"], "postgresql")
-    assert query["tables_accessed"] == ["shop.wp_posts"]
+    assert query["tables_accessed"] == ["public.wp_posts"]
     assert query["query_type"] == "OTHER"
 
 
 def test_a_statement_sqlglot_does_not_model_falls_back_to_the_regex():
     # REFRESH MATERIALIZED VIEW is a generic Command node in sqlglot.
-    assert _tables(["REFRESH MATERIALIZED VIEW CONCURRENTLY orders"]) == [["shop.orders"]]
+    assert _tables(["REFRESH MATERIALIZED VIEW CONCURRENTLY orders"]) == [["public.orders"]]
 
 
 def test_no_table_is_unknown():
@@ -144,8 +148,8 @@ def test_no_table_is_unknown():
         ("sqlserver", "UPDATE STATISTICS [dbo].[orders]", ["shop.orders"]),
         ("mysql", "OPTIMIZE TABLE orders, users", ["shop.orders", "shop.users"]),
         ("mysql", "ALTER TABLE `orders` ADD INDEX i (id)", ["shop.orders"]),
-        ("postgresql", "VACUUM ANALYZE public.orders", ["shop.orders"]),
-        ("postgresql", "TRUNCATE orders", ["shop.orders"]),
+        ("postgresql", "VACUUM ANALYZE public.orders", ["public.orders"]),
+        ("postgresql", "TRUNCATE orders", ["public.orders"]),
         ("oracle", "TRUNCATE TABLE orders", ["shop.orders"]),
     ],
 )
@@ -222,7 +226,7 @@ def test_a_failing_facade_falls_back_to_the_regex(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="src.tools.database.offline_parser"):
         tables = _tables(["SELECT * FROM posts p WHERE p.x IS DISTINCT FROM topics.id"])
     # The regex's own answer, phantom included: the run still completes.
-    assert tables == [["shop.posts", "topics.id"]]
+    assert tables == [["public.posts", "topics.id"]]
     messages = [r.getMessage() for r in caplog.records]
     assert any("facade failed" in m for m in messages)
     assert (

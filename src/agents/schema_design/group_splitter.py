@@ -92,14 +92,23 @@ MAX_GROUP_INPUT_PAGES = 3
 MAX_GROUP_INPUT_CHARS = MAX_GROUP_INPUT_PAGES * READ_PAGE_CHARS
 
 
-def get_primary_table(query: dict, db_name: str) -> str:
-    """Return the primary table for a query (first schema-qualified table)."""
+def get_primary_table(query: dict, db_name: str, known_ids: frozenset[str] | None = None) -> str:
+    """Return the primary table for a query: its first table qualified with
+    ``db_name``, else its first collected table (``known_ids``: a PostgreSQL id leads
+    with its schema, ``public.topics``, #1903), else its first table."""
     tables: list[str] = query.get("tables_accessed", [])
     prefix = f"{db_name}."
     for t in tables:
         if t.startswith(prefix):
             return t
+    for t in tables:
+        if known_ids and t in known_ids:
+            return t
     return tables[0] if tables else "unknown"
+
+
+def _known_ids(resolver: TableNameResolver | None) -> frozenset[str] | None:
+    return resolver.known_ids() if resolver is not None else None
 
 
 def has_no_source_table(query: dict) -> bool:
@@ -312,7 +321,7 @@ def build_groups(
 
     primary_of: dict[str, str] = {}
     for q in queries:
-        primary = _canon(get_primary_table(q, db_name), db_name, resolver)
+        primary = _canon(get_primary_table(q, db_name, _known_ids(resolver)), db_name, resolver)
         primary_of[_qid(q)] = primary
         root = pattern_root.setdefault(pattern_of[_qid(q)], _get_cluster_root(primary, parent))
         by_cluster[root].append(q)
@@ -484,7 +493,9 @@ def assign_table_owners(
         primary: Counter[str] = Counter()
         touched: Counter[str] = Counter()
         for q in expand(group["queries"]):
-            primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
+            primary[
+                _canon(get_primary_table(q, db_name, _known_ids(resolver)), db_name, resolver)
+            ] += 1
             for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
                 touched[t] += 1
         primary_counts.append(primary)
@@ -532,7 +543,9 @@ def name_groups(
         primary: Counter[str] = Counter()
         touched: Counter[str] = Counter()
         for q in expand(group["queries"]):
-            primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
+            primary[
+                _canon(get_primary_table(q, db_name, _known_ids(resolver)), db_name, resolver)
+            ] += 1
             for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
                 touched[t] += 1
         pool = group["primary_tables"] or group.get("context_tables") or []
