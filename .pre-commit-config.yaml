@@ -87,6 +87,20 @@ repos:
         # ones aside) and refuses the run on any finding (ci/llm/private_scan.py).
         exclude: (^package-lock\.json$|^tests/fixtures/assess_cut_v1_3_trailgear_support\.json$|^tests/fixtures/assess_results_v1_3/[a-z_]+\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/contract/assess_released_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$|^tests/fixtures/real_runs/[^/]+/job/)
 
+  # A replay fixture file over 900 KB is committed gzip-compressed (#1847), and the
+  # detect-secrets hook above skips a binary file without reading it. This hook
+  # decompresses each one and runs the detect-secrets plugins (entropy aside) and the
+  # host, address and account scan over its text (ci/llm/private_scan.py, the scan
+  # `replay.py save` runs); ci/lint.sh runs it over every compressed fixture file.
+  - repo: local
+    hooks:
+      - id: scan-compressed-fixtures
+        name: Scan compressed replay fixtures for secrets
+        entry: uv run python ci/llm/private_scan.py
+        language: system
+        files: ^tests/fixtures/real_runs/.+\.gz$
+        pass_filenames: true
+
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves
   # from uv.lock (see .github/workflows/ci.yml). If they drift, the hook and CI

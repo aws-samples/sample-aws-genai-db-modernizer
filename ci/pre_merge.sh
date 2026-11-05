@@ -10,7 +10,7 @@
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
 # with --mutation, the changed hunks no test notices (ci/hunk_revert.py, #1852, minutes), then
-# lint, the security scan (--quick: the changed files), the zero-token replay, the version-pin check
+# lint, the security scan (--quick: the changed files), the zero-token replay of the saved real-model runs, the version-pin check
 # (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict, the PR body's Evidence check (#1153) and, when the PR's last CI run
 # was red, the command that re-runs its failed tests (#1849). Exits non-zero on missing commit hooks, a refused author, a
 # conflict, a lint, security, replay or test failure, a contract version problem, a behaviour change
@@ -339,12 +339,12 @@ else
   fail "security: ci/security.sh found a problem or could not run (last lines above)"
 fi
 
-# h. The zero-token replay of the saved real-model run (#1409): its transcript checks
-# and the external-mode e2e checks over its re-rendered report, in seconds. Runs
+# h. The zero-token replay of the saved real-model runs (#1409, #1847): their transcript checks
+# and the external-mode e2e checks over their re-rendered reports, in seconds. Runs
 # with --quick too: it catches what used to wait for a real-model run.
 replay_out="$(mktemp -d)"  # its own folder: parallel worktrees never share one
 if E2E_OUTPUT="$replay_out" ./ci/replay.sh >"$tmp" 2>&1; then
-  note "ok   replay: $(tail -n 1 "$tmp" | sed 's/=//g; s/^ *//; s/ *$//')"
+  note "ok   replay: $(tail -n 1 "$tmp" | sed 's/=//g; s/^ *//; s/^replay: //; s/ *$//')"
 else
   tail -n 20 "$tmp"
   fail "replay: ci/replay.sh failed (last lines above)"

@@ -1,0 +1,24 @@
+{
+  "db": "discourse",
+  "job_id": "61bd7de6",
+  "mode": "both",
+  "fixture": "discourse",
+  "git_sha": "90e7871",
+  "timestamp": "2026-11-09T13:21:41.266924+00:00",
+  "cost_usd": 23.179964599999995,
+  "judge_mean": 3.571,
+  "job_source": "e2e-llm",
+  "synthesis_version": 3,
+  "checks": {
+    "transcript": true,
+    "contracts": true,
+    "engineering": true,
+    "pdf": true,
+    "ui": true,
+    "judge": true,
+    "explore": true
+  },
+  "rebuilt_files": {
+    "collector/output.json": "rebuilt with scripts/run_collect.py from the run's own input (input/discourse-collection.json) on main 1a9ab9c24, because the run was collected under the old 5 MB per-file upload cap, which left it out (too_large); refresh from a fully recorded run: #2057"
+  }
+}

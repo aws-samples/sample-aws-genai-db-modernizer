@@ -16,7 +16,8 @@ Two scans over text, used by ``ci/llm/run.py collect-job`` (the whole-job upload
   (``identity_findings`` and ``replay.private_data`` too).
 - ``identity_findings``: what names a machine, a network or a person: AWS and
   internal hostnames, private IPs, emails, Windows and UNC paths, a 12-digit AWS
-  account id even inside a name (``bucket-123456789012-logs``).
+  account id even inside a name (``bucket-123456789012-logs``), but not a ``group_key``
+  value, which is a 12-hex hash that can be all digits.
 
 A designer's example values are allowed (#2053), exactly as
 ``src/shared/example_values.py`` defines them: an IP finding passes when its address (or
@@ -34,13 +35,28 @@ under a Read tool, ``grep -n``, list, table, timestamp or escape prefix) and a s
 base64 run of 200 or more characters. Any finding
 not in ``REDACTABLE_KINDS`` (a key, key material, a cloud credential) makes
 ``ci/llm/run.py collect-job`` withhold the file and the job archive.
+
+A replay fixture file over 900 KB is committed gzip-compressed (``<name>.gz``, #1847),
+which detect-secrets' own hook cannot read: it skips a binary file. ``read_text``
+decompresses one, and the command line runs both scans over the decompressed text of
+every ``.gz`` it is given (the ``scan-compressed-fixtures`` pre-commit hook and
+``ci/lint.sh`` run it)::
+
+    uv run python ci/llm/private_scan.py FILE_OR_DIR ...   # a folder: every .gz under it
+
+It prints ``<path>: <finding>`` per finding and exits 1 when there is one, 2 when a
+file cannot be read. A transcript (``transcript.jsonl.gz``) gets the credential-shape
+scan only, as ``ci/llm/replay.py save`` gives it (``secret_findings(key_names=False)``).
 """
 
 from __future__ import annotations
 
+import gzip
 import json
 import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from detect_secrets.core.scan import scan_line
 from detect_secrets.settings import transient_settings
@@ -609,6 +625,10 @@ _IDENTITY_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("unc path", re.compile(r"(?<![\w\\])\\{2,4}[\w.-]{2,}\\{1,2}[\w$.-]+")),
 )
 _ACCOUNT_ID_RE = re.compile(r"(?<![\d.])\d{12}(?!\d|\.\d)")
+# A group key is the first 12 hex characters of a sha256 (move_ledger.group_key), all
+# decimal digits about one time in 450: a discourse job has hundreds (#1847). Its
+# value, JSON-escaped in a transcript too, is a hash, never an account id.
+_GROUP_KEY_RE = re.compile(r'"group_key\\*"\s*:\s*\\*"[0-9a-f]{12}\\*"')
 
 
 def line_of(text: str, match: re.Match[str]) -> int:
@@ -631,9 +651,63 @@ def identity_findings(text: str) -> list[str]:
     ]
     # Blanking keeps newlines, so the lines still count.
     blank = lambda m: re.sub(r"[^\n]", " ", m.group(0))  # noqa: E731
-    without_hex = _LONG_HEX_RE.sub(blank, _UUID_RE.sub(blank, text))
+    without_hex = _LONG_HEX_RE.sub(blank, _UUID_RE.sub(blank, _GROUP_KEY_RE.sub(blank, text)))
     found += [
         f"aws account id at line {line_of(without_hex, m)}"
         for m in _ACCOUNT_ID_RE.finditer(without_hex)
     ]
     return found
+
+
+# A compressed fixture file is never larger than this once decompressed: a discourse
+# collector output is about 14 MB. A larger one (a crafted archive) is refused, not read.
+MAX_DECOMPRESSED_BYTES = 64_000_000
+COMPRESSED_SUFFIX = ".gz"
+
+
+def read_text(path: Path) -> str:
+    """The UTF-8 text of ``path``, decompressed first when its name ends in ``.gz``."""
+    if path.name.endswith(COMPRESSED_SUFFIX):
+        with gzip.open(path, "rb") as f:
+            raw = f.read(MAX_DECOMPRESSED_BYTES + 1)
+        if len(raw) > MAX_DECOMPRESSED_BYTES:
+            raise ValueError(f"{path}: over {MAX_DECOMPRESSED_BYTES} bytes decompressed")
+        return raw.decode("utf-8")
+    return path.read_text(encoding="utf-8")
+
+
+def compressed_file_findings(path: Path) -> list[str]:
+    """Both scans over the decompressed text of ``path``; a transcript gets the
+    credential-shape scan only (no key-name findings, which prose trips)."""
+    text = read_text(path)
+    key_names = not path.name.startswith("transcript.")
+    return secret_findings(text, key_names=key_names) + identity_findings(text)
+
+
+def _compressed_files(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            out += sorted(p for p in path.rglob(f"*{COMPRESSED_SUFFIX}") if p.is_file())
+        elif path.name.endswith(COMPRESSED_SUFFIX):
+            out.append(path)
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    paths = [Path(a) for a in (sys.argv[1:] if argv is None else argv)]
+    status = 0
+    for path in _compressed_files(paths):
+        try:
+            found = compressed_file_findings(path)
+        except (OSError, ValueError, EOFError) as exc:
+            print(f"{path}: cannot be read: {exc}")
+            return 2
+        for hit in found:
+            print(f"{path}: {hit}")
+        status = 1 if found else status
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

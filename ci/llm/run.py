@@ -2374,7 +2374,9 @@ JOB_ALLOW_RES = tuple(
         r"synthesis/v\d+/report\.json",
     )
 )
-JOB_MAX_FILE_BYTES = 5_000_000
+# A file over this is left out (listed under too_large). A discourse collector output is
+# about 14 MB (#1847); ci/llm/replay.py refuses an archive member over the same size.
+JOB_MAX_FILE_BYTES = 30_000_000
 
 
 #: Next to the archive when the scan found anything: each finding's file, line and
