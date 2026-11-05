@@ -919,6 +919,7 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             data_type=_native_type(c),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
+            max_value_bytes=c.get("max_value_bytes"),
             numeric_precision=_numeric_meta(c, "numeric_precision", "data_precision"),
             numeric_scale=_numeric_meta(c, "numeric_scale", "data_scale"),
             # PostgreSQL only (#292); other engines' rows carry no such key.

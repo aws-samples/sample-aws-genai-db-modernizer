@@ -53,6 +53,7 @@ A line with `"status": "error"` (or a non-zero exit) ends with `MOVE_RESULT: sto
 
 - The step: `title`, `source`, `target_engine`, `table_count`.
 - The contract: `status`, and `status_reason` when it has one; every table in `blocked_rules` (those tables do not move until the contract is fixed); `warning_count`, with its `warnings`.
+- Not moved: every entry of the contract's `not_moved`, each `table` with its `reason`, as a list headed "Not moved". `step-1.ddl.sql` creates these tables, so the application works after cutover, but the DMS task does not move their rows: the customer rebuilds them after cutover, as the reason says. Say "Not moved: none." when the list is empty.
 - The plan: the `replication_instance` (`instance_class`, `allocated_storage_gb`, `multi_az_default`, `reason`) and `monthly_cost_usd`, with its `cost_assumptions` and `notes`.
 - The three files in `files`: `aurora-target.yaml` and `step-1.ddl.sql` are the customer's to deploy and run; `dms-step-1.yaml` is the stack this command deploys, with the customer's credentials.
 - The disclaimer: quote the line's `disclaimer` field verbatim, as a block quote. Never shorten, reword or summarise it.

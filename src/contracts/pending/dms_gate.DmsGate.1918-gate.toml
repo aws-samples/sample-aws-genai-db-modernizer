@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "dms_gate.DmsGate"
+kind = "minor"
+reason = "Added the ``not_moved`` exception kind: a table step 1 creates but its DMS task does not move, with the reason and what to rebuild after cutover."
+issue = 1918

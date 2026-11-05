@@ -404,6 +404,7 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("udt_name") or c.get("data_type", ""),
                 normalized_data_type=_PG_TYPE_MAP.get(c.get("data_type", "")),
                 max_length=c.get("max_length"),
+                max_value_bytes=c.get("max_value_bytes"),
                 numeric_precision=c.get("numeric_precision"),
                 numeric_scale=c.get("numeric_scale"),
                 datetime_precision=c.get("datetime_precision"),

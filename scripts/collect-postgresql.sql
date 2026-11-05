@@ -22,6 +22,12 @@
 --   -v query_limit=20000    keep only the 20,000 costliest statements by total time
 --                           (default: no cap, every statement is kept)
 --   -v min_executions=5     keep statements that ran at least 5 times (default: 10)
+--   -v lob_scan_max_mb=0    measure no LOB column (default: 1024). For each table of at
+--                           most this many MB (pg_total_relation_size) that the user may
+--                           SELECT, the script records each LOB column's longest value in
+--                           bytes (max_value_bytes), which sizes step 1's DMS LobMaxSize
+--                           (#1918). It reads each such table once per LOB column; text and
+--                           bytea lengths come from the stored header, without detoasting.
 -- Both are recorded in the collection's metadata.query_capture. The defaults use
 -- \if and :{?var}, which need psql 10 or later (the client; the server is 12+). A
 -- value that is not a number stops the script at its CAST.
@@ -33,6 +39,10 @@
 \if :{?min_executions}
 \else
   \set min_executions 10
+\endif
+\if :{?lob_scan_max_mb}
+\else
+  \set lob_scan_max_mb 1024
 \endif
 \if :{?query_limit}
   \set query_limit_clause 'LIMIT CAST(' :'query_limit' ' AS bigint)'
@@ -107,6 +117,19 @@ columns_data AS (
       c.udt_name AS data_type,
       c.data_type AS column_type,
       c.character_maximum_length AS max_length,
+      -- The longest value of a LOB column, in bytes (#1918): only on a table of at most
+      -- lob_scan_max_mb MB that the user may SELECT; null when not measured, 0 when empty.
+      CASE WHEN CAST(:'lob_scan_max_mb' AS bigint) > 0
+            AND (c.udt_name IN ('text', 'citext', 'bytea', 'json', 'jsonb', 'xml', 'hstore')
+                 OR c.data_type = 'ARRAY')
+            AND has_table_privilege(format('%I.%I', c.table_schema, c.table_name), 'SELECT')
+            AND pg_total_relation_size(format('%I.%I', c.table_schema, c.table_name)::regclass)
+                <= CAST(:'lob_scan_max_mb' AS bigint) * 1048576
+        THEN coalesce((xpath('/row/m/text()', query_to_xml(format(
+               'SELECT max(octet_length(%I%s)) AS m FROM %I.%I', c.column_name,
+               CASE WHEN c.udt_name IN ('text', 'citext', 'bytea') THEN '' ELSE '::text' END,
+               c.table_schema, c.table_name), false, true, '')))[1]::text::bigint, 0)
+      END AS max_value_bytes,
       c.numeric_precision AS numeric_precision,
       c.numeric_scale AS numeric_scale,
       c.datetime_precision AS datetime_precision,
