@@ -213,7 +213,8 @@ def test_redaction_masks_the_same_literals_with_line_breaks(raw: str) -> None:
 
 
 @pytest.mark.parametrize("raw", TEXTS)
-def test_live_collector_reads_the_statement_as_written(raw: str) -> None:
+@pytest.mark.passes_on_main
+def test_live_collector_decodes_the_encoded_statement(raw: str) -> None:
     row = _live_row(raw)
     assert not re.search(r"[\r\n\t]", str(row["query_text"]))  # one sqlcmd line
     (pattern,) = _live_patterns([row])
@@ -230,7 +231,8 @@ def test_live_collector_reads_past_the_comment() -> None:
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize("raw", TEXTS)
 def test_live_text_hash_query_id_is_unchanged(raw: str) -> None:
-    """A row with no query_hash gets the id it had when the text was flattened."""
+    """A row with no query_hash gets the id it had when the text was flattened (these
+    statements are under 256 characters; longer ones were cut before, #1884)."""
     (pattern,) = _live_patterns([_live_row(raw, query_id=None)])
     assert pattern["query_id"] == hashlib.sha256(_flat(raw).strip().encode()).hexdigest()[:16]
 
