@@ -96,3 +96,6 @@ CLAUDE.local.md
 
 # Quarantined prototype snapshot (#1412): its demo env file stays local
 contrib/**/demo.env
+
+# ci/security.sh's merged semgrep rules, present only while it runs (#1844)
+/.security-semgrep-rules.*

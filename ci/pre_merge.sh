@@ -10,10 +10,10 @@
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
 # with --mutation, the changed hunks no test notices (ci/hunk_revert.py, #1852, minutes), then
-# lint, the zero-token replay of the saved real-model run, the version-pin check
+# lint, the security scan (--quick: the changed files), the zero-token replay, the version-pin check
 # (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict, the PR body's Evidence check (#1153) and, when the PR's last CI run
 # was red, the command that re-runs its failed tests (#1849). Exits non-zero on missing commit hooks, a refused author, a
-# conflict, a lint, replay or test failure, a contract version problem, a behaviour change
+# conflict, a lint, security, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
 # ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
 # --strict-main-tests) a new or changed test that passes on main. --mutation only warns.
@@ -322,6 +322,21 @@ if ./ci/lint.sh >"$tmp" 2>&1; then
 else
   tail -n 20 "$tmp"
   fail "lint: ci/lint.sh failed (last lines above)"
+fi
+
+# g2. The security scan (#1844): ci/security.sh, the script the pre-commit hook and the GitHub
+# `security` job run, with the same pinned rules. --quick scans the files the branch changed.
+sec_args=()  # empty in a full run; the +-form keeps bash 3.2 under set -u happy
+sec_scope="every tracked file"
+if [ "$quick" -eq 1 ]; then
+  sec_args=(--quick --base "$base")
+  sec_scope="--quick: the files changed since the merge base with $base"
+fi
+if ./ci/security.sh ${sec_args[@]+"${sec_args[@]}"} >"$tmp" 2>&1; then
+  note "ok   security: ci/security.sh passed ($sec_scope)"
+else
+  tail -n 30 "$tmp"
+  fail "security: ci/security.sh found a problem or could not run (last lines above)"
 fi
 
 # h. The zero-token replay of the saved real-model run (#1409): its transcript checks

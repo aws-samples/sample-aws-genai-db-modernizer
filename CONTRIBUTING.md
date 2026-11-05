@@ -82,7 +82,8 @@ Pre-commit hooks run automatically on every commit to ensure code quality:
 - **isort** - sort imports
 - **Ruff** - lint Python code
 - **mypy** - type checking
-- **Bandit** - security scanning
+- **Security scan** - `ci/security.sh` on the staged files: semgrep with the rules `ci/security.toml` pins, gitleaks and Bandit (the same script the CI `security` job and `./ci/pre_merge.sh` run) <!-- claim: tests/unit/ci/test_security_parity.py::test_the_precommit_security_hook_runs_the_script_on_every_staged_file, tests/unit/ci/test_security_parity.py::test_the_github_security_job_runs_the_script_on_the_whole_tree, tests/unit/ci/test_security_parity.py::test_pre_merge_runs_the_script_quick_on_the_branch_and_full_otherwise -->
+- **detect-secrets** - secrets, against `.secrets.baseline` <!-- claim: tests/unit/ci/test_security_parity.py::test_detect_secrets_stays_a_separate_precommit_hook -->
 - **markdownlint** - lint Markdown files
 - **Conventional Commits** - validate commit message format
 - **License headers** - every new source file carries the SPDX license header (see [Licensing](#licensing))
@@ -350,13 +351,17 @@ We follow **PEP 8** enforced via pre-commit hooks. On every commit, the followin
 - **isort** - import sorting
 - **Ruff** - linting
 - **mypy** - type checking
-- **Bandit** - security scanning
+- **Security scan** - `ci/security.sh` (semgrep, gitleaks, Bandit) <!-- claim: tests/unit/ci/test_security_parity.py::test_the_precommit_security_hook_runs_the_script_on_every_staged_file -->
 
 If you need to run them manually:
 
 ```bash
 uv run pre-commit run --all-files
+./ci/security.sh            # the security scan over every tracked file, as CI runs it
+./ci/security.sh --quick    # only the files changed since the merge base with origin/main
 ```
+
+It keeps the pinned semgrep rules, a semgrep environment and the gitleaks release in `~/.cache/db-modernizer-security`, so the first run needs network. Each run checks the rule files against the hash in `ci/security.toml` and the gitleaks archive against its SHA-256, fetching either again on a mismatch, and reinstalls the semgrep environment from the hashed lock. The pre-commit hook skips that reinstall and checks only the installed versions (see `ci/README.md`). <!-- claim: tests/unit/ci/test_security.py::test_a_tamper_git_status_cannot_see_is_caught_by_the_rules_pin, tests/unit/ci/test_security.py::test_a_swapped_cached_archive_is_downloaded_again, tests/unit/ci/test_security.py::test_the_semgrep_environment_is_synced_to_the_hashed_lock_on_every_run, tests/unit/ci/test_security.py::test_the_hook_syncs_the_semgrep_environment_without_reinstalling -->
 
 ### Code Quality Rules
 
