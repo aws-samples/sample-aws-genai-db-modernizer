@@ -110,10 +110,12 @@ class SQLServerRemoteCollector:
                 t.name AS table_name,
                 r.row_total AS row_count,
                 'estimate' AS row_count_basis,
-                CAST(SUM(a.total_pages) * 8.0 / 1024 AS FLOAT) AS data_size_mb,
-                CAST(SUM(CASE WHEN i.index_id > 1 THEN a.total_pages ELSE 0 END) * 8.0 / 1024 AS FLOAT) AS index_size_mb,
-                MAX(ius.user_scans) AS full_table_scans,
-                MAX(ius.user_seeks + ius.user_lookups) AS index_scans
+                CAST(SUM(CASE WHEN p.index_id IN (0, 1) THEN a.total_pages ELSE 0 END)
+                     * 8.0 / 1024 AS FLOAT) AS data_size_mb,
+                CAST(SUM(CASE WHEN p.index_id > 1 THEN a.total_pages ELSE 0 END)
+                     * 8.0 / 1024 AS FLOAT) AS index_size_mb,
+                MAX(u.full_table_scans) AS full_table_scans,
+                MAX(u.index_scans) AS index_scans
             FROM sys.tables t
             INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
             INNER JOIN (
@@ -122,11 +124,20 @@ class SQLServerRemoteCollector:
                 WHERE index_id IN (0, 1)
                 GROUP BY object_id
             ) r ON r.object_id = t.object_id
-            INNER JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
+            -- Every index's partitions (#1873): index_id 0 or 1 is the data, > 1 the
+            -- nonclustered indexes.
+            INNER JOIN sys.partitions p ON t.object_id = p.object_id
             INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
-            LEFT JOIN sys.indexes i ON t.object_id = i.object_id AND p.index_id = i.index_id
-            LEFT JOIN sys.dm_db_index_usage_stats ius
-                ON ius.object_id = t.object_id AND ius.database_id = DB_ID()
+            -- One usage row per table, so no page is summed once per used index.
+            LEFT JOIN (
+                SELECT
+                    object_id,
+                    MAX(user_scans) AS full_table_scans,
+                    MAX(user_seeks + user_lookups) AS index_scans
+                FROM sys.dm_db_index_usage_stats
+                WHERE database_id = DB_ID()
+                GROUP BY object_id
+            ) u ON u.object_id = t.object_id
             WHERE {_SYSTEM_SCHEMAS_FILTER}
             GROUP BY s.name, t.name, r.row_total
             ORDER BY s.name, t.name
