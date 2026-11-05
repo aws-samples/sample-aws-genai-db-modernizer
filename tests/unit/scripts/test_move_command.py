@@ -172,6 +172,16 @@ def test_the_command_never_handles_a_secret_value() -> None:
     assert keys <= set(run_dms_step.MoveInputs.model_fields)
 
 
+def test_auto_uses_the_inputs_files_confirmed_checks_and_never_fills_them_in() -> None:
+    check = _flat(_section("Stage 2: Check"))
+    assert "it uses the file's `confirmed_checks`, and never adds to them" in check
+    assert "with no `--confirm` flag" in check
+    assert "never fill it in yourself" in check
+    example = re.search(r"```json\n(.*?)```", _text(), re.DOTALL)
+    assert example is not None and '"confirmed_checks"' in example.group(1)
+    assert "confirmed_checks" in run_dms_step.MoveInputs.model_fields
+
+
 def test_the_inputs_blocks_name_only_fields_the_helper_accepts() -> None:
     blocks = _section("Stage 2: Check").split("**Preflight.**", 1)[0].split("Write them", 1)[0]
     kinds = {"rds_instance", "aurora_cluster", "self_managed"}

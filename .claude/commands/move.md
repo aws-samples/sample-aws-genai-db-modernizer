@@ -77,7 +77,8 @@ Ask whether they are ready for Check (they may come back later: `/move step-1` r
 3. `source_secret_arn` and `target_secret_arn` (the ARNs, never the values), and `source_secret_kms_key_arn` / `target_secret_kms_key_arn` only when a secret uses a customer managed key.
 4. `source_certificate_arn` and `target_certificate_arn`.
 5. `subnet_ids` and `security_group_ids` (lists), and `secrets_manager_endpoint_override` only when the Secrets Manager interface endpoint has no private DNS.
-6. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`.
+6. `confirmed_checks`: only the preflight check ids the customer says they checked themselves; never fill it in yourself. Leave it out at first: Preflight adds an id once the customer confirms it.
+7. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`.
 
 Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, one JSON object with exactly these keys (leave out what the customer did not give):
 
@@ -85,7 +86,7 @@ Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/
 {"region": "<region>", "aurora_cluster_id": "<cluster>", "source_kind": "rds_instance", "source_id": "<instance>",
  "source_secret_arn": "<source secret ARN>", "target_secret_arn": "<Aurora secret ARN>",
  "source_certificate_arn": "<source certificate ARN>", "target_certificate_arn": "<Aurora certificate ARN>",
- "subnet_ids": ["<subnet-a>", "<subnet-b>"], "security_group_ids": ["<sg>"], "multi_az": false}
+ "subnet_ids": ["<subnet-a>", "<subnet-b>"], "security_group_ids": ["<sg>"], "multi_az": false, "confirmed_checks": ["<check id the customer checked>"]}
 ```
 
 The scripts refuse any other key. When a command says a value is malformed, ask for that one value again and rewrite the file.
@@ -98,10 +99,10 @@ uv run python scripts/run_dms_step.py preflight --job-id {job_id} --db {db}
 
 - `"status": "pass"`: show the `notes` (the checklist items to read) and go to Move.
 - `"status": "fail"`: name the `first_failure` check and explain its `message`, which says what to fix. The customer fixes it (or gives a corrected input: rewrite the file), then run the preflight again. It stops at the first failure, so a rerun can find the next one.
-- `"status": "needs_confirmation"`: for each id in `to_confirm`, show what to check (the `message`, and the README's list for that check) and ask the customer to confirm they checked it themselves. Rerun with one `--confirm <check_id>` per confirmed id, for example `--confirm source_cdc`. Never confirm a row for them.
+- `"status": "needs_confirmation"`: for each id in `to_confirm`, show what to check (the `message`, and the README's list for that check) and ask the customer to confirm they checked it themselves. Rerun with one `--confirm <check_id>` per confirmed id, for example `--confirm source_cdc`, and add each confirmed id to `confirmed_checks` in the inputs file so a later run keeps it. Never confirm a row for them.
 - `"status": "error"`: explain its `message`; fix the inputs file if it names one, then run again.
 
-Under `--auto`, do not ask: run the preflight once (with no `--confirm`); anything but `pass` ends with `MOVE_RESULT: stopped stage=check reason=preflight <status>: <first_failure or to_confirm>`. Interactively, the customer may stop here: end with `MOVE_RESULT: stopped stage=check reason=<what is left to fix>`.
+Under `--auto`, do not ask: run the preflight once, with no `--confirm` flag: it uses the file's `confirmed_checks`, and never adds to them. Anything but `pass` ends with `MOVE_RESULT: stopped stage=check reason=preflight <status>: <first_failure or to_confirm>`. Interactively, the customer may stop here: end with `MOVE_RESULT: stopped stage=check reason=<what is left to fix>`.
 
 ## Stage 3: Move
 
