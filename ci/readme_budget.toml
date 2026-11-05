@@ -23,11 +23,6 @@ chars = 9299
 block = 2199
 
 [[allowance]]
-heading = "## `replay.sh`"
-chars = 4916
-block = 3886
-
-[[allowance]]
 heading = "## `e2e-llm.sh`"
 chars = 26617
 block = 4570
