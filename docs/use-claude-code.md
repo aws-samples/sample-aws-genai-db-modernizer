@@ -109,7 +109,7 @@ It works on the job in `.modernizer-state.json` unless you pass `--job-id` and `
 
 - Every AWS call uses your own credentials: the ambient ones, or the profiles you name in the inputs file (`read_profile` for the preflight, status and gate, which only read; `write_profile` for the deploy). The inputs file holds ids and ARNs only, never a secret's value.
 - Run `/move step-1` again to resume: it reads where the stack and the task stand and picks up at that stage.
-- `--auto` never asks: without `--inputs <file.json>` it stops after Prepare; with `--inputs` it runs the preflight and stops before the first AWS write unless you also pass `--approve-deploy`.
+- `--auto` never asks: without `--inputs <file.json>` it stops after Prepare; with `--inputs` it runs the preflight and stops before the first AWS write unless you also pass `--approve-deploy`. A `confirm` row of the preflight (for an RDS or Aurora source, `source_cdc`) passes in a headless run only when you list its id in `confirmed_checks` in the inputs file, after checking it yourself.
 - The run ends with one line, `MOVE_RESULT: complete job_id=<id> step=1 gate=<status>` or `MOVE_RESULT: stopped stage=<stage> reason=<reason>`.
 
 ## Analyzing your own database

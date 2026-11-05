@@ -11,7 +11,9 @@ Every subcommand prints one JSON line (exit 1 only on ``"status": "error"``):
   equivalent ``aws cloudformation deploy`` command.
 - ``preflight [--confirm <check_id>]``, ``gate``: read-only; they run
   ``scripts/check_dms_step_preflight.py`` and ``scripts/check_dms_step_gate.py`` with the
-  inputs file's values and print those scripts' own line.
+  inputs file's values and print those scripts' own line. The file's optional
+  ``confirmed_checks`` (ids the customer checked themselves) become one ``--confirm`` each,
+  next to any ``--confirm`` flag; an id that is not a preflight check id is refused.
 - ``status [--until stack|connections|caught_up --wait-seconds N]``: read-only; the stack,
   the endpoint connections, the task and its table statistics, polled until the condition
   holds or the time is up.
@@ -51,6 +53,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import yaml  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
+
+from src.contracts.dms_preflight import CHECK_ORDER  # noqa: E402
 
 STEP_DIR = "data-movement/step-1"
 TEMPLATE = "dms-step-1.yaml"
@@ -97,8 +101,15 @@ class MoveInputs(BaseModel):
     stack_name: str | None = Field(None, pattern=r"^[A-Za-z][-A-Za-z0-9]{0,127}$")
     read_profile: str | None = Field(None, pattern=_PROFILE)
     write_profile: str | None = Field(None, pattern=_PROFILE)
+    confirmed_checks: list[str] = Field(default_factory=list)
 
     def model_post_init(self, _context: Any) -> None:
+        unknown = sorted(set(self.confirmed_checks) - set(CHECK_ORDER))
+        if unknown:
+            raise ValueError(
+                f"confirmed_checks {', '.join(map(repr, unknown))}: not a preflight check id; "
+                f"the ids are {', '.join(CHECK_ORDER)}"
+            )
         for name, prefix in (("subnet_ids", "subnet-"), ("security_group_ids", "sg-")):
             bad = [v for v in getattr(self, name) if not v.startswith(prefix) or not v.isascii()]
             if bad:
@@ -557,7 +568,7 @@ def _delegate(command: str, args: argparse.Namespace, inputs: MoveInputs) -> int
     ):
         if value:
             argv += [flag, value]
-    for check in args.confirm:
+    for check in dict.fromkeys([*inputs.confirmed_checks, *args.confirm]):
         argv += ["--confirm", check]
     return check_dms_step_preflight.main(argv)
 

@@ -489,6 +489,66 @@ def test_preflight_runs_the_preflight_script_with_the_inputs_values_and_the_read
     assert pairs["--source-certificate-arn"] == s.SOURCE_CERT and pairs["--confirm"] == "source_cdc"
 
 
+def _argv_seen(tmp_path, capsys, monkeypatch, *extra):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        print(json.dumps({"status": "pass"}))
+        return 0
+
+    monkeypatch.setattr(check_dms_step_preflight, "main", fake)
+    code, out = _run(tmp_path, "preflight", *extra, capsys=capsys)
+    return code, out, seen.get("argv")
+
+
+def _confirms(argv):
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "--confirm"]
+
+
+def test_preflight_passes_the_inputs_files_confirmed_checks_as_confirm_flags(
+    tmp_path, capsys, monkeypatch
+):
+    _job(tmp_path, confirmed_checks=["source_cdc", "dms_certificates"])
+    code, _out, argv = _argv_seen(tmp_path, capsys, monkeypatch)
+    assert code == 0 and _confirms(argv) == ["source_cdc", "dms_certificates"]
+
+
+@pytest.mark.passes_on_main  # no confirmed_checks means no --confirm, as before
+def test_preflight_without_confirmed_checks_passes_no_confirm(tmp_path, capsys, monkeypatch):
+    _job(tmp_path)
+    _code, _out, argv = _argv_seen(tmp_path, capsys, monkeypatch)
+    assert _confirms(argv) == []
+
+
+def test_preflight_deduplicates_the_flag_and_the_file(tmp_path, capsys, monkeypatch):
+    _job(tmp_path, confirmed_checks=["source_cdc", "source_cdc"])
+    _code, _out, argv = _argv_seen(
+        tmp_path, capsys, monkeypatch, "--confirm", "source_cdc", "--confirm", "secrets"
+    )
+    assert _confirms(argv) == ["source_cdc", "secrets"]
+
+
+def test_an_unknown_confirmed_check_is_refused_before_any_aws_call(tmp_path, capsys, monkeypatch):
+    _job(tmp_path, confirmed_checks=["source_cdc", "source_cdd"])
+
+    def boom(_argv):
+        raise AssertionError("the preflight must not run")
+
+    monkeypatch.setattr(check_dms_step_preflight, "main", boom)
+    code, out = _run(tmp_path, "preflight", capsys=capsys)
+    assert code == 1 and out["status"] == "error"
+    assert "'source_cdd'" in out["message"] and "'source_cdc'" not in out["message"]
+
+
+def test_every_preflight_check_id_is_accepted_as_a_confirmed_check(tmp_path, capsys, monkeypatch):
+    from src.contracts.dms_preflight import CHECK_ORDER
+
+    _job(tmp_path, confirmed_checks=list(CHECK_ORDER))
+    code, _out, argv = _argv_seen(tmp_path, capsys, monkeypatch)
+    assert code == 0 and _confirms(argv) == list(CHECK_ORDER)
+
+
 def test_gate_runs_the_gate_script_on_the_stack(tmp_path, capsys, monkeypatch):
     _job(tmp_path, read_profile="readonly")
     seen = {}
