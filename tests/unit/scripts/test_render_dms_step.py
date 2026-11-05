@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from scripts import render_dms_step as script
 from src.tools.transformation_contract.hashing import canonical_json
 from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, write_job
@@ -80,6 +82,14 @@ def test_check_without_examples_is_an_error_line(capsys):
 def test_examples_with_a_job_is_an_error_line(capsys):
     assert script.main(["--examples", "--job-id", "job1", "--db", "shop"]) == 1
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_examples_rewrite_is_refused_under_the_ci_sandbox(capsys, monkeypatch):
+    """#1886: /move's allow rule covers this script; a headless run never rewrites tracked files."""
+    monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+    monkeypatch.setattr(script, "_examples", lambda check: pytest.fail("must not render"))
+    assert script.main(["--examples"]) == 1
+    assert "MODERNIZER_CI_SANDBOX=1" in json.loads(capsys.readouterr().out)["message"]
 
 
 def test_an_unexpected_failure_is_one_typed_error_line(tmp_path, capsys, monkeypatch):
