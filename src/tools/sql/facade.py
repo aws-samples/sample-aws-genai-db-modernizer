@@ -3096,3 +3096,100 @@ def _scope_facts(
         ),
         aggregate_kinds=_aggregate_kinds(root),
     )
+
+
+# --------------------------------------------------------------------------- routine text
+
+
+@dataclass(frozen=True)
+class RoutineToken:
+    """One token of a routine's ``CREATE`` text, read in the source dialect (#1936).
+
+    ``kind`` is the tokenizer's token-type name (``VAR``, ``STRING``, ``IDENTIFIER``,
+    ``L_PAREN``, ``SEMICOLON``, ...); a keyword has its own (``BEGIN``, ``END``,
+    ``SELECT``). ``start`` and ``end`` are the inclusive character offsets of the token
+    in the text. ``command_rest`` marks the string the tokenizer keeps for the rest of a
+    command (``CALL p(1)``, ``FETCH c INTO v``): its ``text`` is the rest of the command
+    as written, and its offsets do not cover it.
+    """
+
+    kind: str
+    text: str
+    start: int
+    end: int
+    command_rest: bool = False
+
+
+class RoutineTokenError(ValueError):
+    """The text does not tokenize (an unterminated quote or comment). The message names no
+    part of the text."""
+
+
+def routine_tokens(sql: str, source_engine: str) -> tuple[RoutineToken, ...]:
+    """The tokens of ``sql`` in ``source_engine``'s dialect, comments left out.
+
+    Raises :class:`RoutineTokenError`, never another exception, when the text does not
+    tokenize.
+    """
+    try:
+        dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect(source_engine) or None)
+        tokens = list(dialect.tokenize(sql))
+    except Exception as exc:  # noqa: BLE001 -- any failure, an unknown dialect too
+        raise RoutineTokenError("the text does not tokenize") from exc
+    commands = dialect.tokenizer_class.COMMANDS
+    out: list[RoutineToken] = []
+    for i, tok in enumerate(tokens):
+        rest = (
+            i > 0
+            and tok.token_type == sqlglot.tokens.TokenType.STRING
+            and tokens[i - 1].token_type in commands
+        )
+        out.append(RoutineToken(tok.token_type.name, tok.text, tok.start, tok.end, rest))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class RoutineStatementRefs:
+    """The tables and the unknown functions one statement of a routine body names (#1936).
+
+    ``tables`` and ``calls`` are ``(schema, name)`` pairs, lower case, ``schema`` None when
+    the name is not qualified; CTE names and ``DUAL`` are not tables, and a call is one
+    to a function the dialect does not know (a stored function, or a built-in sqlglot
+    does not model). ``read`` is False when the statement could not be read, so both may
+    be missing names.
+    """
+
+    tables: tuple[tuple[str | None, str], ...] = ()
+    calls: tuple[tuple[str | None, str], ...] = ()
+    read: bool = True
+
+
+def routine_statement_refs(sql: str, source_engine: str) -> RoutineStatementRefs:
+    """The :class:`RoutineStatementRefs` of one routine-body statement, from the facade's
+    one parse (its dialect bridges, size cap and table rules, as :func:`table_references`).
+    Never raises: a statement that falls back (it does not parse, is a bare command, is too
+    long) or makes the parser fail in any way (deep nesting raises ``RecursionError``)
+    reads as ``read=False``."""
+    try:
+        parsed = _parse(sql, source_engine)
+        if parsed.fallback_reason is not None:
+            return RoutineStatementRefs(read=False)
+        tables = tuple(
+            ((ref.schema or "").lower() or None, ref.name.lower())
+            for ref in _tables(parsed).tables
+            if ref.name
+        )
+        calls: list[tuple[str | None, str]] = []
+        for statement in parsed.statements:
+            for call in statement.find_all(exp.Anonymous):
+                name = str(call.name).lower()
+                if not name:
+                    continue
+                parent = call.parent
+                schema = None
+                if isinstance(parent, exp.Dot) and parent.expression is call:
+                    schema = str(parent.this.name).lower() or None
+                calls.append((schema, name))
+    except Exception:  # noqa: BLE001 -- any parser failure reads as "not read"
+        return RoutineStatementRefs(read=False)
+    return RoutineStatementRefs(tables=tables, calls=tuple(calls))

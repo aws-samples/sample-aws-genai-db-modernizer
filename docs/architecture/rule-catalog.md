@@ -1824,10 +1824,163 @@ Generated from `src/catalog/routine_checks/*.toml` (#1935; field definitions: `s
 
 | Rule | Sources | Targets | Kinds | Impact | Checks |
 |---|---|---|---|---|---|
+| [`mysql-routine-declare-order`](#mysql-routine-declare-order) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | every DECLARE opens its BEGIN ... END block: variables and conditions first, then cursors, then handlers <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_declare_order --> |
+| [`mysql-routine-definer`](#mysql-routine-definer) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a DEFINER naming a user other than the target user (a CURRENT_USER form passes), for a routine that runs as its definer: a procedure or function unless it is SQL SECURITY INVOKER, and always a trigger or event <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_definer_check, tests/unit/tools/routines/test_mysql_routine_checks.py::test_sql_security_invoker_skips_the_definer_check_only_for_procedures_and_functions --> |
+| [`mysql-routine-dynamic-sql`](#mysql-routine-dynamic-sql) | mysql | Aurora MySQL | procedure, function, trigger, event | Behaves differently | a PREPARE from a user variable, whose text at run time no check can see (the string literals the routine assigns to it are checked) <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-file-output`](#mysql-routine-file-output) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a body statement that contains `INTO OUTFILE`, `INTO DUMPFILE` (not `INTO OUTFILE S3`); a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-handler`](#mysql-routine-handler) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | every handler is CONTINUE or EXIT and names valid, declared, distinct conditions <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_invalid_handlers --> |
+| [`mysql-routine-kill`](#mysql-routine-kill) | mysql | Aurora MySQL | procedure, function, trigger, event | Behaves differently | a body statement that starts with `KILL`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-load-file`](#mysql-routine-load-file) | mysql | Aurora MySQL | procedure, function, trigger, event | Behaves differently | a call to `LOAD_FILE`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-mode-deprecated`](#mysql-routine-mode-deprecated) | mysql | Aurora MySQL | procedure, function, trigger, event | Informational | a stored sql_mode holding `PAD_CHAR_TO_FULL_LENGTH`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_sql_modes, tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules --> |
+| [`mysql-routine-mode-removed`](#mysql-routine-mode-removed) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a stored sql_mode holding `NO_AUTO_CREATE_USER`, `DB2`, `MAXDB`, `MSSQL`, `MYSQL323`, `MYSQL40`, `ORACLE`, `POSTGRESQL`, `NO_FIELD_OPTIONS`, `NO_KEY_OPTIONS`, `NO_TABLE_OPTIONS` <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_sql_modes, tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules --> |
+| [`mysql-routine-mode-unknown`](#mysql-routine-mode-unknown) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a stored sql_mode holding a mode no other rule names and MySQL does not list <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_sql_modes, tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules --> |
+| [`mysql-routine-plugin-install`](#mysql-routine-plugin-install) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a body statement that starts with `INSTALL PLUGIN`, `UNINSTALL PLUGIN`, `INSTALL COMPONENT`, `UNINSTALL COMPONENT`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-replication-control`](#mysql-routine-replication-control) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a body statement that starts with `CHANGE MASTER`, `CHANGE REPLICATION SOURCE`, `CHANGE REPLICATION FILTER`, `START SLAVE`, `START REPLICA`, `STOP SLAVE`, `STOP REPLICA`, `PURGE BINARY LOGS`, `PURGE MASTER LOGS`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-restricted-session-variable`](#mysql-routine-restricted-session-variable) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a SET of `binlog_format`, `binlog_row_image`, `binlog_row_value_options`, `gtid_next`, `sql_log_off`, `pseudo_thread_id`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-server-shutdown`](#mysql-routine-server-shutdown) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a body statement that starts with `SHUTDOWN`, `RESTART`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-set-global`](#mysql-routine-set-global) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a SET of a `GLOBAL`, `PERSIST`, `PERSIST_ONLY` variable; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-sql-log-bin`](#mysql-routine-sql-log-bin) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a SET of `sql_log_bin`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
+| [`mysql-routine-unparseable`](#mysql-routine-unparseable) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | one CREATE PROCEDURE, FUNCTION, TRIGGER or EVENT statement of the routine's kind whose header and compound body statements read <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_bodies_that_do_not_close_are_unparseable, tests/unit/tools/routines/test_mysql_routine_checks.py::test_headers_that_do_not_read_are_unparseable --> |
 | [`postgresql-routine-extension-not-offered`](#postgresql-routine-extension-not-offered) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Blocks the move | every extension the routine uses is offered on the target version line (`src/catalog/aurora_postgresql_extensions.toml`, by name) <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_every_extension_the_target_line_lacks_fails_and_is_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_an_extension_only_a_later_line_offers_fails_on_the_earlier_line --> |
 | [`postgresql-routine-language`](#postgresql-routine-language) | postgresql | Aurora PostgreSQL | function, procedure | Blocks the move | the metadata's language and the statement's LANGUAGE agree, and the language is `plpgsql` or `sql`, or one of `plperl`, `pltcl`, `plv8`, `plcoffee`, `plls` where the target version line offers it as an extension; any other language fails <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_plpgsql_and_sql_pass, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_untrusted_c_and_unknown_languages_fail_and_are_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_trusted_language_passes_only_where_the_target_line_offers_it, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_metadata_and_the_statements_language_must_agree --> |
 | [`postgresql-routine-superuser-security-definer`](#postgresql-routine-superuser-security-definer) | postgresql | Aurora PostgreSQL | function, procedure | Needs a rewrite | a SECURITY DEFINER routine whose owner is a superuser on the source <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_superusers_security_definer_routine_is_flagged, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes --> |
 | [`postgresql-routine-unparseable`](#postgresql-routine-unparseable) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Needs a rewrite | one CREATE FUNCTION, CREATE PROCEDURE or CREATE TRIGGER statement of the routine's kind that PostgreSQL's parser reads, its PL/pgSQL or SQL body included; text holding a NUL or one the parser cannot encode does not parse <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_parse_passes_each_routine_shape, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_body_that_does_not_parse_is_unparseable, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_statement_that_is_not_one_routine_of_its_kind_is_unparseable, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_nul_anywhere_is_unparseable_at_its_position, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_text_the_parser_cannot_encode_is_unparseable_and_raises_nothing --> |
+
+### mysql-routine-declare-order
+
+DECLARE statements out of MySQL's order: needs a rewrite. MySQL takes DECLARE only at the start of a BEGIN ... END block, with variables and conditions first, then cursors, then handlers; this routine declares out of that order, so its CREATE fails.
+
+Fix: Move each DECLARE to the start of its block, in the order variables and conditions, cursors, handlers.
+
+Documentation: MySQL 8.0 Reference Manual, DECLARE Statement.
+
+### mysql-routine-definer
+
+A DEFINER naming a user other than the target user: needs a rewrite. The routine runs as its DEFINER, a named user other than the user that creates it on Aurora MySQL; when that account does not exist on the target cluster, every call \(or every trigger and event firing\) fails with error 1449.
+
+Fix: Set DEFINER to the target user \(or CURRENT\_USER\), or create the named account on the target before the routine is used.
+
+Documentation: MySQL 8.0 Reference Manual, Stored Object Access Control; Amazon Aurora User Guide, Role-based privilege model.
+
+### mysql-routine-dynamic-sql
+
+Dynamic SQL the checks cannot read: behaves differently. The routine prepares and runs SQL held in a user variable, so the statement checks cannot see what it runs on the target; the string literals the routine assigns to that variable are checked, but it may hold other text at run time.
+
+Fix: Review the SQL the routine builds and run it on the target before cutover, or replace the dynamic SQL with static statements the checks can read.
+
+Documentation: MySQL 8.0 Reference Manual, Prepared Statements.
+
+### mysql-routine-file-output
+
+Writing a file on the database server: needs a rewrite. SELECT ... INTO OUTFILE and INTO DUMPFILE write a file on the database server, which needs the FILE privilege; the Aurora MySQL administrative role \(rds\_superuser\_role\) does not include it.
+
+Fix: Write the file to Amazon S3 with SELECT ... INTO OUTFILE S3, after granting the AWS\_SELECT\_S3\_ACCESS role.
+
+Documentation: Amazon Aurora User Guide, Saving data from an Amazon Aurora MySQL DB cluster into text files in an Amazon S3 bucket.
+
+### mysql-routine-handler
+
+A handler MySQL refuses: needs a rewrite. A handler is one MySQL refuses: an UNDO handler, an SQLSTATE that is not five characters or is in class 00, error code 0, a condition name no enclosing block declares, or the same condition handled twice in one block.
+
+Fix: Use CONTINUE or EXIT, a valid SQLSTATE or error code, declare the condition before the handler, and handle each condition once per block.
+
+Documentation: MySQL 8.0 Reference Manual, DECLARE ... HANDLER Statement; DECLARE ... CONDITION Statement.
+
+### mysql-routine-kill
+
+Ending another session or query with KILL: behaves differently. KILL ends another user's connection or query only with CONNECTION\_ADMIN, which on Aurora MySQL a user has only through rds\_superuser\_role or an explicit grant, so the statement fails when the routine runs as any other user.
+
+Fix: Call mysql.rds\_kill or mysql.rds\_kill\_query instead, or make sure the user the routine runs as holds CONNECTION\_ADMIN.
+
+Documentation: MySQL 8.0 Reference Manual, KILL Statement; Amazon Aurora User Guide, Role-based privilege model; Aurora MySQL stored procedure reference.
+
+### mysql-routine-load-file
+
+Reading a server file with LOAD\_FILE\(\): behaves differently. LOAD\_FILE\(\) reads a file on the database server and needs the FILE privilege, which the Aurora MySQL administrative role \(rds\_superuser\_role\) does not include, so on Aurora it returns NULL instead of the file.
+
+Fix: Load the file from Amazon S3 with LOAD DATA FROM S3 into a table, and read the table instead.
+
+Documentation: MySQL 8.0 Reference Manual, String Functions and Operators \(LOAD\_FILE\); Amazon Aurora User Guide, Loading data into an Amazon Aurora MySQL DB cluster from text files in an Amazon S3 bucket.
+
+### mysql-routine-mode-deprecated
+
+An sql\_mode MySQL 8.0 deprecates: informational. The routine's sql\_mode includes a mode MySQL 8.0 deprecates; it still works on Aurora MySQL today, but a later version line may remove it.
+
+Fix: Keep the mode on Aurora MySQL 8.0; drop it only when the target line removes it, padding CHAR values with RPAD in place of PAD\_CHAR\_TO\_FULL\_LENGTH, and dropping the zero-date and division-by-zero modes only on a line whose strict mode includes their effect.
+
+Documentation: MySQL 8.0 Reference Manual, Server SQL Modes.
+
+### mysql-routine-mode-removed
+
+An sql\_mode MySQL 8.0 removed: needs a rewrite. The routine was created under an sql\_mode MySQL 8.0 removed, and every Aurora MySQL line in standard support is 8.0 or later; setting that mode fails, so the routine cannot be created under its own sql\_mode.
+
+Fix: Drop the removed mode from the routine's sql\_mode \(NO\_AUTO\_CREATE\_USER has no replacement; a removed combination mode becomes the modes it stood for\) and check the routine still behaves the same.
+
+Documentation: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 \(Features Removed in MySQL 8.0\); Server SQL Modes.
+
+### mysql-routine-mode-unknown
+
+An sql\_mode MySQL 8.0 does not have: needs a rewrite. The routine's sql\_mode names a mode MySQL 8.0 does not have \(for example a MariaDB mode\), so setting it fails and the routine cannot be created under its own sql\_mode.
+
+Fix: Replace the mode with its MySQL equivalent, or drop it, and check the routine still behaves the same.
+
+Documentation: MySQL 8.0 Reference Manual, Server SQL Modes.
+
+### mysql-routine-plugin-install
+
+Installing or removing a plugin or component: needs a rewrite. Installing or removing a plugin or component writes to the mysql system database, which Aurora MySQL users cannot change; Aurora manages its plugins itself.
+
+Fix: Remove the statement; turn on a supported feature through the DB cluster parameter group instead.
+
+Documentation: Amazon Aurora User Guide, Comparing Aurora MySQL version 3 and MySQL 8.0 Community Edition.
+
+### mysql-routine-replication-control
+
+Replication and binary log control statements: needs a rewrite. Replication and binary log control statements need REPLICATION\_SLAVE\_ADMIN, BINLOG\_ADMIN or SUPER, which the Aurora MySQL administrative role \(rds\_superuser\_role\) does not include; Aurora manages replication through its own stored procedures.
+
+Fix: Call the Aurora MySQL procedures instead \(mysql.rds\_set\_external\_source, mysql.rds\_start\_replication, mysql.rds\_stop\_replication\), or move the step out of the routine.
+
+Documentation: Amazon Aurora User Guide, Aurora MySQL stored procedure reference; Role-based privilege model.
+
+### mysql-routine-restricted-session-variable
+
+Setting a restricted session system variable: needs a rewrite. Setting the session value of this system variable is restricted: it needs SESSION\_VARIABLES\_ADMIN, SYSTEM\_VARIABLES\_ADMIN or SUPER, which the Aurora MySQL administrative role \(rds\_superuser\_role\) does not include, so the statement fails when the routine runs.
+
+Fix: Remove the SET, or set the value in the DB cluster or DB parameter group when every session needs it.
+
+Documentation: MySQL 8.0 Reference Manual, System Variable Privileges; Amazon Aurora User Guide, Role-based privilege model.
+
+### mysql-routine-server-shutdown
+
+Stopping or restarting the server: needs a rewrite. SHUTDOWN and RESTART need the SHUTDOWN privilege, which the Aurora MySQL administrative role does not include; Aurora instances are stopped and rebooted through the RDS API.
+
+Fix: Remove the statement; reboot or stop the instance with the RDS console, CLI or API.
+
+Documentation: MySQL 8.0 Reference Manual, SHUTDOWN Statement; RESTART Statement; Amazon Aurora User Guide, Role-based privilege model.
+
+### mysql-routine-set-global
+
+Setting a global or persisted system variable: needs a rewrite. Setting a global or persisted system variable needs SUPER or SYSTEM\_VARIABLES\_ADMIN, which the Aurora MySQL administrative role \(rds\_superuser\_role\) does not include, so the statement fails when the routine runs.
+
+Fix: Set the variable in the DB cluster or DB parameter group instead, or set its session value if the routine only needs it for itself.
+
+Documentation: Amazon Aurora User Guide, Role-based privilege model; Working with parameter groups.
+
+### mysql-routine-sql-log-bin
+
+Turning binary logging off for the session: needs a rewrite. Turning binary logging off for a session \(sql\_log\_bin\) needs SUPER, SYSTEM\_VARIABLES\_ADMIN or SESSION\_VARIABLES\_ADMIN, which the Aurora MySQL administrative role does not include, so the statement fails when the routine runs.
+
+Fix: Remove the SET sql\_log\_bin statement; to keep changes out of replication, filter them on the replica or run them outside the replicated schema.
+
+Documentation: MySQL 8.0 Reference Manual, Server System Variables \(sql\_log\_bin\); Amazon Aurora User Guide, Role-based privilege model.
+
+### mysql-routine-unparseable
+
+A routine whose CREATE statement does not read as MySQL: needs a rewrite. The routine's CREATE text could not be read: its header, its quoting or its compound statements \(BEGIN ... END, IF, CASE, LOOP, WHILE, REPEAT and their labels\) do not close as MySQL requires, so it cannot be checked or carried as is.
+
+Fix: Re-collect the routine with SHOW CREATE, or fix the text so it loads on the source MySQL, then run the check again.
+
+Documentation: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; Compound Statement Syntax.
 
 ### postgresql-routine-extension-not-offered
 

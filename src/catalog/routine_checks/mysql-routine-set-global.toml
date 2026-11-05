@@ -1,0 +1,14 @@
+# Routine check mysql-routine-set-global (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: Amazon Aurora User Guide, Role-based privilege model (rds_superuser_role); Working with parameter groups.
+id = "mysql-routine-set-global"
+feature = "Setting a global or persisted system variable"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "Setting a global or persisted system variable needs SUPER or SYSTEM_VARIABLES_ADMIN, which the Aurora MySQL administrative role (rds_superuser_role) does not include, so the statement fails when the routine runs."
+fix_hint = "Set the variable in the DB cluster or DB parameter group instead, or set its session value if the routine only needs it for itself."
+docs = "Amazon Aurora User Guide, Role-based privilege model; Working with parameter groups"
+
+[match]
+set_scopes = ["GLOBAL", "PERSIST", "PERSIST_ONLY"]

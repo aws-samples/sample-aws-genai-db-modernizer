@@ -62,6 +62,7 @@ def test_only_the_routine_checkers_and_the_page_renderer_read_the_routine_catalo
     strays = {r for r in readers if r not in READERS and not r.startswith(CHECKERS + ".")}
     assert not strays, f"modules outside src/tools/routines/ read the routine checks: {strays}"
     assert "src.tools.routines.postgresql_checks" in readers
+    assert "src.tools.routines.mysql_checks" in readers
 
 
 # A guard of behaviour main already has: nothing reaches the checkers there.

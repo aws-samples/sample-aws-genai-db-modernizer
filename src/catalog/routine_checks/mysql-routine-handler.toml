@@ -1,0 +1,14 @@
+# Routine check mysql-routine-handler (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, DECLARE ... HANDLER Statement; DECLARE ... CONDITION Statement.
+id = "mysql-routine-handler"
+feature = "A handler MySQL refuses"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "A handler is one MySQL refuses: an UNDO handler, an SQLSTATE that is not five characters or is in class 00, error code 0, a condition name no enclosing block declares, or the same condition handled twice in one block."
+fix_hint = "Use CONTINUE or EXIT, a valid SQLSTATE or error code, declare the condition before the handler, and handle each condition once per block."
+docs = "MySQL 8.0 Reference Manual, DECLARE ... HANDLER Statement; DECLARE ... CONDITION Statement"
+
+[match]
+valid_handlers = true

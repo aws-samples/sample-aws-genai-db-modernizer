@@ -51,6 +51,7 @@ from src.shared.catalog.gaps import (
 
 __all__ = [
     "ROUTINE_CHECKS_DIR",
+    "SET_SCOPES",
     "ROUTINE_KINDS",
     "RoutineCheck",
     "RoutineCheckMatch",
@@ -69,8 +70,8 @@ ROUTINE_KINDS: tuple[RoutineKind, ...] = ("function", "procedure", "trigger", "e
 # - PostgreSQL: its language (``language``), the extensions it uses (``extensions``), its
 #   owner and security mode (``ownership``);
 # - MySQL: its DECLARE order (``declare_order``), its handlers (``handler``), its
-#   DEFINER (``definer``), the statements in its body (``statement``) and its stored
-#   sql_mode (``sql_mode``).
+#   DEFINER (``definer``), the statements in its body (``statement``), its stored
+#   sql_mode (``sql_mode``) and the dynamic SQL it prepares (``dynamic_sql``).
 RoutineCheck = Literal[
     "parse",
     "language",
@@ -81,12 +82,32 @@ RoutineCheck = Literal[
     "definer",
     "statement",
     "sql_mode",
+    "dynamic_sql",
 ]
 
 # The checks that read a function's or procedure's own pg_proc metadata (language,
 # owner, security mode): no such rule applies to a trigger or an event (#1961 review).
 _OWN_METADATA_CHECKS: frozenset[RoutineCheck] = frozenset({"language", "ownership"})
 _OWN_METADATA_KINDS: frozenset[RoutineKind] = frozenset({"function", "procedure"})
+# The source engines whose checker implements each engine-specific check; ``parse`` is
+# every engine's. A rule naming a check for another engine fails at load time.
+_POSTGRESQL_FAMILY = frozenset({"postgresql"})
+_MYSQL_FAMILY = frozenset({"mysql", "mariadb"})
+_CHECK_ENGINES: dict[RoutineCheck, frozenset[str]] = {
+    "language": _POSTGRESQL_FAMILY,
+    "extensions": _POSTGRESQL_FAMILY,
+    "ownership": _POSTGRESQL_FAMILY,
+    "declare_order": _MYSQL_FAMILY,
+    "handler": _MYSQL_FAMILY,
+    "definer": _MYSQL_FAMILY,
+    "statement": _MYSQL_FAMILY,
+    "sql_mode": _MYSQL_FAMILY,
+    "dynamic_sql": _MYSQL_FAMILY,
+}
+# Only MySQL has events (CREATE EVENT).
+_EVENT_ENGINES = _MYSQL_FAMILY
+# The SET scopes the MySQL checker reads: ``SET GLOBAL x``, ``SET @@persist.x``, ...
+SET_SCOPES = frozenset({"GLOBAL", "PERSIST", "PERSIST_ONLY", "SESSION", "LOCAL"})
 
 _ONE_LINE = r"^[^\n]+$"
 _LANGUAGE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -128,18 +149,25 @@ class RoutineCheckMatch(BaseModel):
     definer_not_target_user: bool = False
     always_definer_kinds: tuple[RoutineKind, ...] = ()
     # statement (MySQL): a body statement that starts with one of ``statement_starts`` or
-    # contains one of ``statement_contains`` (keywords, upper case, outside quotes), or
-    # that SETs a variable in one of ``set_scopes`` or one of ``set_variables``, fails.
+    # contains one of ``statement_contains`` (keywords, upper case, outside quotes) where
+    # none of ``statement_exceptions`` starts at the same word, that SETs a variable in one
+    # of ``set_scopes`` (of :data:`SET_SCOPES`) or one of ``set_variables``, or that calls
+    # one of ``function_calls``, fails.
     statement_starts: tuple[str, ...] = ()
     statement_contains: tuple[str, ...] = ()
+    statement_exceptions: tuple[str, ...] = ()
     set_scopes: tuple[str, ...] = ()
     set_variables: tuple[str, ...] = ()
+    function_calls: tuple[str, ...] = ()
     # sql_mode (MySQL): the routine's stored sql_mode holds one of ``sql_modes``, or (with
     # ``unknown_sql_modes``) a mode outside ``known_sql_modes`` and every other sql_mode
     # rule's ``sql_modes``.
     sql_modes: tuple[str, ...] = ()
     unknown_sql_modes: bool = False
     known_sql_modes: tuple[str, ...] = ()
+    # dynamic_sql (MySQL): a PREPARE whose statement text is not a string literal the
+    # checker can read fails, since the statement checks cannot see what it runs.
+    dynamic_sql: bool = False
 
     @property
     def check(self) -> RoutineCheck:
@@ -161,12 +189,19 @@ class RoutineCheckMatch(BaseModel):
             found.append("handler")
         if self.definer_not_target_user:
             found.append("definer")
-        if self.statement_starts or self.statement_contains or self.set_scopes:
-            found.append("statement")
-        elif self.set_variables:
+        statement = (
+            self.statement_starts,
+            self.statement_contains,
+            self.set_scopes,
+            self.set_variables,
+            self.function_calls,
+        )
+        if any(statement):
             found.append("statement")
         if self.sql_modes or self.unknown_sql_modes:
             found.append("sql_mode")
+        if self.dynamic_sql:
+            found.append("dynamic_sql")
         return found
 
     @model_validator(mode="after")
@@ -175,7 +210,8 @@ class RoutineCheckMatch(BaseModel):
             raise ValueError(
                 "[match] needs exactly one of parses, languages, extensions, "
                 "security_definer_owned_by_superuser, declare_order, valid_handlers, "
-                "definer_not_target_user, a statement list, sql_modes or unknown_sql_modes"
+                "definer_not_target_user, a statement list, sql_modes, unknown_sql_modes "
+                "or dynamic_sql"
             )
         if self.trusted_extension_languages and not self.languages:
             raise ValueError("trusted_extension_languages goes with languages")
@@ -183,6 +219,10 @@ class RoutineCheckMatch(BaseModel):
             raise ValueError("always_definer_kinds goes with definer_not_target_user")
         if self.known_sql_modes and not self.unknown_sql_modes:
             raise ValueError("known_sql_modes goes with unknown_sql_modes")
+        if self.statement_exceptions and not self.statement_contains:
+            raise ValueError("statement_exceptions goes with statement_contains")
+        if unknown := sorted(set(self.set_scopes) - SET_SCOPES):
+            raise ValueError(f"set_scopes {unknown}: the scopes are {sorted(SET_SCOPES)}")
         names = (*self.languages, *self.trusted_extension_languages)
         for name in names:
             if not _LANGUAGE.match(name):
@@ -191,6 +231,8 @@ class RoutineCheckMatch(BaseModel):
             "languages": names,
             "statement_starts": self.statement_starts,
             "statement_contains": self.statement_contains,
+            "statement_exceptions": self.statement_exceptions,
+            "function_calls": self.function_calls,
             "set_scopes": self.set_scopes,
             "set_variables": self.set_variables,
             "sql_modes": (*self.sql_modes, *self.known_sql_modes),
@@ -201,6 +243,8 @@ class RoutineCheckMatch(BaseModel):
         keywords = (
             *self.statement_starts,
             *self.statement_contains,
+            *self.statement_exceptions,
+            *self.function_calls,
             *self.set_scopes,
             *self.sql_modes,
             *self.known_sql_modes,
@@ -240,6 +284,11 @@ class RoutineCheckRule(BaseModel):
             values = getattr(self, field)
             if len(set(values)) != len(values):
                 raise ValueError(f"{field} lists a value twice")
+        engines = _CHECK_ENGINES.get(self.match.check)
+        if engines is not None and (stray := sorted(set(self.source_engines) - engines)):
+            raise ValueError(
+                f"a {self.match.check} rule applies only to {sorted(engines)}, not {stray}"
+            )
         if self.match.check in _OWN_METADATA_CHECKS:
             for kind in self.kinds:
                 if kind not in _OWN_METADATA_KINDS:
@@ -247,6 +296,8 @@ class RoutineCheckRule(BaseModel):
                         f"a {self.match.check} rule cannot apply to a {kind}: only a function "
                         "or procedure has a language, owner and security mode of its own"
                     )
+        if "event" in self.kinds and (stray := sorted(set(self.source_engines) - _EVENT_ENGINES)):
+            raise ValueError(f"only MySQL has events; kinds lists event for {stray}")
         return self
 
 

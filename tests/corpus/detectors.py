@@ -264,6 +264,11 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         ),
     ),
     SqlDetector(f"{_FACADE}:written_columns", facade.written_columns),
+    # #1936: the tables and unknown calls one routine-body statement names.
+    SqlDetector(
+        f"{_FACADE}:routine_statement_refs",
+        lambda text, dialect: facade.routine_statement_refs(text, dialect),
+    ),
     SqlDetector(
         f"{_FACADE}:sql_tokens",
         _tokens,
@@ -575,6 +580,11 @@ for _fn in ("scrub_comment", "redact_comment"):
 # Public functions of the fact modules that are not a detector of their own, with why.
 NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_FACADE}:sqlglot_dialect": "maps an engine name to a dialect; reads no SQL",
+    f"{_FACADE}:routine_tokens": (
+        "the dialect's tokenizer over a routine's text (#1936): it returns every token, "
+        "literals included, and detects no fact; the facts read from routine text are "
+        "routine_statement_refs'"
+    ),
     f"{_FACADE}:read_sql": "sql_facts, access_facts and table_references from one parse",
     f"{_FACADE}:query_readings": "sql_facts and access_facts from one parse",
     f"{_FACADE}:regex_answer": "table_references' regex fallback, reached through it",

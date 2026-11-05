@@ -1,0 +1,14 @@
+# Routine check mysql-routine-declare-order (#1936). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, DECLARE Statement (errors 1337 and 1338).
+id = "mysql-routine-declare-order"
+feature = "DECLARE statements out of MySQL's order"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "MySQL takes DECLARE only at the start of a BEGIN ... END block, with variables and conditions first, then cursors, then handlers; this routine declares out of that order, so its CREATE fails."
+fix_hint = "Move each DECLARE to the start of its block, in the order variables and conditions, cursors, handlers."
+docs = "MySQL 8.0 Reference Manual, DECLARE Statement"
+
+[match]
+declare_order = true

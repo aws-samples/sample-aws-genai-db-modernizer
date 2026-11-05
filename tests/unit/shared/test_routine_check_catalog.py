@@ -188,7 +188,9 @@ _MYSQL_MATCHES = {
     "handler": "valid_handlers = true",
     "definer": 'definer_not_target_user = true\nalways_definer_kinds = ["trigger", "event"]',
     "starts": 'statement_starts = ["SHUTDOWN"]',
-    "contains": 'statement_contains = ["INTO OUTFILE"]',
+    "contains": 'statement_contains = ["INTO OUTFILE"]\nstatement_exceptions = ["INTO OUTFILE S3"]',
+    "calls": 'function_calls = ["LOAD_FILE"]',
+    "dynamic": "dynamic_sql = true",
     "scopes": 'set_scopes = ["GLOBAL"]',
     "variables": 'set_variables = ["sql_log_bin"]',
     "modes": 'sql_modes = ["NO_AUTO_CREATE_USER"]',
@@ -198,7 +200,7 @@ _MYSQL_MATCHES = {
 
 def test_the_page_renders_the_mysql_checks_the_shared_catalog_holds(tmp_path: Path) -> None:
     """The catalog is shared with MySQL's routine checks (#1936): the page words every
-    MySQL check, and only a PostgreSQL rule's row carries this PR's claim marker."""
+    MySQL check, and each rule's row carries its own engine's checker tests."""
     for name, match in _MYSQL_MATCHES.items():
         _write(
             tmp_path,
@@ -216,14 +218,19 @@ def test_the_page_renders_the_mysql_checks_the_shared_catalog_holds(tmp_path: Pa
         "definer",
         "statement",
         "sql_mode",
+        "dynamic_sql",
     }
     page = "\n".join(render_routine_checks_md(rules + routine_check_rules(), {}))
     rows = {line.split("`")[1]: line for line in page.splitlines() if line.startswith("| [`")}
     for name in _MYSQL_MATCHES:
         row = rows[f"mysql-{name}"]
-        assert "claim:" not in row and row.count("|") == 7
+        assert "test_mysql_routine_checks.py::" in row and row.count("|") == 7
+        assert "test_postgresql_routine_checks.py::" not in row
     assert "always a trigger or event" in rows["mysql-definer"]
     assert "`SHUTDOWN`" in rows["mysql-starts"] and "`sql_log_bin`" in rows["mysql-variables"]
     assert "EVENT statement" in rows["mysql-parses"]
+    assert "(not `INTO OUTFILE S3`)" in rows["mysql-contains"]
+    assert "a call to `LOAD_FILE`" in rows["mysql-calls"]
+    assert "PREPARE from a user variable" in rows["mysql-dynamic"]
     for rule in routine_check_rules():
         assert "claim:" in rows[rule.id]

@@ -1,0 +1,277 @@
+# Synthetic MySQL routines for the routine checker's tests (#1936). Every routine here is
+# made up for the tests; none comes from a customer. Checked with target_user = "admin".
+#
+# Per routine: file, kind, sql_mode (default STRICT_TRANS_TABLES), optional security_type
+# and definer metadata, the expected status, parsed flag, findings ("<rule id>:<evidence>"),
+# dependencies ("table:<schema>.<name>" or "routine:<schema>.<name>", schema may be empty)
+# and dependencies_complete (default true).
+
+[[routine]]
+file = "clean-procedure.sql"
+kind = "procedure"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["routine:.order_tax", "routine:audit.log_event", "table:.order_history", "table:.order_lines", "table:.orders"]
+
+[[routine]]
+file = "clean-function.sql"
+kind = "function"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "trigger.sql"
+kind = "trigger"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-definer:named definer"]
+dependencies = ["routine:.orders_bi_first", "table:.orders"]
+
+[[routine]]
+file = "event.sql"
+kind = "event"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.app_log_archive", "table:.app_logs"]
+
+[[routine]]
+file = "delimiter-dump.sql"
+kind = "procedure"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "delimiter-dump-trigger.sql"
+kind = "trigger"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.order_lines", "table:.orders"]
+
+[[routine]]
+file = "definer-named.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-definer:named definer"]
+dependencies = ["table:.daily_totals", "table:.orders"]
+
+[[routine]]
+file = "definer-invoker.sql"
+kind = "procedure"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "set-global.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-set-global:SET GLOBAL", "mysql-routine-set-global:SET PERSIST"]
+dependencies = []
+
+[[routine]]
+file = "sql-log-bin.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-sql-log-bin:SET sql_log_bin"]
+dependencies = ["table:.sessions"]
+
+[[routine]]
+file = "replication-control.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-replication-control:CHANGE MASTER", "mysql-routine-replication-control:START SLAVE", "mysql-routine-replication-control:STOP SLAVE"]
+dependencies = []
+
+[[routine]]
+file = "plugin-install.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-plugin-install:INSTALL PLUGIN"]
+dependencies = []
+
+[[routine]]
+file = "server-shutdown.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-server-shutdown:SHUTDOWN"]
+dependencies = []
+
+[[routine]]
+file = "file-output.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-file-output:INTO OUTFILE"]
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "mode-legacy.sql"
+kind = "function"
+sql_mode = "PAD_CHAR_TO_FULL_LENGTH,NO_AUTO_CREATE_USER,STRICT_TRANS_TABLES,EMPTY_STRING_IS_NULL"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-mode-deprecated:PAD_CHAR_TO_FULL_LENGTH", "mysql-routine-mode-removed:NO_AUTO_CREATE_USER", "mysql-routine-mode-unknown:unknown mode"]
+dependencies = []
+
+[[routine]]
+file = "declare-order.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-declare-order:variable after cursor or handler"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "declare-after-statement.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-declare-order:declare after statement"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "handler-undo.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-handler:undo handler"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "handler-undeclared.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-handler:undeclared condition"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "handler-duplicate.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-handler:duplicate handler"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "handler-bad-sqlstate.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-handler:sqlstate"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "unparseable-unclosed.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-unparseable:unbalanced block"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "unparseable-end-label.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-unparseable:end label"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "unparseable-quote.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-unparseable:unterminated quote"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "unparseable-two-creates.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = false
+findings = ["mysql-routine-unparseable:more than one statement"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "dynamic-sql.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-dynamic-sql:dynamic SQL"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "dynamic-sql-literal.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-set-global:SET GLOBAL"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "dynamic-sql-variable.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-dynamic-sql:dynamic SQL", "mysql-routine-set-global:SET GLOBAL"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "kill.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-kill:KILL"]
+dependencies = []
+
+[[routine]]
+file = "load-file.sql"
+kind = "function"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-load-file:LOAD_FILE()"]
+dependencies = []
+
+[[routine]]
+file = "restricted-session-variable.sql"
+kind = "procedure"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-restricted-session-variable:SET binlog_format"]
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "file-output-s3.sql"
+kind = "procedure"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.orders"]
