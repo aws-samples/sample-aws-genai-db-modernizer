@@ -10,7 +10,6 @@ This directory contains the high-level design and architecture documentation for
 | [diagrams/](diagrams/README.md)              | The system context and the pipeline     | All stakeholders           |
 | [decisions/](decisions/README.md)            | Architecture Decision Records, with an index of what is active, partly superseded or retired | All developers, architects |
 | [rule-catalog.md](rule-catalog.md)           | The generated rule catalog: engines, patterns, gates and thresholds (`scripts/render_catalog.py`) | Developers, reviewers |
-| [designs/adoption-paths.md](designs/adoption-paths.md) | Design for adoption paths (epic #1128) | Developers, architects |
 
 ## Architecture Overview
 
