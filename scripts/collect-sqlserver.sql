@@ -545,7 +545,10 @@ SET @os_stats = (
         cpu_count,
         ROUND(physical_memory_kb / 1024.0 / 1024.0, 2) AS physical_memory_gb,
         ROUND(committed_kb / 1024.0 / 1024.0, 2) AS committed_memory_gb,
-        DATEDIFF(HOUR, sqlserver_start_time, GETDATE()) AS db_uptime_hours
+        DATEDIFF(HOUR, sqlserver_start_time, GETDATE()) AS db_uptime_hours,
+        -- #1893: in seconds, so the statement rates' fallback window is exact (DATEDIFF
+        -- counts hour boundaries: 59 minutes read 0 hours, 61 minutes can read 2).
+        DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) AS db_uptime_seconds
     FROM sys.dm_os_sys_info
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 );

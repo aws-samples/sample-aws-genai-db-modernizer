@@ -359,6 +359,12 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "so the deliverables' sentence names the same figure); DDL_TABLE_THRESHOLD_ROWS is the "
         "maintainer's interim rule for a DDL-only table, small as before #1636, until #1646",
     ),
+    "src/shared/rate_window.py": (
+        frozenset({"MIN_WINDOW_SECONDS"}),
+        "a collection fact, not a routing rule: the shortest first-to-last-seen window a "
+        "statement's own timestamps are trusted for as a rate (#1893, whole-second "
+        "timestamps); routing reads only the rate it gives",
+    ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),
         "a prose length, not a routing rule: the words a design sentence needs to be "

@@ -8,6 +8,9 @@ This is a real model run of the `wordpress` sample at release v0.4.0-beta.1: one
 
 The run's synthesis report is committed under [`docs/examples/wordpress/sample-run/`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/examples/wordpress/sample-run), and each build of this site renders the deliverables from it with the current code, so wording and layout fixes show up here without a new run. The assessment itself is the recorded one, and it is refreshed once per release.
 
+!!! note "Call rates since #1893"
+    The recorded run divided every statement's execution count by 24 hours. Since #1893 a run divides it by the window the count covers: the statement's own first-to-last-seen time in the collection, else the server's uptime. The `wordpress` collection records that window for every statement, so a run of it with the current code reads each statement's rate over a different window than this recorded one did, and its call rates, cache candidates and costs differ (a deterministic run projects $749.21 a month, where the recorded run shows $512.58). The figures on this page are the recorded run's until the sample is refreshed for the next release. <!-- claim: tests/unit/shared/test_rate_window.py::test_the_observed_window_divides_the_count, tests/unit/tools/database/test_rate_window_collectors.py::test_an_offline_sql_server_collection_reads_each_window_and_the_uptime_hours, tests/e2e/test_executive_summary_structure.py::test_the_summary_has_the_three_parts_with_the_facts_figures -->
+
 ## The deliverables
 
 These are the files a run writes to its deliverables folder, under the same names:

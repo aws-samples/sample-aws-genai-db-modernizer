@@ -13,7 +13,8 @@ executive report state the same lines and counts. The UI results page is checked
 ``tests/e2e/test_ui.py``.
 
 The cases are the ones #212 found: ``wp_postmeta``, mapped to one engine while another
-reads it; ``wp_usermeta``, which no query writes; and a table the cache fronts, which
+reads it; ``wp_users``, which no query writes (``wp_usermeta`` until #1893, whose reads
+then all moved to Aurora MySQL, so it left the map); and a table the cache fronts, which
 must keep its system-of-record owner and count where that owner's tables count.
 """
 
@@ -36,7 +37,7 @@ from tests.e2e.pipeline import PipelineResult
 pytestmark = pytest.mark.deterministic
 
 POSTMETA = "wordpress.wp_postmeta"
-USERMETA = "wordpress.wp_usermeta"
+USERS = "wordpress.wp_users"
 OPTIONS = "wordpress.wp_options"
 
 
@@ -109,17 +110,24 @@ def test_wp_postmeta_is_owned_by_its_writer_and_also_read_by_the_other_engine(
     assert cells[1:4] == ["DynamoDB", "Aurora MySQL", "ElastiCache"], cells
 
 
-def test_wp_usermeta_has_a_system_of_record_owner_though_no_query_writes_it(
+def test_wp_users_has_a_system_of_record_owner_though_no_query_writes_it(
     designed_run: PipelineResult,
 ) -> None:
-    """#212's second case: no query writes ``wp_usermeta``, so its owner is the engine
-    serving most of its queries, here not the engine the map recommends."""
+    """#212's second case: no query writes ``wp_users``, so its owner is the engine
+    serving most of its queries, here not the engine the map recommends.
+
+    #1893: this was ``wp_usermeta`` (3 reads on Aurora MySQL, 1 on DynamoDB). Over its own
+    window ``3a74580e`` reads it at 1.24 calls/s (0.95 over 24 hours) and ties DynamoDB and
+    Aurora MySQL at 73, a tie the reality check gives the source-compatible engine, so all
+    four reads are on Aurora MySQL and the table is no longer mapped. ``wp_users`` is the
+    same case, and the cache now fronts it too: ``ed65b0b6`` (``SELECT * FROM wp_users
+    WHERE ID = ?``) reads it at 1.35 calls/s, over the 1 call/s hot-read floor."""
     report = _report(designed_run)
     assignment = _assignment(designed_run, report)
-    assert USERMETA not in (assignment.get("write_groups") or {})
-    reads = _engines_reading(assignment, USERMETA)
-    assert reads == {"aurora_mysql": 3, "dynamodb": 1}
-    row = _mapping(report, USERMETA)
+    assert USERS not in (assignment.get("write_groups") or {})
+    reads = _engines_reading(assignment, USERS)
+    assert reads == {"aurora_mysql": 3, "dynamodb": 2}
+    row = _mapping(report, USERS)
     assert row["recommended_database"] == "dynamodb"
     assert (row["owner"], row["owner_basis"], row["also_read_by"]) == (
         "aurora_mysql",
@@ -127,8 +135,8 @@ def test_wp_usermeta_has_a_system_of_record_owner_though_no_query_writes_it(
         ["dynamodb"],
     )
     assert row["owner"] not in CACHE_ENGINES
-    cells = _map_rows(designed_run)[USERMETA]
-    assert cells[1:4] == ["Aurora MySQL", "DynamoDB", "—"], cells
+    cells = _map_rows(designed_run)[USERS]
+    assert cells[1:4] == ["Aurora MySQL", "DynamoDB", "ElastiCache"], cells
 
 
 def test_a_cached_table_keeps_its_owner_and_counts_as_migrating(

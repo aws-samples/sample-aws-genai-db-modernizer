@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -342,6 +343,12 @@ def test_the_fields_carry_no_verdict() -> None:
 # --------------------------------------------------------------------------- unknown is null
 
 
+def _window_seconds(row: dict[str, Any]) -> float:
+    """A trailgear row's own first-to-last-seen window, which its rate covers (#1893)."""
+    seen = [datetime.fromisoformat(row[k]) for k in ("first_seen", "last_seen")]
+    return (seen[1] - seen[0]).total_seconds()
+
+
 def _value(document: dict[str, Any], where: tuple[str, ...]) -> Any:
     """The value at ``where``: ("table", id, field), ("column", table, column), or
     ("statement", index into the collection's rows, field)."""
@@ -382,12 +389,13 @@ def test_an_unknown_value_is_null(where: tuple[str, ...]) -> None:
         (("table", "trailgear.Promotion", "row_count"), 0),
         (("table", "trailgear.Shipment", "row_count"), 0),
         (("column", "trailgear.Customer", "CustomerID"), False),
-        (("statement", "2", "calls_per_second"), None),  # the row's own count a day
+        (("statement", "2", "calls_per_second"), None),  # the row's own count, own window
     ],
 )
 def test_a_known_value_is_kept(where: tuple[str, ...], value: Any) -> None:
     if value is None:
-        value = _edited_collection()["queries"][2]["execution_count"] / 86400
+        row = _edited_collection()["queries"][2]
+        value = row["execution_count"] / _window_seconds(row)
     got = _value(json.loads(_edited_json()), where)
     assert got == pytest.approx(value) if isinstance(value, float) else got == value
 
@@ -537,8 +545,8 @@ def test_an_execution_count_of_0_is_0_calls() -> None:
 def test_a_collector_output_carries_the_collectors_nullable_and_calls() -> None:
     """Documented (assess.md, From 1.2 to 1.3): a collector output records no unknown
     nullability or execution count, so passed back as the collection it gives the
-    collector's values (true, false, one call a day) where the raw collection gives
-    null."""
+    collector's values (true, false, one call over the statement's window, #1893) where
+    the raw collection gives null."""
     run = assess(
         {
             "database_name": "trailgear",
@@ -550,11 +558,12 @@ def test_a_collector_output_carries_the_collectors_nullable_and_calls() -> None:
     collector_output = run.artifacts.model_dump(mode="json")["collector_output"]
     again = json.loads(_run(collector_output, "trailgear"))
     raw = json.loads(_edited_json())
+    rows = _edited_collection()["queries"]
     for where, collector_value in (
         (("column", "trailgear.Brand", "Name"), True),
         (("column", "trailgear.Brand", "Country"), False),
-        (("statement", "0", "calls_per_second"), 1 / 86400),
-        (("statement", "1", "calls_per_second"), 1 / 86400),
+        (("statement", "0", "calls_per_second"), 1 / _window_seconds(rows[0])),
+        (("statement", "1", "calls_per_second"), 1 / _window_seconds(rows[1])),
     ):
         assert _value(raw, where) is None, where
         assert _value(again, where) == collector_value, where

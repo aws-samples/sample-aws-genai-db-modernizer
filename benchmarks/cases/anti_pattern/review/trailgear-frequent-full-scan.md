@@ -25,12 +25,12 @@ Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; rati
 
 | # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | redesign | acceptable | after redesign | ideal | rationale |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `0x3BE9AE87BC4E81FC` | `SELECT [BrandID], [Name], [Country] FROM [Brand]` | SELECT | Brand | 1.64 | 0.90% | A |  | rows~140, 0.768ms |  |  |  |  |  |  |
-| 2 | `0xFDB1D8615B27F96D` | `SELECT [SettingValue] FROM [StoreSetting] WHERE [SettingKey] = @SettingKey` | SELECT | StoreSetting | 6.18 | 3.38% | A |  | rows~1, 0.312ms |  |  |  |  |  |  |
-| 3 | `0x57083C831FBABE20` | `SELECT [FlagKey], [Enabled], [Rollout] FROM [FeatureFlag]` | SELECT | FeatureFlag | 9.41 | 5.15% | A |  | rows~85, 0.563ms |  |  |  |  |  |  |
-| 4 | `0x61AC3BDB0619D600` | `SELECT [WarehouseID], [Code], [Name] FROM [Warehouse]` | SELECT | Warehouse | 0.0422 | 0.02% | C |  | rows~12, 0.312ms |  |  |  |  |  |  |
-| 5 | `0x0253E46183218663` | `SELECT o.[SalesOrderID], o.[OrderNumber], l.[ProductID], l.[Quantity], l.[UnitPrice] FROM [SalesOrder] o JOIN [SalesOrderLine] l ON l.[Sa...` | SELECT | SalesOrder, SalesOrderLine | 1.91 | 1.04% | A |  | joins=1, rows~4, 2.28ms |  |  |  |  |  |  |
-| 6 | `0xBF0498C3B5E8BD52` | `SELECT TOP (200) [EventID], [EventType], [EntityID], [EventTime] FROM [Audit].[EventLog] WHERE [EntityID] = @EntityID AND [EventTime] BET...` | SELECT | EventLog | 0.0404 | 0.02% | C |  | rows~200, 96.3ms |  |  |  |  |  |  |
-| 7 | `0xEA2423F36607A6FE` | `SELECT [ShipmentID], [Carrier], [ShippedDate], [DeliveredDate] FROM [Shipment] WHERE [TrackingNumber] = @TrackingNumber` | SELECT | Shipment | 5.09 | 2.78% | A |  | rows~1, 0.594ms |  |  |  |  |  |  |
-| 8 | `0x88BF8EE1D634B98E` | `SELECT p.[ProductID], p.[Sku], p.[Name], b.[Name] AS [Brand] FROM [Product] p WITH (NOLOCK) JOIN [Brand] b ON b.[BrandID] = p.[BrandID] W...` | SELECT | Product, Brand | 2.21 | 1.21% | A |  | joins=1, rows~24, 8.84ms |  |  |  |  |  |  |
-| 9 | `0x9A123DFBF60D59A1` | `SELECT po.[PurchaseOrderID], po.[Status], po.[OrderedDate] FROM [PurchaseOrder] po WHERE po.[SupplierID] = @SupplierID ORDER BY po.[Order...` | SELECT | PurchaseOrder | 0.0393 | 0.02% | C |  | rows~25, 8.12ms |  |  |  |  |  |  |
+| 1 | `0xDD2E562051788685` | `SELECT [CustomerID], [FirstName], [LastName] FROM [Customer] WHERE [Email] = @Email` | SELECT | Customer | 1.88 | 1.03% | A |  | rows~1, 0.784ms |  |  |  |  |  |  |
+| 2 | `0x3BE9AE87BC4E81FC` | `SELECT [BrandID], [Name], [Country] FROM [Brand]` | SELECT | Brand | 1.8 | 0.98% | A |  | rows~140, 0.768ms |  |  |  |  |  |  |
+| 3 | `0x57083C831FBABE20` | `SELECT [FlagKey], [Enabled], [Rollout] FROM [FeatureFlag]` | SELECT | FeatureFlag | 8.93 | 4.89% | A |  | rows~85, 0.563ms |  |  |  |  |  |  |
+| 4 | `0x2919320F917A4A39` | `SELECT [CustomerID], [Email], [FirstName], [LastName], [Phone] FROM [Customer] WHERE [CustomerID] = @CustomerID` | SELECT | Customer | 5.87 | 3.21% | A |  | rows~1, 0.543ms |  |  |  |  |  |  |
+| 5 | `0x61AC3BDB0619D600` | `SELECT [WarehouseID], [Code], [Name] FROM [Warehouse]` | SELECT | Warehouse | 0.0375 | 0.02% | C |  | rows~12, 0.312ms |  |  |  |  |  |  |
+| 6 | `0xBF0498C3B5E8BD52` | `SELECT TOP (200) [EventID], [EventType], [EntityID], [EventTime] FROM [Audit].[EventLog] WHERE [EntityID] = @EntityID AND [EventTime] BET...` | SELECT | EventLog | 0.038 | 0.02% | C |  | rows~200, 96.3ms |  |  |  |  |  |  |
+| 7 | `0x5903995B9B42F531` | `SELECT pol.[ProductID], pol.[Quantity], pol.[UnitCost] FROM [PurchaseOrderLine] pol WHERE pol.[PurchaseOrderID] = @PurchaseOrderID` | SELECT | PurchaseOrderLine | 0.0324 | 0.02% | C |  | rows~30, 6.82ms |  |  |  |  |  |  |
+| 8 | `0xEA2423F36607A6FE` | `SELECT [ShipmentID], [Carrier], [ShippedDate], [DeliveredDate] FROM [Shipment] WHERE [TrackingNumber] = @TrackingNumber` | SELECT | Shipment | 5.74 | 3.14% | A |  | rows~1, 0.594ms |  |  |  |  |  |  |
+| 9 | `0x88BF8EE1D634B98E` | `SELECT p.[ProductID], p.[Sku], p.[Name], b.[Name] AS [Brand] FROM [Product] p WITH (NOLOCK) JOIN [Brand] b ON b.[BrandID] = p.[BrandID] W...` | SELECT | Product, Brand | 2.29 | 1.26% | A |  | joins=1, rows~24, 8.84ms |  |  |  |  |  |  |

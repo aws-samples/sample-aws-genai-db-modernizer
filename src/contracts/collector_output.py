@@ -77,6 +77,10 @@ Version History:
   ``View.referenced_tables`` and resolves a statement on a view to its base tables.
   Backward compatible: every new field defaults to None.
 - 5.6 (2026-11-05, #1651): Optional Trigger.events: every DML event a trigger fires on
+- 5.7 (2026-11-06, #1893): Added optional ``QueryPattern.rate_window_seconds`` and
+  ``QueryPattern.rate_window_basis`` (observed, uptime, stats_reset or assumed_24h): the
+  window each statement's execution count was divided by for its rates, and how it was
+  chosen. Backward compatible: both default to None (not recorded).
 """
 
 import re
@@ -885,6 +889,26 @@ class QueryPattern(BaseModel):
         ..., ge=0, description="Average frequency of this query pattern per hour"
     )
     calls_per_second: float | None = Field(None, ge=0, description="Average calls per second")
+    rate_window_seconds: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "The seconds the execution count was divided by for frequency_per_hour and "
+            "calls_per_second (#1893); None when not recorded (an output written before "
+            "it, or a Performance Insights statement, which reports its own rate)"
+        ),
+    )
+    rate_window_basis: Literal["observed", "uptime", "stats_reset", "assumed_24h"] | None = Field(
+        None,
+        description=(
+            "How rate_window_seconds was chosen (src.shared.rate_window, #1893): observed "
+            "(the statement's own window of at least 60 s: last_seen - first_seen, or "
+            "PostgreSQL 17's time since stats_since), uptime (the server's uptime), "
+            "stats_reset (PostgreSQL's time since pg_stat_statements was reset) or "
+            "assumed_24h (no window known). A shorter observed window blends toward the "
+            "fallback and is counted under its basis. None when not recorded"
+        ),
+    )
     tables_accessed: list[str] = Field(
         ...,
         min_length=1,
@@ -1168,7 +1192,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.6",
+        default="5.7",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

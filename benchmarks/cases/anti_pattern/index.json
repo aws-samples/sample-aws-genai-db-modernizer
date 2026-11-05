@@ -28,6 +28,19 @@
       ]
     },
     {
+      "id": "wordpress-simple-cache-read",
+      "path": "wordpress-simple-cache-read",
+      "sample": "wordpress",
+      "anti_pattern": "simple-cache-read",
+      "intent": "wordpress: whether queries show the `simple-cache-read` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-simple-cache-read.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "mysql",
+        "anti-pattern",
+        "simple-cache-read"
+      ]
+    },
+    {
       "id": "discourse-frequent-full-scan",
       "path": "discourse-frequent-full-scan",
       "sample": "discourse",

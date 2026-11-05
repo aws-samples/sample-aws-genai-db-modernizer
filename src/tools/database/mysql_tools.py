@@ -8,11 +8,18 @@ All queries execute on a remote automation instance via SSM Run Command.
 No direct database connection from the collector.
 """
 
+import functools
 import hashlib
 import logging
 import re
 
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
+from src.shared.rate_window import (
+    ServerWindow,
+    first_row_figure,
+    server_window,
+    statement_rate_fields,
+)
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
@@ -241,6 +248,18 @@ class MySQLRemoteCollector:
             ORDER BY event_object_table, trigger_name
         """)
 
+    def stats_window(self) -> ServerWindow | None:
+        """The window the server's statement counters cover (#1893): its ``Uptime``
+        (``performance_schema`` resets with the server). ``SHOW GLOBAL STATUS`` answers
+        on every MySQL and MariaDB version, where ``performance_schema.global_status``
+        needs MySQL 5.7 (with ``show_compatibility_56`` off) or MariaDB 10.5. None when
+        it can't be read."""
+        try:
+            rows = self._query("SHOW GLOBAL STATUS LIKE 'Uptime'")
+        except Exception:  # noqa: BLE001 -- no uptime: the rates fall back to 24 hours
+            return None
+        return server_window(uptime_seconds=first_row_figure(rows, "Value"))
+
     # -------------------------------------------------------------------
     # Global status metrics (cache, temp tables)
     # -------------------------------------------------------------------
@@ -321,6 +340,8 @@ class MySQLRemoteCollector:
 
         patterns = []
         reader = LiveQueryReader("mysql", "mysql_tools")
+        # #1893: read once, and only if a statement has no usable window of its own.
+        counters_window = functools.cache(self.stats_window)
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
@@ -336,8 +357,8 @@ class MySQLRemoteCollector:
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "mysql"),
                     "execution_count": exec_count,
-                    "frequency_per_hour": exec_count / 24,
-                    "calls_per_second": exec_count / (24 * 3600),
+                    # #1893: over the digest's FIRST_SEEN to LAST_SEEN, else the uptime.
+                    **statement_rate_fields(exec_count, first_seen, last_seen, counters_window),
                     "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                     "execution_time_ms_max": float(r.get("max_time_ms") or 0),

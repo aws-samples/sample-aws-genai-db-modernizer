@@ -25,6 +25,6 @@ Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; rati
 
 | # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | redesign | acceptable | after redesign | ideal | rationale |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `413c99e44698` | `SELECT option_name , option_value FROM wp_options WHERE autoload = ?` | SELECT | wp_options | 1.44 | 0.65% | B |  | rows~247, 1.27ms |  |  |  |  |  |  |
-| 2 | `329367a24ba8` | `SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME` | SELECT | wp_wc_tax_rate_classes | 1.26 | 0.57% | B |  | rows~2, 0.253ms |  |  |  |  |  |  |
-| 3 | `d4bf16d6ce4e` | `SELECT SQL_CALC_FOUND_ROWS wp_posts . ID FROM wp_posts WHERE ? = ? AND wp_posts . post_parent = ? AND wp_posts . post_type = ? AND ( ( wp...` | SELECT | wp_posts | 1.24 | 0.56% | B |  | rows~0, 0.363ms |  |  |  |  |  |  |
+| 1 | `52da34b1e5fb` | `SELECT p . ID FROM wp_posts p WHERE post_type = ? AND p . post_title = ? AND p . post_status IN (...) ORDER BY p . post_date_gmt ASC LIMI...` | SELECT | wp_posts | 1.73 | 0.71% | A |  | rows~0, 0.357ms |  |  |  |  |  |  |
+| 2 | `329367a24ba8` | `SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME` | SELECT | wp_wc_tax_rate_classes | 1.65 | 0.67% | A |  | rows~2, 0.253ms |  |  |  |  |  |  |
+| 3 | `d4bf16d6ce4e` | `SELECT SQL_CALC_FOUND_ROWS wp_posts . ID FROM wp_posts WHERE ? = ? AND wp_posts . post_parent = ? AND wp_posts . post_type = ? AND ( ( wp...` | SELECT | wp_posts | 1.63 | 0.66% | A |  | rows~0, 0.363ms |  |  |  |  |  |  |

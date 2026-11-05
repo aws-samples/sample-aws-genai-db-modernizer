@@ -91,7 +91,10 @@ MEMBER = f"{SAMPLE}-collection.json"
 # Fixed so the zip is byte-identical across runs (a ZipInfo needs a date).
 ZIP_DATE = (2026, 10, 13, 0, 0, 0)
 COLLECTED_AT = "2026-10-13 06:00:00.000"
-WINDOW_SECONDS = 24 * 3600  # offline_parser reads execution_count as a 24 h window
+# Each statement's count is drawn for a 24 h target rate; since #1893 the parser divides
+# it by the row's own first_seen to last_seen window (about 19 to 30 hours here), so the
+# sample's rates differ from WORKLOAD's by that ratio.
+WINDOW_SECONDS = 24 * 3600
 
 # ---------------------------------------------------------------------------
 # Schema: (schema, table, rows, columns, primary key, foreign keys, indexes)

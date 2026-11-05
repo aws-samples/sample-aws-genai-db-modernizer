@@ -3491,6 +3491,7 @@ def compute_report_facts(
     price_list: Mapping[str, Any] | None = None,
     derived_copy_sync: Mapping[str, Any] | None = None,
     row_counts: Mapping[str, Any] | None = None,
+    rate_windows: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3516,6 +3517,9 @@ def compute_report_facts(
     ``row_counts`` is the collection's row counts by basis and the sizing assumption for
     the unknown ones (``src.shared.row_counts.row_count_facts``, #1636), which needs the
     collection: synthesis passes it, and a report rebuilt without the collection has None.
+    ``rate_windows`` is how many statements' call rates used each window basis
+    (``src.shared.rate_window.rate_window_facts``, #1893), which needs the collection:
+    synthesis passes it, and a report rebuilt without the collection has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3668,6 +3672,8 @@ def compute_report_facts(
         "derived_copy_sync": dict(derived_copy_sync) if derived_copy_sync is not None else None,
         # #1636: the row counts by basis, and the sizing assumption for the unknown ones.
         "row_counts": dict(row_counts) if row_counts is not None else None,
+        # #1893: the window basis of each statement's call rate, and the 24-hour assumption.
+        "rate_windows": dict(rate_windows) if rate_windows is not None else None,
     }
 
 

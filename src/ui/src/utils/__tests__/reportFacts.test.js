@@ -20,6 +20,7 @@ import {
   resolvedRisksBySeverityText,
   tradeOffCountOf,
   realityCheckDecisions,
+  rateWindowStatementOf,
   rowCountStatementOf,
   tradeOffsByTab,
   tradeOffTabLabel,
@@ -352,6 +353,27 @@ describe('derivedCopySyncOf (#1527)', () => {
     expect(derivedCopySyncOf({ facts: { derived_copy_sync: null } }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({ facts: {} }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({}, 'RISK-002')).toBeNull();
+  });
+});
+
+describe('rateWindowStatementOf (#1893)', () => {
+  const statement =
+    "execution counts are divided by each statement's own observed window (156 statements), the server uptime (82), or an assumed 24 hours (0); costs assume that rate runs continuously";
+
+  test('is the facts sentence as it is', () => {
+    expect(rateWindowStatementOf({ facts: { rate_windows: { observed_count: 156, statement } } })).toBe(statement);
+  });
+
+  test('is null for a collection with no statements, and for a report without the fact', () => {
+    expect(rateWindowStatementOf({ facts: { rate_windows: { statement_count: 0, statement: null } } })).toBeNull();
+    expect(rateWindowStatementOf({ facts: { rate_windows: null } })).toBeNull();
+    expect(rateWindowStatementOf({ facts: {} })).toBeNull();
+    expect(rateWindowStatementOf({})).toBeNull();
+    expect(rateWindowStatementOf(null)).toBeNull();
+  });
+
+  test('the results page labels it', () => {
+    expect(enMessages['analysis-results.cost-breakdown.rate-windows']).toBe('Call rates');
   });
 });
 

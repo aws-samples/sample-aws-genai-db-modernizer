@@ -79,7 +79,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2057,6 +2057,12 @@ const AnalysisResultsPage = memo(() => {
                   {rowCountStatementOf(synthesis) && (
                     <Box fontSize="body-s" color="text-body-secondary">
                       <span data-figure="row-counts">{t('analysis-results.cost-breakdown.row-counts')}: {rowCountStatementOf(synthesis)}.</span>
+                    </Box>
+                  )}
+                  {/* #1893: what the call rates rest on (a report fact) */}
+                  {rateWindowStatementOf(synthesis) && (
+                    <Box fontSize="body-s" color="text-body-secondary">
+                      <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
                     </Box>
                   )}
                   <Box fontSize="body-s" color="text-body-secondary">
