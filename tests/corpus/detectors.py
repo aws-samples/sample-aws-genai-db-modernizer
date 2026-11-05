@@ -535,9 +535,6 @@ NOT_CORPUS_MODULES: dict[str, str] = {
 # heuristic of their own, with why.
 NOT_OTHER_SQL_HEURISTICS: dict[str, str] = {
     "src/tools/database/mysql_tools.py:_version_gte": "compares version strings",
-    "src/tools/database/sqlserver_tools.py:_decode_query_text": (
-        "undoes the live query's backslash escapes; reads no SQL syntax"
-    ),
     "src/tools/database/filter_columns.py:_read_word": "a helper of where_columns, registered",
     "src/tools/database/sql_cte.py:_blank": "blanks a span drop_cte_references masked",
     "src/tools/database/sql_cte.py:_visible_ctes": "a helper of drop_cte_references, registered",

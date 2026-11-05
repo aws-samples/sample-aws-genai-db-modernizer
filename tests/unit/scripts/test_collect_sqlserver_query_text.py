@@ -242,3 +242,24 @@ def test_live_backslash_cut_off_at_the_end_is_kept() -> None:
     row = {"query_id": "0x01", "query_text": "SELECT 'C:\\", "execution_count": 50}
     (pattern,) = _live_patterns([row])
     assert pattern["query_text"] == "SELECT 'C:\\"
+
+
+@pytest.mark.passes_on_main
+def test_a_leading_line_comment_tag_ends_at_its_line() -> None:
+    """docs/contracts/assess.md: a SQL Server collection made with the current script or
+    live collector keeps a leading ``--`` tag, and the statement after it (#1874); in
+    an older one the tag ran into the statement and is not read."""
+    tagged = "-- controller='cart',action='show'\r\nSELECT [ProductID] FROM [Product] WHERE [ProductID] = @Id"
+    raw = _sample()
+    raw["queries"][0] = {**raw["queries"][0], "query_text": _offline_text(tagged)}
+    digest = raw["queries"][0]["digest"]
+    queries, _ = _parsed(raw)
+    (live,) = _live_patterns([_live_row(tagged)])
+    for q in (queries[digest], live):
+        assert q["query_tags"] == ["controller='cart',action='show'"]
+    assert queries[digest]["tables_accessed"] == ["trailgear.Product"]
+    assert live["tables_accessed"] == ["Product"]
+    # An older, flattened collection: the tag runs into the statement and is not read.
+    raw["queries"][0]["query_text"] = _flat(tagged)
+    old, _ = _parsed(raw)
+    assert old[digest]["query_tags"] == []
