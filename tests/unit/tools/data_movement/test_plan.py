@@ -560,7 +560,7 @@ def test_written_plans_are_the_registered_contract_and_read_back(tmp_path: Path)
         model = contract_for_artifact(path)
         assert model is (HubPlan if path.endswith("/hub/plan.json") else DataMovementPlan)
         plan = load_contract(model, store.read_json(path), artifact=path)
-        assert plan.contract_version == current_version(model)
+        assert plan.contract_version == current_version(model)  # type: ignore[attr-defined]
     # Writing again gives the same bytes.
     first = [(tmp_path / p).read_bytes() for p in written]
     write_plans(store, "shop", "job-1")
@@ -796,7 +796,7 @@ def test_a_key_token_is_read_through_the_entity_attribute_not_as_a_column() -> N
 def test_a_constant_dynamodb_attribute_is_not_a_gap() -> None:
     """``entity_name = "wp_comments"`` and a sparse-index flag (#1531): the design carries the
     literal, so a writer can build the attribute with no source column."""
-    attrs = [
+    attrs: list[dict] = [
         {"name": "post_id", "source_table": "shop.orders", "source_column": "id"},
         {
             "name": "entity_name",

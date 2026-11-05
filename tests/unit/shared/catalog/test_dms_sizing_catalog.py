@@ -30,9 +30,14 @@ def test_lob_rules_name_types_per_dialect():
     assert "bytea" in lob.types["postgresql"] and 1 <= lob.default_max_kb <= lob.limited_max_kb
 
 
+def test_the_gate_lag_limit_is_30_seconds_with_a_reason():
+    gate = dms_sizing().gate
+    assert gate.max_lag_seconds == 30 and "EventsPollInterval" in gate.why
+
+
 def _write(tmp_path: Path, rows: str) -> Path:
     path = tmp_path / "dms_sizing.toml"
-    path.write_text(rows + '\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
+    path.write_text(rows + '\n[gate]\nmax_lag_seconds = 30\nwhy = "w"\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
                     'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\n'
                     '[lob.types]\nmysql = ["text"]\npostgresql = ["text"]\n'
                     '[lob.scalars]\npostgresql = ["int4"]\n')  # fmt: skip
@@ -159,3 +164,19 @@ def test_the_committed_rows_include_the_storage_the_pricing_page_lists():
     included = {r.instance_class: r.included_storage_gb for r in dms_sizing().rows}
     assert included["dms.t3.medium"] == 50
     assert {v for k, v in included.items() if "r6i" in k} == {100}
+
+
+@pytest.mark.passes_on_main  # main refuses the whole file: it has no [gate] field
+@pytest.mark.parametrize("value", ["0", "-1", "2.5", '"30"'])
+def test_a_bad_gate_lag_limit_is_refused(tmp_path, value):
+    path = _write(tmp_path, _ROW.format(id="a", cls="dms.t3.medium", bounds=""))
+    path.write_text(path.read_text().replace("max_lag_seconds = 30", f"max_lag_seconds = {value}"))
+    with pytest.raises(CatalogError):
+        load_dms_sizing(path)
+
+
+def test_a_missing_gate_section_is_refused(tmp_path):
+    path = _write(tmp_path, _ROW.format(id="a", cls="dms.t3.medium", bounds=""))
+    path.write_text(path.read_text().replace('[gate]\nmax_lag_seconds = 30\nwhy = "w"\n', ""))
+    with pytest.raises(CatalogError):
+        load_dms_sizing(path)

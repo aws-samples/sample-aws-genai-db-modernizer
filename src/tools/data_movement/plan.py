@@ -77,6 +77,7 @@ from src.contracts.data_movement_plan import (
     UnsupportedItem,
 )
 from src.shared import catalog
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
@@ -105,7 +106,7 @@ _DEFAULT = _Default()
 # Defaults the plan states in its notes; nothing measured them for the job.
 HUB_PARTITIONS = 3
 HEARTBEAT_INTERVAL_MS = 10_000
-MAX_LAG_SECONDS = 5
+MAX_LAG_SECONDS = 5  # every tool but DMS; step 1's DMS limit is the sizing catalog's gate
 # The incremental-snapshot signalling table each Debezium wave names on its source.
 SIGNAL_TABLE = "debezium_signal"
 
@@ -1138,6 +1139,11 @@ def _replica_of_non_relational(table: str, engine: str, owner: str, reads: int) 
     )
 
 
+def _max_lag_seconds(is_dms: bool) -> int:
+    """The gate's lag limit: step 1's DMS tool takes the sizing catalog's (#1869)."""
+    return dms_sizing().gate.max_lag_seconds if is_dms else MAX_LAG_SECONDS
+
+
 def _gates(
     job: _JobView,
     wave: Mapping[str, Any],
@@ -1194,7 +1200,7 @@ def _gates(
     gates = Gates(
         wave_gate=str(wave.get("gate") or ""),
         parity=parity,
-        max_lag_seconds=MAX_LAG_SECONDS,
+        max_lag_seconds=_max_lag_seconds(is_first),
         lagging_reads=sorted(lagging, key=lambda r: (r.table, r.engine)),
     )
     return gates, unsupported
@@ -1273,7 +1279,7 @@ def _plan_wave(
     gates, gaps = _gates(job, wave, source_engine, targets, read_tables, base_tables, is_first)
     unsupported.extend(gaps)
     notes.append(
-        f"The lag gate is {MAX_LAG_SECONDS} seconds of capture lag, a default to tune against "
+        f"The lag gate is {_max_lag_seconds(tool == 'dms')} seconds of capture lag, a default to tune against "
         "the lagging reads' tolerance"
     )
     replication = _dms_replication(job, wave, base_tables) if tool == "dms" else None

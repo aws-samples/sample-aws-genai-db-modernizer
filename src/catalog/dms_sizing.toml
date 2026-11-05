@@ -53,6 +53,12 @@ included_storage_gb = 100
 why = "Memory-optimized (64 GiB), the starting point above 2 TB or 5,000 writes per second."
 note = "Above 2 TB or 5,000 writes per second, size the replication instance with the customer's team: split the tables across tasks or choose a larger class before the full load."
 
+[gate]
+# The step 1 plan's gates.max_lag_seconds: the DMS gate (src/tools/data_movement/dms_gate.py)
+# fails when a CDCLatencySource or CDCLatencyTarget datapoint in its window reaches it.
+max_lag_seconds = 30
+why = "AWS DMS's MySQL source polls the binary log every EventsPollInterval seconds when idle (5 s by default), so an idle, caught-up task reports about 5 s; 30 s leaves room for apply time while still catching a backlog."
+
 [lob]
 # Limited LOB mode needs the largest LOB value; the collector records each column's declared
 # maximum (max_length), which bounds every stored value, so a table whose LOB columns all

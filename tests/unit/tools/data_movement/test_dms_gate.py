@@ -11,6 +11,7 @@ import pytest
 
 from src.contracts.dms_gate import NOT_VALIDATED
 from src.contracts.transformation_contract import Finding
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.cutover_message import CUTOVER_MESSAGES
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.dms_gate import (
@@ -93,6 +94,16 @@ def test_lag_over_the_threshold_fails():
     check = lag_check(_view(target=(1.0, 7.5, 2.0)), 5, 15)
     assert check.status == "fail" and check.evidence["CDCLatencyTarget_max"] == "7.5"
     assert lag_check(_view(source=(), target=()), 5, 15).status == "pending"
+
+
+def test_an_idle_task_passes_the_dms_limit_and_a_growing_backlog_fails_it():
+    limit = dms_sizing().gate.max_lag_seconds
+    idle = _view(source=(2.0, 5.0, 4.0), target=(2.0, 6.0, 5.0))
+    assert lag_check(idle, 5, 15).status == "fail"  # the old limit flapped on idle polling
+    assert lag_check(idle, limit, 15).status == "pass"
+    backlog = _view(source=(5.0, 5.0, 5.0), target=(6.0, 20.0, 45.0))
+    check = lag_check(backlog, limit, 15)
+    assert check.status == "fail" and check.evidence["CDCLatencyTarget_max"] == "45"
 
 
 def test_the_window_is_configurable():
