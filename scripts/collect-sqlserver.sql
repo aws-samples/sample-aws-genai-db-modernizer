@@ -222,11 +222,13 @@ SET @metadata = (
         CONVERT(NVARCHAR(50), SERVERPROPERTY('ProductVersion')) AS product_version,
         CONVERT(NVARCHAR(50), SERVERPROPERTY('Edition')) AS edition,
         CONVERT(NVARCHAR(50), SERVERPROPERTY('ProductLevel')) AS product_level,
-        CONVERT(BIGINT, (
-            SELECT SUM(size) * 8.0 / 1024 / 1024 / 1024
+        -- size counts 8 KB pages: * 8.0 / 1024 / 1024 is GB, as a FLOAT the way the
+        -- live collector reads it, so a database under 1 GB is a fraction, not 0 (#1872).
+        CAST((
+            SELECT SUM(size) * 8.0 / 1024 / 1024
             FROM sys.master_files
             WHERE database_id = DB_ID()
-        )) AS database_size_gb,
+        ) AS FLOAT) AS database_size_gb,
         CONVERT(NVARCHAR(30), GETDATE(), 121) AS collected_at,
         -- The capture settings (#384): query_limit null when there is no cap.
         JSON_QUERY((
