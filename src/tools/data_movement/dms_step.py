@@ -227,6 +227,14 @@ def _checked(inputs: Step1Inputs) -> Step1Inputs:
         raise DmsStepError(
             f"every step 1 rule is blocked: fix their findings, then run {_CONTRACT_SCRIPT}"
         )
+    # The database name goes into CREATE DATABASE/USE and the commented grants of
+    # step-1.ddl.sql (#1860): only a name the DMS endpoints take, never a quote or a
+    # line break that would end its quotes or its comment.
+    database = plan.source.database
+    for key in _database_name_keys(inputs):
+        if not re.fullmatch(_DB_NAME_PATTERN[key], database):
+            raise DmsStepError(f"the source database name {database!r} does not match "
+                               f"{_DB_NAME_PATTERN[key]} ({key})")  # fmt: skip
     by_table = {r.source_table: r for r in contract.rules}
     for table in contract_tables(contract):
         for value in (table.schema, table.name):
@@ -241,6 +249,17 @@ def _checked(inputs: Step1Inputs) -> Step1Inputs:
     return dataclasses.replace(
         inputs, skipped=skipped_rules(contract), unsupported=unsupported_fields(contract)
     )
+
+
+def _database_name_keys(inputs: Step1Inputs) -> list[str]:
+    """The endpoint settings whose database name pattern the source database must match:
+    the target's, and the source's when it is PostgreSQL (``render_dms_template`` sets
+    those two parameters to it)."""
+    source = SOURCE_ENDPOINTS.get(inputs.plan.source.engine)
+    keys = {TARGET_ENDPOINTS[inputs.contract.target.engine][1]}
+    if source and source[1] == "PostgreSqlSettings":
+        keys.add(source[1])
+    return sorted(keys)
 
 
 def bundle_inputs(bundle: DmsStepBundle) -> Step1Inputs:

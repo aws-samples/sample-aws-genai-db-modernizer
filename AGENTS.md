@@ -227,7 +227,7 @@ truth.
   `md_code`, `mermaid_label`, ...) when rendered. Generated DDL
   types pass an allowlist (`validate_aurora_type` in
   `src/contracts/aurora_design_delta.py`), so collector text never reaches
-  DDL unchecked.
+  DDL unchecked. <!-- claim: tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_a_type_source_that_returns_an_unchecked_type_is_refused, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_column_ddl_is_built_in_one_place_and_it_runs_the_allowlist, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_every_ddl_column_type_is_the_allowlists_answer, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_collector_text_in_generated_ddl_is_only_quoted_or_commented, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_step1_ddl_takes_the_source_schema_and_database_only_as_plain_names, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_step1_refuses_a_source_database_that_is_not_a_plain_name, tests/unit/tools/schema/aurora_common/test_collector_text_never_reaches_ddl.py::test_every_ddl_writer_is_reviewed -->
 - Engine/query assignment is deterministic; a model may explain it, not decide it.
 
 ## Routing changes

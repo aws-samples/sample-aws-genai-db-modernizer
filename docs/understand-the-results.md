@@ -62,7 +62,7 @@ The "recommended engine" in a `table_mappings` entry is the schema design that m
 
 ## The cache layer
 
-ElastiCache is recommended only for hot reads, as a cache-aside layer. It never owns a query and never holds the only copy of the data. If the cache is lost, the system of record (Aurora, DynamoDB or DocumentDB) still has every row.
+ElastiCache is recommended only for hot reads, as a cache-aside layer. It never owns a query and never holds the only copy of the data. If the cache is lost, the system of record (Aurora, DynamoDB or DocumentDB) still has every row. <!-- claim: tests/unit/agents/referee/test_elasticache_never_owns_a_query.py::test_the_ledger_refuses_a_first_move_onto_a_cache, tests/unit/agents/referee/test_elasticache_never_owns_a_query.py::test_the_ledger_refuses_moving_an_owned_query_onto_a_cache, tests/unit/agents/referee/test_elasticache_never_owns_a_query.py::test_the_ledger_refuses_a_tie_that_names_a_cache, tests/unit/agents/referee/test_only_the_ledger_writes_engines.py::test_only_the_move_ledger_writes_engines_and_ties, tests/unit/agents/referee/test_elasticache_never_owns_a_query.py::test_every_table_a_cache_fronts_has_a_system_of_record_owner, tests/e2e/test_elasticache_never_owns.py::test_no_saved_assignment_or_report_lets_a_cache_own_a_query, tests/e2e/test_elasticache_never_owns.py::test_every_table_a_cache_fronts_keeps_a_system_of_record_owner -->
 
 ## OpenSearch as a read model
 

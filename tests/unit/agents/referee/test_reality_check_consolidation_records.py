@@ -11,6 +11,14 @@ Aurora MySQL stayed, and no record for the 3 aurora_mysql -> elasticache moves. 
 external validator's corrections carry no ``failed_target``, so a correction from
 aurora_mysql matched every aurora_mysql consolidation and deleted the smaller ones.
 
+That run predates the cache overlay (#296): a cache owns no query now, and the move
+ledger refuses a Move onto one (#1860), so these fixtures send those 3 queries to Aurora
+PostgreSQL instead. The records' bookkeeping does not depend on which engine it is.
+It is not a real routing case either: a MySQL source holding both Aurora engines is a
+shape the pipeline never produces (one Aurora engine per run, ADR-031 Decision 6), and
+``aurora_postgresql`` now enters the flag candidate pool (``model_flags``) but stays
+harmless there only because ``_context`` gives it no analysis, so it never scores.
+
 Invariant: applying the recorded moves to ``before_distribution`` gives
 ``after_distribution`` exactly, and savings are claimed only for an engine that ends
 with no in-scope query.
@@ -78,7 +86,7 @@ def _assert_invariant(before: list[dict], after: list[dict], records: list[dict]
 
 
 # ---------------------------------------------------------------------------
-# The wordpress shape: aurora_mysql 22 -> dynamodb 18, elasticache 3, opensearch 1;
+# The wordpress shape: aurora_mysql 22 -> dynamodb 18, aurora_postgresql 3, opensearch 1;
 # 7 corrections (6 on dynamodb, 1 on opensearch), Aurora MySQL stays.
 # ---------------------------------------------------------------------------
 
@@ -91,14 +99,14 @@ def _wordpress_pass2() -> tuple[list[dict], list[dict], list[dict]]:
     )
     revised = (
         [_moved(f"am-{i}", "aurora_mysql", "dynamodb") for i in range(18)]
-        + [_moved(f"am-{i}", "aurora_mysql", "elasticache") for i in range(18, 21)]
+        + [_moved(f"am-{i}", "aurora_mysql", "aurora_postgresql") for i in range(18, 21)]
         + [_moved("am-21", "aurora_mysql", "opensearch")]
         + [_moved(f"doc-{i}", "documentdb", "dynamodb") for i in range(6)]
         + [_qa(f"os-{i}", "opensearch") for i in range(3)]
     )
     records = [
         _record("aurora_mysql", "dynamodb", 18, saved=550),
-        _record("aurora_mysql", "elasticache", 3),
+        _record("aurora_mysql", "aurora_postgresql", 3),
         _record("aurora_mysql", "opensearch", 1),
         _record("documentdb", "dynamodb", 6, saved=500),
     ]
@@ -181,15 +189,16 @@ class TestApplyFlags:
             before,
             revised,
             records,
-            {"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
+            {"aurora_mysql", "dynamodb", "aurora_postgresql", "opensearch"},
         )
 
+    @pytest.mark.passes_on_main
     def test_a_flag_only_touches_the_consolidation_its_query_was_in(self) -> None:
         _, records = self._run()
         pairs = {(c["from_engine"], c["to_engine"]): c["query_count"] for c in records}
         assert pairs == {
             ("aurora_mysql", "dynamodb"): 12,
-            ("aurora_mysql", "elasticache"): 3,
+            ("aurora_mysql", "aurora_postgresql"): 3,
             ("documentdb", "dynamodb"): 6,
         }
 
@@ -255,6 +264,7 @@ class TestApplyFlags:
 
 
 class TestReconcile:
+    @pytest.mark.passes_on_main
     def test_records_reproduce_the_final_distribution(self) -> None:
         before, revised, records = _wordpress_pass2()
         revised, records = _apply(
@@ -262,7 +272,7 @@ class TestReconcile:
             before,
             revised,
             records,
-            {"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
+            {"aurora_mysql", "dynamodb", "aurora_postgresql", "opensearch"},
         )
         # Re-run absorption moved OpenSearch's 3 queries into Aurora MySQL.
         for qa in revised:
@@ -280,9 +290,13 @@ class TestReconcile:
         )
 
         _assert_invariant(before, revised, final)
-        assert _distribution(revised) == {"dynamodb": 18, "aurora_mysql": 10, "elasticache": 3}
+        assert _distribution(revised) == {
+            "dynamodb": 18,
+            "aurora_mysql": 10,
+            "aurora_postgresql": 3,
+        }
         by_pair = {(c["from_engine"], c["to_engine"]): c for c in final}
-        assert by_pair[("aurora_mysql", "elasticache")]["action"] == "partial"
+        assert by_pair[("aurora_mysql", "aurora_postgresql")]["action"] == "partial"
         assert by_pair[("opensearch", "aurora_mysql")]["saved_cost_estimate"] == 450
         assert by_pair[("documentdb", "dynamodb")]["saved_cost_estimate"] == 500
 
@@ -351,10 +365,11 @@ class TestReconcile:
         assert final[0]["action"] == "partial" and final[0]["saved_cost_estimate"] == 0
         _assert_invariant(before, after, final)
 
+    @pytest.mark.passes_on_main
     def test_reason_is_refreshed_when_the_retained_queries_change(self) -> None:
         before = [_qa(q, "aurora_mysql") for q in ("a", "b", "c", "d")]
-        # b was retained on aurora_mysql, then the sweep moved it to elasticache.
-        after = [_qa("a", "dynamodb"), _qa("b", "elasticache"), _qa("c", "aurora_mysql")]
+        # b was retained on aurora_mysql, then the sweep moved it to aurora_postgresql.
+        after = [_qa("a", "dynamodb"), _qa("b", "aurora_postgresql"), _qa("c", "aurora_mysql")]
         after.append(_qa("d", "aurora_mysql"))
         record = {
             **_record("aurora_mysql", "dynamodb", 1, action="partial"),
