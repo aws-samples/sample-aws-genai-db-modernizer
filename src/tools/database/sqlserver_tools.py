@@ -445,7 +445,10 @@ class SQLServerRemoteCollector:
             query_text = _decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
             # The text-hash fallback hashes the text with its line breaks and tabs as
-            # spaces, as the query read before #1874, so no query_id changes.
+            # spaces, the form hashed before #1874. A statement of 256 characters or
+            # fewer keeps its id; a longer one used to be cut at sqlcmd's old default
+            # width before it was hashed, and now hashes whole (#1884). The id only
+            # comes from the text when the row has no query_hash.
             query_id = str(r.get("query_id") or _hash(_flattened(query_text)))
             shape = reader.fields(query_id, query_text)
 
@@ -654,8 +657,8 @@ def _decode_query_text(text: str) -> str:
 
     The SQL writes each backslash as ``\\\\`` first, then CR, LF and tab as ``\\r``,
     ``\\n`` and ``\\t``, so reading the escapes left to right gives the text back. A
-    backslash before any other character, or a last one cut off by the output's width,
-    is kept as it is.
+    backslash before any other character, or a last one with nothing after it, is kept as
+    it is.
     """
     return _ESCAPE_RE.sub(lambda m: _ESCAPED.get(m.group(1), m.group(0)), text)
 

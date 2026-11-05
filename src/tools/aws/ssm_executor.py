@@ -142,7 +142,10 @@ def _build_sql_command(
         )
     elif engine == "sqlserver":
         # -s $'\t': tab separator
-        # -W: trim trailing whitespace from each column
+        # -y 0: unlimited width for variable-length columns. Without it sqlcmd shows
+        #       NVARCHAR(MAX) (statement text) at 256 characters (#1884). -W cannot be
+        #       combined with -y 0, so sqlcmd pads each column and _parse_tabular_output
+        #       strips every value, which is what -W did.
         # -k 1: replace control characters in output with single space (prevents tabs/newlines in
         #       data from breaking the parser)
         # -C: trust server certificate. sqlcmd v18 makes encryption mandatory and cert
@@ -157,7 +160,7 @@ def _build_sql_command(
         return (
             f"{cred_fetch} && "
             f'sqlcmd -S {host},{port} -U "$DB_USER" -P "$DB_PASS" '
-            f"-d {database} -s $'\\t' -W -k 1 -C -Q '{safe_sql}'"
+            f"-d {database} -s $'\\t' -y 0 -k 1 -C -Q '{safe_sql}'"
         )
     elif engine == "oracle":
         # sqlplus requires SET commands to produce parseable tab-separated output.
