@@ -95,6 +95,7 @@ from src.agents.referee.query_scoring import (
     waiver_table,
 )
 from src.agents.referee.reality_check import justification_verdicts
+from src.agents.referee.routine_units import RoutineFollowers, follow_reason, unplaced_reason
 from src.agents.referee.routing_trace import RoutingTrace
 from src.agents.referee.table_assignments import (
     derive_table_assignments,
@@ -357,9 +358,21 @@ class AssignmentResolver:
         # as a homogeneous source only ever had one Aurora candidate to begin with.
         aurora_engine_choice: AuroraEngineChoice | None = None
         both_aurora = AURORA_ENGINES & set(analysis_outputs)
+        # A statement on temporary objects that follows its routine (#1891, ADR-031
+        # Decision 4 Amendment 20) is never placed by its own score: it counts in no
+        # total below and joins no unit, and is placed after the rest (Step 7b), on its
+        # routine's engine. The same predicate every later pass reads, whatever the
+        # engine scope.
+        followers = RoutineFollowers.of(queries, source_scope)
         if source_engine not in SOURCE_ENGINE_TO_AURORA and len(both_aurora) == 2:
             totals = {
-                engine: float(sum(scores.get(q["query_id"], {}).get(engine, 0) for q in queries))
+                engine: float(
+                    sum(
+                        scores.get(q["query_id"], {}).get(engine, 0)
+                        for q in queries
+                        if q["query_id"] not in followers
+                    )
+                )
                 for engine in both_aurora
             }
             features = detect_heterogeneous_features(collector_output, source_engine)
@@ -455,6 +468,8 @@ class AssignmentResolver:
         # for a tie-break or the Aurora fallback has no entry yet (``handled``).
         ledger = MoveLedger()
         handled: set[str] = set()
+        # Followers (#1891) are placed in Step 7b, after every other query.
+        handled.update(followers.routine_of)
         # The scorer's hard gate per (query, engine), read from the exclusion
         # notes above (after the homogeneous-Aurora pruning), never re-run.
         gates_by_query: dict[str, dict[str, str]] = {
@@ -962,10 +977,19 @@ class AssignmentResolver:
         # the earlier assignment is left as-is rather than left unset; since
         # only Aurora passes the sql_admin gate (#766), that is the Aurora
         # fallback.
+        # A follower (#1891) goes to the engine its routine's other statements are now
+        # all on; with none, or several, or one that may not own it, the pin below is
+        # its last resort.
+        follow_targets = {
+            qid: target
+            for qid in followers.routine_of
+            if (target := followers.target(qid, ledger.engines)) is not None
+        }
         utility_qids = [
             query["query_id"]
             for query in queries
-            if is_utility_statement(access_text(query), query.get("tables_accessed"), source_scope)
+            if query["query_id"] not in follow_targets
+            and is_utility_statement(access_text(query), query.get("tables_accessed"), source_scope)
         ]
         procedure_internal_reasons = {
             query["query_id"]: internal_reason
@@ -1032,6 +1056,42 @@ class AssignmentResolver:
                 # through earlier (Step 6b or the Aurora fallback) leaves no
                 # customer choice open: the pin's Move records no tie, which
                 # clears it in the ledger.
+        for qid, target in follow_targets.items():
+            routine = followers.routine_of[qid]
+            # Not scored on its own: the Move records its routine's statements' mean
+            # score on the engine.
+            leader_scores = [
+                float(c)
+                for leader in followers.leaders[routine]
+                if ledger.engines.get(leader) == target
+                and (c := ledger.confidence_of(leader)) is not None
+            ]
+            apply(
+                ledger,
+                qid,
+                target,
+                pass_=MovePass.CO_DEPENDENCY,
+                reason_code=ReasonCode.ROUTINE_FOLLOW,
+                score_after=(sum(leader_scores) / len(leader_scores) if leader_scores else None),
+                # No candidate ladder: it was not placed by its own scores.
+                evidence=MoveEvidence(),
+            )
+            assigned_reason[qid] = follow_reason(procedure_internal_reasons[qid], routine, target)
+        # The last resort with no relational engine to pin to (an engine scope that
+        # leaves Aurora out): no engine in the scope can serve it, as for any query whose
+        # fallback is out of scope (#1329). Never a scored pick or a tie.
+        unplaced_followers = {
+            qid: followers.routine_of[qid]
+            for qid in followers.routine_of
+            if qid not in follow_targets and not utility_engine
+        }
+        for qid in unplaced_followers:
+            apply_unservable(
+                ledger,
+                qid,
+                reason_code=ReasonCode.FALLBACK_NO_SCORE,
+                closest_engine=None,
+            )
 
         # Step 7c: Populate the opt-in routing trace (#497), off by default
         # (``routing_trace is None``). Reads ``exclusion_notes``, ``anti_pattern_map``
@@ -1135,7 +1195,7 @@ class AssignmentResolver:
             # pin it to, it keeps its collected tables like any other routed query.
             query_tables[qid] = (
                 []
-                if utility_engine and qid in procedure_internal_reasons
+                if qid in procedure_internal_reasons and (utility_engine or qid in followers)
                 else query.get("tables_accessed", [])
             )
 
@@ -1149,26 +1209,25 @@ class AssignmentResolver:
                 # #1329: no engine in the scope; its record names the gates and the
                 # out-of-scope engine the fallback rule would have used.
                 move = next(m for m in reversed(ledger.moves) if m.query_id == qid)
-                unservable.append(
-                    UnservableQueryAssignment.model_validate(
-                        unservable_record(
-                            qid,
-                            query_tables.get(qid, []),
-                            rule=move.reason_code.value,
-                            scope=scope or (),
-                            closest_engine=move.evidence.closest_engine,
-                            gates=unservable_gates(
-                                move.evidence.candidates, move.evidence.group_gates
-                            ),
-                            group_key=move.group_key,
-                            group=(
-                                ("write group" if qid in write_members else "co-dependency group")
-                                if move.group_key
-                                else None
-                            ),
-                        )
-                    )
+                record = unservable_record(
+                    qid,
+                    query_tables.get(qid, []),
+                    rule=move.reason_code.value,
+                    scope=scope or (),
+                    closest_engine=move.evidence.closest_engine,
+                    gates=unservable_gates(move.evidence.candidates, move.evidence.group_gates),
+                    group_key=move.group_key,
+                    group=(
+                        ("write group" if qid in write_members else "co-dependency group")
+                        if move.group_key
+                        else None
+                    ),
                 )
+                if qid in unplaced_followers:
+                    record["reason"] = unplaced_reason(
+                        procedure_internal_reasons[qid], unplaced_followers[qid]
+                    )
+                unservable.append(UnservableQueryAssignment.model_validate(record))
                 continue
             # The query's score on its engine, set by its Moves (#1373): a
             # utility pin or a fallback reads its engine's score like any other.

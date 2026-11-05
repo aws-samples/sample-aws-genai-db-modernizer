@@ -994,6 +994,8 @@ def _build_queries(
             parsed_facts=p.get("parsed_facts"),
             query_tags=p.get("query_tags") or [],
             query_tags_dropped=p.get("query_tags_dropped") or 0,
+            # The routines the statement ran in (#1891); None when not collected.
+            parent_routine_ids=p.get("parent_routine_ids"),
             has_text_search=p.get("has_text_search"),
             text_search_type=p.get("text_search_type"),
             has_time_range_filter=p.get("has_time_range_filter"),
@@ -1105,6 +1107,8 @@ def _dict_to_query_pattern(d: dict, *, source_engine: str | None) -> QueryPatter
         parsed_facts=d.get("parsed_facts"),
         query_tags=d.get("query_tags") or [],
         query_tags_dropped=d.get("query_tags_dropped") or 0,
+        # The routines the statement ran in (#1891); None when the collection has none.
+        parent_routine_ids=d.get("parent_routine_ids"),
         has_text_search=d.get("has_text_search"),
         text_search_type=d.get("text_search_type"),
         # A collector that read the flag keeps its answer, False included: the live

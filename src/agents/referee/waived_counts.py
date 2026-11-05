@@ -34,7 +34,7 @@ strand is left pinned and gated, for the feasibility review to block on
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Container, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -204,6 +204,7 @@ def replace_lapsed_counts(
     source_compatible: str | None,
     pinned: Literal["move", "hold"],
     actor: MoveActor = MoveActor.RULE,
+    followers: Container[str] = (),
 ) -> CountReplacement:
     """Re-place every waived count whose table's source of truth the pass changed.
 
@@ -224,7 +225,9 @@ def replace_lapsed_counts(
         {str(_get(qa, "assigned_engine")) for qa in in_scope if _get(qa, "assigned_engine")}
         - set(CACHE_OVERLAY_ENGINES)
     )
-    settled = settled_counts(qas)
+    # The statements on temporary objects that follow their routine (#1891) count in
+    # no settled workload.
+    settled = settled_counts(qas, exclude=followers)
     moved: list[CountMove] = []
     held: list[str] = []
     unserved: list[str] = []

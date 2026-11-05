@@ -489,10 +489,51 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
                 f"| {escaping.md_cell(reason_text or '-')} |"
             )
         out.append("")
+        # This engine's statements that follow their routine (#1891).
+        following = int((counts.get("procedure_internal_routine_counts") or {}).get(eng) or 0)
+        if following:
+            out += [_procedure_internal_routine_text(following), ""]
     internal = int(counts.get("procedure_internal_queries") or 0)
     if internal:
         out += [_procedure_internal_text(internal), ""]
     return out
+
+
+def _followers_elsewhere_md(report: dict[str, Any]) -> list[str]:
+    """One sentence per non-relational engine its statements on temporary objects follow
+    their routine to (#1891), from ``procedure_internal_routine_counts``: the relational
+    engines state theirs under "Queries on Aurora by table"."""
+    counts = (report_facts(report).get("query_group_counts") or {}).get(
+        "procedure_internal_routine_counts"
+    ) or {}
+    return [
+        line
+        for engine, n in counts.items()
+        if engine not in _RELATIONAL_ENGINES and int(n or 0)
+        for line in (_procedure_internal_routine_on_text(display_engine(engine), int(n)), "")
+    ]
+
+
+def _procedure_internal_routine_on_text(engine_name: str, n: int) -> str:
+    """:func:`_procedure_internal_routine_text` for an engine outside the relational
+    section, named first."""
+    return f"On {engine_name}, {_procedure_internal_routine_text(n)}"
+
+
+def _procedure_internal_routine_text(n: int) -> str:
+    """The sentence on procedure-internal statements that follow their routine (#1891),
+    from ``procedure_internal_routine_queries``."""
+    if n == 1:
+        return (
+            "1 statement on temporary tables or table variables follows the routine it "
+            "runs in: it is placed on the engine that routine's other statements are on, "
+            "and is not scored on its own."
+        )
+    return (
+        f"{n} statements on temporary tables or table variables follow the routine each "
+        "runs in: each is placed on the engine its routine's other statements are on, "
+        "and is not scored on its own."
+    )
 
 
 def _procedure_internal_text(n: int) -> str:
@@ -767,6 +808,8 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
         ]
         if placed_share_note(facts):
             out += [placed_share_note(facts), ""]
+        # #1891: the statements on temporary objects a non-relational engine serves.
+        out += _followers_elsewhere_md(report)
         # #1146: the same in-scope queries, as the query patterns they make.
         out += query_patterns_md(report)
         notes = _engine_role_notes_md(

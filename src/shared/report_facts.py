@@ -2117,8 +2117,18 @@ NO_SOURCE_TABLE_GROUP_LABELS = frozenset({UNRESOLVED_TABLE_GROUP_LABEL}) | (
 # A SQL Server statement on temporary tables or table variables only (#1876): kept with
 # the utility statements, never a busiest table either.
 PROCEDURE_INTERNAL_GROUP_LABEL = "Procedure-internal statements"
+# One that follows the routine it runs in, on that routine's engine (#1891): it names no
+# table either.
+PROCEDURE_INTERNAL_ROUTINE_GROUP_LABEL = "Procedure-internal statements, following their routine"
 BLAME_GROUP_LABELS = (
-    frozenset({UTILITY_GROUP_LABEL, PROCEDURE_INTERNAL_GROUP_LABEL}) | NO_SOURCE_TABLE_GROUP_LABELS
+    frozenset(
+        {
+            UTILITY_GROUP_LABEL,
+            PROCEDURE_INTERNAL_GROUP_LABEL,
+            PROCEDURE_INTERNAL_ROUTINE_GROUP_LABEL,
+        }
+    )
+    | NO_SOURCE_TABLE_GROUP_LABELS
 )
 
 
@@ -2383,7 +2393,9 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     own queries and calls/s, busiest first with the two blame groups last, and each
     engine's query total; and the in-scope queries no group of their own engine serves
     (``ungrouped_queries``, #226); and how many queries the procedure-internal group
-    holds (``procedure_internal_queries``, #1876). None for a report with no
+    holds (``procedure_internal_queries``, #1876), and how many statements follow their
+    routine, in all and per engine (``procedure_internal_routine_queries`` and
+    ``procedure_internal_routine_counts``: the report's ``routine_followers``, #1891). None for a report with no
     ``query_groups`` field.
     """
     groups = report.get("query_groups")
@@ -2427,6 +2439,7 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         engine_rows.sort(key=lambda r: (bool(r["blame"]), -float(r["calls_per_second"])))
         query_counts[engine] = sum(int(r["query_count"]) for r in engine_rows)
         rows += [{k: v for k, v in r.items() if k != "blame"} for r in engine_rows]
+    follower_counts = routine_follower_counts(report)
     return {
         "group_count": len(indexed),
         "listed_group_count": len(listed),
@@ -2438,17 +2451,36 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "relational_rows": rows,
         "relational_query_counts": query_counts,
         "ungrouped_queries": _ungrouped_query_rows(report, [g for _, g in indexed]),
-        "procedure_internal_queries": len(
-            {
-                str(q)
-                for _, g in indexed
-                if g.get("group_name") == PROCEDURE_INTERNAL_GROUP_LABEL
-                for ap in g.get("access_patterns") or []
-                if isinstance(ap, dict)
-                for q in ap.get("query_ids") or []
-            }
-        ),
+        "procedure_internal_queries": _group_query_count(indexed, PROCEDURE_INTERNAL_GROUP_LABEL),
+        # Every follower, on any engine, and per engine: a non-relational engine's groups
+        # come from its design, and no design serves a follower (#1891).
+        "procedure_internal_routine_queries": sum(follower_counts.values()),
+        "procedure_internal_routine_counts": follower_counts,
     }
+
+
+def routine_follower_counts(report: Mapping[str, Any]) -> dict[str, int]:
+    """``{engine: count}`` of the report's ``routine_followers`` (#1891), by engine id,
+    each query counted once; engines with none are left out."""
+    by_engine: dict[str, set[str]] = {}
+    for f in report.get("routine_followers") or []:
+        if isinstance(f, dict) and f.get("query_id") and f.get("engine"):
+            by_engine.setdefault(str(f["engine"]), set()).add(str(f["query_id"]))
+    return {engine: len(ids) for engine, ids in sorted(by_engine.items())}
+
+
+def _group_query_count(indexed: Iterable[tuple[int, dict]], label: str) -> int:
+    """How many distinct queries the query groups named ``label`` hold."""
+    return len(
+        {
+            str(q)
+            for _, g in indexed
+            if g.get("group_name") == label
+            for ap in g.get("access_patterns") or []
+            if isinstance(ap, dict)
+            for q in ap.get("query_ids") or []
+        }
+    )
 
 
 def _ungrouped_query_rows(report: dict[str, Any], groups: list[dict[str, Any]]) -> list[dict]:
@@ -2468,6 +2500,13 @@ def _ungrouped_query_rows(report: dict[str, Any], groups: list[dict[str, Any]]) 
         if isinstance(ap, dict) and ap.get("engine")
         for q in ap.get("query_ids") or []
     }
+    # A statement on temporary objects that follows its routine (#1891) is left out of
+    # every design on purpose: no group serving it is no gap.
+    followers = {
+        str(f.get("query_id"))
+        for f in report.get("routine_followers") or []
+        if isinstance(f, dict) and f.get("query_id")
+    }
     missing: dict[str, set[str]] = {}
     for pattern in report.get("query_pattern_groups") or []:
         if not isinstance(pattern, dict):
@@ -2477,7 +2516,7 @@ def _ungrouped_query_rows(report: dict[str, Any], groups: list[dict[str, Any]]) 
             if not isinstance(engine, str) or not engine or engine in CACHE_ENGINES:
                 continue
             qid = str(m.get("query_id") or "")
-            if qid and (engine, qid) not in served:
+            if qid and qid not in followers and (engine, qid) not in served:
                 missing.setdefault(engine, set()).add(qid)
     designed = {
         str(r.get("target")): bool(r.get("schema_design_available"))

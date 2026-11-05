@@ -1620,6 +1620,9 @@ def build_collection(seed: int = SEED) -> dict[str, Any]:
             for n, t, s, timing, ev in TRIGGERS
         ],
         "queries": queries,
+        # The statement-to-routine links (#1891): the synthetic workload runs ad hoc, so
+        # no statement ran in a routine.
+        "query_routines": [],
         "global_stats": {
             "innodb_buffer_pool_read_requests": 918_442_310,
             "innodb_buffer_pool_reads": 4_118_224,

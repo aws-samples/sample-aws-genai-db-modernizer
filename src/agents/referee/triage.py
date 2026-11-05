@@ -614,9 +614,16 @@ def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str
         for qid in sig.query_ids:
             query_signal_map[qid].append(sig.signal)
 
+    # A statement on temporary objects that follows its routine (#1891) neither scores
+    # nor gates: it needs whatever its routine's engine has, so it requires nothing.
+    from src.agents.referee.routine_units import routine_followers
+
+    followers = routine_followers(queries, source)
     result: dict[str, list[str]] = {}
     for q in queries:
         qid = q.get("query_id", "")
+        if qid in followers:
+            continue
         query_text = access_text(q)  # #1875: a view's body is the statement's too
         sigs = query_signal_map.get(qid, [])
         caps = detect_required_capabilities(query_text, sigs, q.get("tables_accessed"), source)

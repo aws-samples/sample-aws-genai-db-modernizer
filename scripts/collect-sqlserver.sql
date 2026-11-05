@@ -84,6 +84,7 @@ DECLARE @views NVARCHAR(MAX);
 DECLARE @procedures NVARCHAR(MAX);
 DECLARE @triggers NVARCHAR(MAX);
 DECLARE @queries NVARCHAR(MAX);
+DECLARE @query_routines NVARCHAR(MAX);
 DECLARE @global_stats NVARCHAR(MAX);
 
 -- Schema filter shared across sections
@@ -280,6 +281,27 @@ SET @queries = (
     ) g
     WHERE @query_limit IS NULL OR g.time_rank <= @query_limit
     ORDER BY g.time_rank
+    FOR JSON PATH
+);
+
+-- ===================== 1b. Statement routines (#1891) =====================
+-- The procedure, function or trigger each statement shape ran in, keyed by the same
+-- digest as section 1: sys.dm_exec_sql_text(sql_handle).objectid names the module a
+-- cached statement belongs to (NULL for an ad hoc or prepared statement). One row per
+-- (digest, routine); a shape two routines both run has two rows. Its own section,
+-- because SQL Server 2016 has no STRING_AGG to list them on the statement's row. Read
+-- right after section 1, before the schema queries evict plans from the cache.
+SET @query_routines = (
+    SELECT DISTINCT
+        CONVERT(VARCHAR(40), qs.query_hash, 1) AS digest,
+        OBJECT_SCHEMA_NAME(st.objectid, st.dbid) AS routine_schema,
+        OBJECT_NAME(st.objectid, st.dbid) AS routine_name
+    FROM sys.dm_exec_query_stats qs
+    CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+    WHERE st.objectid IS NOT NULL
+      AND st.dbid = DB_ID()
+      AND OBJECT_NAME(st.objectid, st.dbid) IS NOT NULL
+    ORDER BY digest, routine_schema, routine_name
     FOR JSON PATH
 );
 
@@ -638,6 +660,7 @@ SELECT
     '"procedures":' + ISNULL(@procedures, '[]') + ',' +
     '"triggers":' + ISNULL(@triggers, '[]') + ',' +
     '"queries":' + ISNULL(@queries, '[]') + ',' +
+    '"query_routines":' + ISNULL(@query_routines, '[]') + ',' +
     '"global_stats":' + ISNULL(@global_stats, '{}') + ',' +
     '"io_stats":' + ISNULL(@io_stats, '{}') + ',' +
     '"wait_events":' + ISNULL(@wait_events, '[]') + ',' +

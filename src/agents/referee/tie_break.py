@@ -67,7 +67,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from typing import Any
 
 from src.shared import catalog
@@ -196,7 +196,9 @@ def source_compatible_engine_survives(
     )
 
 
-def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:
+def settled_counts(
+    query_assignments: Iterable[Any], *, exclude: Container[str] = ()
+) -> dict[str, int]:
     """Each engine's share of the SETTLED workload (ADR-031 Decision 12), from
     a finished list of query assignments rather than a live resolver run (#550,
     #549).
@@ -220,15 +222,23 @@ def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:
     plain dict (the same dual shape ``table_assignments.retained_engine_for``
     already accepts), so this works on raw collector-shaped assignments and
     on validated contracts alike.
+
+    ``exclude`` are queries left out: the statements on temporary objects that follow
+    their routine (#1891, ADR-031 Decision 4 Amendment 20), which the first assignment's
+    snapshot never counts either (it is taken before they are placed).
     """
     counts: dict[str, int] = {}
     for qa in query_assignments:
         if isinstance(qa, Mapping):
             engine = qa.get("assigned_engine")
             tied = qa.get("tied_engines")
+            qid = qa.get("query_id")
         else:
             engine = getattr(qa, "assigned_engine", None)
             tied = getattr(qa, "tied_engines", None)
+            qid = getattr(qa, "query_id", None)
+        if qid in exclude:
+            continue
         if engine and not tied:
             counts[engine] = counts.get(engine, 0) + 1
     return counts

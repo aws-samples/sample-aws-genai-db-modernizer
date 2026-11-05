@@ -252,9 +252,17 @@ def filter_collector_for_assignment(
                 for table in q.get("tables_accessed", []):
                     in_scope_tables.add(table)
 
-    # Filter queries
+    # Filter queries. A statement on temporary objects that follows its routine (#1891)
+    # is scratch work of that routine, not an access pattern: no design serves it.
     original_queries = collector_output.get("queries", {}).get("query_patterns", [])
-    filtered_queries = [q for q in original_queries if q.get("query_id") in in_scope_query_ids]
+    from src.agents.referee.routine_units import RoutineFollowers
+
+    followers = RoutineFollowers.from_collector(collector_output)
+    filtered_queries = [
+        q
+        for q in original_queries
+        if q.get("query_id") in in_scope_query_ids and q.get("query_id") not in followers
+    ]
 
     # Filter tables to only those referenced by filtered queries. Resolved
     # through TableNameResolver (#319) rather than an exact string match: a

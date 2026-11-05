@@ -370,6 +370,8 @@ def test_query_group_facts_cover_every_group() -> None:
         "relational_query_counts": {},
         "ungrouped_queries": [],
         "procedure_internal_queries": 0,
+        "procedure_internal_routine_queries": 0,
+        "procedure_internal_routine_counts": {},
     }
     pg = "aurora_postgresql"
 
@@ -401,13 +403,24 @@ def test_query_group_facts_cover_every_group() -> None:
                     "engines": [pg],
                     "access_patterns": [ap(["p1", "p2"], 99.0), ap(["p2"], 1.0)],
                 },
-            ]
+                {
+                    "group_name": "Procedure-internal statements, following their routine",
+                    "engines": [pg],
+                    "access_patterns": [ap(["r1"], 4.0), ap(["r1"], 1.0)],
+                },
+            ],
+            # Every follower counts, a DynamoDB one no group lists included (#1891).
+            "routine_followers": [
+                {"query_id": "r1", "routine_id": "dbo.p", "engine": pg},
+                {"query_id": "r2", "routine_id": "dbo.p", "engine": "dynamodb"},
+                "not a follower",
+            ],
         }
     )
     assert facts == {
-        "group_count": 5,
+        "group_count": 6,
         "listed_group_count": 1,
-        "relational_only_group_count": 4,
+        "relational_only_group_count": 5,
         "relational_only_engines": [pg],
         "listed_group_indexes": [2],
         # Busiest first by the engine's own calls/s; the blame groups last.
@@ -416,12 +429,16 @@ def test_query_group_facts_cover_every_group() -> None:
             {"engine": pg, "group_index": 0, "query_count": 2, "calls_per_second": 1.0},
             {"engine": pg, "group_index": 5, "query_count": 2, "calls_per_second": 100.0},
             {"engine": pg, "group_index": 3, "query_count": 1, "calls_per_second": 50.0},
+            {"engine": pg, "group_index": 6, "query_count": 1, "calls_per_second": 5.0},
         ],
-        "relational_query_counts": {pg: 6},
+        "relational_query_counts": {pg: 7},
         # No query_pattern_groups: no in-scope query list to check against.
         "ungrouped_queries": [],
-        # The procedure-internal group's queries, each once (#1876).
+        # The procedure-internal group's queries, each once (#1876), and every statement
+        # that follows its routine (#1891).
         "procedure_internal_queries": 2,
+        "procedure_internal_routine_queries": 2,
+        "procedure_internal_routine_counts": {pg: 1, "dynamodb": 1},
     }
 
 

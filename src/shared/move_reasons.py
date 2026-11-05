@@ -79,6 +79,7 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.TIE_CLEARED: "tie settled",
     ReasonCode.TIE_DECIDED_FOR_YOU: "tie decided automatically",
     ReasonCode.GROUP_MEAN: "co-dependency group",
+    ReasonCode.ROUTINE_FOLLOW: "follows its routine",
     ReasonCode.WRITE_GROUP: "write group: one source of truth",
     ReasonCode.OVERRIDE_TEXT_SEARCH: "full-text search",
     ReasonCode.OVERRIDE_UTILITY: "administration statement",
@@ -252,6 +253,11 @@ def _first_assignment(move: Move) -> str:
             f"engine, its source of truth, and {to} has the best mean score across the "
             f"group's queries ({format_score(group_score)})."
         )
+    if code == ReasonCode.ROUTINE_FOLLOW:
+        return (
+            f"Placed on {to} with the routine it runs in: a statement on temporary "
+            "objects follows its routine's other statements and is not scored on its own."
+        )
     if code == ReasonCode.OVERRIDE_TEXT_SEARCH:
         return f"Routed to {to} because the query needs full-text search."
     if code == ReasonCode.OVERRIDE_UTILITY:
@@ -319,6 +325,8 @@ def _engine_change(move: Move) -> str:
         why = "the customer chose it"
     elif code == ReasonCode.TIE_DECIDED_FOR_YOU:
         why = _decided_for_you(move)
+    elif code == ReasonCode.ROUTINE_FOLLOW:
+        why = "it follows the other statements of the routine it runs in, which moved there"
     elif code == ReasonCode.GROUP_CUSTOMER_PROPAGATION:
         why = (
             "it moves with a co-dependent query the customer re-routed"
@@ -400,6 +408,8 @@ def _same_engine(move: Move) -> str:
         return f"Kept on {to}: {_decided_for_you(move)}."
     if code == ReasonCode.GROUP_MEAN:
         return f"Kept on {to} with its co-dependency group."
+    if code == ReasonCode.ROUTINE_FOLLOW:
+        return f"Kept on {to} with the routine it runs in."
     if code == ReasonCode.WRITE_GROUP:
         return f"Kept on {to} with its write group, the table's source of truth."
     return f"Stays on {to} ({rule_label(code)})."

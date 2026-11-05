@@ -32,6 +32,8 @@ REASON_CODES: Mapping[ReasonCode, PublicReasonCode] = {
     R.TIE_DECIDED_FOR_YOU: "tie_rule",
     R.GROUP_MEAN: "co_dependency",
     R.GROUP_CUSTOMER_PROPAGATION: "co_dependency",
+    # A statement on temporary objects that follows its routine's engine (#1891).
+    R.ROUTINE_FOLLOW: "co_dependency",
     R.WRITE_GROUP: "write_group",
     # Moved with a write of the same table: a table's writes share one engine.
     R.WRITE_GROUP_CUSTOMER_PROPAGATION: "write_group",

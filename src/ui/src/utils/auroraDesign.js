@@ -44,9 +44,12 @@ export const isAuroraEngine = (engine) => AURORA_ENGINE_KEYS.includes(engine);
 // engineering report's "Queries on Aurora by table" subsection applies.
 // Mirrors PROCEDURE_INTERNAL_GROUP_LABEL in src/shared/report_facts.py (#1876).
 export const PROCEDURE_INTERNAL_GROUP = 'Procedure-internal statements';
+// Mirrors PROCEDURE_INTERNAL_ROUTINE_GROUP_LABEL in src/shared/report_facts.py (#1891).
+export const PROCEDURE_INTERNAL_ROUTINE_GROUP = 'Procedure-internal statements, following their routine';
 export const AURORA_BLAME_LABELS = [
   'Utility and session statements',
   PROCEDURE_INTERNAL_GROUP,
+  PROCEDURE_INTERNAL_ROUTINE_GROUP,
   NO_SOURCE_TABLE,
 ];
 

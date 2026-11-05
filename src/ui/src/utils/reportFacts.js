@@ -57,6 +57,21 @@ export function procedureInternalQueryCountOf(synthesis) {
   return typeof n === 'number' ? n : 0;
 }
 
+// #1891: the statements on temporary objects that follow their routine, per engine id
+// (facts.query_group_counts.procedure_internal_routine_counts); {} when the facts block
+// has none.
+export function procedureInternalRoutineCountsOf(synthesis) {
+  const counts = factsOf(synthesis) && factsOf(synthesis).query_group_counts;
+  const byEngine = counts && counts.procedure_internal_routine_counts;
+  return byEngine && typeof byEngine === 'object' ? byEngine : {};
+}
+
+// #1891: one engine's count of them; 0 when it has none.
+export function procedureInternalRoutineCountOn(synthesis, engine) {
+  const n = procedureInternalRoutineCountsOf(synthesis)[engine];
+  return typeof n === 'number' ? n : 0;
+}
+
 // "Trade-offs (12)": the trade-offs that still apply (facts.trade_off_count).
 export function tradeOffCountOf(synthesis, shownTradeOffs) {
   const n = factsOf(synthesis) && factsOf(synthesis).trade_off_count;

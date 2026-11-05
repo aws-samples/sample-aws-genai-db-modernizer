@@ -97,3 +97,11 @@ def test_a_move_to_unservable_is_unservable() -> None:
         reason_code=ReasonCode.FALLBACK_NO_GROUP_OWNER,
     )
     assert public_reason_code(move) == "unservable"
+
+
+def test_a_statement_that_follows_its_routine_reports_as_co_dependency() -> None:
+    """#1891: under the frozen 1.3 codes, the closest honest one (ADR-031 Amendment 20)."""
+    from src.assessment.reason_codes import REASON_CODES
+    from src.contracts.move_ledger import ReasonCode
+
+    assert REASON_CODES[ReasonCode.ROUTINE_FOLLOW] == "co_dependency"
