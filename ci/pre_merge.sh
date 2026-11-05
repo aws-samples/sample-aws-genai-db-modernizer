@@ -4,30 +4,33 @@
 
 # Cheap pre-merge failsafe: run before pushing or asking for a merge.
 #
-#   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]
+#   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests] [--mutation]
 #
 # fetch main, check the commit hooks are installed, count commits behind, check commit authors and merge conflicts
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
+# with --mutation, the changed hunks no test notices (ci/hunk_revert.py, #1852, minutes), then
 # lint, the zero-token replay of the saved real-model run, the version-pin check
 # (--quick: only what the branch touched), tests (skipped by --quick), the needs_llm_run verdict, the PR body's Evidence check (#1153) and, when the PR's last CI run
 # was red, the command that re-runs its failed tests (#1849). Exits non-zero on missing commit hooks, a refused author, a
 # conflict, a lint, replay or test failure, a contract version problem, a behaviour change
 # under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, a path in
 # ci/docs_impact_map.toml changed with none of its pages and no "Docs:" line, or (with
-# --strict-main-tests) a new or changed test that passes on main.
+# --strict-main-tests) a new or changed test that passes on main. --mutation only warns.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 quick=0
 main_tests=warn
+mutation=0
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     --strict-main-tests) main_tests=strict ;;
     --no-main-tests) main_tests=skip ;;
-    -h | --help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "usage: ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]" >&2; exit 2 ;;
+    --mutation) mutation=1 ;;
+    -h | --help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests] [--mutation]" >&2; exit 2 ;;
   esac
 done
 
@@ -288,6 +291,28 @@ else
   fi
   if [ -n "$(printf '%s' "$details" | tr -d '[:space:]')" ]; then
     printf '%s\n' "$details" | sed '/^$/d; s/^/       /'
+  fi
+fi
+
+# f2. Hunk revert (#1852, AGENTS.md self-review item 2), opt-in because it takes minutes:
+# revert each changed src/ and scripts/ hunk in a disposable worktree, run the new and changed
+# tests, list the hunks no test notices. Advisory: it warns, never fails.
+if [ "$mutation" -eq 0 ]; then
+  note "skip mutation: off (pass --mutation to revert each changed hunk)"
+else
+  mut_log="$(mktemp)"
+  set +e
+  uv run python ci/hunk_revert.py --base "$base" --strict 2>&1 | tee "$mut_log"
+  mut_rc="${PIPESTATUS[0]}"
+  set -e
+  mut_summary="$(grep '^hunk-revert: summary: ' "$mut_log" | tail -n 1 || true)"
+  rm -f "$mut_log"
+  if [ "$mut_rc" -eq 0 ] && [ -n "$mut_summary" ]; then
+    note "ok   mutation: $mut_summary"
+  elif [ "$mut_rc" -eq 1 ] && [ -n "$mut_summary" ]; then
+    note "warn mutation: $mut_summary"
+  else
+    note "warn mutation: could not run (output above)"
   fi
 fi
 

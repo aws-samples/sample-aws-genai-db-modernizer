@@ -163,12 +163,10 @@ def _show(ref: str, path: str) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
-def _changed(base_ref: str) -> int:
-    proc = _git("merge-base", "HEAD", base_ref)
-    if proc.returncode != 0:
-        print(f"error: no merge base between HEAD and {base_ref}", file=sys.stderr)
-        return 2
-    merge_base = proc.stdout.strip()
+def plan(merge_base: str) -> list[str]:
+    """The ``changed`` lines for HEAD against ``merge_base`` (a commit); see the module
+    docstring. ``ci/hunk_revert.py`` runs the ``run`` and ``marked`` ids."""
+    out: list[str] = []
     diff = _git(
         "diff", "--name-status", "-M", "--diff-filter=AMRC", merge_base, "HEAD", "--", "tests"
     )
@@ -177,16 +175,25 @@ def _changed(base_ref: str) -> int:
             continue
         reason = not_run_reason(path)
         if reason is not None:
-            print(f"skip {path} {reason}")
+            out.append(f"skip {path} {reason}")
             continue
         head = _show("HEAD", path)
         if head is None:
             continue
         if module_marked(head):
-            print(f"badmark {path}")
+            out.append(f"badmark {path}")
         base = _show(merge_base, old) if old is not None else None
-        for action, node in changed_tests(path, base, head):
-            print(f"{action} {node}")
+        out += [f"{action} {node}" for action, node in changed_tests(path, base, head)]
+    return out
+
+
+def _changed(base_ref: str) -> int:
+    proc = _git("merge-base", "HEAD", base_ref)
+    if proc.returncode != 0:
+        print(f"error: no merge base between HEAD and {base_ref}", file=sys.stderr)
+        return 2
+    for line in plan(proc.stdout.strip()):
+        print(line)
     return 0
 
 

@@ -259,7 +259,7 @@ This section is a pointer, not a restatement.
 Self-review checklist, from findings that recur in review. Each item says what to do, then why.
 
 1. Every new test fails on main. Run it against `origin/main`'s code; the reviewer will, and a test that passes there guards nothing. `./ci/pre_merge.sh` (also with `--quick`) runs the branch's new and changed tests on main's code and lists the ones that pass there; mark a test that guards behaviour main already has `@pytest.mark.passes_on_main` (see ci/README.md).
-2. Revert each part of the fix and check that some test fails. If none fails, that part is untested.
+2. Revert each part of the fix and check that some test fails. If none fails, that part is untested. `./ci/pre_merge.sh --mutation` does it per committed `src/` and `scripts/` hunk (`ci/hunk_revert.py`, minutes) and lists the hunks no new or changed test notices; it skips only Python comment and whitespace hunks.
 3. Cover the negative and edge cases: what must not change, ties, empty input, ambiguity. Bugs hide where the happy path does not look.
 4. The PR body states only what this branch shows: its own test counts, timings and drift. "Covered by existing tests" names the tests. Numbers from another branch mislead the reviewer.
 5. Never bend a sample, fixture or expectation to keep a result. Fix the cause, or change the expectation with a per-query explanation (see [Routing changes](#routing-changes)).
