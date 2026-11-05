@@ -254,6 +254,16 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: facade.table_references(text, dialect).tables,
     ),
     SqlDetector(f"{_FACADE}:access_facts", _access_shape),
+    # #1875: what a view definition projects, and the columns a write names.
+    SqlDetector(
+        f"{_FACADE}:read_view_definition",
+        # Its shape, not the names: a twin renames a hostile quoted name.
+        lambda text, dialect: tuple(
+            (c.source.written, c.name == c.column)
+            for c in facade.read_view_definition(text, dialect).columns
+        ),
+    ),
+    SqlDetector(f"{_FACADE}:written_columns", facade.written_columns),
     SqlDetector(
         f"{_FACADE}:sql_tokens",
         _tokens,
@@ -575,6 +585,10 @@ NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_FACADE}:temp_object_name": (
         "classifies one sqlglot table node (#1876); reached through sql_facts and "
         "table_references"
+    ),
+    f"{_FACADE}:resolve_view_text": (
+        "rewrites a statement with the collector's views resolved (#1875); it detects no "
+        "fact, and the text it returns is read by the registered facts"
     ),
     f"{_QUERY_FACTS}:query_facts": "the cached QueryFacts; each fact is registered",
     f"{_QUERY_FACTS}:read_timestamp_column": "QueryFacts.timestamp_column's schema step",

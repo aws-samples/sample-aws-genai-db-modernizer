@@ -96,6 +96,7 @@ from src.tools.schema.design_metrics import row_count_or_assumed
 from src.tools.sql.access_signature import AccessSignature, scope_signature
 from src.tools.sql.facade import AccessFacts, ColumnFact, ScopeFacts, ScopeSource
 from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 KEY_LOOKUP = "key_lookup"
 KEY_SCOPED = "key_scoped"
@@ -460,7 +461,7 @@ def _workload_keys(
     lookups: dict[tuple[str, str], set[str]] = {}
     signatures: dict[tuple[str, str], set[AccessSignature]] = {}
     for query in queries:
-        facts = query_facts(str(query.get("query_text") or ""), engine).access_facts()
+        facts = query_facts(access_text(query), engine).access_facts()
         if facts.parsed_by != "sqlglot" or facts.truncated_read:
             continue
         qid = str(query.get("query_id") or query.get("query_text") or "")
@@ -918,10 +919,19 @@ def classify_query(
     query: Mapping, keys: SchemaKeys, source_engine: str | None
 ) -> AccessClassification:
     """The access-pattern class of one collected query."""
-    text = str(query.get("query_text") or "")
+    text = access_text(query)
     facts = query_facts(text, source_engine).access_facts()
     result = classify_facts(facts, keys, str(query.get("query_type") or ""))
-    return _with_feature_facts(result, text, source_engine)
+    return _with_view_note(_with_feature_facts(result, text, source_engine), query)
+
+
+def _with_view_note(result: AccessClassification, query: Mapping) -> AccessClassification:
+    """``result`` with its reason saying why a statement on a view was read as written
+    (``view_text_fallback``, #1875): its class is then the one its own text gives."""
+    fallback = query.get("view_text_fallback")
+    if not fallback:
+        return result
+    return replace(result, reason=f"{result.reason} (read as written: {fallback})")
 
 
 def _with_feature_facts(
@@ -1037,10 +1047,12 @@ def _scope_columns(facts: ScopeFacts, keys: SchemaKeys) -> ScopeColumns:
 
 def query_access(query: Mapping, keys: SchemaKeys, source_engine: str | None) -> QueryAccess:
     """:func:`classify_query` plus each scope's resolved columns, from one parse."""
-    text = str(query.get("query_text") or "")
+    text = access_text(query)
     facts = query_facts(text, source_engine).access_facts()
     classification = classify_facts(facts, keys, str(query.get("query_type") or ""))
-    classification = _with_feature_facts(classification, text, source_engine)
+    classification = _with_view_note(
+        _with_feature_facts(classification, text, source_engine), query
+    )
     if facts.truncated_read:
         # A cut-short digest's class is read from its prefix, but the columns it pins
         # are not evidence for the key-access and attribute analyses: the predicates

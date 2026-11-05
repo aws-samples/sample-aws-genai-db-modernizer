@@ -934,7 +934,9 @@ def test_a_view_the_collection_lists_can_be_kept() -> None:
     )
     assert cut.table_ids == sorted(catalog)
     (part_id,) = cut.scope.rewritten_query_ids
-    assert _rows(cut)[part_id]["tables_accessed"] == ["vw_ActiveProduct"]
+    # The part reads the view: it is read on the view's base tables (#1875).
+    assert _rows(cut)[part_id]["tables_accessed"] == ["trailgear.Product", "trailgear.Brand"]
+    assert [v["view_id"] for v in _rows(cut)[part_id]["views_read"]] == ["vw_ActiveProduct"]
     # A crossing statement's part over the view counts as the view's base tables
     # (Product and Brand): top products never reads Brand, so the part is refused.
     over_view = "SELECT v.[ProductID], v.[Name] FROM [vw_ActiveProduct] v"
@@ -946,21 +948,36 @@ def test_a_view_the_collection_lists_can_be_kept() -> None:
     assert error.extra == ["trailgear.Brand"]  # type: ignore[attr-defined]
     result = _assess_cut(cut, "analysis")
     assert [t.table_id for t in result.summary.table_facts] == sorted(CATALOG)
-    assert {s.query_id: s.tables for s in result.statements}[part_id] == ["vw_ActiveProduct"]
-    # Without the view in table_ids, a part over it names a table outside the cut.
+    assert {s.query_id: s.tables for s in result.statements}[part_id] == [
+        "trailgear.Product",
+        "trailgear.Brand",
+    ]
+    # Its join count includes the view's join of Product and Brand (#1875).
+    assert {s.query_id: s.join_count for s in result.statements}[part_id] == 1
+    # Without the view in table_ids, a part over it reads its base tables (#1875), both
+    # kept, so it is placed just the same.
+    without = cut_collection(
+        _whole(), table_ids=CATALOG, parts=[{"from_query_id": effective_price, "query_text": text}]
+    )
+    (part_id,) = without.scope.rewritten_query_ids
+    assert _rows(without)[part_id]["tables_accessed"] == ["trailgear.Product", "trailgear.Brand"]
+    # A view whose base tables are not all kept still names a table outside the cut.
     _refused(
-        CATALOG, [{"from_query_id": effective_price, "query_text": text}], PartTableOutsideCutError
+        ["trailgear.Product"],
+        [{"from_query_id": effective_price, "query_text": text}],
+        PartTableOutsideCutError,
     )
     _refused(["vw_Nope"], [], UnknownTableError)
 
 
 def test_a_view_over_another_services_tables_is_refused() -> None:
     """vw_ActiveProduct reads Product and Brand (its definition, parsed in the source
-    dialect: the collection gives no referenced_tables), both catalog tables: kept with
-    the orders tables it would pull them back in."""
+    dialect by the collector, #1875), both catalog tables: kept with the orders tables it
+    would pull them back in."""
     whole = whole_collector_output()
     (view,) = whole["database_schema"]["views"]
-    assert view["view_id"] == "vw_ActiveProduct" and not view.get("referenced_tables")
+    assert view["view_id"] == "vw_ActiveProduct"
+    assert view["referenced_tables"] == ["trailgear.Product", "trailgear.Brand"]
     error = _refused([*ORDERS, "vw_ActiveProduct"], [], ViewOutsideCutError)
     assert error.view_id == "vw_ActiveProduct"  # type: ignore[attr-defined]
     assert sorted(error.outside) == ["trailgear.Brand", "trailgear.Product"]  # type: ignore[attr-defined]

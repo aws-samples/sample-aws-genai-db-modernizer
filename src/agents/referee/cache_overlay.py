@@ -55,6 +55,7 @@ from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.view_lineage import access_text
 
 if TYPE_CHECKING:
     from src.agents.referee.move_ledger import MoveLedger
@@ -120,7 +121,7 @@ def is_write_query(query: Mapping, source_engine: str | None = None) -> bool:
         return True
     if qtype != "OTHER":
         return False
-    return query_facts(str(query.get("query_text") or ""), source_engine).write_statement_text
+    return query_facts(access_text(query), source_engine).write_statement_text
 
 
 def is_locking_read(query: Mapping, source_engine: str | None = None) -> bool:
@@ -141,7 +142,7 @@ def is_locking_read(query: Mapping, source_engine: str | None = None) -> bool:
     the same cases (``locking_clause_cases.json``, whose ``engine`` field names
     the dialect).
     """
-    return locking_clause(str(query.get("query_text") or ""), source_engine) is not None
+    return locking_clause(access_text(query), source_engine) is not None
 
 
 def can_own(engine: str, query: Mapping | None = None, source_engine: str | None = None) -> bool:
@@ -192,7 +193,7 @@ def cache_pattern(query: Mapping, source_engine: str = "") -> str | None:
     #893) is not a lookup; a prefix ``LIKE 'abc%'`` is a range, which the keyed
     test below decides.
     """
-    text = str(query.get("query_text") or "")
+    text = access_text(query)
     facts = query_facts(text, source_engine)
     if facts.aggregation or facts.text_search or locking_clause(text, source_engine):
         return None

@@ -1615,10 +1615,12 @@ def timestamp_column_trace(collector_output: Mapping) -> dict:
     types = ColumnTypes.from_collector(collector_output)
     if types is None:
         return {"read_by": "column name (the collection has no column types)", "name_fallbacks": []}
+    from src.tools.sql.view_lineage import access_text
+
     engine = source_engine_of(collector_output)
     fallbacks = []
     for q in (collector_output.get("queries") or {}).get("query_patterns") or []:
-        reading = query_facts(q.get("query_text") or "", engine).timestamp_column(types)
+        reading = query_facts(access_text(q), engine).timestamp_column(types)
         if reading.fallbacks:
             fallbacks.append(
                 {

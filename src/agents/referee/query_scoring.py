@@ -75,6 +75,7 @@ from src.tools.analysis.scoring import (
     weighted_confidence,
 )
 from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 ANTI_PATTERN_PENALTIES: dict[str, int] = anti_pattern_penalties()
 CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = capability_signal_engines()
@@ -1008,7 +1009,7 @@ def _structural_gate(
     A capability the catalog waives for the pair (:meth:`ScoringContext.capability_waivers`,
     ADR-031 Decision 2 Amendment 12) is not required, unless ``waive`` is False."""
     query_id = str(query.get("query_id") or "")
-    query_text = query.get("query_text", "")
+    query_text = access_text(query)
     exclusion = check_exclusions(query_id, query_text, engine, ctx.source_engine)
     if exclusion:
         return EngineScore(

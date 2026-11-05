@@ -25,8 +25,9 @@ contract shape but holds only what the group's design uses (issue #272):
   its ``member_query_ids``;
 - the tables those queries touch, with the projected table, column, index and
   foreign-key fields (plus the native ``data_type``), the triggers on those
-  tables (the skill writes ``migration_notes`` for them), and no procedures,
-  views or duplicate top-level ``tables``;
+  tables (the skill writes ``migration_notes`` for them), the views those queries read
+  (``views_read``), each with its definition and how the collector resolved it to base
+  tables (#1875), and no procedures or duplicate top-level ``tables``;
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, and the
   workload-wide ones that name neither, the aggregates and table recommendations
@@ -74,7 +75,15 @@ from src.contracts.analysis_output import (
     key_scoped_writes_in_scope,
     redesign_requirements_in_scope,
 )
-from src.contracts.collector_output import Column, ForeignKey, Index, QueryPattern, Table, Trigger
+from src.contracts.collector_output import (
+    Column,
+    ForeignKey,
+    Index,
+    QueryPattern,
+    Table,
+    Trigger,
+    View,
+)
 from src.contracts.schema_design_input import (
     AgentAggregateRecommendation,
     AgentAntiPattern,
@@ -122,6 +131,16 @@ _AGGREGATE_FIELDS = set(AgentAggregateRecommendation.model_fields) | set(
 )
 _TABLE_REC_FIELDS = set(TableRecommendation.model_fields)
 _TRIGGER_FIELDS = set(Trigger.model_fields)
+_VIEW_FIELDS = {
+    "view_id",
+    "view_name",
+    "schema_name",
+    "definition",
+    "referenced_tables",
+    "referenced_views",
+    "lineage_status",
+    "lineage_reason",
+}
 
 
 def _required(model: type[BaseModel]) -> set[str]:
@@ -139,6 +158,7 @@ _REQUIRED = {
     "aggregate": _required(AggregateRecommendation),
     "table_rec": _required(TableRecommendation),
     "trigger": _required(Trigger),
+    "view": _required(View),
 }
 
 
@@ -169,6 +189,26 @@ def _slim_table(table: dict) -> dict:
         if slim.get(key):
             slim[key] = [_slim(x, fields, kind) for x in slim[key]]
     return slim
+
+
+def _group_views(collector_output: dict, group_queries: list[dict]) -> list[dict]:
+    """The views the group's queries read (#1875), each with its definition and how the
+    collector resolved it to base tables (``referenced_tables``, ``lineage_status``,
+    ``lineage_reason``): a design that meets a view knows what it stands for, and says a
+    view has no source tables only when the collection holds none for it."""
+    named = {
+        str(read.get("view_id"))
+        for q in group_queries
+        for read in q.get("views_read") or []
+        if isinstance(read, dict) and read.get("view_id")
+    }
+    if not named:
+        return []
+    return [
+        _slim(v, _VIEW_FIELDS, "view")
+        for v in collector_output.get("database_schema", {}).get("views") or []
+        if str(v.get("view_id")) in named
+    ]
 
 
 def _split_text(text: str, width: int = QUERY_TEXT_LINE) -> list[str]:
@@ -351,6 +391,9 @@ def build_group_input(
     group_schema: dict[str, Any] = {"tables": [_slim_table(t) for t in group_tables]}
     if triggers:
         group_schema["triggers"] = triggers
+    views = _group_views(collector_output, group_queries)
+    if views:
+        group_schema["views"] = views
     group_queries_section: dict[str, Any] = {
         **queries_header,
         "query_patterns": (

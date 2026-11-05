@@ -28,6 +28,7 @@ from src.tools.analysis.scoring import (
     compute_confidence,
 )
 from src.tools.sql.query_facts import ColumnTypes, query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 
 def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
@@ -66,7 +67,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
     large_result_queries: list[dict] = []
 
     for q in queries:
-        facts = query_facts(q.get("query_text", ""), source_engine)
+        facts = query_facts(access_text(q), source_engine)
 
         # Caching: hot SELECTs, at or above the overlay's inclusive floor (#398)
         if (

@@ -70,6 +70,12 @@ Version History:
   name, version): the extensions installed in the source database, PostgreSQL's
   pg_extension, read by the relational-move gap check. Backward compatible: defaults to
   None (not collected), and the extension gap rules then find nothing.
+- 5.5 (2026-11-05, #1875): Added optional ``View.referenced_views``,
+  ``View.lineage_status``, ``View.lineage_reason``, ``QueryPattern.views_read`` (new
+  ``ViewRead``), ``QueryPattern.view_resolved_text``, ``QueryPattern.view_text_form``
+  and ``QueryPattern.view_text_fallback``; the collector now fills
+  ``View.referenced_tables`` and resolves a statement on a view to its base tables.
+  Backward compatible: every new field defaults to None.
 """
 
 import re
@@ -680,9 +686,53 @@ class View(BaseModel):
         None, description="Whether the view supports INSERT/UPDATE/DELETE operations"
     )
     referenced_tables: list[str] | None = Field(
-        None, description="List of table IDs referenced by this view"
+        None,
+        description=(
+            "Table IDs referenced by this view: the collector fills it with the base tables "
+            "its definition reads, through any views it reads (src.tools.sql.view_lineage, "
+            "#1875); a name the collection has no table for is kept as written"
+        ),
     )
     column_list: list[str] | None = Field(None, description="List of column names in the view")
+    referenced_views: list[str] | None = Field(
+        None,
+        description=(
+            "View IDs this view's definition reads, directly or through another view (#1875)"
+        ),
+    )
+    lineage_status: Literal["resolved", "partial", "unresolved"] | None = Field(
+        None,
+        description=(
+            "How far the collector resolved the view to its base tables (#1875): resolved "
+            "(every relation it reads is a collected table, or a view that resolves), "
+            "partial (some base tables are known; lineage_reason says what is missing) or "
+            "unresolved (no collected base table: no definition, a definition that names "
+            "none, or a view on a cycle of views). None for an output written before #1875"
+        ),
+    )
+    lineage_reason: str | None = Field(
+        None, description="Why lineage_status is not resolved, in plain words (#1875)"
+    )
+
+
+class ViewRead(BaseModel):
+    """One view a statement names, as the collector resolved it (#1875)."""
+
+    view_id: str = Field(..., description="The view's view_id")
+    base_tables: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The base tables the statement reaches through the view (the view's "
+            "referenced_tables); empty when the view is unresolved"
+        ),
+    )
+    written_tables: list[str] | None = Field(
+        None,
+        description=(
+            "When the statement writes the view: the base tables the write changes (the one "
+            "table its written columns come from, else every base table). None for a read"
+        ),
+    )
 
 
 class Procedure(BaseModel):
@@ -828,7 +878,46 @@ class QueryPattern(BaseModel):
     )
     calls_per_second: float | None = Field(None, ge=0, description="Average calls per second")
     tables_accessed: list[str] = Field(
-        ..., min_length=1, description="List of table IDs accessed by this query"
+        ...,
+        min_length=1,
+        description=(
+            "List of table IDs accessed by this query. A view the collector resolved is "
+            "replaced by its base tables (views_read names it, #1875); an unresolved view "
+            "stays as written"
+        ),
+    )
+    views_read: list[ViewRead] | None = Field(
+        None,
+        description=(
+            "The views the statement names, each with the base tables it stands for in "
+            "tables_accessed (#1875); None when it names none"
+        ),
+    )
+    view_resolved_text: str | None = Field(
+        None,
+        description=(
+            "The statement as the database runs it, with each view it names resolved "
+            "(#1875; view_text_form says how), built from the redacted query_text and view "
+            "definitions. Every routing step reads it in place of query_text. None when "
+            "the statement names no view, or cannot be rewritten (view_text_fallback)"
+        ),
+    )
+    view_text_form: Literal["merged", "derived", "base_write"] | None = Field(
+        None,
+        description=(
+            "How view_resolved_text was built (#1875): merged (each view merged in, the "
+            "direct join of its base tables), derived (a view that does not merge, such as "
+            "one with an aggregation, GROUP BY, DISTINCT, TOP/LIMIT or UNION, kept as its "
+            "body in a derived table) or base_write (a write through a column-preserving "
+            "view written onto its base table)"
+        ),
+    )
+    view_text_fallback: str | None = Field(
+        None,
+        description=(
+            "Why a statement that names a view is read as written (#1875): its view is "
+            "unresolved, or the statement cannot be rewritten onto the view's base tables"
+        ),
     )
     rows_returned_avg: float | None = Field(
         None, ge=0, description="Average number of rows returned"
@@ -858,8 +947,15 @@ class QueryPattern(BaseModel):
     db_load_contribution_percent: float | None = Field(
         None, ge=0, le=100, description="Percentage of total database load from this query"
     )
-    has_joins: bool | None = Field(None, description="Whether query contains joins")
-    join_count: int | None = Field(None, ge=0, description="Number of joins in query")
+    has_joins: bool | None = Field(
+        None,
+        description="Whether query contains joins, the joins of the views it reads included (#1875)",
+    )
+    join_count: int | None = Field(
+        None,
+        ge=0,
+        description="Number of joins in query, the joins of the views it reads included (#1875)",
+    )
     has_aggregations: bool | None = Field(None, description="Whether query contains aggregations")
     has_subqueries: bool | None = Field(None, description="Whether query contains subqueries")
     has_text_search: bool | None = Field(
@@ -1064,7 +1160,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.4",
+        default="5.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1098,6 +1194,10 @@ class CollectorOutputContract(BaseModel):
         )
         for pattern in self.queries.query_patterns:
             pattern.query_text = redact_literals(pattern.query_text, engine, settings)
+            if pattern.view_resolved_text:  # #1875: query text too
+                pattern.view_resolved_text = redact_literals(
+                    pattern.view_resolved_text, engine, settings
+                )
             if pattern.query_tags:
                 tags = [redact_comment(tag, engine) for tag in pattern.query_tags]
                 pattern.query_tags = list(dict.fromkeys(tags))

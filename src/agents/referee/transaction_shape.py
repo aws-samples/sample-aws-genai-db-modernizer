@@ -74,6 +74,7 @@ from src.tools.sql.regex_facts import (
     IN_LIST_RE,
     SELECT_WORD_RE,
 )
+from src.tools.sql.view_lineage import access_text
 
 SINGLE_ITEM = "single item"
 BOUNDED = "bounded"
@@ -415,7 +416,7 @@ def transaction_shape(
     if measured is not None:
         return _by_count(measured, f"changes about {measured} row(s) per call (measured)")
     sql = _without_exists_conditions(
-        _readable_sql(str(query.get("query_text") or ""), source.engine if source else None)
+        _readable_sql(access_text(query), source.engine if source else None)
     )
     if query_type in ("INSERT", "REPLACE"):
         return _insert_shape(query, sql, source, keys)

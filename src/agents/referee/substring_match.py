@@ -65,6 +65,7 @@ from src.tools.sql.query_facts import (
     source_engine_of,
 )
 from src.tools.sql.refs import TableRef
+from src.tools.sql.view_lineage import access_text
 
 __all__ = [
     "SubstringMatch",
@@ -344,7 +345,7 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
     out: dict[str, SubstringMatch] = {}
     for query in (collector.get("queries") or {}).get("query_patterns") or []:
         qid = str(query.get("query_id") or "")
-        facts = query_facts(str(query.get("query_text") or ""), source_engine)
+        facts = query_facts(access_text(query), source_engine)
         likes = facts.wildcard_likes
         if not qid or not (likes or facts.pattern_match):
             continue
@@ -496,7 +497,7 @@ def substring_match_risks(
     entries = _entries()
     matches = substring_matches(collector)
     texts = {
-        str(q.get("query_id")): str(q.get("query_text") or "")
+        str(q.get("query_id")): access_text(q)
         for q in (collector.get("queries") or {}).get("query_patterns") or []
         if q.get("query_id")
     }

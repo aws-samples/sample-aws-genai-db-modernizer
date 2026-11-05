@@ -64,6 +64,7 @@ from src.shared.sql_spans import span_settings, use_span_settings, with_span_set
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
+from src.tools.sql.view_lineage import apply_view_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,12 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     metadata stage reads become the active ones for the stages after it (the query and
     definition text each one redacts), and end with the collection."""
     with with_span_settings(None):
-        return _collect_live_stages(inp, ckpt)
+        # #1875: a statement on a view is scored on the view's base tables, its views and
+        # statements read with the same source settings.
+        resolved: CollectorOutputContract = apply_view_lineage(
+            _collect_live_stages(inp, ckpt), "postgresql"
+        )
+        return resolved
 
 
 def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:

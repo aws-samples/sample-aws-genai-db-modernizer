@@ -31,6 +31,7 @@ from typing import Any
 
 from src.tools.sql.access_signature import QuerySignature, query_signature, returned_columns
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.view_lineage import access_text
 
 # The prefix of a pattern id: ``PAT-1``, ``PAT-2``, ... in the order of each pattern's
 # first query in the input.
@@ -83,7 +84,7 @@ def group_by_query_pattern(
         if not qid or qid in seen:
             continue
         seen.add(qid)
-        facts = query_facts(str(query.get("query_text") or ""), source_engine)
+        facts = query_facts(access_text(query), source_engine)
         access = facts.access_facts()
         signature = query_signature(access, facts.write_targets, facts.upsert)
         key: QuerySignature | str = signature if signature is not None else f"query:{qid}"

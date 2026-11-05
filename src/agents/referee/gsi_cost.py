@@ -69,6 +69,7 @@ from src.shared.engine_names import display_engine
 from src.tools.analysis.dynamodb_analysis_tools import STANDARD, write_request_units
 from src.tools.sql.facade import access_facts
 from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 _GB = 1024**3
 
@@ -212,7 +213,7 @@ def gsi_cost_facts(
         """The columns the query's ``UPDATE ... SET`` assigns, read in the source dialect;
         None when the statement does not say (no SET list, or one read only partly)."""
         if qid not in readings:
-            sql = str(queries[qid].get("query_text") or "")
+            sql = access_text(queries[qid])
             facts = access_facts(sql, dialect) if sql else None
             readings[qid] = (
                 facts.assigned_columns

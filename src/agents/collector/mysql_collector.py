@@ -97,6 +97,7 @@ from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 from src.tools.sql.query_tags import QueryTags
 from src.tools.sql.redact import redact_values
+from src.tools.sql.view_lineage import apply_view_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -1545,7 +1546,7 @@ def _build_output(
     installed extensions an offline PostgreSQL collection lists (#1078), kept as
     :func:`source_extensions` reads them."""
     elapsed = time.monotonic() - start
-    return CollectorOutputContract(
+    output = CollectorOutputContract(
         job_id=inp.job_id,
         metadata=Metadata(
             collection_timestamp=datetime.now(UTC),
@@ -1575,6 +1576,9 @@ def _build_output(
         queries=queries,
         metrics=metrics,
     )
+    # #1875: a statement on a view is scored on the view's base tables.
+    resolved: CollectorOutputContract = apply_view_lineage(output, inp.engine.value)
+    return resolved
 
 
 def _build_cred_mgr(inp: CollectorInput) -> AWSCredentialManager | None:

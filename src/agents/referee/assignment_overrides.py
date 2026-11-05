@@ -93,6 +93,7 @@ from src.storage.assignment_versioning import (
     resolve_effective_assignment_version,
 )
 from src.tools.sql.query_facts import remember_collected_facts
+from src.tools.sql.view_lineage import access_text
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +235,7 @@ def _gate_failure(
         score_query_for_engine,
     )
 
-    query_text = (query or {}).get("query_text", "")
+    query_text = access_text(query or {})
     if ctx is None:
         exclusion = check_exclusions(query_id, query_text, engine)
         if exclusion:

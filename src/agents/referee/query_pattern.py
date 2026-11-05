@@ -60,6 +60,7 @@ from src.agents.referee.redesign_findings import (
 from src.shared.catalog.access_classes import class_engine_scores, class_parity_anchors
 from src.tools.analysis.score_weights import table_weights
 from src.tools.sql.query_facts import remember_collected_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import EngineScore
@@ -124,7 +125,7 @@ class QueryPatternModel:
 
     def classification(self, query: Mapping) -> AccessClassification:
         """The access-pattern class of ``query`` (computed once per query)."""
-        memo_key = (str(query.get("query_id") or ""), str(query.get("query_text") or ""))
+        memo_key = (str(query.get("query_id") or ""), access_text(query))
         found = self._classes.get(memo_key)
         if found is None:
             found = classify_query(query, self.keys, self.source_engine)
@@ -365,7 +366,9 @@ def access_patterns_record(
     ``intrinsic`` with its evidence, as the scorer labelled it
     (``query_scoring.anti_pattern_findings``, ADR-031 Decision 2 Amendment 13, #1231):
     only an intrinsic finding costs its engine points, and the designer of the engine
-    that serves the query is given its fixable ones. ``score_dimensions`` and the record's
+    that serves the query is given its fixable ones. ``views_read`` (only on a query that
+    reads a view, #1875): each view and the base tables its ``tables`` name in its place.
+    ``score_dimensions`` and the record's
     ``table_dimensions`` are ``dimensions``' (:func:`recorded_dimensions`, #1471), empty
     when none is given.
     """
@@ -412,6 +415,13 @@ def access_patterns_record(
                 ),
             }
         )
+        if query.get("views_read"):
+            # #1875: the views the query reads and the base tables it was scored on instead.
+            rows[-1]["views_read"] = [
+                {"view_id": v.get("view_id"), "base_tables": list(v.get("base_tables") or [])}
+                for v in query["views_read"]
+                if isinstance(v, Mapping)
+            ]
         rows[-1]["score_dimensions"] = _without_class_pattern(
             rows[-1], scored.get(str(query.get("query_id") or "")) or {}
         )

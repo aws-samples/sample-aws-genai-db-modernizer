@@ -51,6 +51,7 @@ from src.tools.analysis.key_access import KeyAccessReader
 from src.tools.analysis.pattern_catalog_base import HIGH_INGEST_CPS_THRESHOLD
 from src.tools.analysis.scoring import TableProfile
 from src.tools.sql.query_facts import query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 # ==========================================================================
 # Internal helpers
@@ -131,7 +132,7 @@ def _is_admin_statement(query: Mapping, source: SourceScope | None = None) -> bo
     so (``BEGIN``, ``COMMIT``, ``SET``, ``CREATE``, ...)."""
     query_type = str(query.get("query_type") or "").upper()
     return query_type in SKIP_QUERY_TYPES or is_utility_statement(
-        query.get("query_text"), query.get("tables_accessed"), source
+        access_text(query), query.get("tables_accessed"), source
     )
 
 
@@ -227,7 +228,7 @@ def analyze_aurora_common_use_cases(
     for q in queries:
         qid = q.get("query_id", "")
         qt = (q.get("query_type") or "").upper()
-        facts = query_facts(q.get("query_text") or "", source_engine)
+        facts = query_facts(access_text(q), source_engine)
         tables = q.get("tables_accessed") or []
         cps = float(q.get("calls_per_second") or 0.0)
         has_joins = bool(q.get("has_joins", False))

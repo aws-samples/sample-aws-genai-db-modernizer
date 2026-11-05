@@ -42,6 +42,7 @@ from src.shared.placeholder_tables import (
     saved_write_groups,
 )
 from src.tools.sql.query_facts import query_facts, source_engine_of
+from src.tools.sql.view_lineage import access_text
 
 __all__ = [
     "WRITE_GROUP_LABEL",
@@ -83,6 +84,20 @@ def _bare(table: str) -> str:
     return table.rsplit(".", 1)[-1].strip('[]"`').lower()
 
 
+def _through_views(query: Mapping, targets: set[str], tables: Iterable[str]) -> list[str]:
+    """The base tables of ``tables`` that ``query`` writes through a view it names as one of
+    its write ``targets`` (bare, lower-case names): the collector's
+    ``ViewRead.written_tables`` (#1875). A write through a view is a write to its base table,
+    so the table keeps one writer."""
+    allowed = set(tables)
+    out: list[str] = []
+    for read in query.get("views_read") or []:
+        if not isinstance(read, Mapping) or _bare(str(read.get("view_id") or "")) not in targets:
+            continue
+        out.extend(t for t in read.get("written_tables") or [] if t in allowed)
+    return list(dict.fromkeys(out))
+
+
 def written_tables(
     query: Mapping, source_engine: str = "", source: SourceScope | None = None
 ) -> list[str]:
@@ -90,13 +105,14 @@ def written_tables(
 
     A write's tables are its targets (``QueryFacts.write_targets``), never a table
     it only reads; a locking read's are every table it reads, since it locks
-    their rows. A write whose target is none of its collected tables (no text, or
-    text the facts cannot read) counts as writing all of them: keeping too many
+    their rows. A write through a view writes the base tables the collector says it
+    changes (``ViewRead.written_tables``, #1875). A write whose target is none of its
+    collected tables (no text, or text the facts cannot read) counts as writing all of them: keeping too many
     writes together never splits a table's writes. An administration statement
     writes no table here, and neither does any statement on a placeholder or dummy
     table (:func:`~src.shared.placeholder_tables.is_placeholder_table`, #1817).
     """
-    text = str(query.get("query_text") or "")
+    text = access_text(query)
     # The utility test reads the collected names as it always has (it treats a dummy
     # table as no table itself); a placeholder is never a written table (#1817).
     collected = [str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"]
@@ -112,7 +128,8 @@ def written_tables(
     out: list[str] = []
     if is_write_query(query, source_engine):
         targets = set(query_facts(text, source_engine).write_targets)
-        out.extend([t for t in tables if _bare(t) in targets] or tables)
+        named = [t for t in tables if _bare(t) in targets] + _through_views(query, targets, tables)
+        out.extend(list(dict.fromkeys(named)) or tables)
     if is_locking_read(query, source_engine):
         out.extend(tables)
     return list(dict.fromkeys(out))
@@ -135,7 +152,7 @@ def inserted_tables(
     written = written_tables(query, source_engine, source)
     if not written:
         return []
-    facts = query_facts(str(query.get("query_text") or ""), source_engine)
+    facts = query_facts(access_text(query), source_engine)
     targets = set(facts.append_targets)
     matched = [t for t in written if _bare(t) in targets]
     if matched:

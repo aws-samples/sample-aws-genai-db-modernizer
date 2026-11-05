@@ -37,6 +37,7 @@ from src.contracts.move_ledger import EngineScore, MoveEvidence, MovePass, Reaso
 from src.shared import catalog
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.view_lineage import access_text
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -191,7 +192,7 @@ def closed_to_pinned_search(
         qa["query_id"]
         for qa in query_assignments
         if not _query_has_search_depth(
-            query_map.get(qa["query_id"], {}).get("query_text"), source_engine
+            access_text(query_map.get(qa["query_id"], {})), source_engine
         )
     }
     by_id = {qa["query_id"]: qa for qa in query_assignments}
@@ -250,7 +251,7 @@ def search_depth_justification(
     Returns ``{query_id: (justified, reason)}``; ``reason`` always explains
     the decision so the deliverables can state why.
     """
-    texts = {qa["query_id"]: query_map.get(qa["query_id"], {}).get("query_text") for qa in qas}
+    texts = {qa["query_id"]: access_text(query_map.get(qa["query_id"], {})) for qa in qas}
     deep_qids = {qid for qid, t in texts.items() if _query_has_search_depth(t, source_engine)}
 
     shallow_reason = (
