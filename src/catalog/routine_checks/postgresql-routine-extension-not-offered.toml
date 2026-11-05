@@ -1,0 +1,15 @@
+# Routine check postgresql-routine-extension-not-offered (#1935). Fields: src/shared/catalog/routine_checks.py.
+# Source: Extension versions for Amazon Aurora PostgreSQL (src/catalog/aurora_postgresql_extensions.toml).
+id = "postgresql-routine-extension-not-offered"
+feature = "A routine that uses an extension the target Aurora PostgreSQL version does not offer"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure", "trigger"]
+impact = "blocks_move"
+reason = "The routine depends on an extension that Aurora PostgreSQL does not offer on the target version line, so it cannot be created there."
+fix_hint = "Replace what the extension provides with SQL or an extension the target version offers, move to a version line that offers it, or keep that logic outside the database."
+docs = "Extension versions for Amazon Aurora PostgreSQL"
+
+# Checks: the routine's extensions (pg_depend) against the target line's list, by name.
+[match]
+extensions = "offered_on_target_line"

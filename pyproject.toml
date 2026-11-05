@@ -61,6 +61,10 @@ dependencies = [
     "sqlglot==30.22.0",
     # Embedded SQL engine that runs a transformation contract rule on synthetic rows (#1763)
     "duckdb>=2.0,<3",
+    # PostgreSQL's own parser (libpg_query, PostgreSQL 17 grammar) for the routine
+    # checks (#1935). BSD-3-Clause; pglast (GPL-3.0-or-later) is not used. Exact pin:
+    # a libpg_query bump can change parse results, so a bump is its own PR.
+    "pgparse==1.0.3",
 ]
 
 [project.optional-dependencies]

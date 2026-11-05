@@ -15,7 +15,8 @@ of the engine and pattern facts every consumer must agree on. Python reads them 
   penalty, why) next to the engine properties, the routing thresholds, the hard gates
   and the triage signals (``src/catalog/routing.toml``, ``gates.toml``,
   ``triage_signals.toml``), the relational-move gap rules
-  (``src/catalog/gaps/*.toml``, #471) and the write intents
+  (``src/catalog/gaps/*.toml``, #471), the routine check rules
+  (``src/catalog/routine_checks/*.toml``, #1935) and the write intents
   (``src/catalog/write_intents/*.toml``, ``carried_writes.toml``, #1362), for review.
 
 Usage:
@@ -58,6 +59,10 @@ from src.shared.catalog.patterns import (  # noqa: E402
     EngineSupport,
     PatternEntry,
     patterns,
+)
+from src.shared.catalog.routine_checks import (  # noqa: E402
+    RoutineCheckRule,
+    routine_check_rules,
 )
 from src.shared.catalog.routing import gates_file, routing_file, triage_signals_file  # noqa: E402
 from src.shared.catalog.write_intents import (  # noqa: E402
@@ -308,6 +313,7 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
     out += render_gaps_md(
         gap_rules(), aurora_version_lines(), {e.id: e.display_name for e in entries}
     )
+    out += render_routine_checks_md(routine_check_rules(), {e.id: e.display_name for e in entries})
     out += render_write_intents_md(
         write_intents(),
         carried_write_settings(),
@@ -541,6 +547,163 @@ def render_gaps_md(
             f"### {r.id}",
             "",
             f"{md_text(r.feature)}: {_IMPACT_LABELS[r.impact].lower()}. {md_text(r.reason)}",
+            "",
+            f"Documentation: {md_text(r.docs)}.",
+            "",
+        ]
+    return out
+
+
+# The claim markers of the routine check section's sentences (#1935).
+_ROUTINE_TESTS = "tests/unit/tools/routines/test_postgresql_routine_checks.py::"
+_ROUTINE_SECTION_CLAIM = (
+    _ROUTINE_TESTS + "test_a_clean_function_passes_every_rule_with_its_reason_and_fix_hint",
+    _ROUTINE_TESTS + "test_a_routine_that_fails_several_rules_lists_each_one",
+    _ROUTINE_TESTS + "test_the_metadata_checks_still_run_when_the_statement_does_not_parse",
+    _ROUTINE_TESTS + "test_the_verdict_never_holds_the_routine_text",
+)
+_ROUTINE_LINE_CLAIM = (
+    _ROUTINE_TESTS + "test_the_routines_line_is_the_one_the_gap_checks_move_lands_on",
+    _ROUTINE_TESTS + "test_the_target_line_follows_the_gap_checks_choice",
+)
+# What each check looks for, per check; a parse rule's words are its source engine's.
+_ROUTINE_PARSE_TEXT = {
+    "postgresql": (
+        "one CREATE FUNCTION, CREATE PROCEDURE or CREATE TRIGGER statement of the "
+        "routine's kind that PostgreSQL's parser reads, its PL/pgSQL or SQL body included; "
+        "text holding a NUL or one the parser cannot encode does not parse"
+    ),
+    "mysql": (
+        "one CREATE PROCEDURE, FUNCTION, TRIGGER or EVENT statement of the routine's kind "
+        "whose header and compound body statements read"
+    ),
+}
+_ROUTINE_CHECK_TEXT = {
+    "extensions": (
+        "every extension the routine uses is offered on the target version line "
+        "(`src/catalog/aurora_postgresql_extensions.toml`, by name)"
+    ),
+    "ownership": "a SECURITY DEFINER routine whose owner is a superuser on the source",
+    "declare_order": (
+        "every DECLARE opens its BEGIN ... END block: variables and conditions first, then "
+        "cursors, then handlers"
+    ),
+    "handler": "every handler is CONTINUE or EXIT and names valid, declared, distinct conditions",
+}
+_ROUTINE_CHECK_CLAIMS = {
+    "parse": (
+        _ROUTINE_TESTS + "test_parse_passes_each_routine_shape",
+        _ROUTINE_TESTS + "test_a_body_that_does_not_parse_is_unparseable",
+        _ROUTINE_TESTS + "test_a_statement_that_is_not_one_routine_of_its_kind_is_unparseable",
+        _ROUTINE_TESTS + "test_a_nul_anywhere_is_unparseable_at_its_position",
+        _ROUTINE_TESTS + "test_text_the_parser_cannot_encode_is_unparseable_and_raises_nothing",
+    ),
+    "language": (
+        _ROUTINE_TESTS + "test_plpgsql_and_sql_pass",
+        _ROUTINE_TESTS + "test_untrusted_c_and_unknown_languages_fail_and_are_named",
+        _ROUTINE_TESTS + "test_a_trusted_language_passes_only_where_the_target_line_offers_it",
+        _ROUTINE_TESTS + "test_the_metadata_and_the_statements_language_must_agree",
+    ),
+    "extensions": (
+        _ROUTINE_TESTS + "test_every_extension_the_target_line_lacks_fails_and_is_named",
+        _ROUTINE_TESTS + "test_an_extension_only_a_later_line_offers_fails_on_the_earlier_line",
+    ),
+    "ownership": (
+        _ROUTINE_TESTS + "test_a_superusers_security_definer_routine_is_flagged",
+        _ROUTINE_TESTS + "test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes",
+    ),
+}
+
+
+def _codes(values: tuple[str, ...]) -> str:
+    return ", ".join(f"`{v}`" for v in values)
+
+
+def _routine_check_text(rule: RoutineCheckRule) -> str:
+    """What a routine check rule checks, as one Markdown line."""
+    match = rule.match
+    if match.check == "parse":
+        return "; ".join(_ROUTINE_PARSE_TEXT[e] for e in rule.source_engines)
+    if match.check in _ROUTINE_CHECK_TEXT:
+        return _ROUTINE_CHECK_TEXT[match.check]
+    if match.check == "definer":
+        text = (
+            "a DEFINER naming a user other than the target user (a CURRENT_USER form "
+            "passes), for a routine that runs as its definer: a procedure or function "
+            "unless it is SQL SECURITY INVOKER"
+        )
+        if match.always_definer_kinds:
+            text += ", and always a " + " or ".join(match.always_definer_kinds)
+        return text
+    if match.check == "statement":
+        parts = []
+        if match.statement_starts:
+            parts.append("a body statement that starts with " + _codes(match.statement_starts))
+        if match.statement_contains:
+            parts.append("a body statement that contains " + _codes(match.statement_contains))
+        if match.set_scopes:
+            parts.append("a SET of a " + _codes(match.set_scopes) + " variable")
+        if match.set_variables:
+            parts.append("a SET of " + _codes(match.set_variables))
+        return "; ".join(parts)
+    if match.check == "sql_mode":
+        if match.unknown_sql_modes:
+            return "a stored sql_mode holding a mode no other rule names and MySQL does not list"
+        return "a stored sql_mode holding " + _codes(match.sql_modes)
+    text = (
+        "the metadata's language and the statement's LANGUAGE agree, and the language is "
+        + " or ".join(f"`{v}`" for v in match.languages)
+    )
+    if match.trusted_extension_languages:
+        text += (
+            ", or one of "
+            + ", ".join(f"`{v}`" for v in match.trusted_extension_languages)
+            + " where the target version line offers it as an extension"
+        )
+    return text + "; any other language fails"
+
+
+def _routine_check_claim(rule: RoutineCheckRule) -> str:
+    """The claim marker of a PostgreSQL rule's row; another engine's checker names its own."""
+    if rule.source_engines != ("postgresql",):
+        return ""
+    return _claim(_ROUTINE_CHECK_CLAIMS[rule.match.check])
+
+
+def render_routine_checks_md(
+    rules: tuple[RoutineCheckRule, ...], labels: dict[str, str]
+) -> list[str]:
+    """The routine check rules section of the rule-catalog page (#1935, #1936)."""
+    out = [
+        "## Routine checks: what stops a routine loading on the target",
+        "",
+        "Generated from `src/catalog/routine_checks/*.toml` (#1935; field definitions: "
+        "`src/shared/catalog/routine_checks.py`). Each routine's CREATE statement and "
+        "metadata are checked against every rule for its kind; the verdict lists each "
+        "rule's outcome with its reason and fix hint, runs the metadata checks even when "
+        "the statement does not parse, and never holds the routine's statement or its literals."
+        + _claim(_ROUTINE_SECTION_CLAIM)
+        + " The target version line is the one the gap check's move lands on for the "
+        "source's installed extensions." + _claim(_ROUTINE_LINE_CLAIM),
+        "",
+        "| Rule | Sources | Targets | Kinds | Impact | Checks |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in rules:
+        targets = ", ".join(labels.get(t, t) for t in r.targets)
+        out.append(
+            f"| [`{r.id}`](#{r.id}) | {', '.join(r.source_engines)} | {md_cell(targets)} | "
+            f"{', '.join(r.kinds)} | {_IMPACT_LABELS[r.impact]} | "
+            f"{md_cell(_routine_check_text(r))}{_routine_check_claim(r)} |"
+        )
+    out.append("")
+    for r in rules:
+        out += [
+            f"### {r.id}",
+            "",
+            f"{md_text(r.feature)}: {_IMPACT_LABELS[r.impact].lower()}. {md_text(r.reason)}",
+            "",
+            f"Fix: {md_text(r.fix_hint)}",
             "",
             f"Documentation: {md_text(r.docs)}.",
             "",
