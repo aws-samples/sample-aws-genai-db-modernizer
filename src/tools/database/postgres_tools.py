@@ -194,22 +194,32 @@ class PostgreSQLRemoteCollector:
         return list(indexes.values())
 
     def collect_foreign_keys(self, table_name: str) -> list[dict]:
+        # pg_constraint, not information_schema (#1868): see collect-postgresql.sql. One row
+        # per column pair, in constraint order; conparentid = 0 drops partition copies.
         raw = self._query(f"""
             SELECT
-                tc.constraint_name, kcu.column_name,
-                ccu.table_name AS referenced_table_name,
-                ccu.column_name AS referenced_column_name,
-                rc.update_rule AS on_update, rc.delete_rule AS on_delete
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-              ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-            JOIN information_schema.referential_constraints rc
-              ON rc.constraint_name = tc.constraint_name
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_schema = 'public' AND tc.table_name = '{table_name}'
-            ORDER BY tc.constraint_name
+                c.conname AS constraint_name, a.attname AS column_name,
+                k.ordinal_position,
+                rcl.relname AS referenced_table_name,
+                ra.attname AS referenced_column_name,
+                CASE c.confupdtype
+                    WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END AS on_update,
+                CASE c.confdeltype
+                    WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END AS on_delete
+            FROM pg_catalog.pg_constraint c
+            JOIN pg_catalog.pg_class cl ON cl.oid = c.conrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+            JOIN pg_catalog.pg_class rcl ON rcl.oid = c.confrelid
+            CROSS JOIN LATERAL unnest(c.conkey, c.confkey)
+                WITH ORDINALITY AS k(attnum, rattnum, ordinal_position)
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            JOIN pg_catalog.pg_attribute ra
+              ON ra.attrelid = c.confrelid AND ra.attnum = k.rattnum
+            WHERE c.contype = 'f' AND c.conparentid = 0
+              AND n.nspname = 'public' AND cl.relname = '{table_name}'
+            ORDER BY c.conname, k.ordinal_position
         """)  # nosec B608 — table_name from information_schema, not user input
         fks: dict[str, dict] = {}
         for r in raw:

@@ -150,26 +150,41 @@ indexes_data AS (
 ),
 
 -- ===================== 5. Foreign Keys =====================
+-- Read from pg_catalog, not information_schema: a role with only SELECT sees no
+-- constraint it does not own there, a foreign key onto a unique index has no
+-- referenced constraint to join, and its views join on the constraint name alone
+-- (unique only per table), so duplicate names and partitions mixed up the column
+-- pairs (#1868). unnest() WITH ORDINALITY gives the position of each column pair in
+-- the constraint, so every row is one aligned pair. conparentid = 0 keeps the
+-- constraint a partitioned table declares and drops its per-partition copies (and the
+-- internal constraints on the partitions of a referenced table); conparentid needs
+-- PostgreSQL 11 or later.
 foreign_keys_data AS (
   SELECT coalesce(json_agg(fk ORDER BY fk.table_name, fk.constraint_name, fk.ordinal_position), '[]'::json) AS data
   FROM (
     SELECT
-      kcu.table_name,
-      kcu.constraint_name,
-      kcu.column_name,
-      kcu.ordinal_position,
-      ccu.table_name AS referenced_table_name,
-      ccu.column_name AS referenced_column_name,
-      rc.delete_rule AS on_delete,
-      rc.update_rule AS on_update
-    FROM information_schema.key_column_usage kcu
-    JOIN information_schema.referential_constraints rc
-      ON kcu.constraint_name = rc.constraint_name
-     AND kcu.constraint_schema = rc.constraint_schema
-    JOIN information_schema.constraint_column_usage ccu
-      ON rc.unique_constraint_name = ccu.constraint_name
-     AND rc.unique_constraint_schema = ccu.constraint_schema
-    WHERE kcu.table_schema NOT IN ('pg_catalog', 'information_schema')
+      cl.relname AS table_name,
+      c.conname AS constraint_name,
+      a.attname AS column_name,
+      k.ordinal_position,
+      rcl.relname AS referenced_table_name,
+      ra.attname AS referenced_column_name,
+      CASE c.confdeltype
+        WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE'
+        WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END AS on_delete,
+      CASE c.confupdtype
+        WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE'
+        WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END AS on_update
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class cl ON cl.oid = c.conrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+    JOIN pg_catalog.pg_class rcl ON rcl.oid = c.confrelid
+    CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, rattnum, ordinal_position)
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+    JOIN pg_catalog.pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.rattnum
+    WHERE c.contype = 'f'
+      AND c.conparentid = 0
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   ) fk
 ),
 

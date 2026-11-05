@@ -174,6 +174,19 @@ def _parse_with_source_settings(
         return _parse_offline_collection(data, shadow, database_name=database_name)
 
 
+def _fk_position(row: dict) -> tuple[bool, int]:
+    """Sort key for a foreign key row: its position in the constraint, rows without one last."""
+    position = row.get("ordinal_position")
+    if position is None:
+        position = row.get("constraint_column_id")
+    if position is None:
+        return (True, 0)
+    try:
+        return (False, int(position))
+    except (TypeError, ValueError):
+        return (True, 0)
+
+
 def _parse_offline_collection(
     data: dict, shadow: TableShadow | None = None, *, database_name: str | None = None
 ) -> dict:
@@ -251,7 +264,12 @@ def _parse_offline_collection(
                 index["prefix_lengths"] = None
 
     fks_by_table: dict[str, dict[str, dict]] = {}
-    for fk in data.get("foreign_keys") or []:
+    # A foreign key's column order is its position in the constraint (``ordinal_position``;
+    # SQL Server's ``constraint_column_id``), not the row order: MySQL's JSON_ARRAYAGG
+    # drops the subquery's ORDER BY (#1868). The sort is stable and moves a row as a whole,
+    # so ``columns`` and ``referenced_columns`` stay aligned, and rows without a position
+    # keep their order.
+    for fk in sorted(data.get("foreign_keys") or [], key=_fk_position):
         tbl = fk["table_name"]
         name = fk["constraint_name"]
         if tbl not in fks_by_table:
