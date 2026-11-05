@@ -341,6 +341,7 @@ BEGIN
             'table_name' VALUE LOWER(a.TABLE_NAME),
             'constraint_name' VALUE LOWER(a.CONSTRAINT_NAME),
             'column_name' VALUE LOWER(ac.COLUMN_NAME),
+            'ordinal_position' VALUE ac.POSITION,
             'referenced_table_name' VALUE LOWER(rc.TABLE_NAME),
             'referenced_column_name' VALUE LOWER(rcc.COLUMN_NAME),
             'delete_rule' VALUE a.DELETE_RULE

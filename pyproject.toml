@@ -75,6 +75,7 @@ dev = [
     "mypy>=1.16.0",
     "bandit>=1.7.6",
     "hypothesis>=6.0.0",
+    "pgserver>=0.1.4",  # a real PostgreSQL on a Unix socket for the foreign key tests (#1868)
     "pre-commit>=3.0.0",
     "detect-secrets>=1.4.0",
     "cfn-lint>=0.83.0",
