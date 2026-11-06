@@ -4878,6 +4878,54 @@
         "schema": {
           "kind": "object",
           "properties": {
+            "enum_types": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "labels": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "schema_name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "type_name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
             "procedures": {
               "required": false,
               "schema": {
@@ -9334,8 +9382,8 @@
         }
       }
     },
-    "schema_hash": "7bc7f628e62d5776b665f44b36acd035909cae6d900be52cf89feaf16d455b48",
-    "version": "5.10"
+    "schema_hash": "63287c1f3bd571f3269a0542a2f6e1656972c4b0d3f9b1370498c159376f7db0",
+    "version": "5.11"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

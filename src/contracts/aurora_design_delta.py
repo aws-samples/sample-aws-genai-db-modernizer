@@ -86,6 +86,15 @@ _ENUM_GRAMMAR = re.compile(
 )
 
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
+# A PostgreSQL user-defined type the step 1 DDL creates itself (#1834): "schema"."name",
+# both plain identifiers, double-quoted. Only an explicit Aurora PostgreSQL check accepts
+# it, so a model's delta (checked for either engine) can never name one.
+_PG_QUALIFIED_TYPE = re.compile(rf'"{IDENTIFIER.pattern}"\."{IDENTIFIER.pattern}"')
+
+
+def is_pg_qualified_type(aurora_type: str) -> bool:
+    return bool(_PG_QUALIFIED_TYPE.fullmatch(aurora_type))
+
 
 # Aurora MySQL's DECIMAL/NUMERIC hard limits (#156): CREATE TABLE rejects
 # anything wider, or with scale greater than precision, so a model-supplied
@@ -199,7 +208,9 @@ def validate_aurora_type(value: str, engine: str | None = None) -> str:
     ``VARCHAR``, ``DOUBLE PRECISION``, ...), an optional ``(n)`` / ``(p, s)``,
     an engine-specific suffix (``WITH TIME ZONE`` on PostgreSQL, ``UNSIGNED``
     on MySQL) and, on PostgreSQL, ``[]`` arrays; or, on MySQL, ``ENUM`` /
-    ``SET`` with quoted literals (capped in count and length). ``engine=None``
+    ``SET`` with quoted literals (capped in count and length); or, checked for Aurora
+    PostgreSQL only, a double-quoted ``"schema"."type"`` of two plain identifiers (an
+    enum step 1 creates, #1834). ``engine=None``
     accepts a type valid for either engine; the merge re-checks per engine.
     Rejects anything else, including ``BIGINT); DROP TABLE users; --``,
     ``INT, `evil` TEXT``, ``INT NOT NULL`` and ``pg_sleep(10)``.
@@ -214,6 +225,13 @@ def validate_aurora_type(value: str, engine: str | None = None) -> str:
                 "Aurora PostgreSQL use TEXT (or a lookup table)"
             )
         return _check_enum(stripped)
+    if is_pg_qualified_type(stripped):
+        if engine != "aurora_postgresql":
+            raise ValueError(
+                f"aurora_type {value!r}: a schema-qualified type is checked for Aurora "
+                "PostgreSQL only"
+            )
+        return stripped
     normalized = " ".join(value.split())
     if not normalized:
         raise ValueError("aurora_type must not be blank")

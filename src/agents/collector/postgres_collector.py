@@ -29,6 +29,7 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _normalize_index_type,
     _parse_ddl_raw,
+    source_enum_types,
     source_extensions,
     source_settings,
 )
@@ -246,7 +247,14 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             # #1078: an older checkpoint's schema stage has none.
             extensions=source_extensions(schema_raw.get("extensions")),
         ),
-        database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),
+        database_schema=Schema(
+            tables=tables,
+            views=views,
+            procedures=procs,
+            triggers=triggers,
+            # #1834: an older checkpoint's schema stage has none.
+            enum_types=source_enum_types(schema_raw.get("enum_types")),
+        ),
         queries=queries,
         metrics=metrics,
     )
@@ -365,6 +373,13 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
     except Exception:
         logger.warning("Failed to collect extensions")
 
+    # #1834: None (not read) keeps step 1's TEXT fallback for enum columns.
+    enum_types: list[dict] | None = None
+    try:
+        enum_types = db.collect_enum_types()
+    except Exception:
+        logger.warning("Failed to collect enum types")
+
     return {
         "tables": tables,
         "views": views,
@@ -372,6 +387,7 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
         "triggers": triggers,
         "global_stats": global_stats,
         "extensions": extensions,
+        "enum_types": enum_types,
     }
 
 

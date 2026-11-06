@@ -9,8 +9,10 @@ Mirrors MySQLRemoteCollector pattern but with PostgreSQL-specific queries
 (pg_stat_statements, pg_stat_user_tables, pg_stats, information_schema).
 """
 
+import contextlib
 import functools
 import hashlib
+import json
 import logging
 import re
 
@@ -296,6 +298,26 @@ class PostgreSQLRemoteCollector:
             FROM pg_extension
             ORDER BY extname
         """)
+
+    def collect_enum_types(self) -> list[dict]:
+        """Every enum type outside the system schemas, its labels in sort order (#1834).
+        psql prints the labels as a JSON array: each row's ``labels`` is read back into a
+        list (a row whose labels do not read as JSON keeps the text, and is dropped later)."""
+        rows = self._query("""
+            SELECT n.nspname AS schema_name, t.typname AS type_name,
+                   json_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+            FROM pg_type t
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+            JOIN pg_enum e ON e.enumtypid = t.oid
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+            GROUP BY n.nspname, t.typname
+            ORDER BY n.nspname, t.typname
+        """)
+        for row in rows:
+            if isinstance(row.get("labels"), str):
+                with contextlib.suppress(ValueError):
+                    row["labels"] = json.loads(row["labels"])
+        return rows
 
     def collect_triggers(self) -> list[dict]:
         return self._query("""

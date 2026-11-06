@@ -80,9 +80,12 @@ class TypeOverride:
 
     aurora_type: str
     reason: str = ""
+    # The engine to check the type for; None checks it for either (a model's delta). Step 1
+    # names Aurora PostgreSQL to give an enum column its "schema"."type" (#1834).
+    engine: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "aurora_type", validate_aurora_type(self.aurora_type))
+        object.__setattr__(self, "aurora_type", validate_aurora_type(self.aurora_type, self.engine))
 
 
 TypeOverrides = dict[tuple[str, str], TypeOverride]

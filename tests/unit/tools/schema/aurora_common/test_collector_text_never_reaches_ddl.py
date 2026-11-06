@@ -323,6 +323,9 @@ DDL_WRITERS = {
     # An in-memory DuckDB table of VARCHAR columns for the contract check, never Aurora
     # DDL: column names through quote_ident (quotes doubled).
     "src/tools/transformation_contract/duckdb_backend.py",
+    # CREATE TYPE ... AS ENUM for step 1 (#1834): type names pass the identifier allowlist,
+    # labels are string literals with quotes doubled; test_step1_enum_types_... below.
+    "src/tools/transformation_contract/pg_enums.py",
     # The local graph store's own Cypher schema (table names from a fixed list), not SQL.
     "src/graph/store.py",
     # Disposable source engines (#1943): the DDL and routine text it runs is the customer's
@@ -450,3 +453,32 @@ def test_step1_refuses_a_hyphenated_database_on_aurora_postgresql(monkeypatch):
     bundle = _step1_bundle("aurora_postgresql", "public", "my-shop", monkeypatch)
     with pytest.raises(DmsStepError, match="database name"):
         bundle_inputs(bundle)
+
+
+@settings(max_examples=scaled(200), deadline=None)
+@given(name=st.one_of(_name, st.just("mood")), labels=st.lists(_hostile, max_size=4))
+def test_step1_enum_types_take_names_only_as_identifiers_and_labels_only_as_literals(name, labels):
+    """A PostgreSQL enum's name and labels are collector text (#1834). Step 1 keeps an enum
+    only when its schema and name are plain identifiers; its labels reach ``step-1.ddl.sql``
+    only inside string literals, the commented CREATE CAST uncommented included."""
+    from src.contracts.collector_output import CollectorOutputContract
+    from src.tools.transformation_contract.pg_enums import enum_columns
+    from tests.unit.tools.transformation_contract.conftest import col, collector, table
+
+    raw = collector("postgresql", [table("public", "t", [col("c", name, 1)], pk=["c"])])
+    raw["database_schema"]["enum_types"] = [
+        {"schema_name": "public", "type_name": name, "labels": labels}
+    ]
+    enums = list(enum_columns(CollectorOutputContract.model_validate(raw), "aurora_postgresql")
+                 .types.values())  # fmt: skip
+    for e in enums:
+        assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", e.schema) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_$]*", e.name
+        )
+    inputs = dataclasses.replace(
+        bundle_inputs(make_bundle("aurora_postgresql")), enum_types=tuple(enums)
+    )
+    ddl = render_ddl(inputs)
+    assert SENTINEL not in sql_code(ddl, "aurora_postgresql").lower()
+    uncommented = re.sub(r"(?m)^-- (?=CREATE CAST)", "", ddl)
+    assert SENTINEL not in sql_code(uncommented, "aurora_postgresql").lower()
