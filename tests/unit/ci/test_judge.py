@@ -288,6 +288,76 @@ def test_only_invalid_objects_reports_the_first_validation_error(tmp_path: Path)
     assert "is not an integer in 1-5" in result["error"]
 
 
+def test_flat_scores_without_the_wrapper_are_graded(tmp_path: Path) -> None:
+    # The judge sometimes drops the "scores" wrapper (#2003): a flat object
+    # keyed by exactly the rubric's criteria grades like the wrapped one.
+    scores = dict(PASSING_SCORES, grounded=3)
+    result, code = _run_with_reply(tmp_path, json.dumps(scores))
+
+    assert code == 0, result
+    assert result["scores"] == scores
+    assert result["notes"] == dict.fromkeys(judge.CRITERIA, "")
+
+
+@pytest.mark.passes_on_main  # the wrapped form must not change (#2003)
+def test_wrapped_scores_keep_their_notes_and_defects() -> None:
+    defect = {"criterion": "risks", "kind": "missing_risk", "where": "w", "quote": "q"}
+    reply = json.dumps(
+        {
+            "scores": PASSING_SCORES,
+            "notes": {k: f"note-{k}" for k in judge.CRITERIA},
+            "defects": [defect],
+        }
+    )
+    scores, notes, defects, trailing = judge.parse_judge_reply_full(reply)
+
+    assert scores == PASSING_SCORES
+    assert notes == {k: f"note-{k}" for k in judge.CRITERIA}
+    assert defects == {"items": [defect], "dropped": 0}
+    assert trailing == 0
+
+
+@pytest.mark.passes_on_main  # only the exact criteria are accepted flat (#2003)
+@pytest.mark.parametrize(
+    "flat",
+    [
+        pytest.param({k: 4 for k in judge.CRITERIA[1:]}, id="missing-criterion"),
+        pytest.param(dict.fromkeys(judge.CRITERIA, 4) | {"overall": 4}, id="extra-key"),
+        pytest.param(
+            dict.fromkeys(judge.CRITERIA, 4) | {"notes": {}}, id="notes-beside-flat-scores"
+        ),
+        pytest.param(dict.fromkeys(judge.CRITERIA, 4) | {"scores": 4}, id="scores-not-an-object"),
+        pytest.param({}, id="empty"),
+    ],
+)
+def test_a_flat_object_that_is_not_exactly_the_criteria_is_rejected(flat: dict) -> None:
+    with pytest.raises(judge.JudgeError, match="missing a 'scores' object"):
+        judge.parse_judge_reply_full(json.dumps(flat))
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (9, "is not an integer in 1-5"),
+        (0, "is not an integer in 1-5"),
+        (3.5, "is not an integer in 1-5"),
+        ("3", "is not a number"),
+        (True, "is not a number"),
+        (None, "is not a number"),
+    ],
+)
+def test_a_flat_object_with_an_invalid_score_is_rejected(value: object, message: str) -> None:
+    flat = dict(PASSING_SCORES, risks=value)
+    with pytest.raises(judge.JudgeError, match=message):
+        judge.parse_judge_reply_full(json.dumps(flat))
+
+
+def test_flat_and_wrapped_answers_that_differ_are_ambiguous() -> None:
+    reply = _inner(PASSING_SCORES) + "\n\n" + json.dumps(ALL_TWOS)
+    with pytest.raises(judge.JudgeError, match="ambiguous judge response"):
+        judge.parse_judge_reply_full(reply)
+
+
 def test_garbage_with_braces_is_still_a_parse_error(tmp_path: Path) -> None:
     result, code = _run_with_reply(tmp_path, "{oops} not {json at all")
 

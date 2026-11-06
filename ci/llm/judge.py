@@ -218,6 +218,13 @@ RESPONSE_SHAPE = (
     '"where": "engineering_report > Risk register", "quote": "the exact text"}]}'
 )
 
+# The judge has sent the scores flat, without this wrapper (#2003); the parser
+# accepts that form, and the prompt still asks for the shape above.
+SCORES_WRAPPER_INSTRUCTION = (
+    'The integer scores go inside the "scores" object and the notes inside the '
+    '"notes" object; never put a criterion\'s score at the top level.'
+)
+
 DEFECTS_INSTRUCTION = (
     "`defects` lists every instance you scored a criterion down for, one entry "
     "each (an empty list when there are none). `kind` is one of: "
@@ -992,6 +999,7 @@ def build_prompt_with_stats(
             '"facts.engines[dynamodb].tables_served").',
             "Respond with ONLY a JSON object of this exact shape, integer scores 1-5, "
             "no prose outside the JSON object:\n" + RESPONSE_SHAPE,
+            SCORES_WRAPPER_INSTRUCTION,
             DEFECTS_INSTRUCTION,
             ONE_OBJECT_INSTRUCTION,
         ]
@@ -1283,9 +1291,16 @@ def parse_judge_reply_full(
 
 
 def validate_scores(payload: dict[str, Any]) -> tuple[dict[str, int], dict[str, str]]:
-    if "scores" not in payload or not isinstance(payload["scores"], dict):
+    """The scores and notes of one reply object. The scores come from its
+    ``scores`` object or, when the judge dropped that wrapper (#2003), from the
+    object itself, but only when its keys are exactly ``CRITERIA`` (it then has
+    no notes). Every score must be an integer in 1-5 either way."""
+    if isinstance(payload.get("scores"), dict):
+        scores_raw = payload["scores"]
+    elif set(payload) == set(CRITERIA):
+        scores_raw = payload
+    else:
         raise JudgeError(f"judge response missing a 'scores' object: {payload!r}")
-    scores_raw = payload["scores"]
     notes_candidate = payload.get("notes")
     notes_raw: dict[str, Any] = notes_candidate if isinstance(notes_candidate, dict) else {}
 
