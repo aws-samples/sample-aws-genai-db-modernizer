@@ -1325,11 +1325,14 @@ def test_results_page_states_the_pending_engine_choices(
 ) -> None:
     """#1003: the results page states the pending engine choices with the counts
     report.json's facts hold (the ones the engineering report and the PDF state),
-    and nothing when there are none."""
+    the choices --auto decided the same way (#1973), and nothing when there are
+    neither."""
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         facts = report.get("facts") or {}
         n, q = facts.get("pending_choice_count") or 0, facts.get("pending_choice_query_count") or 0
+        d = facts.get("auto_decided_choice_count") or 0
+        dq = facts.get("auto_decided_query_count") or 0
         page, ev = loaded_results(r)
         page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
         note = page.locator("#engine-choices-note")
@@ -1337,7 +1340,16 @@ def test_results_page_states_the_pending_engine_choices(
             tables = "table still ties" if n == 1 else "tables still tie"
             queries = "query" if q == 1 else "queries"
             assert f"{n} {tables} between engines ({q} {queries})" in note.inner_text(), r.db
+        if d:
+            choices = "engine choice" if d == 1 else "engine choices"
+            queries = "query" if dq == 1 else "queries"
+            decided = "was decided" if d == 1 else "were decided"
+            assert f"{d} {choices} ({dq} {queries}) {decided} automatically" in (
+                note.inner_text()
+            ), r.db
         else:
+            assert "decided automatically" not in (note.inner_text() if note.count() else ""), r.db
+        if not n and not d:
             assert note.count() == 0, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
