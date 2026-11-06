@@ -100,7 +100,13 @@ def test_each_corpus_routine_gets_its_expected_verdict(entry: dict[str, Any]) ->
 
 
 def _mysql_rules() -> list[RoutineCheckRule]:
-    return [r for r in routine_check_rules() if "mysql" in r.source_engines]
+    """The MySQL rules the checker runs: the dependency check needs the step's moved
+    objects, so it runs in ``src/tools/routines/dependencies.py`` (#1937)."""
+    return [
+        r
+        for r in routine_check_rules()
+        if "mysql" in r.source_engines and r.match.check != "dependencies"
+    ]
 
 
 def test_every_mysql_rule_has_a_corpus_routine_that_trips_it() -> None:
@@ -495,7 +501,7 @@ def test_the_builtin_list() -> None:
 def test_the_bundled_routine_rules_load_and_validate() -> None:
     rules = routine_check_rules()
     assert [r.id for r in rules] == sorted(p.stem for p in ROUTINE_CHECKS_DIR.glob("*.toml"))
-    mysql = _mysql_rules()
+    mysql = [r for r in rules if "mysql" in r.source_engines]
     assert mysql and all(r.id.startswith("mysql-") for r in mysql)
     assert all(r.source_engines == ("mysql",) and r.targets == ("aurora_mysql",) for r in mysql)
     assert {r.match.check for r in mysql} == {
@@ -506,6 +512,7 @@ def test_the_bundled_routine_rules_load_and_validate() -> None:
         "statement",
         "sql_mode",
         "dynamic_sql",
+        "dependencies",
     }
     for rule in mysql:
         assert rule.reason.endswith(".") and rule.fix_hint.endswith(".")
@@ -635,7 +642,7 @@ def test_needs_attention_follows_failed_rules_that_matter() -> None:
         assert verdict.needs_attention and verdict.status == "needs_attention"
 
 
-_COMPUTED = {"parsed", "failed_rules", "needs_attention", "status"}
+_COMPUTED = {"parsed", "failed_rules", "unknown_rules", "needs_attention", "status"}
 
 
 def test_a_verdict_round_trips_through_json() -> None:

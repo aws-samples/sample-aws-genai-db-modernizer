@@ -100,8 +100,12 @@ from src.tools.sql.facade import (
 __all__ = [
     "MAX_NESTING",
     "SOURCE_ENGINE",
+    "MySqlHeader",
     "MySqlRoutine",
     "check_mysql_routine",
+    "is_target_user",
+    "mysql_header",
+    "parse_account",
     "split_client_statements",
 ]
 
@@ -420,6 +424,8 @@ class _Header:
     body_start: int
     trigger_table: tuple[str | None, str] | None = None
     trigger_order: tuple[str | None, str] | None = None
+    # The DEFINER clause's tokens, ``DEFINER`` up to the account's last token (exclusive).
+    definer_tokens: tuple[int, int] | None = None
 
 
 class _Cursor:
@@ -578,17 +584,26 @@ def _header(toks: list[Token]) -> _Header:
     cur = _Cursor(toks)
     cur.expect("CREATE")
     definer: tuple[str, str | None] | Literal["current_user"] | None = None
+    definer_tokens: tuple[int, int] | None = None
     if cur.accept("DEFINER"):
+        first = cur.i - 1
         if cur.take().kind != "EQ":
             raise _Unparseable("header")
         definer = _definer(cur)
+        definer_tokens = (first, cur.i)
     kind = cur.word()
     if kind not in _ROUTINE_WORDS:
         raise _Unparseable("header")
     cur.take()
     cur.accept("IF", "NOT", "EXISTS")
     _qualified_name(cur)
-    header = _Header(kind=kind.lower(), definer=definer, security=None, body_start=0)
+    header = _Header(
+        kind=kind.lower(),
+        definer=definer,
+        security=None,
+        body_start=0,
+        definer_tokens=definer_tokens,
+    )
     if kind in {"PROCEDURE", "FUNCTION"}:
         cur.skip_parens()
         if kind == "FUNCTION":
@@ -1109,7 +1124,8 @@ def _set_assignments(toks: Sequence[Token]) -> list[tuple[str | None, str, list[
 @dataclass
 class _Reading:
     tables: list[tuple[str | None, str]] = field(default_factory=list)
-    routines: list[tuple[str | None, str]] = field(default_factory=list)
+    # Each called routine: its schema, its name, and procedure (CALL) or function.
+    routines: list[tuple[str | None, str, RoutineKind]] = field(default_factory=list)
     complete: bool = True
 
 
@@ -1121,7 +1137,7 @@ def _read_sql(sql: str, reading: _Reading) -> None:
         return
     reading.tables += refs.tables
     reading.routines += [
-        (s, n) for s, n in refs.calls if s is not None or not is_builtin_function(n)
+        (s, n, "function") for s, n in refs.calls if s is not None or not is_builtin_function(n)
     ]
 
 
@@ -1133,7 +1149,7 @@ def _read_leaf(sql: str, part: list[Token], expression: bool, reading: _Reading)
         return
     first = _word(part[0])
     if first == "CALL":
-        reading.routines.append(_call_target(part))
+        reading.routines.append((*_call_target(part), "procedure"))
         arguments = _call_arguments(sql, part)
         if arguments is not None:
             _read_sql("SELECT " + arguments, reading)
@@ -1377,27 +1393,38 @@ def _statement_findings(rule: RoutineCheckRule, statements: Iterable[_Statement]
 def _dependencies(
     reading: _Reading, header: _Header | None, own: tuple[str | None, str]
 ) -> tuple[RoutineDependency, ...]:
-    deps: dict[tuple[str, str | None, str], RoutineDependency] = {}
+    deps: dict[tuple[str, str | None, str, str | None], RoutineDependency] = {}
 
-    def add(kind: Literal["table", "routine"], schema: str | None, name: str) -> None:
+    def add(
+        kind: Literal["table", "routine"],
+        schema: str | None,
+        name: str,
+        routine_kind: RoutineKind | None = None,
+    ) -> None:
         if not name:
             reading.complete = False
             return
         if kind == "routine" and (schema or own[0]) == own[0] and name == own[1]:
             return  # a recursive call is not a dependency
         deps.setdefault(
-            (kind, schema, name), RoutineDependency(kind=kind, name=name, schema_name=schema)
+            (kind, schema, name, routine_kind),
+            RoutineDependency(kind=kind, name=name, schema_name=schema, routine_kind=routine_kind),
         )
 
     if header is not None and header.trigger_table is not None:
         add("table", *header.trigger_table)
     if header is not None and header.trigger_order is not None:
-        add("routine", *header.trigger_order)
+        add("routine", *header.trigger_order, routine_kind="trigger")
     for schema, name in reading.tables:
         add("table", schema, name)
-    for schema, name in reading.routines:
-        add("routine", schema, name)
-    return tuple(sorted(deps.values(), key=lambda d: (d.kind, d.schema_name or "", d.name)))
+    for schema, name, routine_kind in reading.routines:
+        add("routine", schema, name, routine_kind)
+    return tuple(
+        sorted(
+            deps.values(),
+            key=lambda d: (d.kind, d.schema_name or "", d.name, d.routine_kind or ""),
+        )
+    )
 
 
 def _target_user(
@@ -1476,7 +1503,8 @@ def check_mysql_routine(
     ``"8.4"``, or None for every line).
 
     Every rule for a MySQL source, ``target_engine`` and the routine's kind runs, in check
-    order (parse, declare order, handlers, definer, statements, dynamic SQL, sql_mode).
+    order (parse, declare order, handlers, definer, statements, dynamic SQL, sql_mode);
+    the dependency check is :func:`src.tools.routines.dependencies.check_dependencies`'s.
     ``target_user`` is the user the routines are created as on the target (``admin`` or
     ``admin@%``); a ``DEFINER`` naming anyone else, or any named ``DEFINER`` when it is
     None, fails the definer check. ``rules`` defaults to the catalog's. A target engine
@@ -1497,8 +1525,10 @@ def check_mysql_routine(
         if SOURCE_ENGINE in r.source_engines
         and target_engine in r.targets
         and routine.kind in r.kinds
+        # The dependency check needs the step's moved objects (dependencies.py).
+        and r.match.check != "dependencies"
     ]
-    # The loader keeps every MySQL rule's check one this module implements.
+    # The loader keeps every other MySQL rule's check one this module implements.
     applicable.sort(key=lambda r: (_CHECK_ORDER.index(r.match.check), r.id))
 
     read = _read(routine)
@@ -1551,3 +1581,92 @@ def check_mysql_routine(
         dependencies=_dependencies(read.reading, header, routine.schema_and_name),
         dependencies_complete=read.reading.complete,
     )
+
+
+# --------------------------------------------------------------------------- the header, for rewrites
+
+
+@dataclass(frozen=True)
+class MySqlHeader:
+    """Where a routine's header lies in its ``create_sql``, for the rewrites (#1937).
+
+    Offsets are character offsets into ``create_sql``, end exclusive, from the tokens of
+    the one ``CREATE`` statement (never a pattern over the text):
+
+    - ``definer``: the ``DEFINER = <account>`` clause, None when the text has none;
+    - ``account``: the account it names (``(user, host)``, or ``"current_user"``);
+    - ``security``: the ``SQL SECURITY`` clause's ``DEFINER`` or ``INVOKER``, None when the
+      text has none;
+    - ``body_start``: where the body starts (everything before it is the header);
+    - ``tokens``: every token of the statement, at its offset in ``create_sql``.
+    """
+
+    definer: tuple[int, int] | None
+    account: tuple[str, str | None] | Literal["current_user"] | None
+    body_start: int
+    tokens: tuple[Token, ...]
+    security: str | None = None
+
+
+def mysql_header(routine: MySqlRoutine) -> MySqlHeader | None:
+    """The header of ``routine``'s ``CREATE`` (:class:`MySqlHeader`), or None when the text
+    does not read as one routine of its kind or its ``CREATE`` is not written verbatim in
+    it (an executable comment around it, which the reader unwraps). Never raises."""
+    escapes = "NO_BACKSLASH_ESCAPES" not in routine.modes
+    text = routine.create_sql
+    try:
+        create = _the_create(
+            [
+                stmt if escapes else _mask_backslashes(stmt)
+                for stmt in split_client_statements(text, backslash_escapes=escapes)
+            ]
+        )
+        raw = create if escapes else None
+        if raw is None:
+            # The masked statement keeps its offsets: find the unmasked one it came from.
+            for stmt in split_client_statements(text, backslash_escapes=escapes):
+                if _mask_backslashes(stmt) == create:
+                    raw = stmt
+                    break
+        base = text.find(raw) if raw is not None else -1
+        if base < 0:
+            return None
+        toks = _tokens(create)
+        header = _header(toks)
+        if header.kind != routine.kind or header.body_start >= len(toks):
+            return None
+        _Body(toks, header.body_start).read()
+    except Exception:  # noqa: BLE001 -- text that does not read has no header to rewrite
+        return None
+    shifted = tuple(
+        Token(t.kind, t.text, t.start + base, t.end + base, t.command_rest) for t in toks
+    )
+    span = None
+    if header.definer_tokens is not None:
+        first, after = header.definer_tokens
+        span = (shifted[first].start, shifted[after - 1].end + 1)
+    return MySqlHeader(
+        definer=span,
+        account=header.definer,
+        body_start=shifted[header.body_start].start,
+        tokens=shifted,
+        security=header.security,
+    )
+
+
+def parse_account(text: str) -> tuple[str, str | None] | Literal["current_user"]:
+    """An account name (``user@host``, either part quoted, or a ``CURRENT_USER`` form), as
+    the definer check reads one. A ValueError, naming no part of the text, otherwise."""
+    try:
+        return _parse_user(text)
+    except _Unparseable:
+        raise ValueError("not a MySQL account name (user or user@host)") from None
+
+
+def is_target_user(
+    account: tuple[str, str | None] | Literal["current_user"],
+    target: tuple[str, str | None] | Literal["current_user"],
+) -> bool:
+    """Whether a ``DEFINER`` naming ``account`` is the target user, as the definer check
+    decides it (a ``CURRENT_USER`` form always is; a target with no host matches any)."""
+    return _is_target_user(account, target)

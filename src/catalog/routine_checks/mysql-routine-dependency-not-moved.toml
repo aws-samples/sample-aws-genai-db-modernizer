@@ -1,0 +1,16 @@
+# Routine check mysql-routine-dependency-not-moved (#1937). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement.
+id = "mysql-routine-dependency-not-moved"
+feature = "A routine that names a table or routine not moved in the same step"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "blocks_move"
+reason = "The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs (or, for a trigger, cannot be created) until that object moves too."
+fix_hint = "Move the named tables and routines in the same step as this routine, or move the routine in the step that moves them."
+docs = "MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement"
+
+# Checks: each table and routine the routine names (as the checker records them) is in the
+# set of objects the step moves; an unqualified name is the routine's own schema.
+[match]
+dependencies_moved_together = true
