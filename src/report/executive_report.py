@@ -74,7 +74,7 @@ from src.shared.target_databases import engine_scope_statement
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
 from .architecture import _architecture_engines
-from .cache_layer import cache_change_notes, cache_layer_text
+from .cache_layer import cache_change_notes, cache_layer_text, cache_role_notes
 from .derived_copy_sync import derived_copy_sync_pdf
 from .engine_choices import (
     AUTO_DECIDED_NOTE,
@@ -980,8 +980,11 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         )
         if notes:
             flow += [_gap(8), Paragraph(_md_markup(notes), st["small"])]
+        # #399: the cache layer as the assessment's recommendation, with its reason; then
         # #1252: the one sentence that says the design covers fewer reads than the gate's
         # cache candidates, read from the report like the engineering report's.
+        for role in cache_role_notes(report):
+            flow += [_gap(4), _para(role, st["small"])]
         for change in cache_change_notes(report):
             flow += [_gap(4), _para(change, st["small"])]
     ownership = ownership_facts(report)

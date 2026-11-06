@@ -71,15 +71,16 @@ class AssignmentValidator:
         for qa in assignment.query_assignments:
             if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
                 errors.append(
-                    f"ERROR: Query {qa.query_id} is owned by '{qa.assigned_engine}', a cache "
-                    "layer and not a system of record. Assign it to the engine that stores "
-                    "its data; the cache can still front it as a cache overlay."
+                    f"ERROR: Query {qa.query_id} is owned by '{qa.assigned_engine}', the cache "
+                    "layer, which this plan does not use as a system of record. Assign it to "
+                    "the engine that stores its data; the cache can still front it as a cache "
+                    "overlay."
                 )
             elif not can_own(qa.assigned_engine, query_by_id.get(qa.query_id), source_engine):
                 errors.append(
                     f"ERROR: Query {qa.query_id} is a write owned by "
                     f"{display_engine(qa.assigned_engine)}, "
-                    "which is not a system of record for its tables."
+                    "which this plan does not use as a system of record for its tables."
                 )
 
         # --- WARNING: co-dependent queries split across engines ---

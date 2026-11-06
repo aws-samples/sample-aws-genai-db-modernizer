@@ -1980,6 +1980,13 @@ const AnalysisResultsPage = memo(() => {
                           {cacheLayerLine}
                         </Box>
                       )}
+                      {/* #399: why the cache layer is cache-aside, from
+                          facts.cache_layer.role_sentence, as every deliverable states it. */}
+                      {cacheLayerLine && cacheFacts?.roleSentence && (
+                        <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                          {cacheFacts.roleSentence}
+                        </Box>
+                      )}
                       {/* #1891: per non-Aurora engine, its statements on temporary objects
                           that follow their routine (facts.query_group_counts.
                           procedure_internal_routine_counts); an Aurora engine states its

@@ -3164,7 +3164,7 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         head = (
             f"Cache layer for {n} designed cached {'read' if n == 1 else 'reads'} "
             f"({r.get('cache_call_share_percent', 0)}% of calls){shape}, cache-aside in front "
-            f"of {owners}; it owns no queries"
+            f"of {owners}, which stay the system of record"
         )
         fit = _routed_phrase(r, "mean cache fit", ("cached read", "cached reads"))
         parts = [head + (f"; {fit}" if fit else "")]
@@ -3580,7 +3580,8 @@ def build_summary(
             parts.append(
                 f"Cache layer: {display_name(r['target'])} fronts {n} designed cached "
                 f"{'read' if n == 1 else 'reads'} ({r.get('cache_call_share_percent', 0)}% of "
-                "calls) cache-aside and owns no queries."
+                "calls) cache-aside, as recommended for hot, small reads; their owner engines "
+                "stay the system of record."
             )
         designed_engines, _ = designed_and_not_designed_engines(ranking)
         designed = [r for r in with_workload + cache if r["target"] in designed_engines]

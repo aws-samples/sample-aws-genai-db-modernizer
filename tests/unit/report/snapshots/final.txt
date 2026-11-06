@@ -13,6 +13,7 @@ A second paragraph.
 - Projected monthly cost: $582.76
 - Full-modernization estimate: all waves done, every kept engine running. Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator (https://calculator.aws/).
 - Migration: 3 waves
+- Cache layer: ElastiCache is recommended as a cache-aside layer in front of the engine that owns each cached read: the cached reads are hot, small and can be rebuilt from that engine, so it stays the system of record and the cache is sized for the hot reads, not the whole dataset. ElastiCache for Valkey 9.0 and later offers durability on Multi-AZ clusters; this assessment does not use it as a system of record today.
 - Cache layer note: 15 cache candidates, 12 designed; 3 stay on their owner engine.
 
 ### Engines

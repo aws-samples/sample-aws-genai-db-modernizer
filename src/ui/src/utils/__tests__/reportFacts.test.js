@@ -297,7 +297,17 @@ describe('cache layer facts (#1252)', () => {
   test('read the candidates and the designed cached reads as stored', () => {
     expect(cacheLayerFactsOf({ facts })).toEqual({
       candidates: 20, candidateCallShare: 83.4, designed: 14, designedCallShare: 76.1, ownerOnly: 6,
+      roleSentence: null,
     });
+  });
+
+  // #399: the cache layer as the assessment's recommendation, printed as stored.
+  test('carries the stored role sentence, and none for a report written before it', () => {
+    const sentence = 'ElastiCache is recommended as a cache-aside layer in front of each owner.';
+    const stored = { cache_layer: { designed_read_count: 14, role_sentence: sentence } };
+    expect(cacheLayerFactsOf({ facts: stored }).roleSentence).toBe(sentence);
+    const older = { cache_layer: { designed_read_count: 14 } };
+    expect(cacheLayerFactsOf({ facts: older }).roleSentence).toBeNull();
   });
 
   test('a report with no cache layer, or written before the fact, has none', () => {

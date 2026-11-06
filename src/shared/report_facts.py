@@ -44,6 +44,7 @@ from typing import Any
 
 from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.cache_role import cache_role_sentence
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
 from src.shared.catalog.gaps import GAP_IMPACTS
 from src.shared.engine_names import (
@@ -204,7 +205,9 @@ def cache_layer_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     figure); ``designed_*`` is what the cache engine's schema design covers (the figure
     after schema design); ``owner_only_read_count`` is the candidates the design does not
     cover, which stay on their owner engine alone. This is the one source of the cache
-    figures and of the change sentence (:func:`src.shared.cache_change.cache_change_sentence`).
+    figures, of the change sentence (:func:`src.shared.cache_change.cache_change_sentence`)
+    and of ``role_sentence``, the cache layer stated as the assessment's recommendation
+    with its reason (:func:`src.shared.cache_role.cache_role_sentence`, #399).
 
     A report written before ``candidate_query_count`` has its candidates as the designed reads
     plus the reads it recorded as dropped (``dropped_query_ids``); their call share is then
@@ -234,6 +237,8 @@ def cache_layer_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "designed_read_count": designed,
         "designed_call_share_percent": designed_share,
         "owner_only_read_count": candidates - designed,
+        # #399: the cache layer as the assessment's recommendation, with its reason.
+        "role_sentence": cache_role_sentence(overlay.get("engine")),
     }
 
 

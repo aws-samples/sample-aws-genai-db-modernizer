@@ -607,6 +607,9 @@ Version History:
   a procedure, function or trigger merged, and the routine value of TableGroup.kind, a
   wave table group from a routine unit (#1654). Backward compatible: routine_units
   defaults to an empty list.
+- 1.81 (2026-11-08, #399): Added optional ``facts.cache_layer.role_sentence``: the cache
+  layer stated as the assessment's recommendation, with its reason, that every
+  deliverable prints (#399).
 """
 
 from datetime import datetime
@@ -1865,6 +1868,13 @@ class CacheLayerFacts(BaseModel):
     owner_only_read_count: int = Field(
         0, ge=0, description="Candidates the design does not cover: they stay on their owner"
     )
+    role_sentence: str | None = Field(
+        None,
+        description=(
+            "The cache layer stated as the assessment's recommendation, with its reason "
+            "(#399); None for a report written before it"
+        ),
+    )
 
 
 class DerivedCopyFacts(BaseModel):
@@ -2958,7 +2968,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.80",
+        default="1.81",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

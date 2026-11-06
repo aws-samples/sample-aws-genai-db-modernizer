@@ -63,7 +63,7 @@ _GATE_TEXT: dict[str, str] = {
     GATE_KIND_HARD_EXCLUSION: "ruled out for this kind of query",
     GATE_KIND_CAPABILITY: "missing a capability the query needs",
     GATE_KIND_MODEL_FLAG: "a design review found it cannot support this query",
-    WRITE_GATE: "cannot own a query that writes data (not a system of record)",
+    WRITE_GATE: "cannot own a query that writes data (not used as a system of record in this plan)",
     GROUP_OWNER_GATE: "cannot own every query in its co-dependency group",
 }
 

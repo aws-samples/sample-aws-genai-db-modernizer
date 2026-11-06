@@ -27,7 +27,7 @@ The analysis does not decide where a query goes. Routing does, in the Assignment
 The engine file's `status` and `role` say what the engine is for:
 
 - `status = "active"` is a routing target. `future` is a named placeholder (Neptune, Keyspaces) that is never analysed, designed or routed (ADR-031 Decision 9). `legacy` is an id only older reports carry (the generic `aurora`).
-- `system_of_record` says whether the engine can durably own a table. DynamoDB, DocumentDB and the Aurora engines do. OpenSearch is a search read model and ElastiCache is a cache; neither owns a query or a write.
+- `system_of_record` says whether the tool lets the engine own a table. DynamoDB, DocumentDB and the Aurora engines do. The tool uses OpenSearch as a search read model and ElastiCache as a cache, so neither owns a query or a write. That is the tool's choice, not a limit of either service: ElastiCache for Valkey 9.0 and later offers durability on Multi-AZ clusters, which the tool does not use as a system of record today (#401). <!-- claim: tests/unit/agents/referee/test_elasticache_never_owns_a_query.py::test_the_ledger_refuses_a_first_move_onto_a_cache, tests/unit/report/test_cache_role_sentence.py::TestTheSentence::test_it_notes_valkey_durability_and_that_the_tool_does_not_use_it -->
 
 ### Data flow
 

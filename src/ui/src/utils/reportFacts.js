@@ -287,6 +287,8 @@ export function cacheLayerFactsOf(synthesis) {
     designed: c.designed_read_count,
     designedCallShare: c.designed_call_share_percent,
     ownerOnly: c.owner_only_read_count || 0,
+    // #399: the cache layer as the assessment's recommendation, with its reason.
+    roleSentence: typeof c.role_sentence === 'string' && c.role_sentence ? c.role_sentence : null,
   };
 }
 
