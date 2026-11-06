@@ -57,6 +57,10 @@ ownership, so "does engine X touch table T" must be answered from
 synthesis ``llm_input.json`` when present, otherwise derived the same way
 (tables accessed by the engine's assigned in-scope queries) from
 ``assignment.json``, or as a last resort from ``report.json`` ``query_groups``.
+Whichever source it comes from, the tables ``report.json``'s owner lines give an
+engine are added: the table's one writer and every engine reading it through a copy
+kept in sync via CDC (ADR-031 Amendment 9), so the facts match what the report
+states (#1988).
 """
 
 from __future__ import annotations
@@ -169,6 +173,44 @@ def derive_tables_served(
             names &= known
         for engine in engines:
             out.setdefault(engine, set()).update(names)
+    return with_owner_line_tables({e: sorted(t) for e, t in out.items()}, report)
+
+
+def owner_line_tables(report: dict[str, Any]) -> dict[str, set[str]] | None:
+    """Per engine, the tables ``report.json``'s owner lines (``facts.table_owner_lines``,
+    #212) say it serves: as the table's one writer (``owner``), as a reader through a copy
+    kept in sync via CDC (``also_read_by``, ADR-031 Amendment 9) or as the cache fronting
+    its reads (``cached_by``). None for a report written before the owner lines."""
+    lines = ((report.get("facts") or {}).get("table_owner_lines") or {}).get("table_lines")
+    if not isinstance(lines, list):
+        return None
+    db = report.get("database_name")
+    out: dict[str, set[str]] = {}
+    for line in lines:
+        if not isinstance(line, dict) or not line.get("table"):
+            continue
+        table = _strip_db(str(line["table"]), db)
+        cached = line.get("cached_by")
+        engines = [line.get("owner"), *(line.get("also_read_by") or [])]
+        engines += cached if isinstance(cached, list) else [cached]
+        for engine in engines:
+            if engine:
+                out.setdefault(str(engine), set()).add(table)
+    return out
+
+
+def with_owner_line_tables(
+    served: dict[str, list[str]], report: dict[str, Any]
+) -> dict[str, list[str]]:
+    """``served`` with the tables each engine serves as the report's owner lines state them
+    added (:func:`owner_line_tables`), so a reader through a copy counts the table its
+    queries' scope left out (#1988). Unchanged for a report written before them."""
+    stated = owner_line_tables(report)
+    if not stated:
+        return served
+    out = {engine: set(tables or []) for engine, tables in served.items()}
+    for engine, tables in stated.items():
+        out.setdefault(engine, set()).update(tables)
     return {engine: sorted(tables) for engine, tables in out.items()}
 
 
@@ -579,9 +621,13 @@ def build_facts(
 
     if effective:
         served_source = "effective_architecture (synthesis llm_input.json)"
-        served = {
-            e.get("engine"): sorted(e.get("tables") or []) for e in effective.get("engines") or []
-        }
+        served = with_owner_line_tables(
+            {
+                e.get("engine"): sorted(e.get("tables") or [])
+                for e in effective.get("engines") or []
+            },
+            report,
+        )
     elif (assignment or {}).get("query_assignments"):
         served_source = "derived from assignment.json query_assignments (no llm_input.json)"
         served = derive_tables_served(report, assignment)
@@ -593,6 +639,11 @@ def build_facts(
         )
         served = derive_tables_served(report)
     partial_scope = not effective and not (assignment or {}).get("query_assignments")
+    if owner_line_tables(report):
+        served_source += (
+            "; plus the tables report.json's facts.table_owner_lines give each engine as "
+            "owner, reader through a CDC copy or cache"
+        )
 
     # Names that aren't source tables ("unknown", "DUAL", a column a parser
     # took for a table) are dropped from risk table lists when the source
