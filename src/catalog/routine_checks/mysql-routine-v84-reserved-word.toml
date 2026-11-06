@@ -1,0 +1,17 @@
+# Routine check mysql-routine-v84-reserved-word (#2006 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.4 Reference Manual, Keywords and Reserved Words (INFORMATION_SCHEMA.KEYWORDS: QUALIFY and TABLESAMPLE are the only words 8.4 reserves that 8.0 does not); MySQL Shell upgrade checker, reserved keywords check.
+id = "mysql-routine-v84-reserved-word"
+feature = "A word MySQL 8.4 reserves, used as an identifier"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine uses as a name (a parameter, variable, label, column or table) a word that MySQL 8.4 reserves, so on Aurora MySQL version 8.4 the statement no longer parses and the routine cannot be created."
+fix_hint = "Quote the name with backticks wherever the routine writes it (`qualify`), or rename it, and do the same in the statements that call the routine or read the column."
+docs = "MySQL 8.4 Reference Manual, Keywords and Reserved Words; MySQL Shell, Upgrade Checker Utility"
+
+[version_change]
+line = "8.4"
+
+[match]
+reserved_words = ["QUALIFY", "TABLESAMPLE"]

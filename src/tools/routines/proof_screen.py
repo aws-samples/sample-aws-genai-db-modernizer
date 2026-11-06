@@ -291,6 +291,8 @@ def _references(
         verdict = check_mysql_routine(
             MySqlRoutine(routine_id="proof.routine", kind=kind, create_sql=text),  # type: ignore[arg-type]
             target_engine="aurora_mysql",
+            # Only the parse and the dependencies are read here, not the version rules.
+            source_version=None,
         )
         for d in verdict.dependencies:
             (tables if d.kind == "table" else calls).append((d.schema_name, d.name))
@@ -378,6 +380,8 @@ def create_refusal(text: str, engine: str, kind: str, namespace: str) -> str | N
         check_mysql_routine(
             MySqlRoutine(routine_id="proof.routine", kind=kind, create_sql=text),  # type: ignore[arg-type]
             target_engine="aurora_mysql",
+            # Only the parse and the dependencies are read here, not the version rules.
+            source_version=None,
         ).parse_failure
         is not None
     ):

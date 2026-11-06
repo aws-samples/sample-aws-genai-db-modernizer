@@ -201,6 +201,10 @@ _MYSQL_MATCHES = {
     "variables": 'set_variables = ["sql_log_bin"]',
     "modes": 'sql_modes = ["NO_AUTO_CREATE_USER"]',
     "unknown": 'unknown_sql_modes = true\nknown_sql_modes = ["ANSI_QUOTES"]',
+    "reserved": 'reserved_words = ["RANK", "ROW"]\nreserved_word_contexts = ["EACH ROW"]',
+    "unsorted": 'group_by = "without_order_by"',
+    "sorted": 'group_by = "with_direction"',
+    "sysvars": 'system_variables = ["tx_isolation"]',
 }
 
 
@@ -225,12 +229,15 @@ def test_the_page_renders_the_mysql_checks_the_shared_catalog_holds(tmp_path: Pa
         "statement",
         "sql_mode",
         "dynamic_sql",
+        "reserved_word",
+        "group_by",
     }
     page = "\n".join(render_routine_checks_md(rules + routine_check_rules(), {}))
     rows = {line.split("`")[1]: line for line in page.splitlines() if line.startswith("| [`")}
     for name in _MYSQL_MATCHES:
         row = rows[f"mysql-{name}"]
-        assert "test_mysql_routine_checks.py::" in row and row.count("|") == 7
+        mysql_tests = ("test_mysql_routine_checks.py::", "test_mysql_version_change_checks.py::")
+        assert any(t in row for t in mysql_tests) and row.count("|") == 7
         assert "test_postgresql_routine_checks.py::" not in row
     assert "always a trigger or event" in rows["mysql-definer"]
     assert "`SHUTDOWN`" in rows["mysql-starts"] and "`sql_log_bin`" in rows["mysql-variables"]
@@ -238,5 +245,14 @@ def test_the_page_renders_the_mysql_checks_the_shared_catalog_holds(tmp_path: Pa
     assert "(not `INTO OUTFILE S3`)" in rows["mysql-contains"]
     assert "a call to `LOAD_FILE`" in rows["mysql-calls"]
     assert "PREPARE from a user variable" in rows["mysql-dynamic"]
+    # #1952: the version-change checks, and when a version-change rule runs.
+    assert "`RANK`, `ROW`" in rows["mysql-reserved"] and "`EACH ROW`" in rows["mysql-reserved"]
+    assert "no ORDER BY after it" in rows["mysql-unsorted"]
+    assert "`ASC` or `DESC`" in rows["mysql-sorted"]
+    assert "an `@@` read of `tx_isolation`" in rows["mysql-sysvars"]
+    assert "runs only when" not in rows["mysql-reserved"]
+    version = rows["mysql-routine-v80-reserved-word"]
+    assert "older than 8.0 and the target line is 8.0 or later" in version
+    assert "test_rules_never_run_on_a_same_major_target" in version
     for rule in routine_check_rules():
         assert "claim:" in rows[rule.id]
