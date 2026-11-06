@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v12-removed-types (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 12 release notes, Migration to Version 12 (the abstime, reltime and tinterval types removed).
+id = "postgresql-routine-v12-removed-types"
+feature = "A type PostgreSQL 12 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 12 removed the abstime, reltime and tinterval types, so on every Aurora PostgreSQL line a routine that takes, returns, casts to or declares one cannot be created or fails when it runs."
+fix_hint = "Use timestamptz for abstime, interval for reltime, and a tstzrange (or two timestamptz values) for tinterval."
+docs = "PostgreSQL 12 release notes, Migration to Version 12"
+
+[version_change]
+line = "12"
+
+[match]
+removed_types = ["abstime", "reltime", "tinterval"]

@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v14-removed-functions (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 14 release notes, Migration to Version 14 (the factorial operators and numeric_fac() removed).
+id = "postgresql-routine-v14-removed-functions"
+feature = "A function PostgreSQL 14 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 14 removed numeric_fac() with the factorial operators, so on Aurora PostgreSQL 14 and later the call fails with an unknown function when the routine runs."
+fix_hint = "Call factorial() in place of numeric_fac()."
+docs = "PostgreSQL 14 release notes, Migration to Version 14"
+
+[version_change]
+line = "14"
+
+[match]
+called_functions = ["numeric_fac"]
