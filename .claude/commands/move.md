@@ -78,9 +78,9 @@ Ask whether they are ready for Check (they may come back later: `/move step-1` r
 4. `source_certificate_arn` and `target_certificate_arn`.
 5. `subnet_ids` and `security_group_ids` (lists), and `secrets_manager_endpoint_override` only when the Secrets Manager interface endpoint has no private DNS.
 6. `confirmed_checks`: only the preflight check ids the customer says they checked themselves; never fill it in yourself. Leave it out at first: Preflight adds an id once the customer confirms it.
-7. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`.
+7. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, and `template_bucket` only for a large source (a stack template over 51,200 bytes): an S3 bucket the customer owns in the stack's region, where `deploy` uploads the template.
 
-Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, one JSON object with exactly these keys (leave out what the customer did not give):
+Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, one JSON object with exactly these keys, plus any optional key of block 7 the customer gave (`multi_az`, `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, `template_bucket`); leave out what the customer did not give:
 
 ```json
 {"region": "<region>", "aurora_cluster_id": "<cluster>", "source_kind": "rds_instance", "source_id": "<instance>",
@@ -119,6 +119,8 @@ Show the `stack_name`, the `region`, every entry of `parameters`, and the `comma
 ```bash
 uv run python scripts/run_dms_step.py deploy --job-id {job_id} --db {db} --approve
 ```
+
+An error that names `template_bucket` means the template is over CloudFormation's inline limit: ask for a bucket the customer owns in the stack's region, add `template_bucket` to the inputs file, and run `deploy` again (the same approval covers the upload of the template, and nothing else, to that bucket).
 
 **2. Show the change set.** `"status": "change_set_ready"`: show every entry of `changes` (`action`, `logical_id`, `type`, `replacement`). Ask: "Execute this change set?" Only on a yes, with the line's `change_set_name`:
 
