@@ -1,6 +1,6 @@
 {
   "plan": {
-    "contract_version": "1.1",
+    "contract_version": "1.4",
     "job_id": "099e6873",
     "database_name": "wordpress",
     "assignment_version": 2,
@@ -10,7 +10,7 @@
     "step": 1,
     "contract": {
       "artifact": "transformation-contract/v2/step-1.json",
-      "sha256": "e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf"
+      "sha256": "7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46"
     },
     "hub_topics": [],
     "source": {
@@ -23,7 +23,7 @@
           "primary_key": [
             "action_id"
           ],
-          "estimated_rows": 12537
+          "estimated_rows": 25429
         },
         {
           "table": "wordpress.wp_actionscheduler_claims",
@@ -44,21 +44,21 @@
           "primary_key": [
             "log_id"
           ],
-          "estimated_rows": 12910
+          "estimated_rows": 26183
         },
         {
           "table": "wordpress.wp_commentmeta",
           "primary_key": [
             "meta_id"
           ],
-          "estimated_rows": 0
+          "estimated_rows": 6820
         },
         {
           "table": "wordpress.wp_comments",
           "primary_key": [
             "comment_ID"
           ],
-          "estimated_rows": 29651
+          "estimated_rows": 55500
         },
         {
           "table": "wordpress.wp_links",
@@ -72,21 +72,21 @@
           "primary_key": [
             "option_id"
           ],
-          "estimated_rows": 23163
+          "estimated_rows": 55527
         },
         {
           "table": "wordpress.wp_postmeta",
           "primary_key": [
             "meta_id"
           ],
-          "estimated_rows": 448688
+          "estimated_rows": 910705
         },
         {
           "table": "wordpress.wp_posts",
           "primary_key": [
             "ID"
           ],
-          "estimated_rows": 11990
+          "estimated_rows": 24276
         },
         {
           "table": "wordpress.wp_term_relationships",
@@ -94,7 +94,7 @@
             "object_id",
             "term_taxonomy_id"
           ],
-          "estimated_rows": 801
+          "estimated_rows": 3148
         },
         {
           "table": "wordpress.wp_term_taxonomy",
@@ -122,14 +122,14 @@
           "primary_key": [
             "umeta_id"
           ],
-          "estimated_rows": 21
+          "estimated_rows": 142751
         },
         {
           "table": "wordpress.wp_users",
           "primary_key": [
             "ID"
           ],
-          "estimated_rows": 1
+          "estimated_rows": 4305
         },
         {
           "table": "wordpress.wp_wc_admin_note_actions",
@@ -158,7 +158,7 @@
           "primary_key": [
             "customer_id"
           ],
-          "estimated_rows": 0
+          "estimated_rows": 4141
         },
         {
           "table": "wordpress.wp_wc_download_log",
@@ -228,10 +228,10 @@
         {
           "table": "wordpress.wp_wc_product_attributes_lookup",
           "primary_key": [
-            "product_id",
             "product_or_parent_id",
-            "taxonomy",
-            "term_id"
+            "term_id",
+            "product_id",
+            "taxonomy"
           ],
           "estimated_rows": 0
         },
@@ -247,7 +247,7 @@
           "primary_key": [
             "product_id"
           ],
-          "estimated_rows": 150
+          "estimated_rows": 1286
         },
         {
           "table": "wordpress.wp_wc_rate_limits",
@@ -311,14 +311,14 @@
           "primary_key": [
             "meta_id"
           ],
-          "estimated_rows": 244039
+          "estimated_rows": 473830
         },
         {
           "table": "wordpress.wp_woocommerce_order_items",
           "primary_key": [
             "order_item_id"
           ],
-          "estimated_rows": 24713
+          "estimated_rows": 48460
         },
         {
           "table": "wordpress.wp_woocommerce_payment_tokenmeta",
@@ -339,7 +339,7 @@
           "primary_key": [
             "session_id"
           ],
-          "estimated_rows": 0
+          "estimated_rows": 1
         },
         {
           "table": "wordpress.wp_woocommerce_shipping_zone_locations",
@@ -413,165 +413,183 @@
       "target_engine": "aurora_mysql",
       "target_engine_line": "8.0",
       "sizing": {
-        "row": "small",
-        "instance_class": "dms.t3.medium",
-        "allocated_storage_gb": 50,
-        "included_storage_gb": 50,
-        "database_gb": 0.135,
-        "writes_per_second": 21.251,
-        "reason": "0.135 GB and 21.251 writes per second: up to 10 GB and 50 writes per second. Burstable class for a demo or a small database: up to 10 GB and 50 writes per second fit its 4 GiB of memory; 50 GB of storage holds task logs and spilled changes (this catalog's choice).",
+        "row": "medium",
+        "instance_class": "dms.r6i.large",
+        "allocated_storage_gb": 100,
+        "included_storage_gb": 100,
+        "database_gb": 0.2998,
+        "writes_per_second": 190.986,
+        "reason": "0.2998 GB and 190.986 writes per second: up to 500 GB and 1000 writes per second. Memory-optimized (16 GiB) so changes stay in memory up to 1,000 writes per second; 100 GB of storage holds task logs and changes that spill from memory during a full load of up to 500 GB (this catalog's choice). The task's LobMaxSize of 64 KB, with 20 LOB columns at 1280 KB in total (each at the limit its table runs at) fits dms.r6i.large (a task-wide LobMaxSize up to 5120 KB).",
         "note": null
       },
+      "engine_version": "3.6.1",
+      "engine_version_why": "On the default engine (3.5.4) the data validator can fail to read an endpoint secret and retry one table indefinitely, which stalls validation on large sources; on 3.6.1 it re-reads the secret and recovers. From a MySQL source, earlier rehearsals passed on 3.5.4 in full LOB mode, and the first on 3.6.1 failed in full LOB mode on NOT NULL LONGTEXT columns (#2123); the 3.6.0 and 3.6.1 release notes list no MySQL LOB change, and step 1 no longer runs a MySQL source in full LOB mode, so 3.6.1 stays until a live run shows otherwise.",
       "multi_az_default": true,
-      "lob_max_size_kb": 32,
+      "lob_max_size_kb": 64,
       "lob_tables": [
         {
           "table": "wordpress.wp_actionscheduler_actions",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "schedule"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (schedule): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_commentmeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_links",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "link_notes"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 65536 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (link_notes): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_options",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "option_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (option_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_postmeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_posts",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "post_content",
             "post_content_filtered"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (post_content, post_content_filtered): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_term_taxonomy",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "description"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (description): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_termmeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_usermeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_wc_admin_note_actions",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "query"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (query): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_wc_admin_notes",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "content",
             "content_data",
             "title"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (content, content_data, title): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_woocommerce_api_keys",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "nonces"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (nonces): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_woocommerce_log",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "context",
             "message"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (context, message): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_woocommerce_order_itemmeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_woocommerce_payment_tokenmeta",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "meta_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (meta_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         },
         {
           "table": "wordpress.wp_woocommerce_sessions",
-          "mode": "full",
+          "mode": "limited",
           "columns": [
             "session_value"
           ],
-          "max_size_kb": null,
-          "reason": "A LOB column declares up to 16777216 KB (character columns counted at 4 bytes per character), above the 1024 KB limit, so full LOB mode moves every value whole."
+          "max_size_kb": 64,
+          "reason": "A LOB column has no declared maximum size (or one above the limit); this source never runs full LOB mode (it inserts each row with its LOB columns NULL and fills them in afterwards, which a NOT NULL LOB column refuses, #2123), so the table runs in limited LOB mode at 64 KB. LOB size not measured (session_value): the collection did not measure its values, and this source endpoint truncates a longer value with no task error, so preflight's lob_sizes check stops until it is measured: run lob-sizes.sql (read-only, SELECT max(length(<column>)) FROM <table> per column) and run_dms_step.py lob-sizes.",
+          "size_source": "unmeasured"
         }
       ],
       "unbounded_varchar": {
@@ -643,7 +661,7 @@
       }
     ],
     "gates": {
-      "wave_gate": "Schema and data parity validated against the source database before cutover. Once replication to Aurora MySQL has caught up, decommission the source MySQL database: later waves move from Aurora MySQL, not from it.",
+      "wave_gate": "Schema and data parity validated against the source database. Decommission the source MySQL database once you have completed your cutover: later waves move from Aurora MySQL, not from it. The cutover is your responsibility. Close RISK-004, RISK-005 and RISK-010 before this gate (source objects' database logic, design trade-offs and carried routines to check). To do before wave 1: migrate 1 routine yourself (RISK-009).",
       "parity": [
         {
           "table": "wordpress.wp_actionscheduler_actions",
@@ -846,7 +864,7 @@
           "check": "row_count_and_key_checksum"
         }
       ],
-      "max_lag_seconds": 5,
+      "max_lag_seconds": 30,
       "lagging_reads": []
     },
     "stacks": [
@@ -857,22 +875,23 @@
         "template": null
       }
     ],
-    "monthly_cost_usd": 108.77,
+    "monthly_cost_usd": 257.69,
     "cost_assumptions": [
-      "One Multi-AZ DMS replication instance (dms.t3.medium, the stack's default MultiAZ=true) with 50 GB of allocated storage (50 GB included in the instance price, the rest billed per GB) runs the full load and ongoing replication for step 1",
-      "Instance size: 0.135 GB and 21.251 writes per second: up to 10 GB and 50 writes per second. Burstable class for a demo or a small database: up to 10 GB and 50 writes per second fit its 4 GiB of memory; 50 GB of storage holds task logs and spilled changes (this catalog's choice).",
+      "One Multi-AZ DMS replication instance (dms.r6i.large, the stack's default MultiAZ=true) with 100 GB of allocated storage (100 GB included in the instance price, the rest billed per GB) runs the full load and ongoing replication for step 1",
+      "Instance size: 0.2998 GB and 190.986 writes per second: up to 500 GB and 1000 writes per second. Memory-optimized (16 GiB) so changes stay in memory up to 1,000 writes per second; 100 GB of storage holds task logs and changes that spill from memory during a full load of up to 500 GB (this catalog's choice). The task's LobMaxSize of 64 KB, with 20 LOB columns at 1280 KB in total (each at the limit its table runs at) fits dms.r6i.large (a task-wide LobMaxSize up to 5120 KB).",
       "The migration is billed as one month (730 hours); the instance is removed once the step cuts over",
-      "With MultiAZ=false the instance and its storage cost 54.38 USD per month",
+      "With MultiAZ=false the instance and its storage cost 128.48 USD per month",
       "The targets' own cost is in the total cost of ownership, not repeated here",
       "Prices: AWS Price List, us-east-1, on-demand, retrieved on 2026-11-04"
     ],
     "unsupported": [],
     "notes": [
-      "The lag gate is 5 seconds of capture lag, a default to tune against the lagging reads' tolerance"
+      "The lag gate is 30 seconds of capture lag, a default to tune against the lagging reads' tolerance",
+      "LOB size not measured: 16 step 1 tables have a LOB column the collection did not measure (wordpress.wp_actionscheduler_actions, wordpress.wp_commentmeta, wordpress.wp_links, wordpress.wp_options, wordpress.wp_postmeta and 11 more), so the task's 64 KB LobMaxSize is not checked against them and a larger value is truncated: this source endpoint truncates with no task error (no FailTasksOnLobTruncation), so preflight's lob_sizes check stops until they are measured. Run the read-only lob-sizes.sql step 1 writes (SELECT max(length(<column>)) FROM <table> per LOB column), then run_dms_step.py lob-sizes, which sizes each table from its output and writes the stack again; or, to skip measuring, set \"lob_sizes\": \"skip\" in inputs.json and run run_dms_step.py lob-sizes: each such table then runs at 1024 KB, and a longer value is truncated, which only DMS validation reports."
     ]
   },
   "contract": {
-    "contract_version": "1.0",
+    "contract_version": "1.5",
     "job_id": "099e6873",
     "assignment_version": 2,
     "step": 1,
@@ -894,6 +913,9 @@
         "target_table": "wp_actionscheduler_actions",
         "table_class": null,
         "primary_key": [
+          "action_id"
+        ],
+        "key_columns": [
           "action_id"
         ],
         "fields": [
@@ -1106,6 +1128,9 @@
         "primary_key": [
           "claim_id"
         ],
+        "key_columns": [
+          "claim_id"
+        ],
         "fields": [
           {
             "source_column": "claim_id",
@@ -1151,6 +1176,9 @@
         "primary_key": [
           "group_id"
         ],
+        "key_columns": [
+          "group_id"
+        ],
         "fields": [
           {
             "source_column": "group_id",
@@ -1186,6 +1214,9 @@
         "target_table": "wp_actionscheduler_logs",
         "table_class": null,
         "primary_key": [
+          "log_id"
+        ],
+        "key_columns": [
           "log_id"
         ],
         "fields": [
@@ -1276,6 +1307,9 @@
         "primary_key": [
           "meta_id"
         ],
+        "key_columns": [
+          "meta_id"
+        ],
         "fields": [
           {
             "source_column": "meta_id",
@@ -1335,6 +1369,9 @@
         "target_table": "wp_comments",
         "table_class": null,
         "primary_key": [
+          "comment_ID"
+        ],
+        "key_columns": [
           "comment_ID"
         ],
         "fields": [
@@ -1545,6 +1582,9 @@
         "primary_key": [
           "link_id"
         ],
+        "key_columns": [
+          "link_id"
+        ],
         "fields": [
           {
             "source_column": "link_id",
@@ -1722,6 +1762,9 @@
         "primary_key": [
           "option_id"
         ],
+        "key_columns": [
+          "option_id"
+        ],
         "fields": [
           {
             "source_column": "option_id",
@@ -1783,6 +1826,9 @@
         "primary_key": [
           "meta_id"
         ],
+        "key_columns": [
+          "meta_id"
+        ],
         "fields": [
           {
             "source_column": "meta_id",
@@ -1842,6 +1888,9 @@
         "target_table": "wp_posts",
         "table_class": null,
         "primary_key": [
+          "ID"
+        ],
+        "key_columns": [
           "ID"
         ],
         "fields": [
@@ -2163,6 +2212,10 @@
           "object_id",
           "term_taxonomy_id"
         ],
+        "key_columns": [
+          "object_id",
+          "term_taxonomy_id"
+        ],
         "fields": [
           {
             "source_column": "object_id",
@@ -2210,6 +2263,9 @@
         "target_table": "wp_term_taxonomy",
         "table_class": null,
         "primary_key": [
+          "term_taxonomy_id"
+        ],
+        "key_columns": [
           "term_taxonomy_id"
         ],
         "fields": [
@@ -2297,6 +2353,9 @@
         "primary_key": [
           "meta_id"
         ],
+        "key_columns": [
+          "meta_id"
+        ],
         "fields": [
           {
             "source_column": "meta_id",
@@ -2356,6 +2415,9 @@
         "target_table": "wp_terms",
         "table_class": null,
         "primary_key": [
+          "term_id"
+        ],
+        "key_columns": [
           "term_id"
         ],
         "fields": [
@@ -2419,6 +2481,9 @@
         "primary_key": [
           "umeta_id"
         ],
+        "key_columns": [
+          "umeta_id"
+        ],
         "fields": [
           {
             "source_column": "umeta_id",
@@ -2478,6 +2543,9 @@
         "target_table": "wp_users",
         "table_class": null,
         "primary_key": [
+          "ID"
+        ],
+        "key_columns": [
           "ID"
         ],
         "fields": [
@@ -2621,6 +2689,9 @@
         "primary_key": [
           "action_id"
         ],
+        "key_columns": [
+          "action_id"
+        ],
         "fields": [
           {
             "source_column": "action_id",
@@ -2740,6 +2811,9 @@
         "target_table": "wp_wc_admin_notes",
         "table_class": null,
         "primary_key": [
+          "note_id"
+        ],
+        "key_columns": [
           "note_id"
         ],
         "fields": [
@@ -2975,6 +3049,10 @@
           "category_tree_id",
           "category_id"
         ],
+        "key_columns": [
+          "category_tree_id",
+          "category_id"
+        ],
         "fields": [
           {
             "source_column": "category_tree_id",
@@ -3010,6 +3088,9 @@
         "target_table": "wp_wc_customer_lookup",
         "table_class": null,
         "primary_key": [
+          "customer_id"
+        ],
+        "key_columns": [
           "customer_id"
         ],
         "fields": [
@@ -3184,6 +3265,9 @@
         "primary_key": [
           "download_log_id"
         ],
+        "key_columns": [
+          "download_log_id"
+        ],
         "fields": [
           {
             "source_column": "download_log_id",
@@ -3263,6 +3347,9 @@
         "target_table": "wp_wc_order_addresses",
         "table_class": null,
         "primary_key": [
+          "id"
+        ],
+        "key_columns": [
           "id"
         ],
         "fields": [
@@ -3447,6 +3534,10 @@
           "order_id",
           "coupon_id"
         ],
+        "key_columns": [
+          "order_id",
+          "coupon_id"
+        ],
         "fields": [
           {
             "source_column": "order_id",
@@ -3514,6 +3605,9 @@
         "target_table": "wp_wc_order_operational_data",
         "table_class": null,
         "primary_key": [
+          "id"
+        ],
+        "key_columns": [
           "id"
         ],
         "fields": [
@@ -3760,6 +3854,9 @@
         "primary_key": [
           "order_item_id"
         ],
+        "key_columns": [
+          "order_item_id"
+        ],
         "fields": [
           {
             "source_column": "order_item_id",
@@ -3935,6 +4032,9 @@
         "target_table": "wp_wc_order_stats",
         "table_class": null,
         "primary_key": [
+          "order_id"
+        ],
+        "key_columns": [
           "order_id"
         ],
         "fields": [
@@ -4148,6 +4248,10 @@
           "order_id",
           "tax_rate_id"
         ],
+        "key_columns": [
+          "order_id",
+          "tax_rate_id"
+        ],
         "fields": [
           {
             "source_column": "order_id",
@@ -4239,6 +4343,9 @@
         "target_table": "wp_wc_orders",
         "table_class": null,
         "primary_key": [
+          "id"
+        ],
+        "key_columns": [
           "id"
         ],
         "fields": [
@@ -4473,6 +4580,9 @@
         "primary_key": [
           "id"
         ],
+        "key_columns": [
+          "id"
+        ],
         "fields": [
           {
             "source_column": "id",
@@ -4532,10 +4642,16 @@
         "target_table": "wp_wc_product_attributes_lookup",
         "table_class": null,
         "primary_key": [
-          "product_id",
           "product_or_parent_id",
-          "taxonomy",
-          "term_id"
+          "term_id",
+          "product_id",
+          "taxonomy"
+        ],
+        "key_columns": [
+          "product_or_parent_id",
+          "term_id",
+          "product_id",
+          "taxonomy"
         ],
         "fields": [
           {
@@ -4622,6 +4738,9 @@
         "primary_key": [
           "url_id"
         ],
+        "key_columns": [
+          "url_id"
+        ],
         "fields": [
           {
             "source_column": "url_id",
@@ -4669,6 +4788,9 @@
         "target_table": "wp_wc_product_meta_lookup",
         "table_class": null,
         "primary_key": [
+          "product_id"
+        ],
+        "key_columns": [
           "product_id"
         ],
         "fields": [
@@ -4852,6 +4974,9 @@
         "primary_key": [
           "rate_limit_id"
         ],
+        "key_columns": [
+          "rate_limit_id"
+        ],
         "fields": [
           {
             "source_column": "rate_limit_id",
@@ -4911,6 +5036,10 @@
         "target_table": "wp_wc_reserved_stock",
         "table_class": null,
         "primary_key": [
+          "order_id",
+          "product_id"
+        ],
+        "key_columns": [
           "order_id",
           "product_id"
         ],
@@ -5002,6 +5131,9 @@
         "primary_key": [
           "tax_rate_class_id"
         ],
+        "key_columns": [
+          "tax_rate_class_id"
+        ],
         "fields": [
           {
             "source_column": "tax_rate_class_id",
@@ -5049,6 +5181,9 @@
         "target_table": "wp_wc_webhooks",
         "table_class": null,
         "primary_key": [
+          "webhook_id"
+        ],
+        "key_columns": [
           "webhook_id"
         ],
         "fields": [
@@ -5261,6 +5396,9 @@
         "primary_key": [
           "key_id"
         ],
+        "key_columns": [
+          "key_id"
+        ],
         "fields": [
           {
             "source_column": "key_id",
@@ -5390,6 +5528,9 @@
         "primary_key": [
           "attribute_id"
         ],
+        "key_columns": [
+          "attribute_id"
+        ],
         "fields": [
           {
             "source_column": "attribute_id",
@@ -5473,6 +5614,9 @@
         "target_table": "wp_woocommerce_downloadable_product_permissions",
         "table_class": null,
         "primary_key": [
+          "permission_id"
+        ],
+        "key_columns": [
           "permission_id"
         ],
         "fields": [
@@ -5635,6 +5779,9 @@
         "primary_key": [
           "log_id"
         ],
+        "key_columns": [
+          "log_id"
+        ],
         "fields": [
           {
             "source_column": "log_id",
@@ -5728,6 +5875,9 @@
         "primary_key": [
           "meta_id"
         ],
+        "key_columns": [
+          "meta_id"
+        ],
         "fields": [
           {
             "source_column": "meta_id",
@@ -5787,6 +5937,9 @@
         "target_table": "wp_woocommerce_order_items",
         "table_class": null,
         "primary_key": [
+          "order_item_id"
+        ],
+        "key_columns": [
           "order_item_id"
         ],
         "fields": [
@@ -5850,6 +6003,9 @@
         "primary_key": [
           "meta_id"
         ],
+        "key_columns": [
+          "meta_id"
+        ],
         "fields": [
           {
             "source_column": "meta_id",
@@ -5909,6 +6065,9 @@
         "target_table": "wp_woocommerce_payment_tokens",
         "table_class": null,
         "primary_key": [
+          "token_id"
+        ],
+        "key_columns": [
           "token_id"
         ],
         "fields": [
@@ -5996,6 +6155,9 @@
         "primary_key": [
           "session_id"
         ],
+        "key_columns": [
+          "session_id"
+        ],
         "fields": [
           {
             "source_column": "session_id",
@@ -6057,6 +6219,9 @@
         "primary_key": [
           "location_id"
         ],
+        "key_columns": [
+          "location_id"
+        ],
         "fields": [
           {
             "source_column": "location_id",
@@ -6116,6 +6281,9 @@
         "target_table": "wp_woocommerce_shipping_zone_methods",
         "table_class": null,
         "primary_key": [
+          "instance_id"
+        ],
+        "key_columns": [
           "instance_id"
         ],
         "fields": [
@@ -6191,6 +6359,9 @@
         "primary_key": [
           "zone_id"
         ],
+        "key_columns": [
+          "zone_id"
+        ],
         "fields": [
           {
             "source_column": "zone_id",
@@ -6238,6 +6409,9 @@
         "target_table": "wp_woocommerce_tax_rate_locations",
         "table_class": null,
         "primary_key": [
+          "location_id"
+        ],
+        "key_columns": [
           "location_id"
         ],
         "fields": [
@@ -6299,6 +6473,9 @@
         "target_table": "wp_woocommerce_tax_rates",
         "table_class": null,
         "primary_key": [
+          "tax_rate_id"
+        ],
+        "key_columns": [
           "tax_rate_id"
         ],
         "fields": [
@@ -6426,9 +6603,98 @@
         "status": "valid",
         "findings": []
       }
-    ]
+    ],
+    "routines": {
+      "source": "routine_migration",
+      "routine_migration_version": 2,
+      "total": 5,
+      "carried": 2,
+      "not_carried": 1,
+      "deferred": 2,
+      "routines": [
+        {
+          "routine_id": "wordpress.wp_post_comment_count",
+          "kind": "function",
+          "schema_name": "wordpress",
+          "name": "wp_post_comment_count",
+          "specific_name": "wp_post_comment_count",
+          "table": null,
+          "signature": "bigint unsigned",
+          "returns": "int",
+          "carry": "carried",
+          "order": 1,
+          "migration_status": "as_is",
+          "enabled_as": "enabled",
+          "reasons": []
+        },
+        {
+          "routine_id": "wordpress.wp_refresh_comment_count",
+          "kind": "procedure",
+          "schema_name": "wordpress",
+          "name": "wp_refresh_comment_count",
+          "specific_name": "wp_refresh_comment_count",
+          "table": null,
+          "signature": "IN bigint unsigned",
+          "returns": null,
+          "carry": "carried",
+          "order": 2,
+          "migration_status": "rewritten",
+          "enabled_as": "enabled",
+          "reasons": []
+        },
+        {
+          "routine_id": "wordpress.wp_purge_action_logs",
+          "kind": "event",
+          "schema_name": "wordpress",
+          "name": "wp_purge_action_logs",
+          "specific_name": "wp_purge_action_logs",
+          "table": null,
+          "signature": null,
+          "returns": null,
+          "carry": "deferred_to_cutover",
+          "order": null,
+          "migration_status": null,
+          "enabled_as": "absent",
+          "reasons": []
+        },
+        {
+          "routine_id": "wordpress.wp_bulk_import_mode",
+          "kind": "procedure",
+          "schema_name": "wordpress",
+          "name": "wp_bulk_import_mode",
+          "specific_name": "wp_bulk_import_mode",
+          "table": null,
+          "signature": "IN tinyint",
+          "returns": null,
+          "carry": "not_carried",
+          "order": null,
+          "migration_status": null,
+          "enabled_as": null,
+          "reasons": [
+            "mysql-routine-set-global"
+          ]
+        },
+        {
+          "routine_id": "wordpress.wp_comments_count_after_insert",
+          "kind": "trigger",
+          "schema_name": "wordpress",
+          "name": "wp_comments_count_after_insert",
+          "specific_name": "wp_comments.wp_comments_count_after_insert",
+          "table": "wp_comments",
+          "signature": null,
+          "returns": null,
+          "carry": "deferred_to_cutover",
+          "order": null,
+          "migration_status": null,
+          "enabled_as": "absent",
+          "reasons": [],
+          "fires": "AFTER INSERT",
+          "action_order": 1
+        }
+      ]
+    }
   },
-  "ddl": "CREATE TABLE `wp_actionscheduler_actions` (\n  `action_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `args` VARCHAR(191),\n  `attempts` INT NOT NULL DEFAULT '0',\n  `claim_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `extended_args` VARCHAR(8000),\n  `group_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `hook` VARCHAR(191) NOT NULL,\n  `last_attempt_gmt` DATETIME DEFAULT NULL,\n  `last_attempt_local` DATETIME DEFAULT NULL,\n  `priority` TINYINT UNSIGNED NOT NULL DEFAULT '10',\n  `schedule` LONGTEXT,\n  `scheduled_date_gmt` DATETIME DEFAULT NULL,\n  `scheduled_date_local` DATETIME DEFAULT NULL,\n  `status` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`action_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_claims` (\n  `claim_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `date_created_gmt` DATETIME DEFAULT NULL,\n  PRIMARY KEY (`claim_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_groups` (\n  `group_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `slug` VARCHAR(255) NOT NULL,\n  PRIMARY KEY (`group_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_logs` (\n  `action_id` BIGINT UNSIGNED NOT NULL,\n  `log_date_gmt` DATETIME DEFAULT NULL,\n  `log_date_local` DATETIME DEFAULT NULL,\n  `log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `message` TEXT NOT NULL,\n  PRIMARY KEY (`log_id`)\n);\n\nCREATE TABLE `wp_commentmeta` (\n  `comment_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_comments` (\n  `comment_agent` VARCHAR(255) NOT NULL DEFAULT '',\n  `comment_approved` VARCHAR(20) NOT NULL DEFAULT '1',\n  `comment_author` TINYTEXT NOT NULL,\n  `comment_author_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_IP` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_url` VARCHAR(200) NOT NULL DEFAULT '',\n  `comment_content` TEXT NOT NULL,\n  `comment_date` DATETIME NOT NULL,\n  `comment_date_gmt` DATETIME NOT NULL,\n  `comment_ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `comment_karma` INT NOT NULL DEFAULT '0',\n  `comment_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_post_ID` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_type` VARCHAR(20) NOT NULL DEFAULT 'comment',\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`comment_ID`)\n);\n\nCREATE TABLE `wp_links` (\n  `link_description` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `link_image` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_name` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_notes` MEDIUMTEXT NOT NULL,\n  `link_owner` BIGINT UNSIGNED NOT NULL DEFAULT '1',\n  `link_rating` INT NOT NULL DEFAULT '0',\n  `link_rel` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_rss` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_target` VARCHAR(25) NOT NULL DEFAULT '',\n  `link_updated` DATETIME NOT NULL,\n  `link_url` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_visible` VARCHAR(20) NOT NULL DEFAULT 'Y',\n  PRIMARY KEY (`link_id`)\n);\n\nCREATE TABLE `wp_options` (\n  `autoload` VARCHAR(20) NOT NULL DEFAULT 'yes',\n  `option_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `option_name` VARCHAR(191) NOT NULL DEFAULT '',\n  `option_value` LONGTEXT NOT NULL,\n  PRIMARY KEY (`option_id`)\n);\n\nCREATE TABLE `wp_postmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `post_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_posts` (\n  `comment_count` BIGINT NOT NULL DEFAULT '0',\n  `comment_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `guid` VARCHAR(255) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `menu_order` INT NOT NULL DEFAULT '0',\n  `ping_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `pinged` TEXT NOT NULL,\n  `post_author` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_content` LONGTEXT NOT NULL,\n  `post_content_filtered` LONGTEXT NOT NULL,\n  `post_date` DATETIME NOT NULL,\n  `post_date_gmt` DATETIME NOT NULL,\n  `post_excerpt` TEXT NOT NULL,\n  `post_mime_type` VARCHAR(100) NOT NULL DEFAULT '',\n  `post_modified` DATETIME NOT NULL,\n  `post_modified_gmt` DATETIME NOT NULL,\n  `post_name` VARCHAR(200) NOT NULL DEFAULT '',\n  `post_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_password` VARCHAR(255) NOT NULL DEFAULT '',\n  `post_status` VARCHAR(20) NOT NULL DEFAULT 'publish',\n  `post_title` TEXT NOT NULL,\n  `post_type` VARCHAR(20) NOT NULL DEFAULT 'post',\n  `to_ping` TEXT NOT NULL,\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_term_relationships` (\n  `object_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_order` INT NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`object_id`, `term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_term_taxonomy` (\n  `count` BIGINT NOT NULL DEFAULT '0',\n  `description` LONGTEXT NOT NULL,\n  `parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `taxonomy` VARCHAR(32) NOT NULL DEFAULT '',\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_termmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_terms` (\n  `name` VARCHAR(200) NOT NULL DEFAULT '',\n  `slug` VARCHAR(200) NOT NULL DEFAULT '',\n  `term_group` BIGINT NOT NULL DEFAULT '0',\n  `term_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_id`)\n);\n\nCREATE TABLE `wp_usermeta` (\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `umeta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`umeta_id`)\n);\n\nCREATE TABLE `wp_users` (\n  `display_name` VARCHAR(250) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_activation_key` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `user_login` VARCHAR(60) NOT NULL DEFAULT '',\n  `user_nicename` VARCHAR(50) NOT NULL DEFAULT '',\n  `user_pass` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_registered` DATETIME NOT NULL,\n  `user_status` INT NOT NULL DEFAULT '0',\n  `user_url` VARCHAR(100) NOT NULL DEFAULT '',\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_wc_admin_note_actions` (\n  `action_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `actioned_text` VARCHAR(255) NOT NULL,\n  `label` VARCHAR(255) NOT NULL,\n  `name` VARCHAR(255) NOT NULL,\n  `nonce_action` VARCHAR(255),\n  `nonce_name` VARCHAR(255),\n  `note_id` BIGINT UNSIGNED NOT NULL,\n  `query` LONGTEXT NOT NULL,\n  `status` VARCHAR(255) NOT NULL,\n  PRIMARY KEY (`action_id`)\n);\n\nCREATE TABLE `wp_wc_admin_notes` (\n  `content` LONGTEXT NOT NULL,\n  `content_data` LONGTEXT,\n  `date_created` DATETIME NOT NULL,\n  `date_reminder` DATETIME,\n  `icon` VARCHAR(200) NOT NULL DEFAULT 'info',\n  `image` VARCHAR(200),\n  `is_deleted` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_read` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_snoozable` TINYINT(1) NOT NULL DEFAULT '0',\n  `layout` VARCHAR(20) NOT NULL DEFAULT '',\n  `locale` VARCHAR(20) NOT NULL,\n  `name` VARCHAR(255) NOT NULL,\n  `note_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `source` VARCHAR(200) NOT NULL,\n  `status` VARCHAR(200) NOT NULL,\n  `title` LONGTEXT NOT NULL,\n  `type` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`note_id`)\n);\n\nCREATE TABLE `wp_wc_category_lookup` (\n  `category_id` BIGINT UNSIGNED NOT NULL,\n  `category_tree_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`category_tree_id`, `category_id`)\n);\n\nCREATE TABLE `wp_wc_customer_lookup` (\n  `city` VARCHAR(100) NOT NULL DEFAULT '',\n  `country` CHAR(2) NOT NULL DEFAULT '',\n  `customer_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `date_last_active` TIMESTAMP,\n  `date_registered` TIMESTAMP,\n  `email` VARCHAR(100),\n  `first_name` VARCHAR(255) NOT NULL,\n  `last_name` VARCHAR(255) NOT NULL,\n  `postcode` VARCHAR(20) NOT NULL DEFAULT '',\n  `state` VARCHAR(100) NOT NULL DEFAULT '',\n  `user_id` BIGINT UNSIGNED,\n  `username` VARCHAR(60) NOT NULL DEFAULT '',\n  PRIMARY KEY (`customer_id`)\n);\n\nCREATE TABLE `wp_wc_download_log` (\n  `download_log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `permission_id` BIGINT UNSIGNED NOT NULL,\n  `timestamp` DATETIME NOT NULL,\n  `user_id` BIGINT UNSIGNED,\n  `user_ip_address` VARCHAR(100) DEFAULT '',\n  PRIMARY KEY (`download_log_id`)\n);\n\nCREATE TABLE `wp_wc_order_addresses` (\n  `address_1` TEXT,\n  `address_2` TEXT,\n  `address_type` VARCHAR(20),\n  `city` TEXT,\n  `company` TEXT,\n  `country` TEXT,\n  `email` VARCHAR(320),\n  `first_name` TEXT,\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `last_name` TEXT,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `phone` VARCHAR(100),\n  `postcode` TEXT,\n  `state` TEXT,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_order_coupon_lookup` (\n  `coupon_id` BIGINT NOT NULL,\n  `date_created` DATETIME NOT NULL,\n  `discount_amount` DOUBLE NOT NULL DEFAULT '0',\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`order_id`, `coupon_id`)\n);\n\nCREATE TABLE `wp_wc_order_operational_data` (\n  `cart_hash` VARCHAR(100),\n  `coupon_usages_are_counted` TINYINT(1),\n  `created_via` VARCHAR(100),\n  `date_completed_gmt` DATETIME,\n  `date_paid_gmt` DATETIME,\n  `discount_tax_amount` DECIMAL(26,8),\n  `discount_total_amount` DECIMAL(26,8),\n  `download_permission_granted` TINYINT(1),\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `new_order_email_sent` TINYINT(1),\n  `order_id` BIGINT UNSIGNED,\n  `order_key` VARCHAR(100),\n  `order_stock_reduced` TINYINT(1),\n  `prices_include_tax` TINYINT(1),\n  `recorded_sales` TINYINT(1),\n  `shipping_tax_amount` DECIMAL(26,8),\n  `shipping_total_amount` DECIMAL(26,8),\n  `woocommerce_version` VARCHAR(20),\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_order_product_lookup` (\n  `coupon_amount` DOUBLE NOT NULL DEFAULT '0',\n  `customer_id` BIGINT UNSIGNED,\n  `date_created` DATETIME NOT NULL,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_item_id` BIGINT UNSIGNED NOT NULL,\n  `product_gross_revenue` DOUBLE NOT NULL DEFAULT '0',\n  `product_id` BIGINT UNSIGNED NOT NULL,\n  `product_net_revenue` DOUBLE NOT NULL DEFAULT '0',\n  `product_qty` INT NOT NULL,\n  `shipping_amount` DOUBLE NOT NULL DEFAULT '0',\n  `shipping_tax_amount` DOUBLE NOT NULL DEFAULT '0',\n  `tax_amount` DOUBLE NOT NULL DEFAULT '0',\n  `variation_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`order_item_id`)\n);\n\nCREATE TABLE `wp_wc_order_stats` (\n  `customer_id` BIGINT UNSIGNED NOT NULL,\n  `date_completed` DATETIME DEFAULT NULL,\n  `date_created` DATETIME NOT NULL,\n  `date_created_gmt` DATETIME NOT NULL,\n  `date_paid` DATETIME DEFAULT NULL,\n  `net_total` DOUBLE NOT NULL DEFAULT '0',\n  `num_items_sold` INT NOT NULL DEFAULT '0',\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `returning_customer` TINYINT(1),\n  `shipping_total` DOUBLE NOT NULL DEFAULT '0',\n  `status` VARCHAR(200) NOT NULL,\n  `tax_total` DOUBLE NOT NULL DEFAULT '0',\n  `total_sales` DOUBLE NOT NULL DEFAULT '0',\n  PRIMARY KEY (`order_id`)\n);\n\nCREATE TABLE `wp_wc_order_tax_lookup` (\n  `date_created` DATETIME NOT NULL,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_tax` DOUBLE NOT NULL DEFAULT '0',\n  `shipping_tax` DOUBLE NOT NULL DEFAULT '0',\n  `tax_rate_id` BIGINT UNSIGNED NOT NULL,\n  `total_tax` DOUBLE NOT NULL DEFAULT '0',\n  PRIMARY KEY (`order_id`, `tax_rate_id`)\n);\n\nCREATE TABLE `wp_wc_orders` (\n  `billing_email` VARCHAR(320),\n  `currency` VARCHAR(10),\n  `customer_id` BIGINT UNSIGNED,\n  `customer_note` TEXT,\n  `date_created_gmt` DATETIME,\n  `date_updated_gmt` DATETIME,\n  `id` BIGINT UNSIGNED NOT NULL,\n  `ip_address` VARCHAR(100),\n  `parent_order_id` BIGINT UNSIGNED,\n  `payment_method` VARCHAR(100),\n  `payment_method_title` TEXT,\n  `status` VARCHAR(20),\n  `tax_amount` DECIMAL(26,8),\n  `total_amount` DECIMAL(26,8),\n  `transaction_id` VARCHAR(100),\n  `type` VARCHAR(20),\n  `user_agent` TEXT,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_orders_meta` (\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` TEXT,\n  `order_id` BIGINT UNSIGNED,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_product_attributes_lookup` (\n  `in_stock` TINYINT(1) NOT NULL,\n  `is_variation_attribute` TINYINT(1) NOT NULL,\n  `product_id` BIGINT NOT NULL,\n  `product_or_parent_id` BIGINT NOT NULL,\n  `taxonomy` VARCHAR(32) NOT NULL,\n  `term_id` BIGINT NOT NULL,\n  PRIMARY KEY (`product_id`, `product_or_parent_id`, `taxonomy`, `term_id`)\n);\n\nCREATE TABLE `wp_wc_product_download_directories` (\n  `enabled` TINYINT(1) NOT NULL DEFAULT '0',\n  `url` VARCHAR(256) NOT NULL,\n  `url_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`url_id`)\n);\n\nCREATE TABLE `wp_wc_product_meta_lookup` (\n  `average_rating` DECIMAL(3,2) DEFAULT '0.00',\n  `downloadable` TINYINT(1) DEFAULT '0',\n  `max_price` DECIMAL(19,4),\n  `min_price` DECIMAL(19,4),\n  `onsale` TINYINT(1) DEFAULT '0',\n  `product_id` BIGINT NOT NULL,\n  `rating_count` BIGINT DEFAULT '0',\n  `sku` VARCHAR(100) DEFAULT '',\n  `stock_quantity` DOUBLE,\n  `stock_status` VARCHAR(100) DEFAULT 'instock',\n  `tax_class` VARCHAR(100) DEFAULT '',\n  `tax_status` VARCHAR(100) DEFAULT 'taxable',\n  `total_sales` BIGINT DEFAULT '0',\n  `virtual` TINYINT(1) DEFAULT '0',\n  PRIMARY KEY (`product_id`)\n);\n\nCREATE TABLE `wp_wc_rate_limits` (\n  `rate_limit_expiry` BIGINT UNSIGNED NOT NULL,\n  `rate_limit_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `rate_limit_key` VARCHAR(200) NOT NULL,\n  `rate_limit_remaining` SMALLINT NOT NULL DEFAULT '0',\n  PRIMARY KEY (`rate_limit_id`)\n);\n\nCREATE TABLE `wp_wc_reserved_stock` (\n  `expires` DATETIME NOT NULL,\n  `order_id` BIGINT NOT NULL,\n  `product_id` BIGINT NOT NULL,\n  `stock_quantity` DOUBLE NOT NULL DEFAULT '0',\n  `timestamp` DATETIME NOT NULL,\n  PRIMARY KEY (`order_id`, `product_id`)\n);\n\nCREATE TABLE `wp_wc_tax_rate_classes` (\n  `name` VARCHAR(200) NOT NULL DEFAULT '',\n  `slug` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_class_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`tax_rate_class_id`)\n);\n\nCREATE TABLE `wp_wc_webhooks` (\n  `api_version` SMALLINT NOT NULL,\n  `date_created` DATETIME NOT NULL,\n  `date_created_gmt` DATETIME NOT NULL,\n  `date_modified` DATETIME NOT NULL,\n  `date_modified_gmt` DATETIME NOT NULL,\n  `delivery_url` TEXT NOT NULL,\n  `failure_count` SMALLINT NOT NULL DEFAULT '0',\n  `name` TEXT NOT NULL,\n  `pending_delivery` TINYINT(1) NOT NULL DEFAULT '0',\n  `secret` TEXT NOT NULL,\n  `status` VARCHAR(200) NOT NULL,\n  `topic` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL,\n  `webhook_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`webhook_id`)\n);\n\nCREATE TABLE `wp_woocommerce_api_keys` (\n  `consumer_key` CHAR(64) NOT NULL,\n  `consumer_secret` CHAR(43) NOT NULL,\n  `description` VARCHAR(200),\n  `key_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `last_access` DATETIME,\n  `nonces` LONGTEXT,\n  `permissions` VARCHAR(10) NOT NULL,\n  `truncated_key` CHAR(7) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`key_id`)\n);\n\nCREATE TABLE `wp_woocommerce_attribute_taxonomies` (\n  `attribute_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `attribute_label` VARCHAR(200),\n  `attribute_name` VARCHAR(200) NOT NULL,\n  `attribute_orderby` VARCHAR(20) NOT NULL,\n  `attribute_public` INT NOT NULL DEFAULT '1',\n  `attribute_type` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`attribute_id`)\n);\n\nCREATE TABLE `wp_woocommerce_downloadable_product_permissions` (\n  `access_expires` DATETIME,\n  `access_granted` DATETIME NOT NULL,\n  `download_count` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `download_id` VARCHAR(36) NOT NULL,\n  `downloads_remaining` VARCHAR(9),\n  `order_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `order_key` VARCHAR(200) NOT NULL,\n  `permission_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `product_id` BIGINT UNSIGNED NOT NULL,\n  `user_email` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED,\n  PRIMARY KEY (`permission_id`)\n);\n\nCREATE TABLE `wp_woocommerce_log` (\n  `context` LONGTEXT,\n  `level` SMALLINT NOT NULL,\n  `log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `message` LONGTEXT NOT NULL,\n  `source` VARCHAR(200) NOT NULL,\n  `timestamp` DATETIME NOT NULL,\n  PRIMARY KEY (`log_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_itemmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `order_item_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_items` (\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_item_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `order_item_name` TEXT NOT NULL,\n  `order_item_type` VARCHAR(200) NOT NULL DEFAULT '',\n  PRIMARY KEY (`order_item_id`)\n);\n\nCREATE TABLE `wp_woocommerce_payment_tokenmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `payment_token_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_woocommerce_payment_tokens` (\n  `gateway_id` VARCHAR(200) NOT NULL,\n  `is_default` TINYINT(1) NOT NULL DEFAULT '0',\n  `token` TEXT NOT NULL,\n  `token_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `type` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`token_id`)\n);\n\nCREATE TABLE `wp_woocommerce_sessions` (\n  `session_expiry` BIGINT UNSIGNED NOT NULL,\n  `session_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `session_key` CHAR(32) NOT NULL,\n  `session_value` LONGTEXT NOT NULL,\n  PRIMARY KEY (`session_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zone_locations` (\n  `location_code` VARCHAR(200) NOT NULL,\n  `location_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `location_type` VARCHAR(40) NOT NULL,\n  `zone_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`location_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zone_methods` (\n  `instance_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `is_enabled` TINYINT(1) NOT NULL DEFAULT '1',\n  `method_id` VARCHAR(200) NOT NULL,\n  `method_order` BIGINT UNSIGNED NOT NULL,\n  `zone_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`instance_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zones` (\n  `zone_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `zone_name` VARCHAR(200) NOT NULL,\n  `zone_order` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`zone_id`)\n);\n\nCREATE TABLE `wp_woocommerce_tax_rate_locations` (\n  `location_code` VARCHAR(200) NOT NULL,\n  `location_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `location_type` VARCHAR(40) NOT NULL,\n  `tax_rate_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`location_id`)\n);\n\nCREATE TABLE `wp_woocommerce_tax_rates` (\n  `tax_rate` VARCHAR(8) NOT NULL DEFAULT '',\n  `tax_rate_class` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_compound` INT NOT NULL DEFAULT '0',\n  `tax_rate_country` VARCHAR(2) NOT NULL DEFAULT '',\n  `tax_rate_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `tax_rate_name` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_order` BIGINT UNSIGNED NOT NULL,\n  `tax_rate_priority` BIGINT UNSIGNED NOT NULL,\n  `tax_rate_shipping` INT NOT NULL DEFAULT '1',\n  `tax_rate_state` VARCHAR(200) NOT NULL DEFAULT '',\n  PRIMARY KEY (`tax_rate_id`)\n);\n\nCREATE INDEX `args` ON `wp_actionscheduler_actions` (`args`);\n\nCREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`, `claim_id`);\n\nCREATE INDEX `group_id` ON `wp_actionscheduler_actions` (`group_id`);\n\nCREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`, `status`, `scheduled_date_gmt`);\n\nCREATE INDEX `last_attempt_gmt` ON `wp_actionscheduler_actions` (`last_attempt_gmt`);\n\nCREATE INDEX `scheduled_date_gmt` ON `wp_actionscheduler_actions` (`scheduled_date_gmt`);\n\nCREATE INDEX `status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`);\n\nCREATE INDEX `date_created_gmt` ON `wp_actionscheduler_claims` (`date_created_gmt`);\n\nCREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);\n\nCREATE INDEX `action_id` ON `wp_actionscheduler_logs` (`action_id`);\n\nCREATE INDEX `log_date_gmt` ON `wp_actionscheduler_logs` (`log_date_gmt`);\n\nCREATE INDEX `comment_id` ON `wp_commentmeta` (`comment_id`);\n\nCREATE INDEX `meta_key` ON `wp_commentmeta` (`meta_key`);\n\nCREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_date_gmt`, `comment_approved`);\n\nCREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`);\n\nCREATE INDEX `comment_date_gmt` ON `wp_comments` (`comment_date_gmt`);\n\nCREATE INDEX `comment_parent` ON `wp_comments` (`comment_parent`);\n\nCREATE INDEX `comment_post_ID` ON `wp_comments` (`comment_post_ID`);\n\nCREATE INDEX `woo_idx_comment_type` ON `wp_comments` (`comment_type`);\n\nCREATE INDEX `link_visible` ON `wp_links` (`link_visible`);\n\nCREATE INDEX `autoload` ON `wp_options` (`autoload`);\n\nCREATE UNIQUE INDEX `option_name` ON `wp_options` (`option_name`);\n\nCREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`);\n\nCREATE INDEX `post_id` ON `wp_postmeta` (`post_id`);\n\nCREATE INDEX `post_author` ON `wp_posts` (`post_author`);\n\nCREATE INDEX `post_name` ON `wp_posts` (`post_name`);\n\nCREATE INDEX `post_parent` ON `wp_posts` (`post_parent`);\n\nCREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_date`, `post_status`, `post_type`);\n\nCREATE INDEX `term_taxonomy_id` ON `wp_term_relationships` (`term_taxonomy_id`);\n\nCREATE INDEX `taxonomy` ON `wp_term_taxonomy` (`taxonomy`);\n\nCREATE UNIQUE INDEX `term_id_taxonomy` ON `wp_term_taxonomy` (`term_id`, `taxonomy`);\n\nCREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`);\n\nCREATE INDEX `term_id` ON `wp_termmeta` (`term_id`);\n\nCREATE INDEX `name` ON `wp_terms` (`name`);\n\nCREATE INDEX `slug` ON `wp_terms` (`slug`);\n\nCREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`);\n\nCREATE INDEX `user_id` ON `wp_usermeta` (`user_id`);\n\nCREATE INDEX `user_email` ON `wp_users` (`user_email`);\n\nCREATE INDEX `user_login_key` ON `wp_users` (`user_login`);\n\nCREATE INDEX `user_nicename` ON `wp_users` (`user_nicename`);\n\nCREATE INDEX `note_id` ON `wp_wc_admin_note_actions` (`note_id`);\n\nCREATE INDEX `email` ON `wp_wc_customer_lookup` (`email`);\n\nCREATE UNIQUE INDEX `user_id` ON `wp_wc_customer_lookup` (`user_id`);\n\nCREATE INDEX `permission_id` ON `wp_wc_download_log` (`permission_id`);\n\nCREATE INDEX `timestamp` ON `wp_wc_download_log` (`timestamp`);\n\nCREATE UNIQUE INDEX `address_type_order_id` ON `wp_wc_order_addresses` (`order_id`, `address_type`);\n\nCREATE INDEX `email` ON `wp_wc_order_addresses` (`email`);\n\nCREATE INDEX `order_id` ON `wp_wc_order_addresses` (`order_id`);\n\nCREATE INDEX `phone` ON `wp_wc_order_addresses` (`phone`);\n\nCREATE INDEX `coupon_id` ON `wp_wc_order_coupon_lookup` (`coupon_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_coupon_lookup` (`date_created`);\n\nCREATE UNIQUE INDEX `order_id` ON `wp_wc_order_operational_data` (`order_id`);\n\nCREATE INDEX `order_key` ON `wp_wc_order_operational_data` (`order_key`);\n\nCREATE INDEX `customer_id` ON `wp_wc_order_product_lookup` (`customer_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_product_lookup` (`date_created`);\n\nCREATE INDEX `order_id` ON `wp_wc_order_product_lookup` (`order_id`);\n\nCREATE INDEX `product_id` ON `wp_wc_order_product_lookup` (`product_id`);\n\nCREATE INDEX `customer_id` ON `wp_wc_order_stats` (`customer_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_stats` (`date_created`);\n\nCREATE INDEX `status` ON `wp_wc_order_stats` (`status`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_tax_lookup` (`date_created`);\n\nCREATE INDEX `tax_rate_id` ON `wp_wc_order_tax_lookup` (`tax_rate_id`);\n\nCREATE INDEX `billing_email` ON `wp_wc_orders` (`billing_email`);\n\nCREATE INDEX `customer_id_billing_email` ON `wp_wc_orders` (`customer_id`, `billing_email`);\n\nCREATE INDEX `date_created` ON `wp_wc_orders` (`date_created_gmt`);\n\nCREATE INDEX `date_updated` ON `wp_wc_orders` (`date_updated_gmt`);\n\nCREATE INDEX `parent_order_id` ON `wp_wc_orders` (`parent_order_id`);\n\nCREATE INDEX `status` ON `wp_wc_orders` (`status`);\n\nCREATE INDEX `type_status_date` ON `wp_wc_orders` (`status`, `type`, `date_created_gmt`);\n\nCREATE INDEX `meta_key_value` ON `wp_wc_orders_meta` (`meta_key`, `meta_value`(191));\n\nCREATE INDEX `order_id_meta_key_meta_value` ON `wp_wc_orders_meta` (`order_id`, `meta_key`, `meta_value`(191));\n\nCREATE INDEX `is_variation_attribute_term_id` ON `wp_wc_product_attributes_lookup` (`term_id`, `is_variation_attribute`);\n\nCREATE INDEX `url` ON `wp_wc_product_download_directories` (`url`);\n\nCREATE INDEX `downloadable` ON `wp_wc_product_meta_lookup` (`downloadable`);\n\nCREATE INDEX `min_max_price` ON `wp_wc_product_meta_lookup` (`min_price`, `max_price`);\n\nCREATE INDEX `onsale` ON `wp_wc_product_meta_lookup` (`onsale`);\n\nCREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`);\n\nCREATE INDEX `stock_quantity` ON `wp_wc_product_meta_lookup` (`stock_quantity`);\n\nCREATE INDEX `stock_status` ON `wp_wc_product_meta_lookup` (`stock_status`);\n\nCREATE INDEX `virtual` ON `wp_wc_product_meta_lookup` (`virtual`);\n\nCREATE UNIQUE INDEX `rate_limit_key` ON `wp_wc_rate_limits` (`rate_limit_key`);\n\nCREATE UNIQUE INDEX `slug` ON `wp_wc_tax_rate_classes` (`slug`);\n\nCREATE INDEX `user_id` ON `wp_wc_webhooks` (`user_id`);\n\nCREATE INDEX `consumer_key` ON `wp_woocommerce_api_keys` (`consumer_key`);\n\nCREATE INDEX `consumer_secret` ON `wp_woocommerce_api_keys` (`consumer_secret`);\n\nCREATE INDEX `attribute_name` ON `wp_woocommerce_attribute_taxonomies` (`attribute_name`);\n\nCREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`, `order_key`);\n\nCREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`);\n\nCREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`, `user_id`, `downloads_remaining`, `access_expires`);\n\nCREATE INDEX `level` ON `wp_woocommerce_log` (`level`);\n\nCREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`);\n\nCREATE INDEX `order_item_id` ON `wp_woocommerce_order_itemmeta` (`order_item_id`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_order_items` (`order_id`);\n\nCREATE INDEX `meta_key` ON `wp_woocommerce_payment_tokenmeta` (`meta_key`);\n\nCREATE INDEX `payment_token_id` ON `wp_woocommerce_payment_tokenmeta` (`payment_token_id`);\n\nCREATE INDEX `user_id` ON `wp_woocommerce_payment_tokens` (`user_id`);\n\nCREATE UNIQUE INDEX `session_key` ON `wp_woocommerce_sessions` (`session_key`);\n\nCREATE INDEX `location_type_code` ON `wp_woocommerce_shipping_zone_locations` (`location_code`, `location_type`);\n\nCREATE INDEX `zone_id` ON `wp_woocommerce_shipping_zone_locations` (`zone_id`);\n\nCREATE INDEX `location_type_code` ON `wp_woocommerce_tax_rate_locations` (`location_code`, `location_type`);\n\nCREATE INDEX `tax_rate_id` ON `wp_woocommerce_tax_rate_locations` (`tax_rate_id`);\n\nCREATE INDEX `tax_rate_class` ON `wp_woocommerce_tax_rates` (`tax_rate_class`);\n\nCREATE INDEX `tax_rate_country` ON `wp_woocommerce_tax_rates` (`tax_rate_country`);\n\nCREATE INDEX `tax_rate_priority` ON `wp_woocommerce_tax_rates` (`tax_rate_priority`);\n\nCREATE INDEX `tax_rate_state` ON `wp_woocommerce_tax_rates` (`tax_rate_state`);\n",
+  "ddl": "CREATE TABLE `wp_actionscheduler_actions` (\n  `action_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `args` VARCHAR(191),\n  `attempts` INT NOT NULL DEFAULT '0',\n  `claim_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `extended_args` VARCHAR(8000),\n  `group_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `hook` VARCHAR(191) NOT NULL,\n  `last_attempt_gmt` DATETIME DEFAULT NULL,\n  `last_attempt_local` DATETIME DEFAULT NULL,\n  `priority` TINYINT UNSIGNED NOT NULL DEFAULT '10',\n  `schedule` LONGTEXT,\n  `scheduled_date_gmt` DATETIME DEFAULT NULL,\n  `scheduled_date_local` DATETIME DEFAULT NULL,\n  `status` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`action_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_claims` (\n  `claim_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `date_created_gmt` DATETIME DEFAULT NULL,\n  PRIMARY KEY (`claim_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_groups` (\n  `group_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `slug` VARCHAR(255) NOT NULL,\n  PRIMARY KEY (`group_id`)\n);\n\nCREATE TABLE `wp_actionscheduler_logs` (\n  `action_id` BIGINT UNSIGNED NOT NULL,\n  `log_date_gmt` DATETIME DEFAULT NULL,\n  `log_date_local` DATETIME DEFAULT NULL,\n  `log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `message` TEXT NOT NULL,\n  PRIMARY KEY (`log_id`)\n);\n\nCREATE TABLE `wp_commentmeta` (\n  `comment_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_comments` (\n  `comment_agent` VARCHAR(255) NOT NULL DEFAULT '',\n  `comment_approved` VARCHAR(20) NOT NULL DEFAULT '1',\n  `comment_author` TINYTEXT NOT NULL,\n  `comment_author_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_IP` VARCHAR(100) NOT NULL DEFAULT '',\n  `comment_author_url` VARCHAR(200) NOT NULL DEFAULT '',\n  `comment_content` TEXT NOT NULL,\n  `comment_date` DATETIME NOT NULL,\n  `comment_date_gmt` DATETIME NOT NULL,\n  `comment_ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `comment_karma` INT NOT NULL DEFAULT '0',\n  `comment_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_post_ID` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `comment_type` VARCHAR(20) NOT NULL DEFAULT 'comment',\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`comment_ID`)\n);\n\nCREATE TABLE `wp_links` (\n  `link_description` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `link_image` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_name` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_notes` MEDIUMTEXT NOT NULL,\n  `link_owner` BIGINT UNSIGNED NOT NULL DEFAULT '1',\n  `link_rating` INT NOT NULL DEFAULT '0',\n  `link_rel` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_rss` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_target` VARCHAR(25) NOT NULL DEFAULT '',\n  `link_updated` DATETIME NOT NULL,\n  `link_url` VARCHAR(255) NOT NULL DEFAULT '',\n  `link_visible` VARCHAR(20) NOT NULL DEFAULT 'Y',\n  PRIMARY KEY (`link_id`)\n);\n\nCREATE TABLE `wp_options` (\n  `autoload` VARCHAR(20) NOT NULL DEFAULT 'yes',\n  `option_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `option_name` VARCHAR(191) NOT NULL DEFAULT '',\n  `option_value` LONGTEXT NOT NULL,\n  PRIMARY KEY (`option_id`)\n);\n\nCREATE TABLE `wp_postmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `post_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_posts` (\n  `comment_count` BIGINT NOT NULL DEFAULT '0',\n  `comment_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `guid` VARCHAR(255) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `menu_order` INT NOT NULL DEFAULT '0',\n  `ping_status` VARCHAR(20) NOT NULL DEFAULT 'open',\n  `pinged` TEXT NOT NULL,\n  `post_author` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_content` LONGTEXT NOT NULL,\n  `post_content_filtered` LONGTEXT NOT NULL,\n  `post_date` DATETIME NOT NULL,\n  `post_date_gmt` DATETIME NOT NULL,\n  `post_excerpt` TEXT NOT NULL,\n  `post_mime_type` VARCHAR(100) NOT NULL DEFAULT '',\n  `post_modified` DATETIME NOT NULL,\n  `post_modified_gmt` DATETIME NOT NULL,\n  `post_name` VARCHAR(200) NOT NULL DEFAULT '',\n  `post_parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `post_password` VARCHAR(255) NOT NULL DEFAULT '',\n  `post_status` VARCHAR(20) NOT NULL DEFAULT 'publish',\n  `post_title` TEXT NOT NULL,\n  `post_type` VARCHAR(20) NOT NULL DEFAULT 'post',\n  `to_ping` TEXT NOT NULL,\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_term_relationships` (\n  `object_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_order` INT NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`object_id`, `term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_term_taxonomy` (\n  `count` BIGINT NOT NULL DEFAULT '0',\n  `description` LONGTEXT NOT NULL,\n  `parent` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `taxonomy` VARCHAR(32) NOT NULL DEFAULT '',\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `term_taxonomy_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_taxonomy_id`)\n);\n\nCREATE TABLE `wp_termmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `term_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_terms` (\n  `name` VARCHAR(200) NOT NULL DEFAULT '',\n  `slug` VARCHAR(200) NOT NULL DEFAULT '',\n  `term_group` BIGINT NOT NULL DEFAULT '0',\n  `term_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`term_id`)\n);\n\nCREATE TABLE `wp_usermeta` (\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `umeta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`umeta_id`)\n);\n\nCREATE TABLE `wp_users` (\n  `display_name` VARCHAR(250) NOT NULL DEFAULT '',\n  `ID` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `user_activation_key` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_email` VARCHAR(100) NOT NULL DEFAULT '',\n  `user_login` VARCHAR(60) NOT NULL DEFAULT '',\n  `user_nicename` VARCHAR(50) NOT NULL DEFAULT '',\n  `user_pass` VARCHAR(255) NOT NULL DEFAULT '',\n  `user_registered` DATETIME NOT NULL,\n  `user_status` INT NOT NULL DEFAULT '0',\n  `user_url` VARCHAR(100) NOT NULL DEFAULT '',\n  PRIMARY KEY (`ID`)\n);\n\nCREATE TABLE `wp_wc_admin_note_actions` (\n  `action_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `actioned_text` VARCHAR(255) NOT NULL,\n  `label` VARCHAR(255) NOT NULL,\n  `name` VARCHAR(255) NOT NULL,\n  `nonce_action` VARCHAR(255),\n  `nonce_name` VARCHAR(255),\n  `note_id` BIGINT UNSIGNED NOT NULL,\n  `query` LONGTEXT NOT NULL,\n  `status` VARCHAR(255) NOT NULL,\n  PRIMARY KEY (`action_id`)\n);\n\nCREATE TABLE `wp_wc_admin_notes` (\n  `content` LONGTEXT NOT NULL,\n  `content_data` LONGTEXT,\n  `date_created` DATETIME NOT NULL,\n  `date_reminder` DATETIME,\n  `icon` VARCHAR(200) NOT NULL DEFAULT 'info',\n  `image` VARCHAR(200),\n  `is_deleted` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_read` TINYINT(1) NOT NULL DEFAULT '0',\n  `is_snoozable` TINYINT(1) NOT NULL DEFAULT '0',\n  `layout` VARCHAR(20) NOT NULL DEFAULT '',\n  `locale` VARCHAR(20) NOT NULL,\n  `name` VARCHAR(255) NOT NULL,\n  `note_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `source` VARCHAR(200) NOT NULL,\n  `status` VARCHAR(200) NOT NULL,\n  `title` LONGTEXT NOT NULL,\n  `type` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`note_id`)\n);\n\nCREATE TABLE `wp_wc_category_lookup` (\n  `category_id` BIGINT UNSIGNED NOT NULL,\n  `category_tree_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`category_tree_id`, `category_id`)\n);\n\nCREATE TABLE `wp_wc_customer_lookup` (\n  `city` VARCHAR(100) NOT NULL DEFAULT '',\n  `country` CHAR(2) NOT NULL DEFAULT '',\n  `customer_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `date_last_active` TIMESTAMP,\n  `date_registered` TIMESTAMP,\n  `email` VARCHAR(100),\n  `first_name` VARCHAR(255) NOT NULL,\n  `last_name` VARCHAR(255) NOT NULL,\n  `postcode` VARCHAR(20) NOT NULL DEFAULT '',\n  `state` VARCHAR(100) NOT NULL DEFAULT '',\n  `user_id` BIGINT UNSIGNED,\n  `username` VARCHAR(60) NOT NULL DEFAULT '',\n  PRIMARY KEY (`customer_id`)\n);\n\nCREATE TABLE `wp_wc_download_log` (\n  `download_log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `permission_id` BIGINT UNSIGNED NOT NULL,\n  `timestamp` DATETIME NOT NULL,\n  `user_id` BIGINT UNSIGNED,\n  `user_ip_address` VARCHAR(100) DEFAULT '',\n  PRIMARY KEY (`download_log_id`)\n);\n\nCREATE TABLE `wp_wc_order_addresses` (\n  `address_1` TEXT,\n  `address_2` TEXT,\n  `address_type` VARCHAR(20),\n  `city` TEXT,\n  `company` TEXT,\n  `country` TEXT,\n  `email` VARCHAR(320),\n  `first_name` TEXT,\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `last_name` TEXT,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `phone` VARCHAR(100),\n  `postcode` TEXT,\n  `state` TEXT,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_order_coupon_lookup` (\n  `coupon_id` BIGINT NOT NULL,\n  `date_created` DATETIME NOT NULL,\n  `discount_amount` DOUBLE NOT NULL DEFAULT '0',\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`order_id`, `coupon_id`)\n);\n\nCREATE TABLE `wp_wc_order_operational_data` (\n  `cart_hash` VARCHAR(100),\n  `coupon_usages_are_counted` TINYINT(1),\n  `created_via` VARCHAR(100),\n  `date_completed_gmt` DATETIME,\n  `date_paid_gmt` DATETIME,\n  `discount_tax_amount` DECIMAL(26,8),\n  `discount_total_amount` DECIMAL(26,8),\n  `download_permission_granted` TINYINT(1),\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `new_order_email_sent` TINYINT(1),\n  `order_id` BIGINT UNSIGNED,\n  `order_key` VARCHAR(100),\n  `order_stock_reduced` TINYINT(1),\n  `prices_include_tax` TINYINT(1),\n  `recorded_sales` TINYINT(1),\n  `shipping_tax_amount` DECIMAL(26,8),\n  `shipping_total_amount` DECIMAL(26,8),\n  `woocommerce_version` VARCHAR(20),\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_order_product_lookup` (\n  `coupon_amount` DOUBLE NOT NULL DEFAULT '0',\n  `customer_id` BIGINT UNSIGNED,\n  `date_created` DATETIME NOT NULL,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_item_id` BIGINT UNSIGNED NOT NULL,\n  `product_gross_revenue` DOUBLE NOT NULL DEFAULT '0',\n  `product_id` BIGINT UNSIGNED NOT NULL,\n  `product_net_revenue` DOUBLE NOT NULL DEFAULT '0',\n  `product_qty` INT NOT NULL,\n  `shipping_amount` DOUBLE NOT NULL DEFAULT '0',\n  `shipping_tax_amount` DOUBLE NOT NULL DEFAULT '0',\n  `tax_amount` DOUBLE NOT NULL DEFAULT '0',\n  `variation_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`order_item_id`)\n);\n\nCREATE TABLE `wp_wc_order_stats` (\n  `customer_id` BIGINT UNSIGNED NOT NULL,\n  `date_completed` DATETIME DEFAULT NULL,\n  `date_created` DATETIME NOT NULL,\n  `date_created_gmt` DATETIME NOT NULL,\n  `date_paid` DATETIME DEFAULT NULL,\n  `net_total` DOUBLE NOT NULL DEFAULT '0',\n  `num_items_sold` INT NOT NULL DEFAULT '0',\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `returning_customer` TINYINT(1),\n  `shipping_total` DOUBLE NOT NULL DEFAULT '0',\n  `status` VARCHAR(200) NOT NULL,\n  `tax_total` DOUBLE NOT NULL DEFAULT '0',\n  `total_sales` DOUBLE NOT NULL DEFAULT '0',\n  PRIMARY KEY (`order_id`)\n);\n\nCREATE TABLE `wp_wc_order_tax_lookup` (\n  `date_created` DATETIME NOT NULL,\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_tax` DOUBLE NOT NULL DEFAULT '0',\n  `shipping_tax` DOUBLE NOT NULL DEFAULT '0',\n  `tax_rate_id` BIGINT UNSIGNED NOT NULL,\n  `total_tax` DOUBLE NOT NULL DEFAULT '0',\n  PRIMARY KEY (`order_id`, `tax_rate_id`)\n);\n\nCREATE TABLE `wp_wc_orders` (\n  `billing_email` VARCHAR(320),\n  `currency` VARCHAR(10),\n  `customer_id` BIGINT UNSIGNED,\n  `customer_note` TEXT,\n  `date_created_gmt` DATETIME,\n  `date_updated_gmt` DATETIME,\n  `id` BIGINT UNSIGNED NOT NULL,\n  `ip_address` VARCHAR(100),\n  `parent_order_id` BIGINT UNSIGNED,\n  `payment_method` VARCHAR(100),\n  `payment_method_title` TEXT,\n  `status` VARCHAR(20),\n  `tax_amount` DECIMAL(26,8),\n  `total_amount` DECIMAL(26,8),\n  `transaction_id` VARCHAR(100),\n  `type` VARCHAR(20),\n  `user_agent` TEXT,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_orders_meta` (\n  `id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` TEXT,\n  `order_id` BIGINT UNSIGNED,\n  PRIMARY KEY (`id`)\n);\n\nCREATE TABLE `wp_wc_product_attributes_lookup` (\n  `in_stock` TINYINT(1) NOT NULL,\n  `is_variation_attribute` TINYINT(1) NOT NULL,\n  `product_id` BIGINT NOT NULL,\n  `product_or_parent_id` BIGINT NOT NULL,\n  `taxonomy` VARCHAR(32) NOT NULL,\n  `term_id` BIGINT NOT NULL,\n  PRIMARY KEY (`product_or_parent_id`, `term_id`, `product_id`, `taxonomy`)\n);\n\nCREATE TABLE `wp_wc_product_download_directories` (\n  `enabled` TINYINT(1) NOT NULL DEFAULT '0',\n  `url` VARCHAR(256) NOT NULL,\n  `url_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`url_id`)\n);\n\nCREATE TABLE `wp_wc_product_meta_lookup` (\n  `average_rating` DECIMAL(3,2) DEFAULT '0.00',\n  `downloadable` TINYINT(1) DEFAULT '0',\n  `max_price` DECIMAL(19,4),\n  `min_price` DECIMAL(19,4),\n  `onsale` TINYINT(1) DEFAULT '0',\n  `product_id` BIGINT NOT NULL,\n  `rating_count` BIGINT DEFAULT '0',\n  `sku` VARCHAR(100) DEFAULT '',\n  `stock_quantity` DOUBLE,\n  `stock_status` VARCHAR(100) DEFAULT 'instock',\n  `tax_class` VARCHAR(100) DEFAULT '',\n  `tax_status` VARCHAR(100) DEFAULT 'taxable',\n  `total_sales` BIGINT DEFAULT '0',\n  `virtual` TINYINT(1) DEFAULT '0',\n  PRIMARY KEY (`product_id`)\n);\n\nCREATE TABLE `wp_wc_rate_limits` (\n  `rate_limit_expiry` BIGINT UNSIGNED NOT NULL,\n  `rate_limit_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `rate_limit_key` VARCHAR(200) NOT NULL,\n  `rate_limit_remaining` SMALLINT NOT NULL DEFAULT '0',\n  PRIMARY KEY (`rate_limit_id`)\n);\n\nCREATE TABLE `wp_wc_reserved_stock` (\n  `expires` DATETIME NOT NULL,\n  `order_id` BIGINT NOT NULL,\n  `product_id` BIGINT NOT NULL,\n  `stock_quantity` DOUBLE NOT NULL DEFAULT '0',\n  `timestamp` DATETIME NOT NULL,\n  PRIMARY KEY (`order_id`, `product_id`)\n);\n\nCREATE TABLE `wp_wc_tax_rate_classes` (\n  `name` VARCHAR(200) NOT NULL DEFAULT '',\n  `slug` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_class_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`tax_rate_class_id`)\n);\n\nCREATE TABLE `wp_wc_webhooks` (\n  `api_version` SMALLINT NOT NULL,\n  `date_created` DATETIME NOT NULL,\n  `date_created_gmt` DATETIME NOT NULL,\n  `date_modified` DATETIME NOT NULL,\n  `date_modified_gmt` DATETIME NOT NULL,\n  `delivery_url` TEXT NOT NULL,\n  `failure_count` SMALLINT NOT NULL DEFAULT '0',\n  `name` TEXT NOT NULL,\n  `pending_delivery` TINYINT(1) NOT NULL DEFAULT '0',\n  `secret` TEXT NOT NULL,\n  `status` VARCHAR(200) NOT NULL,\n  `topic` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL,\n  `webhook_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  PRIMARY KEY (`webhook_id`)\n);\n\nCREATE TABLE `wp_woocommerce_api_keys` (\n  `consumer_key` CHAR(64) NOT NULL,\n  `consumer_secret` CHAR(43) NOT NULL,\n  `description` VARCHAR(200),\n  `key_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `last_access` DATETIME,\n  `nonces` LONGTEXT,\n  `permissions` VARCHAR(10) NOT NULL,\n  `truncated_key` CHAR(7) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`key_id`)\n);\n\nCREATE TABLE `wp_woocommerce_attribute_taxonomies` (\n  `attribute_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `attribute_label` VARCHAR(200),\n  `attribute_name` VARCHAR(200) NOT NULL,\n  `attribute_orderby` VARCHAR(20) NOT NULL,\n  `attribute_public` INT NOT NULL DEFAULT '1',\n  `attribute_type` VARCHAR(20) NOT NULL,\n  PRIMARY KEY (`attribute_id`)\n);\n\nCREATE TABLE `wp_woocommerce_downloadable_product_permissions` (\n  `access_expires` DATETIME,\n  `access_granted` DATETIME NOT NULL,\n  `download_count` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `download_id` VARCHAR(36) NOT NULL,\n  `downloads_remaining` VARCHAR(9),\n  `order_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  `order_key` VARCHAR(200) NOT NULL,\n  `permission_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `product_id` BIGINT UNSIGNED NOT NULL,\n  `user_email` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED,\n  PRIMARY KEY (`permission_id`)\n);\n\nCREATE TABLE `wp_woocommerce_log` (\n  `context` LONGTEXT,\n  `level` SMALLINT NOT NULL,\n  `log_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `message` LONGTEXT NOT NULL,\n  `source` VARCHAR(200) NOT NULL,\n  `timestamp` DATETIME NOT NULL,\n  PRIMARY KEY (`log_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_itemmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `order_item_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_woocommerce_order_items` (\n  `order_id` BIGINT UNSIGNED NOT NULL,\n  `order_item_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `order_item_name` TEXT NOT NULL,\n  `order_item_type` VARCHAR(200) NOT NULL DEFAULT '',\n  PRIMARY KEY (`order_item_id`)\n);\n\nCREATE TABLE `wp_woocommerce_payment_tokenmeta` (\n  `meta_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `meta_key` VARCHAR(255),\n  `meta_value` LONGTEXT,\n  `payment_token_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`meta_id`)\n);\n\nCREATE TABLE `wp_woocommerce_payment_tokens` (\n  `gateway_id` VARCHAR(200) NOT NULL,\n  `is_default` TINYINT(1) NOT NULL DEFAULT '0',\n  `token` TEXT NOT NULL,\n  `token_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `type` VARCHAR(200) NOT NULL,\n  `user_id` BIGINT UNSIGNED NOT NULL DEFAULT '0',\n  PRIMARY KEY (`token_id`)\n);\n\nCREATE TABLE `wp_woocommerce_sessions` (\n  `session_expiry` BIGINT UNSIGNED NOT NULL,\n  `session_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `session_key` CHAR(32) NOT NULL,\n  `session_value` LONGTEXT NOT NULL,\n  PRIMARY KEY (`session_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zone_locations` (\n  `location_code` VARCHAR(200) NOT NULL,\n  `location_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `location_type` VARCHAR(40) NOT NULL,\n  `zone_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`location_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zone_methods` (\n  `instance_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `is_enabled` TINYINT(1) NOT NULL DEFAULT '1',\n  `method_id` VARCHAR(200) NOT NULL,\n  `method_order` BIGINT UNSIGNED NOT NULL,\n  `zone_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`instance_id`)\n);\n\nCREATE TABLE `wp_woocommerce_shipping_zones` (\n  `zone_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `zone_name` VARCHAR(200) NOT NULL,\n  `zone_order` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`zone_id`)\n);\n\nCREATE TABLE `wp_woocommerce_tax_rate_locations` (\n  `location_code` VARCHAR(200) NOT NULL,\n  `location_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `location_type` VARCHAR(40) NOT NULL,\n  `tax_rate_id` BIGINT UNSIGNED NOT NULL,\n  PRIMARY KEY (`location_id`)\n);\n\nCREATE TABLE `wp_woocommerce_tax_rates` (\n  `tax_rate` VARCHAR(8) NOT NULL DEFAULT '',\n  `tax_rate_class` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_compound` INT NOT NULL DEFAULT '0',\n  `tax_rate_country` VARCHAR(2) NOT NULL DEFAULT '',\n  `tax_rate_id` BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,\n  `tax_rate_name` VARCHAR(200) NOT NULL DEFAULT '',\n  `tax_rate_order` BIGINT UNSIGNED NOT NULL,\n  `tax_rate_priority` BIGINT UNSIGNED NOT NULL,\n  `tax_rate_shipping` INT NOT NULL DEFAULT '1',\n  `tax_rate_state` VARCHAR(200) NOT NULL DEFAULT '',\n  PRIMARY KEY (`tax_rate_id`)\n);\n\nCREATE INDEX `args` ON `wp_actionscheduler_actions` (`args`);\n\nCREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`claim_id`, `status`, `scheduled_date_gmt`);\n\nCREATE INDEX `group_id` ON `wp_actionscheduler_actions` (`group_id`);\n\nCREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`(163), `status`, `scheduled_date_gmt`);\n\nCREATE INDEX `last_attempt_gmt` ON `wp_actionscheduler_actions` (`last_attempt_gmt`);\n\nCREATE INDEX `scheduled_date_gmt` ON `wp_actionscheduler_actions` (`scheduled_date_gmt`);\n\nCREATE INDEX `status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`);\n\nCREATE INDEX `date_created_gmt` ON `wp_actionscheduler_claims` (`date_created_gmt`);\n\nCREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`(191));\n\nCREATE INDEX `action_id` ON `wp_actionscheduler_logs` (`action_id`);\n\nCREATE INDEX `log_date_gmt` ON `wp_actionscheduler_logs` (`log_date_gmt`);\n\nCREATE INDEX `comment_id` ON `wp_commentmeta` (`comment_id`);\n\nCREATE INDEX `meta_key` ON `wp_commentmeta` (`meta_key`(191));\n\nCREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_approved`, `comment_date_gmt`);\n\nCREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`(10));\n\nCREATE INDEX `comment_date_gmt` ON `wp_comments` (`comment_date_gmt`);\n\nCREATE INDEX `comment_parent` ON `wp_comments` (`comment_parent`);\n\nCREATE INDEX `comment_post_ID` ON `wp_comments` (`comment_post_ID`);\n\nCREATE INDEX `woo_idx_comment_type` ON `wp_comments` (`comment_type`);\n\nCREATE INDEX `link_visible` ON `wp_links` (`link_visible`);\n\nCREATE INDEX `autoload` ON `wp_options` (`autoload`);\n\nCREATE UNIQUE INDEX `option_name` ON `wp_options` (`option_name`);\n\nCREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`(191));\n\nCREATE INDEX `post_id` ON `wp_postmeta` (`post_id`);\n\nCREATE INDEX `post_author` ON `wp_posts` (`post_author`);\n\nCREATE INDEX `post_name` ON `wp_posts` (`post_name`(191));\n\nCREATE INDEX `post_parent` ON `wp_posts` (`post_parent`);\n\nCREATE INDEX `type_status_date` ON `wp_posts` (`post_type`, `post_status`, `post_date`, `ID`);\n\nCREATE INDEX `term_taxonomy_id` ON `wp_term_relationships` (`term_taxonomy_id`);\n\nCREATE INDEX `taxonomy` ON `wp_term_taxonomy` (`taxonomy`);\n\nCREATE UNIQUE INDEX `term_id_taxonomy` ON `wp_term_taxonomy` (`term_id`, `taxonomy`);\n\nCREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`(191));\n\nCREATE INDEX `term_id` ON `wp_termmeta` (`term_id`);\n\nCREATE INDEX `name` ON `wp_terms` (`name`(191));\n\nCREATE INDEX `slug` ON `wp_terms` (`slug`(191));\n\nCREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`(191));\n\nCREATE INDEX `user_id` ON `wp_usermeta` (`user_id`);\n\nCREATE INDEX `user_email` ON `wp_users` (`user_email`);\n\nCREATE INDEX `user_login_key` ON `wp_users` (`user_login`);\n\nCREATE INDEX `user_nicename` ON `wp_users` (`user_nicename`);\n\nCREATE INDEX `note_id` ON `wp_wc_admin_note_actions` (`note_id`);\n\nCREATE INDEX `email` ON `wp_wc_customer_lookup` (`email`);\n\nCREATE UNIQUE INDEX `user_id` ON `wp_wc_customer_lookup` (`user_id`);\n\nCREATE INDEX `permission_id` ON `wp_wc_download_log` (`permission_id`);\n\nCREATE INDEX `timestamp` ON `wp_wc_download_log` (`timestamp`);\n\nCREATE UNIQUE INDEX `address_type_order_id` ON `wp_wc_order_addresses` (`address_type`, `order_id`);\n\nCREATE INDEX `email` ON `wp_wc_order_addresses` (`email`(191));\n\nCREATE INDEX `order_id` ON `wp_wc_order_addresses` (`order_id`);\n\nCREATE INDEX `phone` ON `wp_wc_order_addresses` (`phone`);\n\nCREATE INDEX `coupon_id` ON `wp_wc_order_coupon_lookup` (`coupon_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_coupon_lookup` (`date_created`);\n\nCREATE UNIQUE INDEX `order_id` ON `wp_wc_order_operational_data` (`order_id`);\n\nCREATE INDEX `order_key` ON `wp_wc_order_operational_data` (`order_key`);\n\nCREATE INDEX `customer_id` ON `wp_wc_order_product_lookup` (`customer_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_product_lookup` (`date_created`);\n\nCREATE INDEX `order_id` ON `wp_wc_order_product_lookup` (`order_id`);\n\nCREATE INDEX `product_id` ON `wp_wc_order_product_lookup` (`product_id`);\n\nCREATE INDEX `customer_id` ON `wp_wc_order_stats` (`customer_id`);\n\nCREATE INDEX `date_created` ON `wp_wc_order_stats` (`date_created`);\n\nCREATE INDEX `status` ON `wp_wc_order_stats` (`status`(191));\n\nCREATE INDEX `date_created` ON `wp_wc_order_tax_lookup` (`date_created`);\n\nCREATE INDEX `tax_rate_id` ON `wp_wc_order_tax_lookup` (`tax_rate_id`);\n\nCREATE INDEX `billing_email` ON `wp_wc_orders` (`billing_email`(191));\n\nCREATE INDEX `customer_id_billing_email` ON `wp_wc_orders` (`customer_id`, `billing_email`(171));\n\nCREATE INDEX `date_created` ON `wp_wc_orders` (`date_created_gmt`);\n\nCREATE INDEX `date_updated` ON `wp_wc_orders` (`date_updated_gmt`);\n\nCREATE INDEX `parent_order_id` ON `wp_wc_orders` (`parent_order_id`);\n\nCREATE INDEX `status` ON `wp_wc_orders` (`status`);\n\nCREATE INDEX `type_status_date` ON `wp_wc_orders` (`type`, `status`, `date_created_gmt`);\n\nCREATE INDEX `meta_key_value` ON `wp_wc_orders_meta` (`meta_key`(100), `meta_value`(82));\n\nCREATE INDEX `order_id_meta_key_meta_value` ON `wp_wc_orders_meta` (`order_id`, `meta_key`(100), `meta_value`(82));\n\nCREATE INDEX `is_variation_attribute_term_id` ON `wp_wc_product_attributes_lookup` (`is_variation_attribute`, `term_id`);\n\nCREATE INDEX `url` ON `wp_wc_product_download_directories` (`url`(191));\n\nCREATE INDEX `downloadable` ON `wp_wc_product_meta_lookup` (`downloadable`);\n\nCREATE INDEX `min_max_price` ON `wp_wc_product_meta_lookup` (`min_price`, `max_price`);\n\nCREATE INDEX `onsale` ON `wp_wc_product_meta_lookup` (`onsale`);\n\nCREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`(50));\n\nCREATE INDEX `stock_quantity` ON `wp_wc_product_meta_lookup` (`stock_quantity`);\n\nCREATE INDEX `stock_status` ON `wp_wc_product_meta_lookup` (`stock_status`);\n\nCREATE INDEX `virtual` ON `wp_wc_product_meta_lookup` (`virtual`);\n\nCREATE UNIQUE INDEX `rate_limit_key` ON `wp_wc_rate_limits` (`rate_limit_key`(191));\n\nCREATE UNIQUE INDEX `slug` ON `wp_wc_tax_rate_classes` (`slug`(191));\n\nCREATE INDEX `user_id` ON `wp_wc_webhooks` (`user_id`);\n\nCREATE INDEX `consumer_key` ON `wp_woocommerce_api_keys` (`consumer_key`);\n\nCREATE INDEX `consumer_secret` ON `wp_woocommerce_api_keys` (`consumer_secret`);\n\nCREATE INDEX `attribute_name` ON `wp_woocommerce_attribute_taxonomies` (`attribute_name`(20));\n\nCREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`product_id`, `order_id`, `order_key`(16), `download_id`);\n\nCREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `order_id`, `product_id`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`);\n\nCREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`user_id`, `order_id`, `downloads_remaining`, `access_expires`);\n\nCREATE INDEX `level` ON `wp_woocommerce_log` (`level`);\n\nCREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`(32));\n\nCREATE INDEX `order_item_id` ON `wp_woocommerce_order_itemmeta` (`order_item_id`);\n\nCREATE INDEX `order_id` ON `wp_woocommerce_order_items` (`order_id`);\n\nCREATE INDEX `meta_key` ON `wp_woocommerce_payment_tokenmeta` (`meta_key`(32));\n\nCREATE INDEX `payment_token_id` ON `wp_woocommerce_payment_tokenmeta` (`payment_token_id`);\n\nCREATE INDEX `user_id` ON `wp_woocommerce_payment_tokens` (`user_id`);\n\nCREATE UNIQUE INDEX `session_key` ON `wp_woocommerce_sessions` (`session_key`);\n\nCREATE INDEX `location_type_code` ON `wp_woocommerce_shipping_zone_locations` (`location_type`(10), `location_code`(20));\n\nCREATE INDEX `zone_id` ON `wp_woocommerce_shipping_zone_locations` (`zone_id`);\n\nCREATE INDEX `location_type_code` ON `wp_woocommerce_tax_rate_locations` (`location_type`(10), `location_code`(20));\n\nCREATE INDEX `tax_rate_id` ON `wp_woocommerce_tax_rate_locations` (`tax_rate_id`);\n\nCREATE INDEX `tax_rate_class` ON `wp_woocommerce_tax_rates` (`tax_rate_class`(10));\n\nCREATE INDEX `tax_rate_country` ON `wp_woocommerce_tax_rates` (`tax_rate_country`);\n\nCREATE INDEX `tax_rate_priority` ON `wp_woocommerce_tax_rates` (`tax_rate_priority`);\n\nCREATE INDEX `tax_rate_state` ON `wp_woocommerce_tax_rates` (`tax_rate_state`(2));\n",
   "zero_date_defaults": [
     "wordpress.wp_actionscheduler_actions.last_attempt_gmt",
     "wordpress.wp_actionscheduler_actions.last_attempt_local",
@@ -6461,11 +6727,172 @@
     "wordpress.wp_wc_webhooks.date_modified_gmt",
     "wordpress.wp_woocommerce_downloadable_product_permissions.access_granted"
   ],
-  "identity_columns": [],
+  "identity_columns": [
+    [
+      "wordpress.wp_actionscheduler_actions",
+      "action_id"
+    ],
+    [
+      "wordpress.wp_actionscheduler_claims",
+      "claim_id"
+    ],
+    [
+      "wordpress.wp_actionscheduler_groups",
+      "group_id"
+    ],
+    [
+      "wordpress.wp_actionscheduler_logs",
+      "log_id"
+    ],
+    [
+      "wordpress.wp_commentmeta",
+      "meta_id"
+    ],
+    [
+      "wordpress.wp_comments",
+      "comment_ID"
+    ],
+    [
+      "wordpress.wp_links",
+      "link_id"
+    ],
+    [
+      "wordpress.wp_options",
+      "option_id"
+    ],
+    [
+      "wordpress.wp_postmeta",
+      "meta_id"
+    ],
+    [
+      "wordpress.wp_posts",
+      "ID"
+    ],
+    [
+      "wordpress.wp_term_taxonomy",
+      "term_taxonomy_id"
+    ],
+    [
+      "wordpress.wp_termmeta",
+      "meta_id"
+    ],
+    [
+      "wordpress.wp_terms",
+      "term_id"
+    ],
+    [
+      "wordpress.wp_usermeta",
+      "umeta_id"
+    ],
+    [
+      "wordpress.wp_users",
+      "ID"
+    ],
+    [
+      "wordpress.wp_wc_admin_note_actions",
+      "action_id"
+    ],
+    [
+      "wordpress.wp_wc_admin_notes",
+      "note_id"
+    ],
+    [
+      "wordpress.wp_wc_customer_lookup",
+      "customer_id"
+    ],
+    [
+      "wordpress.wp_wc_download_log",
+      "download_log_id"
+    ],
+    [
+      "wordpress.wp_wc_order_addresses",
+      "id"
+    ],
+    [
+      "wordpress.wp_wc_order_operational_data",
+      "id"
+    ],
+    [
+      "wordpress.wp_wc_orders_meta",
+      "id"
+    ],
+    [
+      "wordpress.wp_wc_product_download_directories",
+      "url_id"
+    ],
+    [
+      "wordpress.wp_wc_rate_limits",
+      "rate_limit_id"
+    ],
+    [
+      "wordpress.wp_wc_tax_rate_classes",
+      "tax_rate_class_id"
+    ],
+    [
+      "wordpress.wp_wc_webhooks",
+      "webhook_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_api_keys",
+      "key_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_attribute_taxonomies",
+      "attribute_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "permission_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_log",
+      "log_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_order_itemmeta",
+      "meta_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_order_items",
+      "order_item_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_payment_tokenmeta",
+      "meta_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_payment_tokens",
+      "token_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_sessions",
+      "session_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_shipping_zone_locations",
+      "location_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_shipping_zone_methods",
+      "instance_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_shipping_zones",
+      "zone_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_tax_rate_locations",
+      "location_id"
+    ],
+    [
+      "wordpress.wp_woocommerce_tax_rates",
+      "tax_rate_id"
+    ]
+  ],
   "source_objects": {
-    "procedures": 0,
-    "functions": 0,
-    "triggers": 0,
+    "procedures": 2,
+    "functions": 1,
+    "triggers": 1,
     "views": 0
   },
   "extensions": null

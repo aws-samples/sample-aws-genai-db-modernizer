@@ -10,13 +10,14 @@ runs analysis, the assignment and the reality check (``POST .../resume``). Synth
 and the deliverables follow as in the deterministic pipeline.
 
 - ``["dynamodb", "aurora_postgresql"]``: the source-compatible Aurora MySQL is left
-  out, so Aurora PostgreSQL is the relational candidate: DynamoDB 40, Aurora
-  PostgreSQL 67 (as #1331's library scope), and every deliverable says so.
+  out, so Aurora PostgreSQL is the relational candidate: DynamoDB 55, Aurora
+  PostgreSQL 108 (as #1331's library scope; 39 and 68 before the refreshed sample of
+  #1955), and every deliverable says so.
 - No scope: the per-query routing is the routing snapshot's (main's), and nothing is
   recorded or stated.
-- ``["dynamodb"]``: 42 queries no in-scope engine can serve (#1329): the run completes,
-  they have no engine and are in no wave, and every deliverable lists them as a
-  blocking risk; the other 65 go to DynamoDB.
+- ``["dynamodb"]``: 69 queries no in-scope engine can serve (#1329; 42 of 107 before
+  #1955): the run completes, they have no engine and are in no wave, and every
+  deliverable lists them as a blocking risk; the other 94 go to DynamoDB.
 """
 
 from __future__ import annotations
@@ -175,10 +176,10 @@ def test_wordpress_scope_through_the_api_is_recorded_for_the_job(scoped: dict) -
 @pytest.mark.deterministic
 def test_wordpress_scope_through_the_api_routes_only_to_it(scoped: dict) -> None:
     first, final = scoped["versions"][0], scoped["versions"][-1]
-    # #1994: wp_postmeta's meta_id read no longer takes simple-cache-read on Aurora (it is
-    # far below Aurora's documented read capacity), so it moves off DynamoDB.
-    assert _distribution(first) == {"dynamodb": 39, "aurora_postgresql": 68}
-    assert _distribution(final) == {"dynamodb": 39, "aurora_postgresql": 68}
+    # 58 and 105 after #1955 (the refreshed sample's 163 statements), against 39 and 68
+    # on the earlier 107-statement collection.
+    assert _distribution(first) == {"dynamodb": 55, "aurora_postgresql": 108}
+    assert _distribution(final) == {"dynamodb": 55, "aurora_postgresql": 108}
     for version in scoped["versions"]:
         for qa in version["query_assignments"]:
             assert qa["assigned_engine"] in SCOPED
@@ -218,8 +219,9 @@ def ddb_only(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 
 # wordpress' queries DynamoDB alone cannot serve: the utility statements, the
 # aggregates, joins and pattern searches it is gated on, and the write and
-# co-dependency groups holding one of them (each unservable as one unit).
-DDB_UNSERVABLE = 42
+# co-dependency groups holding one of them (each unservable as one unit). 69 since
+# #1955: the refreshed sample's 163 statements (42 of 107 before).
+DDB_UNSERVABLE = 69
 
 
 @pytest.mark.deterministic
@@ -285,20 +287,20 @@ def test_wordpress_unservable_queries_are_in_every_deliverable(ddb_only: dict) -
         assert "change a query's engine" not in text
         assert UNSERVABLE_INTRO.split(":")[0] not in text
         assert serve in text
-    # The headline totals name them, in both reports.
+    # The headline totals name them, in both reports (163 queries since #1955).
     no_engine = f"{DDB_UNSERVABLE} have no engine in the customer's engine scope"
     assert (
-        f"of 107 queries move to a new engine (a migration target or a search read model); {no_engine}"
+        f"of 163 queries move to a new engine (a migration target or a search read model); {no_engine}"
         in ddb_only["engineering"]
     )
-    assert "of 107 queries move to a new engine" in pdf and f"{no_engine}." in pdf
+    assert "of 163 queries move to a new engine" in pdf and f"{no_engine}." in pdf
     excludes = (
         f"Excludes the {DDB_UNSERVABLE} queries with no engine in the customer's engine scope"
     )
     assert excludes in ddb_only["engineering"] and excludes in pdf
     facts = ddb_only["report"]["facts"]
     assert (facts["query_total_count"], facts["no_engine_in_scope_query_count"]) == (
-        107,
+        163,
         DDB_UNSERVABLE,
     )
     risk_id = next(
@@ -307,7 +309,7 @@ def test_wordpress_unservable_queries_are_in_every_deliverable(ddb_only: dict) -
         if r.get("rule") == "routing.no_engine_in_scope"
     )
     assert risk_id in ddb_only["engineering"]
-    summary = f"{DDB_UNSERVABLE} of the 107 queries have no engine"
+    summary = f"{DDB_UNSERVABLE} of the 163 queries have no engine"
     assert summary in ddb_only["report"]["summary"]
     data = json.loads((ddb_only["job_dir"] / "deliverables" / "assessment-data.json").read_text())
     assert len(data["scope_unservable"]) == DDB_UNSERVABLE

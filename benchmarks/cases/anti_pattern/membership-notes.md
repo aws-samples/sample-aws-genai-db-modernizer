@@ -2,6 +2,22 @@
 
 Why a committed case's query list changed, case by case, for whoever reviews its sheet. The lists are written by `uv run python -m benchmarks.runner.anti_pattern_cases`, never by hand; these notes only record the evidence for a change. They say which queries joined or left a case, not which rows the pipeline flags: that stays out of the review, as the blind sheets require (ADR-030 Amendment 2).
 
+## 2026-11-13, #1955: the refreshed wordpress sample
+
+The wordpress sample was collected again, after a statistics reset and a seeded workload through the shop's web and REST interfaces (`docs/examples/wordpress/README.md`): 163 statements instead of 107, with the writes the old file lacked, and every statement's window about 27 minutes of that workload. Rates rose for almost every statement and new tables gained traffic, so the builder selected the two committed wordpress cases again; the selection rule did not change, and both are still unreviewed. This change lands after #1994's rules below, so each list compares the case as #1994 left it with the one the refreshed sample gives; #1994 had already removed `wordpress-simple-cache-read`, and no refreshed read comes near the calibrated threshold either, so the builder still selects no case for it. Rates below are calls per second, on the old file and then on the new one, both over each statement's own window (`-` for a statement the old file does not hold).
+
+### wordpress-frequent-full-scan
+
+- Left: `52da34b1…` (`SELECT p.ID FROM wp_posts p WHERE post_type = ? AND p.post_title = ? …`): 1.732 → 19.249; `d4bf16d6…` (`SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts WHERE … post_parent = ? …`): 1.625 → 3.471.
+- Joined: `1794daed…` (`SELECT key_id, user_id, permissions, consumer_key, … FROM wp_woocommerce_api_keys …`): 1.351 → 8.497; `413c99e4…` (`SELECT option_name, option_value FROM wp_options WHERE autoload = ?`): 0.867 → 9.627.
+- Stayed: `329367a2…` (`SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME`): 1.649 → 9.147.
+
+### wordpress-no-relational-need
+
+- Left: `2c0093ed…` and `33dfdb12…` (`UPDATE wp_postmeta SET meta_value = meta_value ± ? …`): 0.291 → 0.865 and 0.292 → 0.865; `59163c18…` (`SELECT a.action_id FROM wp_actionscheduler_actions a LEFT JOIN wp_actionscheduler_groups g …`): 0.743 → 3.160; `966f5a33…` (`SELECT t.term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt …`): 0.381 → 2.627; `97834e68…` (`SELECT p.ID FROM wp_posts p INNER JOIN wp_term_relationships tr …`): 0.743 → 3.160.
+- Joined: `22726c84…` (`SELECT t.term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt …`): 0.676 → 3.867; `413c99e4…` (`SELECT option_name, option_value FROM wp_options WHERE autoload = ?`): 0.867 → 9.627; `41b2f2d1…` (`UPDATE wp_usermeta SET meta_value = ? WHERE user_id = ? AND meta_key = ?`): - → 1.274; `4b856e29…` (`UPDATE wp_woocommerce_order_itemmeta SET meta_value = ? …`): 0.317 → 1.464; `67fcc3ec…` (`SELECT umeta_id AS meta_id, meta_key, meta_value FROM wp_usermeta WHERE user_id = ? …`): - → 8.309; `d4bf16d6…` (`SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts WHERE … post_parent = ? …`): 1.625 → 3.471; `eb232c6c…` (`SELECT umeta_id FROM wp_usermeta WHERE meta_key = ? AND user_id = ?`): - → 10.975; `f37cfe51…` (`SELECT DISTINCTROW t.term_id, tr.object_id FROM wp_terms AS t …`): 0.276 → 1.926.
+- Stayed: `34b8682e…` (0.414 → 1.985), `3c5c8a79…` (0.292 → 1.222), `50b46567…` (0.409 → 2.136), `ee386e4a…` (0.875 → 3.768).
+
 ## 2026-11-07, #1994: calibrated rate thresholds and whole-table ordered reads
 
 Two rule changes, so the builder was rerun on the three samples. The selection rule did not change.

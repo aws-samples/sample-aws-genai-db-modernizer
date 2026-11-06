@@ -150,7 +150,10 @@ def test_the_wordpress_samples_composite_indexes_come_out_in_key_order():
         if cols
         != [r["column_name"] for r in raw["indexes"] if (r["table_name"], r["index_name"]) == key]
     ]
-    assert len(reordered) == 12
+    # 0 since #1955: the refreshed sample was collected after #1930, which writes each
+    # index's rows in key order (the old sample had 12 composite indexes out of order).
+    # test_a_shuffled_composite_index_comes_out_in_key_order covers the reordering.
+    assert len(reordered) == 0
 
 
 def _index_section(script: str) -> str:

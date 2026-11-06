@@ -91,13 +91,15 @@ def test_synthesis_and_reports_finish_after_a_customer_pick(picked: dict) -> Non
 # COUNT the waiver put there with it (ADR-031 Decision 2 Amendment 12). Per sample, the
 # pick (a write of the counted table), the counts on DynamoDB that must follow it, and
 # the engine they land on; named by id, so the test does not judge with the rule itself.
-# INSERT INTO wp_comments ...; the count: COUNT(*) FROM wp_comments WHERE
-# comment_post_ID = ? AND comment_approved = ?
+# INSERT INTO wp_commentmeta ...; the count: COUNT(*) FROM wp_commentmeta WHERE
+# meta_key = ? AND comment_id = ?. Since #1955 (the refreshed sample) the wp_comments
+# COUNT this used is on Aurora MySQL (its table's no-relational-need penalty is gone), and
+# this wp_commentmeta pair is the sample's key-scoped COUNT on DynamoDB with its write.
 WP_WRITE = (
-    "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"  # pragma: allowlist secret
+    "00c3bcc18acdf03f064c4a7b52571e81e578d2ae2367ce7904205744c2ffe8c8"  # pragma: allowlist secret
 )
 WP_COUNT = (
-    "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"  # pragma: allowlist secret
+    "0278ef630aad35db79d780cd92b66d45a9ef35980cfef327f7603fb84f92c510"  # pragma: allowlist secret
 )
 COUNT_FOLLOWS_WRITES: dict[str, tuple[str, list[str], str] | None] = {
     "wordpress": (WP_WRITE, [WP_COUNT], "aurora_mysql"),

@@ -440,7 +440,9 @@ def test_a_table_with_no_schema_name_is_found_by_its_name() -> None:
         del fk["schema_name"]
     fk = _foreign_keys(json.loads(_run(collection, "wordpress")))["fk_posts_author"]
     assert fk["referenced_table"] == "wordpress.wp_users"
-    assert fk["avg_children_per_parent"] == 11990 / 1
+    # wp_posts' 24,276 rows over wp_users' 4,305 on the refreshed sample (#1955; 11,990
+    # over 1 before).
+    assert fk["avg_children_per_parent"] == 24276 / 4305
     assert fk["basis"] == "catalogue_estimate"
 
 

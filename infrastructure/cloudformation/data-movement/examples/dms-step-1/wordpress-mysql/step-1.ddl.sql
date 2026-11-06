@@ -95,9 +95,12 @@
 -- lob-sizes, which sizes each table from its output and writes this file and the stack.
 --
 -- Not moved by step 1 (DMS moves table rows only; counts from the collection):
--- - procedures: 0 (none in the collection).
--- - functions: 0 (none in the collection).
--- - triggers: 0 (none in the collection).
+-- - procedures: 2 (after the full load, /move writes routines-deploy.sql for the routines step
+-- 1 carries (its routines section names the rest); you run it).
+-- - functions: 1 (after the full load, /move writes routines-deploy.sql for the routines step 1
+-- carries (its routines section names the rest); you run it).
+-- - triggers: 1 (after the full load, /move writes routines-deploy.sql for the routines step 1
+-- carries (its routines section names the rest); you run it).
 -- - views: 0 (none in the collection).
 -- - events: not in the collection: list them on the source with SHOW EVENTS and recreate them
 -- on Aurora yourself.
@@ -485,7 +488,7 @@ CREATE TABLE `wp_wc_product_attributes_lookup` (
   `product_or_parent_id` BIGINT NOT NULL,
   `taxonomy` VARCHAR(32) NOT NULL,
   `term_id` BIGINT NOT NULL,
-  PRIMARY KEY (`product_id`, `product_or_parent_id`, `taxonomy`, `term_id`)
+  PRIMARY KEY (`product_or_parent_id`, `term_id`, `product_id`, `taxonomy`)
 );
 
 CREATE TABLE `wp_wc_product_download_directories` (
@@ -693,11 +696,11 @@ CREATE TABLE `wp_woocommerce_tax_rates` (
 
 CREATE INDEX `args` ON `wp_actionscheduler_actions` (`args`);
 
-CREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`status`, `scheduled_date_gmt`, `claim_id`);
+CREATE INDEX `claim_id_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`claim_id`, `status`, `scheduled_date_gmt`);
 
 CREATE INDEX `group_id` ON `wp_actionscheduler_actions` (`group_id`);
 
-CREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`, `status`, `scheduled_date_gmt`);
+CREATE INDEX `hook_status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`hook`(163), `status`, `scheduled_date_gmt`);
 
 CREATE INDEX `last_attempt_gmt` ON `wp_actionscheduler_actions` (`last_attempt_gmt`);
 
@@ -707,7 +710,7 @@ CREATE INDEX `status_scheduled_date_gmt` ON `wp_actionscheduler_actions` (`statu
 
 CREATE INDEX `date_created_gmt` ON `wp_actionscheduler_claims` (`date_created_gmt`);
 
-CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);
+CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`(191));
 
 CREATE INDEX `action_id` ON `wp_actionscheduler_logs` (`action_id`);
 
@@ -715,11 +718,11 @@ CREATE INDEX `log_date_gmt` ON `wp_actionscheduler_logs` (`log_date_gmt`);
 
 CREATE INDEX `comment_id` ON `wp_commentmeta` (`comment_id`);
 
-CREATE INDEX `meta_key` ON `wp_commentmeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_commentmeta` (`meta_key`(191));
 
-CREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_date_gmt`, `comment_approved`);
+CREATE INDEX `comment_approved_date_gmt` ON `wp_comments` (`comment_approved`, `comment_date_gmt`);
 
-CREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`);
+CREATE INDEX `comment_author_email` ON `wp_comments` (`comment_author_email`(10));
 
 CREATE INDEX `comment_date_gmt` ON `wp_comments` (`comment_date_gmt`);
 
@@ -735,17 +738,17 @@ CREATE INDEX `autoload` ON `wp_options` (`autoload`);
 
 CREATE UNIQUE INDEX `option_name` ON `wp_options` (`option_name`);
 
-CREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_postmeta` (`meta_key`(191));
 
 CREATE INDEX `post_id` ON `wp_postmeta` (`post_id`);
 
 CREATE INDEX `post_author` ON `wp_posts` (`post_author`);
 
-CREATE INDEX `post_name` ON `wp_posts` (`post_name`);
+CREATE INDEX `post_name` ON `wp_posts` (`post_name`(191));
 
 CREATE INDEX `post_parent` ON `wp_posts` (`post_parent`);
 
-CREATE INDEX `type_status_date` ON `wp_posts` (`ID`, `post_date`, `post_status`, `post_type`);
+CREATE INDEX `type_status_date` ON `wp_posts` (`post_type`, `post_status`, `post_date`, `ID`);
 
 CREATE INDEX `term_taxonomy_id` ON `wp_term_relationships` (`term_taxonomy_id`);
 
@@ -753,15 +756,15 @@ CREATE INDEX `taxonomy` ON `wp_term_taxonomy` (`taxonomy`);
 
 CREATE UNIQUE INDEX `term_id_taxonomy` ON `wp_term_taxonomy` (`term_id`, `taxonomy`);
 
-CREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_termmeta` (`meta_key`(191));
 
 CREATE INDEX `term_id` ON `wp_termmeta` (`term_id`);
 
-CREATE INDEX `name` ON `wp_terms` (`name`);
+CREATE INDEX `name` ON `wp_terms` (`name`(191));
 
-CREATE INDEX `slug` ON `wp_terms` (`slug`);
+CREATE INDEX `slug` ON `wp_terms` (`slug`(191));
 
-CREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_usermeta` (`meta_key`(191));
 
 CREATE INDEX `user_id` ON `wp_usermeta` (`user_id`);
 
@@ -781,9 +784,9 @@ CREATE INDEX `permission_id` ON `wp_wc_download_log` (`permission_id`);
 
 CREATE INDEX `timestamp` ON `wp_wc_download_log` (`timestamp`);
 
-CREATE UNIQUE INDEX `address_type_order_id` ON `wp_wc_order_addresses` (`order_id`, `address_type`);
+CREATE UNIQUE INDEX `address_type_order_id` ON `wp_wc_order_addresses` (`address_type`, `order_id`);
 
-CREATE INDEX `email` ON `wp_wc_order_addresses` (`email`);
+CREATE INDEX `email` ON `wp_wc_order_addresses` (`email`(191));
 
 CREATE INDEX `order_id` ON `wp_wc_order_addresses` (`order_id`);
 
@@ -809,15 +812,15 @@ CREATE INDEX `customer_id` ON `wp_wc_order_stats` (`customer_id`);
 
 CREATE INDEX `date_created` ON `wp_wc_order_stats` (`date_created`);
 
-CREATE INDEX `status` ON `wp_wc_order_stats` (`status`);
+CREATE INDEX `status` ON `wp_wc_order_stats` (`status`(191));
 
 CREATE INDEX `date_created` ON `wp_wc_order_tax_lookup` (`date_created`);
 
 CREATE INDEX `tax_rate_id` ON `wp_wc_order_tax_lookup` (`tax_rate_id`);
 
-CREATE INDEX `billing_email` ON `wp_wc_orders` (`billing_email`);
+CREATE INDEX `billing_email` ON `wp_wc_orders` (`billing_email`(191));
 
-CREATE INDEX `customer_id_billing_email` ON `wp_wc_orders` (`customer_id`, `billing_email`);
+CREATE INDEX `customer_id_billing_email` ON `wp_wc_orders` (`customer_id`, `billing_email`(171));
 
 CREATE INDEX `date_created` ON `wp_wc_orders` (`date_created_gmt`);
 
@@ -827,15 +830,15 @@ CREATE INDEX `parent_order_id` ON `wp_wc_orders` (`parent_order_id`);
 
 CREATE INDEX `status` ON `wp_wc_orders` (`status`);
 
-CREATE INDEX `type_status_date` ON `wp_wc_orders` (`status`, `type`, `date_created_gmt`);
+CREATE INDEX `type_status_date` ON `wp_wc_orders` (`type`, `status`, `date_created_gmt`);
 
-CREATE INDEX `meta_key_value` ON `wp_wc_orders_meta` (`meta_key`, `meta_value`(191));
+CREATE INDEX `meta_key_value` ON `wp_wc_orders_meta` (`meta_key`(100), `meta_value`(82));
 
-CREATE INDEX `order_id_meta_key_meta_value` ON `wp_wc_orders_meta` (`order_id`, `meta_key`, `meta_value`(191));
+CREATE INDEX `order_id_meta_key_meta_value` ON `wp_wc_orders_meta` (`order_id`, `meta_key`(100), `meta_value`(82));
 
-CREATE INDEX `is_variation_attribute_term_id` ON `wp_wc_product_attributes_lookup` (`term_id`, `is_variation_attribute`);
+CREATE INDEX `is_variation_attribute_term_id` ON `wp_wc_product_attributes_lookup` (`is_variation_attribute`, `term_id`);
 
-CREATE INDEX `url` ON `wp_wc_product_download_directories` (`url`);
+CREATE INDEX `url` ON `wp_wc_product_download_directories` (`url`(191));
 
 CREATE INDEX `downloadable` ON `wp_wc_product_meta_lookup` (`downloadable`);
 
@@ -843,7 +846,7 @@ CREATE INDEX `min_max_price` ON `wp_wc_product_meta_lookup` (`min_price`, `max_p
 
 CREATE INDEX `onsale` ON `wp_wc_product_meta_lookup` (`onsale`);
 
-CREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`);
+CREATE INDEX `sku` ON `wp_wc_product_meta_lookup` (`sku`(50));
 
 CREATE INDEX `stock_quantity` ON `wp_wc_product_meta_lookup` (`stock_quantity`);
 
@@ -851,9 +854,9 @@ CREATE INDEX `stock_status` ON `wp_wc_product_meta_lookup` (`stock_status`);
 
 CREATE INDEX `virtual` ON `wp_wc_product_meta_lookup` (`virtual`);
 
-CREATE UNIQUE INDEX `rate_limit_key` ON `wp_wc_rate_limits` (`rate_limit_key`);
+CREATE UNIQUE INDEX `rate_limit_key` ON `wp_wc_rate_limits` (`rate_limit_key`(191));
 
-CREATE UNIQUE INDEX `slug` ON `wp_wc_tax_rate_classes` (`slug`);
+CREATE UNIQUE INDEX `slug` ON `wp_wc_tax_rate_classes` (`slug`(191));
 
 CREATE INDEX `user_id` ON `wp_wc_webhooks` (`user_id`);
 
@@ -861,25 +864,25 @@ CREATE INDEX `consumer_key` ON `wp_woocommerce_api_keys` (`consumer_key`);
 
 CREATE INDEX `consumer_secret` ON `wp_woocommerce_api_keys` (`consumer_secret`);
 
-CREATE INDEX `attribute_name` ON `wp_woocommerce_attribute_taxonomies` (`attribute_name`);
+CREATE INDEX `attribute_name` ON `wp_woocommerce_attribute_taxonomies` (`attribute_name`(20));
 
-CREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`, `order_key`);
+CREATE INDEX `download_order_key_product` ON `wp_woocommerce_downloadable_product_permissions` (`product_id`, `order_id`, `order_key`(16), `download_id`);
 
-CREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `product_id`, `order_id`);
+CREATE INDEX `download_order_product` ON `wp_woocommerce_downloadable_product_permissions` (`download_id`, `order_id`, `product_id`);
 
 CREATE INDEX `order_id` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`);
 
-CREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`order_id`, `user_id`, `downloads_remaining`, `access_expires`);
+CREATE INDEX `user_order_remaining_expires` ON `wp_woocommerce_downloadable_product_permissions` (`user_id`, `order_id`, `downloads_remaining`, `access_expires`);
 
 CREATE INDEX `level` ON `wp_woocommerce_log` (`level`);
 
-CREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_woocommerce_order_itemmeta` (`meta_key`(32));
 
 CREATE INDEX `order_item_id` ON `wp_woocommerce_order_itemmeta` (`order_item_id`);
 
 CREATE INDEX `order_id` ON `wp_woocommerce_order_items` (`order_id`);
 
-CREATE INDEX `meta_key` ON `wp_woocommerce_payment_tokenmeta` (`meta_key`);
+CREATE INDEX `meta_key` ON `wp_woocommerce_payment_tokenmeta` (`meta_key`(32));
 
 CREATE INDEX `payment_token_id` ON `wp_woocommerce_payment_tokenmeta` (`payment_token_id`);
 
@@ -887,21 +890,21 @@ CREATE INDEX `user_id` ON `wp_woocommerce_payment_tokens` (`user_id`);
 
 CREATE UNIQUE INDEX `session_key` ON `wp_woocommerce_sessions` (`session_key`);
 
-CREATE INDEX `location_type_code` ON `wp_woocommerce_shipping_zone_locations` (`location_code`, `location_type`);
+CREATE INDEX `location_type_code` ON `wp_woocommerce_shipping_zone_locations` (`location_type`(10), `location_code`(20));
 
 CREATE INDEX `zone_id` ON `wp_woocommerce_shipping_zone_locations` (`zone_id`);
 
-CREATE INDEX `location_type_code` ON `wp_woocommerce_tax_rate_locations` (`location_code`, `location_type`);
+CREATE INDEX `location_type_code` ON `wp_woocommerce_tax_rate_locations` (`location_type`(10), `location_code`(20));
 
 CREATE INDEX `tax_rate_id` ON `wp_woocommerce_tax_rate_locations` (`tax_rate_id`);
 
-CREATE INDEX `tax_rate_class` ON `wp_woocommerce_tax_rates` (`tax_rate_class`);
+CREATE INDEX `tax_rate_class` ON `wp_woocommerce_tax_rates` (`tax_rate_class`(10));
 
 CREATE INDEX `tax_rate_country` ON `wp_woocommerce_tax_rates` (`tax_rate_country`);
 
 CREATE INDEX `tax_rate_priority` ON `wp_woocommerce_tax_rates` (`tax_rate_priority`);
 
-CREATE INDEX `tax_rate_state` ON `wp_woocommerce_tax_rates` (`tax_rate_state`);
+CREATE INDEX `tax_rate_state` ON `wp_woocommerce_tax_rates` (`tax_rate_state`(2));
 
 --
 -- The DMS user, after the tables and the schema its grants name (YOUR RESPONSIBILITY, as above;

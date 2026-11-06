@@ -229,6 +229,24 @@ def dnn_run(e2e_root: Path) -> PipelineResult:
 
 
 @pytest.fixture(scope="session")
+def designed_pre_1955(e2e_root: Path) -> PipelineResult:
+    """The designed wordpress job on the collection bundled before #1955
+    (``designed_run.run_pre_1955_designed_wordpress``), cached once per session: the
+    table-owner and sync shapes the refreshed sample lacks."""
+    if _external_env() is not None:
+        pytest.skip("external-job mode: no deterministic designed run")
+    cached = _PIPELINE_CACHE.get("wordpress-designed-pre-1955")
+    if cached is not None:
+        return cached
+    from tests.e2e.designed_run import run_pre_1955_designed_wordpress
+
+    result = run_pre_1955_designed_wordpress(e2e_root / "artifacts", "e2e-pre1")
+    _RESULTS.append(result)
+    _PIPELINE_CACHE["wordpress-designed-pre-1955"] = result
+    return result
+
+
+@pytest.fixture(scope="session")
 def designed_run(e2e_root: Path) -> PipelineResult:
     """The wordpress run with a schema design for every kept engine and no model
     (``tests/e2e/designed_run.py``), cached once per session: the deterministic

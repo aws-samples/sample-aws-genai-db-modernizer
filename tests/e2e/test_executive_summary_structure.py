@@ -41,7 +41,11 @@ pytestmark = pytest.mark.deterministic
 # #1994: wordpress $749.21 to $757.62. wp_postmeta's meta_id read (23.8 calls/s) moves from
 # DynamoDB to Aurora MySQL once simple-cache-read fires only above Aurora's documented read
 # capacity: Aurora MySQL $484.94 to $497.25, DynamoDB $79.68 to $75.78.
-WHOLE_DOLLARS = {"wordpress": 758, "discourse": 535, "trailgear": 432}
+# #1955 refreshes the wordpress sample (163 statements under a seeded workload, rates over
+# its ~27-minute window): $757.62 to $1,178.33. DynamoDB $75.78 to $496.49 (its sized load
+# rises to 923.7 calls/s with 191.0 writes/s, on-demand), Aurora MySQL unchanged at $497.25
+# (108 sized queries, 647.7 calls/s), ElastiCache unchanged at $184.59.
+WHOLE_DOLLARS = {"wordpress": 1178, "discourse": 535, "trailgear": 432}
 
 
 def _report(run: PipelineResult) -> dict:

@@ -108,6 +108,9 @@ def _wordpress(dest: Path, capture: dict | None) -> tuple[Path, int]:
     raw = json.loads(text[text.index("{") :])
     if capture is not None:
         raw["metadata"]["query_capture"] = capture
+    else:
+        # An older collector wrote no query_capture; the refreshed sample has one (#1955).
+        raw["metadata"].pop("query_capture", None)
     path.write_text(json.dumps(raw))
     return path, len(raw["queries"])
 

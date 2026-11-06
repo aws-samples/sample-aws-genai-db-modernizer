@@ -10,6 +10,8 @@ regenerate with ``uv run python -m tests.unit.tools.sql.sql_facts_snapshot
 
 import json
 
+import pytest
+
 from tests.unit.tools.sql.sql_facts_snapshot import BASELINE, dump_snapshot, measure
 
 
@@ -34,11 +36,28 @@ def _differs(facts: frozenset[str] | None = None) -> dict[tuple[str, str], tuple
     }
 
 
+# #1955: the refreshed wordpress sample holds two statements the regex misreads: an
+# implicit join (``FROM wp_term_relationships , wp_posts WHERE ...``) it does not count,
+# and ``UPDATE wp_term_taxonomy SET `count` = ?``, a column it reads as COUNT.
+_WORDPRESS_CORRECTIONS = {
+    ("wordpress", "62118b26279d4f5aeadd94f2acdddc1627c7c99c632650020db012ea5c4016a7"): (
+        "has_joins",
+        "join_count",
+    ),
+    ("wordpress", "ec7cf9bbb12fedeb1d9f45392a80b97f6a2837465d7deb3aefaac9e392557671"): (
+        "has_aggregation",
+    ),
+}
+
+
+@pytest.mark.passes_on_main  # main's facade already reads these; #1955 changed the sample
 def test_every_regex_difference_on_the_samples_is_a_known_correction():
-    """Only the 21 discourse queries whose facts the regex misread (#796) differ."""
+    """Only the 21 discourse queries whose facts the regex misread (#796) and the two
+    wordpress ones above differ."""
     differs = _differs(_FACTS_796)
-    assert {sample for sample, _ in differs} == {"discourse"}
-    assert len(differs) == 21
+    assert {sample for sample, _ in differs} == {"discourse", "wordpress"}
+    assert sum(1 for sample, _ in differs if sample == "discourse") == 21
+    assert {k: v for k, v in differs.items() if k[0] == "wordpress"} == _WORDPRESS_CORRECTIONS
 
 
 def test_the_facts_893_added_differ_from_their_fallback_only_where_it_misreads():

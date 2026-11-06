@@ -454,12 +454,25 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # (20), so the 20-point penalty sends it to DynamoDB: aurora_mysql -1, dynamodb +1.
     # ``8c66eaee...`` (the wp_comments COUNT, 0.44 calls/s, 0.27 before) lifts DocumentDB
     # 77 -> 79 over DynamoDB's 77 and is first-assigned there: dynamodb -1, documentdb +1.
+    # #1955 (the refreshed sample, 163 statements: 58 new, 2 gone): the two gone
+    # ``SELECT SQL_CALC_FOUND_ROWS wp_users.ID ... JOIN wp_usermeta`` admin user-list reads
+    # (``05e0232d...``, ``797c033f...``) were first-assigned to DocumentDB and the seeded
+    # workload never opens that page (documentdb -2); the 58 new statements go
+    # aurora_mysql +31, dynamodb +15, documentdb +12. Of the 105 shared queries 4 change
+    # first engine, none of them changing access-pattern class: ``65f7884e...`` (the
+    # wp_commentmeta ``meta_id`` read) goes DynamoDB -> DocumentDB on score (80 over 77);
+    # ``3a74580e...`` (wp_usermeta) and ``06584926...`` (wp_actionscheduler_actions) tie
+    # Aurora MySQL with DocumentDB (78 and 83) and go to Aurora MySQL as the
+    # source-compatible engine; ``1794daed...`` (wp_woocommerce_api_keys) ties DocumentDB
+    # and DynamoDB at 79 and is settled on DynamoDB. Net on the shared queries:
+    # aurora_mysql +2, dynamodb 0, documentdb -2. Every moved query is in the #1955 PR,
+    # per query, from the routing snapshot.
     assert rc["before_distribution"] == {
         # #1994: wp_postmeta's meta_id read by post and key moved from DynamoDB to Aurora
         # MySQL; simple-cache-read no longer penalizes it below Aurora's read capacity.
-        "dynamodb": 36,
-        "aurora_mysql": 59,
-        "documentdb": 11,
+        "dynamodb": 51,
+        "aurora_mysql": 92,
+        "documentdb": 19,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

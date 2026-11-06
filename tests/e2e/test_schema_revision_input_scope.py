@@ -95,10 +95,12 @@ def test_a_revision_input_equals_the_single_call_design_input(
         assert analysis == first_analysis, where
 
 
+@pytest.mark.passes_on_main  # #1524 scope, now derived from the run on any sample
 def test_an_aurora_mysql_revision_holds_fewer_tables_than_the_collection(
     run: PipelineResult, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Wordpress: 20 tables and 20 recommendations of the 50 collected (#1524)."""
+    """Wordpress: the Aurora MySQL revision holds its own tables and recommendations,
+    fewer than the collection's (#1524)."""
     cases = [c for c in _cases(run) if c.engine == "aurora_mysql"]
     if not cases:
         # No Aurora MySQL design in this assignment (a source-compatible engine won).
@@ -111,5 +113,10 @@ def test_an_aurora_mysql_revision_holds_fewer_tables_than_the_collection(
     assert len(analysis["table_recommendations"]) == len(case.tables)
     assert len(case.tables) < len(full["database_schema"]["tables"])
     assert len(collector["queries"]["query_patterns"]) < len(full["queries"]["query_patterns"])
-    if run.db == "wordpress":
-        assert (len(case.tables), len(full["database_schema"]["tables"])) == (20, 50)
+    # Derived from the run itself, not pinned (#1955: 20 tables on the earlier sample, 22
+    # on the refreshed one, and a replayed or headless run can be either): the revision
+    # holds exactly the tables the assignment's Aurora MySQL queries read, and fewer than
+    # the collection.
+    held = {case.canonical(t["table_id"]) for t in collector["database_schema"]["tables"]}
+    assert held == case.tables
+    assert 0 < len(held) < len(full["database_schema"]["tables"])

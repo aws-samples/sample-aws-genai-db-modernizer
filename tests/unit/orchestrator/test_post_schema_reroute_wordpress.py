@@ -152,7 +152,9 @@ class TestTheRerouteOnWordpress:
         # #494 slice 2: the INSERT's cost dimension is its own, not its table's cost band:
         # DynamoDB 100 (its writes cost $0.16 a month) instead of 65, Aurora MySQL 98 (its
         # $250 standing cost shared by 107 queries) instead of 55; the scores were 90 and 51.
-        assert (reroute["score_before"], reroute["score_after"]) == (95, 55)
+        # #1955: 96, not 95, on the refreshed sample: DynamoDB's performance dimension for
+        # wp_actionscheduler_logs is 45 instead of 25 (+1 at weight 0.05; cost 100 -> 99).
+        assert (reroute["score_before"], reroute["score_after"]) == (96, 55)
 
     def test_the_rerouted_version_never_claims_customer_approval(self, rerouted):
         assert rerouted["v2"]["status"] == "customer_approved"

@@ -158,8 +158,9 @@ def write_opensearch_design(
 ) -> None:
     """An OpenSearch design for the version's OpenSearch statements: an index (mapped
     fields, a nested object among them, and an alias) per collected source table they
-    read, except the last, which is a data stream (an ``@timestamp`` field), and one
-    access pattern per statement, served from its first table's index or data stream.
+    read, except the last one a statement reads first, which is a data stream (an
+    ``@timestamp`` field), and one access pattern per statement, served from its first
+    table's index or data stream.
     No sample has a time-series table, so the data stream is this designer's only."""
     from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
 
@@ -183,7 +184,10 @@ def write_opensearch_design(
         "assumed_node_count": 3,
         "shard_sizing_rationale": "Under 30 GB of data -> 1 shard",
     }
-    streamed = tables[-1:] if len(tables) > 1 else []
+    # The stream is the last table some statement reads first, so it serves a statement:
+    # the last table of all served none on the refreshed wordpress sample (#1955).
+    firsts = sorted({read[0] for _, read in queries})
+    streamed = firsts[-1:] if len(tables) > 1 else []
     served_by = {t: f"{names[t]}-events" if t in streamed else names[t] for t in tables}
     design = OpenSearchModelOutputContract.model_validate(
         {
@@ -349,6 +353,19 @@ def report_unsupported(
         q["query_id"]: str(q.get("query_type") or "").upper()
         for q in store.read_json(f"{prefix}/collector/output.json")["queries"]["query_patterns"]
     }
+    # The entry below names aggregation, which the ddb-key-scoped-count waiver lifts for a
+    # key-scoped COUNT on DynamoDB (src/catalog/gates.toml), so such a read never moves.
+    # The refreshed wordpress sample's first DynamoDB read by id is one (#1955).
+    patterns_key = f"{prefix}/assignment/v{version}/access_patterns.json"
+    waived = (
+        {
+            q["query_id"]
+            for q in store.read_json(patterns_key).get("queries", [])
+            if "key_scoped_count" in (q.get("facts") or [])
+        }
+        if store.exists(patterns_key)
+        else set()
+    )
     flagged = sorted(
         qa["query_id"]
         for qa in assignment["query_assignments"]
@@ -356,6 +373,7 @@ def report_unsupported(
         and qa.get("in_scope", True)
         and qa["query_id"] not in grouped
         and qa["query_id"] not in skip
+        and qa["query_id"] not in waived
         and types.get(qa["query_id"]) == "SELECT"
     )[0]
     key = f"{prefix}/schema-dynamodb/v{version}/schema_output.json"
