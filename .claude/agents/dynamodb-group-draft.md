@@ -71,7 +71,7 @@ The pipeline has already scoped it to this engine and, for large workloads, spli
 **`design_metrics` — numbers computed for you. Read them; never recompute them.** Validation rejects a design whose numbers disagree with these:
 
 - `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied). A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
-- `tables[]`: per `table_id`, `row_count` (the collector's; when `row_count_assumed` is true the source has no count for the table and this is the stated assumption, its data size over `schema_item_size_bytes`: where a figure rests on it, say in `trade_offs` that the row count is derived from the table's size), `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute)
+- `tables[]`: per `table_id`, `row_count` (the collector's; when `row_count_assumed` is true the source has no count for the table and this is the stated assumption, its data size over `schema_item_size_bytes`: where a figure rests on it, say in `trade_offs` that the row count is derived from the table's size), `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute) and `key_distinct_values` (the column sets whose distinct values the collection holds: a primary key or unique index has the table's row count, a column its collected cardinality; the cost check spreads a hot-partition entry's total over them to estimate one key value's load, and says "not measured" for a key on none of them)
 - `coverage`: `in_scope_patterns`, `total_queries_analyzed` and `coverage_ratio`. Absent in a design group, which holds only its share of the queries: skip the coverage check then
 - `dynamodb_partition_limits`: the per-partition-key-value limits and the at-risk threshold
 
@@ -154,7 +154,7 @@ For each pattern the base table key cannot serve:
 - For write-heavy tables, calculate amplified WCU at `design_rps` for any mutable GSI key attribute
 
 **Step 5 — Hot partition pre-check**
-Before finalising, estimate the RCU/s or WCU/s each partition key value receives at `design_rps` and run the cost check (see `hot_partition_analysis` below): it computes the utilization against `design_metrics.dynamodb_partition_limits` and flags every value above the at-risk threshold. Apply mitigation (shard suffix, time-bucket PK) where it flags one and update the key design.
+Before finalising, give the RCU/s or WCU/s each table and GSI receives at `design_rps` (the total over all its partition key values) and run the cost check (see `hot_partition_analysis` below): it computes the total's utilization against one key value's limit in `design_metrics.dynamodb_partition_limits` (an upper bound, reached only if every request used the same key value) and, for each entry above the at-risk threshold, the load per key value it estimates from the key's distinct values in `design_metrics.tables[].key_distinct_values` (`per_key_basis`, `distinct_key_values`, `per_key_utilization_pct` in `hot_partition_findings`). Apply mitigation (shard suffix, time-bucket PK) where the estimated key value is near its limit, or the key is constant or has few distinct values, and update the key design; where the total is spread over many key values, the entry's `mitigation` says so.
 
 **Step 6 — Settle the structure of each table**
 Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `index_name`, `partition_key` as a list of `KeyDefinition`, `sort_key` and `projection`), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` (`identifying_relationship` and `separate` tables) or `entities` (`item_collection` tables only), never both and never neither.
@@ -198,7 +198,7 @@ Exception: when some queries arrive with only the child's id (the `WHERE` names 
 
 - Use `design_rps` for all capacity and hot partition analysis.
 - Hot partition limits: **3,000 RCU/s** and **1,000 WCU/s** per distinct partition key value.
-- Flag any partition key value exceeding 80% of either limit at design RPS.
+- Flag any partition key value exceeding 80% of either limit at design RPS: a constant key or one with few distinct values carries most of its table's load on one value.
 - Mitigation: shard suffix (`entity_id#shard` where shard = hash(id) % N), time-bucket PK (`entity_id#YYYY-MM`), or redesign the aggregate boundary.
 - Scan anti-patterns: replace every `full_table_scans > 0` pattern with a GSI Query, identifying relationship Query, or item collection Query. Show the replacement in the access pattern table.
 
@@ -1003,12 +1003,25 @@ class MigrationNote(BaseModel):
 
 
 class HotPartitionEntry(BaseModel):
+    """The load on one table or GSI: the total over all its partition key values, so an
+    upper bound for one key value. The pipeline estimates the load per key value from
+    the key's collected distinct values (#1989)."""
+
     table_name: str
     gsi_name: str | None = None
     operation: PARTITION_OPERATIONS
-    rcu_or_wcu_per_second: float = Field(..., ge=0)
+    rcu_or_wcu_per_second: float = Field(
+        ..., ge=0, description="The table's or GSI's total read or write units per second"
+    )
     partition_limit: float = Field(..., description="3000 for reads, 1000 for writes")
-    utilization_pct: float = Field(..., ge=0, le=100)
+    utilization_pct: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "rcu_or_wcu_per_second / partition_limit × 100, never capped: above 100 the "
+            "total is over one key value's limit (an upper bound)"
+        ),
+    )
     at_risk: bool = Field(..., description="True when utilization_pct > 80")
     contributing_patterns: list[str] = Field(
         ..., description="query_ids driving this partition's load"

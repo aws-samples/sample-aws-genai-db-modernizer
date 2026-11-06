@@ -64,8 +64,16 @@ rule                       severity  raised when
                            LOW       every noted object is a trigger or routine on wave 1's
                                      engine for a homogeneous source: it carries over with
                                      the schema and is tested after cutover (#1642)
-``design.hot_partition``   MEDIUM    design partitions run above 80% of their limit at peak;
-                           HIGH      at ``HOT_PARTITION_HIGH_PCT`` or more; one per engine
+``design.hot_partition``   HIGH      a partition key value's estimated load is above its
+                                     throughput limit at the design rate (#1989,
+                                     ``partition_load``: every request on one key value, or the
+                                     total spread evenly over the key's collected distinct
+                                     values)
+                           LOW       a table or index total is above 80% of one key value's
+                                     limit, but no estimated key value is above it, or the
+                                     key's distinct values are not collected ("per-key load
+                                     not measured"): the total is an upper bound and never sets
+                                     the severity; one risk per engine
 ``design.trade_offs``      MEDIUM    an engine's schema design records trade-offs to review;
                                      one risk per engine
 ``design.redesign``        MEDIUM    queries sit on an engine whose score for them is the
@@ -146,6 +154,7 @@ from src.shared.migration_risk_rules import (
     wave_gate_strategies,
     wave_of_engine,
 )
+from src.shared.partition_load import hot_partition_rows, over_key_limit
 from src.shared.report_facts import (
     CLOSE_CALL_MARGIN,
     RELATIONAL_ENGINES,
@@ -155,10 +164,11 @@ from src.shared.report_facts import (
 from src.shared.risk_severity import overall_risk_level
 from src.shared.unsupported_pattern import unsupported_pattern_ids
 
-# A hot partition at or above this utilization is HIGH; below it (but at risk,
-# above 80%) it is MEDIUM.
-HOT_PARTITION_HIGH_PCT = 95.0
-
+#: Which figure the LOW hot-partition risk states first (#1989): "per_key" (the busiest
+#: estimated key value, the maintainer's decision on #2001) or "table_total" (the upper
+#: bound). The executive report prints open risks' descriptions as written, so it states
+#: the per-key figure first too.
+LOW_RISK_LEADS_WITH: str = "per_key"
 
 # Facts the risk register does not read yet. Each needs its own rule above
 # (severity, test); until then nothing reads the field. Empty since #1149.
@@ -945,46 +955,153 @@ def _app_layer_risks(
     return out
 
 
+def _pct(value: float) -> str:
+    """A share of one key value's limit, never capped: ``303%``, ``89.2%``, ``0.0055%``."""
+    if value >= 1000:
+        return f"{value:,.0f}%"
+    if value >= 1:
+        return f"{value:.1f}".rstrip("0").rstrip(".") + "%"
+    return f"{value:.2g}%"
+
+
+def _units(value: float) -> str:
+    return f"{value:,.1f}".rstrip("0").rstrip(".") if value >= 1 else f"{value:.2g}"
+
+
+def _hot_partition_detail(row: Mapping[str, Any]) -> str:
+    """One entry's line: the total as an upper bound, then the per-key estimate."""
+    where = row["table_name"] + (f" index {row['gsi_name']}" if row.get("gsi_name") else "")
+    kind = "read" if row["operation"] == "read" else "write"
+    head = (
+        f"{where} {kind}s: {_units(row['total_units_per_second'])} {kind} units/s in total, "
+        f"{_pct(row['total_pct_of_key_limit'])} of one key value's "
+        f"{row['partition_limit']:,.0f} limit (an upper bound)"
+    )
+    if row["per_key_basis"] == "not_measured":
+        return f"{head}; per-key load not measured."
+    return (
+        f"{head}; {_spread(row)}: about {_units(row['per_key_units_per_second'])} {kind} "
+        f"units/s on the busiest key value, {_pct(row['per_key_pct_of_limit'])} of its limit."
+    )
+
+
+def _spread(row: Mapping[str, Any]) -> str:
+    """What the per-key estimate assumes, in words."""
+    n = row.get("distinct_key_values") or 1
+    if row.get("per_key_source") == "access_pattern":
+        return (
+            "an access pattern's calls use one literal key value"
+            if n == 1
+            else f"an access pattern's calls reach at most {n:,} key values"
+        )
+    if row["per_key_basis"] == "single_key":
+        return "every request uses the same key value"
+    if row.get("distinct_key_bound") == "at_most":
+        return f"the key takes at most {n:,} values (a modulo key), spread evenly"
+    return f"spread evenly over {n:,} distinct key values; skew across values not measured"
+
+
 def _hot_partition_risks(
     ctx: _Context,
     schema_designs: Mapping[str, Mapping[str, Any]],
     normalise: Callable[[Iterable[str]], set[str]],
+    rows: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
+    """One ``design.hot_partition`` risk per engine whose design has an entry above the
+    at-risk share of one key value's limit (#1989, ``partition_load.hot_partition_rows``).
+
+    HIGH only when an estimated key value is above its limit; otherwise LOW, an item to
+    watch: the table or index total is an upper bound and never sets the severity."""
+    if rows is None:
+        rows = hot_partition_rows(schema_designs)
     out: list[dict[str, Any]] = []
-    for engine in sorted(schema_designs):
-        design = schema_designs[engine] or {}
-        hot = [
-            h
-            for h in design.get("hot_partition_analysis") or []
-            if isinstance(h, dict) and h.get("at_risk")
-        ]
-        if not hot:
-            continue
+    for engine in sorted({r["engine"] for r in rows}):
+        mine = [r for r in rows if r["engine"] == engine]
+        design = schema_designs.get(engine) or {}
         sources = {
             str(t.get("table_name")): normalise(t.get("source_tables") or [])
             for t in design.get("table_definitions") or []
             if isinstance(t, dict) and t.get("table_name")
         }
-        peak = max(float(h.get("utilization_pct") or 0.0) for h in hot)
-        tables = sorted({str(h.get("table_name")) for h in hot if h.get("table_name")})
-        qids = {str(q) for h in hot for q in h.get("contributing_patterns") or [] if q}
+        tables = sorted({r["table_name"] for r in mine if r["table_name"]})
+        over = [r for r in mine if over_key_limit(r)]
+        top_total = max(r["total_pct_of_key_limit"] for r in mine)
+        upper = (
+            f"the highest at {_pct(top_total)}: an upper bound, reached only if every request "
+            "used the same key value"
+        )
         wave = ctx.wave_of_engine.get(engine)
+        if over:
+            worst = max(over, key=lambda r: r["per_key_pct_of_limit"])
+            over_tables = sorted({r["table_name"] for r in over})
+            how = _spread(worst)
+            description = (
+                f"{_n(len(over_tables), 'design table has', 'design tables have')} a partition "
+                "key value whose estimated load is above its throughput limit at the design "
+                f"rate (the highest at {_pct(worst['per_key_pct_of_limit'])} of the limit, "
+                f"{how})."
+            )
+            mitigation = by_gate(
+                "Spread the load on these key values (write sharding or a different "
+                "partition key), and load-test them at the design rate",
+                wave,
+            )
+            severity = "HIGH"
+        else:
+            unmeasured = sorted(
+                {r["table_name"] for r in mine if r["per_key_basis"] == "not_measured"}
+            )
+            measured = [r for r in mine if r["per_key_basis"] != "not_measured"]
+            n = len(tables)
+            total_sentence = (
+                f"{_n(n, 'design table has', 'design tables have')} a table or index total "
+                "above 80% of one partition key value's throughput limit at the design rate "
+                f"({upper})."
+            )
+            per_key_sentence = None
+            if measured:
+                busiest = max(measured, key=lambda r: r["per_key_pct_of_limit"])
+                per_key_sentence = (
+                    "No estimated key value is above its limit: the busiest is at "
+                    f"{_pct(busiest['per_key_pct_of_limit'])} ({_spread(busiest)})."
+                )
+            if LOW_RISK_LEADS_WITH == "per_key" and measured:
+                busiest = max(measured, key=lambda r: r["per_key_pct_of_limit"])
+                tables_of = _n(n, "design table", "design tables")
+                sentences = [
+                    f"{tables_of}: the busiest estimated partition key value is at "
+                    f"{_pct(busiest['per_key_pct_of_limit'])} of its limit at the design rate "
+                    f"({_spread(busiest)}), and no estimated key value is above it.",
+                    "The table or index total, an upper bound reached only if every request "
+                    "used the same key value, is above 80% of one key value's limit (the "
+                    f"highest at {_pct(max(r['total_pct_of_key_limit'] for r in mine))}).",
+                ]
+            else:
+                sentences = [s for s in (total_sentence, per_key_sentence) if s]
+            if unmeasured:
+                which = "" if len(unmeasured) == n else f" for {len(unmeasured)} of these tables"
+                sentences.append(
+                    f"Per-key load not measured{which}: the collection has no distinct-value "
+                    f"count for {'its' if len(unmeasured) == 1 else 'their'} partition "
+                    f"{'key' if len(unmeasured) == 1 else 'keys'}."
+                )
+            description = " ".join(sentences)
+            step = "Watch the busiest key values of these tables in a load test at the design rate"
+            if unmeasured:
+                step += ", and check how many distinct values the keys not measured take"
+            mitigation = by_gate(step, wave)
+            severity = "LOW"
         out.append(
             _risk(
                 "design.hot_partition",
                 engine,
-                f"{_n(len(tables), 'design table has', 'design tables have')} a partition above "
-                f"80% of its throughput limit at the designed peak (the highest at "
-                f"{peak:g}%).",
-                by_gate(
-                    "Spread the load on these partitions (write sharding or a different "
-                    "partition key), and load-test them at peak",
-                    wave,
-                ),
+                description,
+                mitigation,
                 {s for t in tables for s in sources.get(t, set())},
-                qids,
+                {q for r in mine for q in r["query_ids"]},
                 wave,
-                severity="HIGH" if peak >= HOT_PARTITION_HIGH_PCT else None,
+                severity=severity,
+                details=[_hot_partition_detail(r) for r in mine],
             )
         )
     return out
@@ -1303,6 +1420,7 @@ def build_migration_risks(
     redesign_requirements: Iterable[Mapping[str, Any]] | None = None,
     carried_writes: Iterable[Mapping[str, Any]] | None = None,
     copy_lines: Iterable[Mapping[str, Any]] | None = None,
+    hot_partitions: list[dict[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -1325,6 +1443,11 @@ def build_migration_risks(
     ``scope_unservable`` rows (#1329); ``redesign_requirements``
     the queries routing scored after redesign, each with its engine (#1231);
     ``carried_writes`` the write-group members their engine serves poorly (#1362);
+    ``hot_partitions`` the design entries above the at-risk share of one key value's
+    limit with their per-key estimates (``partition_load.hot_partition_rows`` over the
+    collector's tables, #1989; synthesis computes them once for this and for
+    ``facts.hot_partitions``; without them they are computed from ``schema_designs``
+    alone, so a key's distinct values read as not measured);
     ``source_engine`` is the
     dialect the queries' text is read in.
     """
@@ -1343,7 +1466,7 @@ def build_migration_risks(
         *_close_call_risks(ctx, query_traces),
         *_cache_risks(ctx, cache_overlay, designs, cache_only_engines),
         *_app_layer_risks(ctx, designs, trigger_tables or {}),
-        *_hot_partition_risks(ctx, designs, norm),
+        *_hot_partition_risks(ctx, designs, norm, hot_partitions),
         *_trade_off_risks(ctx, trade_offs, norm),
         *_redesign_risks(ctx, redesign_requirements),
         *_carried_write_risks(ctx, carried_writes),

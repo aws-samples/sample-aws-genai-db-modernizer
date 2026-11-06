@@ -102,6 +102,7 @@ from src.shared.design_text import said_once_trade_offs
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.executive_brief import check_summary_brief, executive_brief_text
+from src.shared.partition_load import hot_partition_rows
 from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, replace_dashes
@@ -467,6 +468,11 @@ def run_synthesis_deterministic(
     scope_unservable = scope_unservable_rows(
         data.assignment, triage_query_capabilities(data.triage)
     )
+    # #1989: each DynamoDB design entry above the at-risk share of one key value's limit,
+    # with its load per key value estimated from the collection's distinct values; read
+    # before the risks, which set the hot-partition severity from it, and stated in
+    # facts.hot_partitions.
+    hot_partitions = _hot_partitions(data)
     # #471: the relational move's gaps, read before the risks, which raise them (#1149).
     relational_gaps = _relational_gaps(data)
     # #1362: the write-group members their engine serves poorly, read before the risks,
@@ -521,6 +527,7 @@ def run_synthesis_deterministic(
             redesign_requirements=redesign_requirements,
             carried_writes=carried_writes,
             copy_lines=copy_lines,
+            hot_partitions=hot_partitions,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -692,6 +699,7 @@ def run_synthesis_deterministic(
         "scope_unservable": scope_unservable,
         "carried_writes": carried_writes,
         "relational_gaps": relational_gaps,
+        "hot_partitions": hot_partitions,
         "derived_copy_syncs": derived_copy_syncs,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
@@ -1276,6 +1284,15 @@ def _carried_writes(
     )
 
 
+def _hot_partitions(data: SynthesisData) -> list[dict]:
+    """The design entries above the at-risk share of one key value's limit, each with
+    its per-key estimate over the collector's tables (#1989)."""
+    return hot_partition_rows(
+        {e: a.schema_design or {} for e, a in data.engines.items()},
+        ((data.collector or {}).get("database_schema") or {}).get("tables") or [],
+    )
+
+
 def _relational_gaps(data: SynthesisData) -> dict | None:
     """The relational move's gap check against wave 1's Aurora engine (#471), from
     the collection; None without one."""
@@ -1478,6 +1495,10 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     relational_gaps = (
         result["relational_gaps"] if "relational_gaps" in result else _relational_gaps(data)
     )
+    # #1989: the hot-partition rows the risks were raised from, computed once.
+    hot_partitions = (
+        result["hot_partitions"] if "hot_partitions" in result else _hot_partitions(data)
+    )
     # #1566: the sync synthesis computed once for the cost (an older caller's result
     # without it gets it here).
     derived_copy_syncs = (
@@ -1514,6 +1535,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         row_counts=row_count_facts(schema.get("tables") or []) if data.collector else None,
         # #1893: the window each statement's call rate used, and the one statement of the
         # 24-hour assumption when any rate rests on it.
+        hot_partitions=hot_partitions,
         rate_windows=(
             rate_window_facts(
                 ((data.collector or {}).get("queries") or {}).get("query_patterns") or []

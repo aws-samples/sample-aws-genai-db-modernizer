@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional facts.hot_partitions (HotPartitionFacts): each DynamoDB design entry above the at-risk share of one partition key value's limit, with its total as an upper bound (never capped) and its load per key value estimated from the collection's distinct values, or not measured. Backward compatible: defaults to None."
+issue = 1989

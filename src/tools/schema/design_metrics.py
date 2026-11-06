@@ -39,11 +39,13 @@ from src.contracts.design_metrics import (
     DesignMetricsContract,
     DynamoDBPartitionLimits,
     EmbeddingSizeMetrics,
+    KeyDistinctValues,
     OpenSearchShardMetrics,
     OpenSearchShardRules,
     QueryDesignMetrics,
     TableDesignMetrics,
 )
+from src.shared.partition_load import key_distinct_values
 from src.shared.row_counts import (
     DDL_TABLE_THRESHOLD_ROWS,
     UNKNOWN_SIZE_MB,
@@ -206,6 +208,7 @@ def _table_metrics(table: Mapping[str, Any]) -> TableDesignMetrics:
         schema_item_size_bytes=schema_item_size_bytes(table.get("columns") or []),
         data_gb=round(float(size_mb or 0) / 1024, 4),
         capped_text_columns=capped_text_columns(table.get("columns") or []),
+        key_distinct_values=[KeyDistinctValues(**k) for k in key_distinct_values(table)],
     )
 
 
@@ -458,8 +461,10 @@ def _check_rps(
 
 
 def expected_utilization_pct(units_per_second: float, partition_limit: float) -> float:
-    """``min(100, units / limit × 100)`` to one decimal (the merge's own rule)."""
-    return round(min(100.0, units_per_second / partition_limit * 100), 1)
+    """``units / limit × 100`` to one decimal (the merge's own rule), never capped (#1989):
+    an entry is the table or index total, so above 100% it states how far the total is
+    over one key value's limit, an upper bound the per-key estimate qualifies."""
+    return round(units_per_second / partition_limit * 100, 1)
 
 
 def check_hot_partition_entry(entry: Mapping[str, Any], label: str = "entry") -> list[str]:

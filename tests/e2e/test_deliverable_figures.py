@@ -53,6 +53,7 @@ from src.agents.referee.table_assignments import retained_engine_for
 from src.report.formatting import price_list_text
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
+from src.shared.partition_load import hot_partition_rows
 from src.shared.rate_window import rate_window_facts
 from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
 from src.shared.row_counts import row_count_facts
@@ -238,8 +239,20 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
         row_counts=row_count_facts(collector["database_schema"]["tables"]),
         # #1893: the rate window bases too.
         rate_windows=rate_window_facts(collector["queries"]["query_patterns"]),
+        # #1989: the hot-partition rows, from the job's designs and the collection.
+        hot_partitions=hot_partition_rows(
+            _schema_designs_of_the_job(run), collector["database_schema"]["tables"]
+        ),
     )
     assert stored == recomputed
+
+
+def _schema_designs_of_the_job(run: PipelineResult) -> dict[str, Any]:
+    """Each engine's latest schema design in the job (none without a model)."""
+    designs: dict[str, Any] = {}
+    for path in sorted(run.job_dir().glob("schema-*/v*/schema_output.json")):
+        designs[path.parent.parent.name.removeprefix("schema-")] = json.loads(path.read_text())
+    return designs
 
 
 def _relational_gaps_from_the_job(run: PipelineResult, report: dict[str, Any]) -> Any:

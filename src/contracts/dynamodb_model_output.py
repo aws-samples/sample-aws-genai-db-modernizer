@@ -646,12 +646,25 @@ class MigrationNote(BaseModel):
 
 
 class HotPartitionEntry(BaseModel):
+    """The load on one table or GSI: the total over all its partition key values, so an
+    upper bound for one key value. The pipeline estimates the load per key value from
+    the key's collected distinct values (#1989)."""
+
     table_name: str
     gsi_name: str | None = None
     operation: PARTITION_OPERATIONS
-    rcu_or_wcu_per_second: float = Field(..., ge=0)
+    rcu_or_wcu_per_second: float = Field(
+        ..., ge=0, description="The table's or GSI's total read or write units per second"
+    )
     partition_limit: float = Field(..., description="3000 for reads, 1000 for writes")
-    utilization_pct: float = Field(..., ge=0, le=100)
+    utilization_pct: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "rcu_or_wcu_per_second / partition_limit × 100, never capped: above 100 the "
+            "total is over one key value's limit (an upper bound)"
+        ),
+    )
     at_risk: bool = Field(..., description="True when utilization_pct > 80")
     contributing_patterns: list[str] = Field(
         ..., description="query_ids driving this partition's load"

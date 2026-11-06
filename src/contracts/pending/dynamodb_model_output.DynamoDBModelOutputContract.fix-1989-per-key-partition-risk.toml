@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "dynamodb_model_output.DynamoDBModelOutputContract"
+kind = "minor"
+reason = "HotPartitionEntry.utilization_pct is no longer capped at 100 (le=100 removed): an entry is a table or GSI total, and above 100 it states how far the total is over one partition key value's limit, an upper bound the pipeline's per-key estimate qualifies. Backward compatible: every entry written before still validates."
+issue = 1989
