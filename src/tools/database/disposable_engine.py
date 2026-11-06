@@ -3,7 +3,7 @@
 
 """Disposable source engines for running the original routines (#1943).
 
-To prove a carried routine behaves like the original, the original has to run
+To compare a carried routine with the original side by side, the original has to run
 somewhere, and never on the customer's source. This module starts a throwaway
 engine of the source's own engine and version, loads synthetic tables, rows and
 the original routines into it, calls them, reads the tables back and removes
@@ -18,6 +18,16 @@ everything again::
         stop(handle)
 
 ``running(...)`` wraps the same calls in a context manager.
+
+For the side-by-side comparison (#1944): ``counters(handle)`` and
+``restore_counters(handle, state)`` read and put back what a rollback does not undo
+(PostgreSQL sequences, MySQL ``AUTO_INCREMENT`` of tables with a plain name);
+``tables(handle)`` lists the routines' schema's tables; ``reset_session(handle)`` gives
+MySQL a new connection's session state; ``time_limit(handle, seconds)`` interrupts a
+statement that runs too long. A failed statement carries its SQLSTATE
+(``CallResult.sqlstate``, ``EngineError.sqlstate``) and MySQL's error number
+(``CallResult.errno``), and a MySQL procedure's result sets keep their sizes
+(``CallResult.result_sets``).
 
 ``execute(handle, sql, params)`` runs one more statement with bound values (a test
 row change that fires a trigger, #1942); ``row_change_sql`` builds the ``INSERT``,
@@ -133,6 +143,7 @@ import socket
 import stat
 import subprocess  # nosec B404 - runs the engine binaries, fixed argument lists
 import tempfile
+import threading
 import time
 import uuid
 import warnings
@@ -174,6 +185,8 @@ _SWEEP_MIN_AGE_S = 120.0  # a folder younger than this is never swept
 _RUNNER = "routine_runner"  # the non-superuser role every routine runs as
 _DATABASE = "src"
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+#: The schema every loaded table and routine lives in (PostgreSQL schema, MySQL database).
+NAMESPACE = {"postgresql": "public", "mysql": _DATABASE}
 _LOG_TAIL_BYTES = 4000
 # Setup statements. Only the module's own constants, never customer text, and the
 # passwords are bound.
@@ -186,6 +199,9 @@ _MY_CREATE_DB = f"CREATE DATABASE `{_DATABASE}`"
 _MY_CREATE_USER = f"CREATE USER '{_RUNNER}'@'localhost' IDENTIFIED BY %s"
 # Only this one schema: no FILE, no SUPER, no other global privilege.
 _MY_GRANT = f"GRANT ALL PRIVILEGES ON `{_DATABASE}`.* TO '{_RUNNER}'@'localhost'"
+_MY_GRANT_USER_VARIABLES = (
+    f"GRANT SELECT ON performance_schema.user_variables_by_thread TO '{_RUNNER}'@'localhost'"
+)
 _MY_ARG_VAR = "@modernizer_arg_%d"  # the session variable an OUT or INOUT argument uses
 # A loaded table's identity and serial columns, with their sequences (the table twice:
 # pg_get_serial_sequence takes its name as text, the filter as a regclass).
@@ -194,6 +210,32 @@ _PG_TABLE_SEQUENCES = (
     "FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
     "AND NOT a.attisdropped) s WHERE seq IS NOT NULL ORDER BY attname"
 )
+# Every sequence of the database with its state, and how to put one back (#1944).
+_PG_SEQUENCE_STATE = (
+    "SELECT quote_ident(schemaname) || '.' || quote_ident(sequencename), last_value, "
+    "start_value FROM pg_sequences ORDER BY 1"
+)
+_PG_SET_SEQUENCE = "SELECT setval(%s::regclass, %s, %s)"
+_MY_STATS_NOW = "SET SESSION information_schema_stats_expiry = 0"  # 8.0+: no cached counter
+_MY_AUTO_INCREMENTS = (
+    "SELECT TABLE_NAME, AUTO_INCREMENT FROM information_schema.TABLES "
+    "WHERE TABLE_SCHEMA = DATABASE() AND AUTO_INCREMENT IS NOT NULL ORDER BY TABLE_NAME"
+)
+# The base tables of the routines' own schema (PostgreSQL ``public``, the MySQL database).
+_PG_TABLES = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+_MY_TABLES = (
+    "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
+    "AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
+)
+_PG_COLUMN_TYPES = (
+    "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+    "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+)
+_MY_COLUMN_TYPES = (
+    "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS "
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION"
+)
+_MY_THREAD_ALIVE = "SELECT ID FROM information_schema.PROCESSLIST WHERE ID = %s"
 _MY_SET_ROOT_PASSWORD = "ALTER USER 'root'@'localhost' IDENTIFIED BY %s"  # nosec B105 - a bound parameter, not a password
 
 
@@ -206,7 +248,15 @@ class EngineUnavailable(RuntimeError):
 
 
 class EngineError(RuntimeError):
-    """The engine is present but something went wrong: a failed load or read."""
+    """The engine is present but something went wrong: a failed load or read.
+
+    ``sqlstate`` is the engine's five-character SQLSTATE when the failure was a SQL
+    error (a ``CREATE`` the engine refused), None otherwise.
+    """
+
+    def __init__(self, message: str, sqlstate: str | None = None) -> None:
+        super().__init__(message)
+        self.sqlstate = sqlstate
 
 
 class EngineStartError(EngineError):
@@ -232,10 +282,37 @@ class SourceRoutine:
 
 @dataclass(frozen=True)
 class CallResult:
-    """What one routine call gave back: result sets, or the error it raised."""
+    """What one routine call gave back: result sets, or the error it raised.
+
+    ``sqlstate`` is the error's five-character SQLSTATE when the engine gave one (a
+    side-by-side comparison matches errors on it, #1944); ``error`` is the engine's own
+    message, which can quote the routine's text, so it never goes into a report.
+    """
 
     rows: list[list[Any]] = field(default_factory=list)
     error: str | None = None
+    sqlstate: str | None = None
+    #: MySQL's own error number (``HY000`` alone covers hundreds of errors).
+    errno: int | None = None
+    #: The number of rows in each result set a MySQL procedure returned (its ``OUT``
+    #: arguments' row last), so moving a row between result sets is not hidden by
+    #: ``rows``, which holds them all in order; None for a single result.
+    result_sets: tuple[int, ...] | None = None
+    #: The error's own message (PostgreSQL's primary message, MySQL's text) and, for a
+    #: constraint violation, the constraint and its table: the comparison digests them to
+    #: tell two errors of one SQLSTATE apart. Both can quote routine text: never report them.
+    message: str | None = field(default=None, repr=False)
+    constraint: str | None = field(default=None, repr=False)
+    #: The call ran past its time limit and was interrupted (:func:`time_limit`).
+    timed_out: bool = False
+    #: The engine's type of each result column (PostgreSQL ``format_type``, MySQL's field
+    #: type), one tuple per result set, so ``1`` from an ``integer`` and from a
+    #: ``boolean`` or ``double`` column are told apart.
+    column_types: tuple[tuple[str, ...], ...] = ()
+    #: Each result column's name, one tuple per result set: a caller reads columns by
+    #: name, so ``total`` and ``amount`` differ. A name can be routine text (MySQL names an
+    #: unaliased literal column by the literal): never report one unchecked.
+    column_names: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass
@@ -295,6 +372,14 @@ def _quote(name: str, mark: str) -> str:
     return ".".join(mark + p + mark for p in _parts(name))
 
 
+def _quote_table(name: str, mark: str) -> str:
+    """Quote one table name of any spelling (``odd log``): the mark doubled inside it. A
+    NUL or another control character is refused, since no engine names a table so."""
+    if not name or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError("not a table name a statement may write")
+    return mark + name.replace(mark, mark + mark) + mark
+
+
 _SQL_NOTE = "identifiers are validated by _parts and quoted; values are bound"
 
 
@@ -305,7 +390,10 @@ def _insert_sql(table: str, cols: Sequence[str], mark: str) -> str:
 
 
 def _select_all_sql(table: str, mark: str) -> str:
-    return f"SELECT * FROM {_quote(table, mark)}"  # nosec B608 - see _SQL_NOTE
+    target = (
+        _quote(table, mark) if _IDENT.match(table.split(".")[-1]) else _quote_table(table, mark)
+    )
+    return f"SELECT * FROM {target}"  # nosec B608 - see _SQL_NOTE
 
 
 def _call_sql(
@@ -405,6 +493,47 @@ def row_change_sql(
     if event == "DELETE":
         return f"DELETE FROM {target} WHERE {match}"  # nosec B608 - see _SQL_NOTE
     raise ValueError(f"not a row event: {event!r}")
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    """The SQLSTATE of a driver error: psycopg2's ``pgcode``, MySQL Connector's ``sqlstate``."""
+    code = getattr(exc, "pgcode", None) or getattr(exc, "sqlstate", None)
+    return str(code) if code else None
+
+
+def _my_types(description: Any) -> tuple[str, ...]:
+    """MySQL's field type of each column of a result (``LONG``, ``DOUBLE``, ``DATETIME``)."""
+    from mysql.connector import FieldType
+
+    return tuple(str(FieldType.get_info(d[1])) for d in description or ())
+
+
+def _my_names(description: Any) -> tuple[str, ...]:
+    return tuple(str(d[0]) for d in description or ())
+
+
+def _error_result(exc: BaseException) -> CallResult:
+    errno = getattr(exc, "errno", None)
+    diag = getattr(exc, "diag", None)  # psycopg2
+    message = None
+    if diag is not None and getattr(diag, "message_primary", None) is not None:
+        # DETAIL holds a violated key's value and HINT the routine's own hint
+        message = "\n".join(
+            str(getattr(diag, a, None) or "")
+            for a in ("message_primary", "message_detail", "message_hint")
+        )
+    if message is None:
+        message = getattr(exc, "msg", None)  # MySQL Connector
+    names = ("schema_name", "table_name", "column_name", "datatype_name", "constraint_name")
+    parts = [getattr(diag, a, None) for a in names] if diag is not None else []
+    constraint = "/".join(str(p or "") for p in parts) if any(parts) else None
+    return CallResult(
+        error=f"{type(exc).__name__}: {str(exc).strip()}",
+        sqlstate=_sqlstate(exc),
+        errno=errno if isinstance(errno, int) and errno > 0 else None,
+        message=str(message) if message else None,
+        constraint=constraint,
+    )
 
 
 def _execute(cur: Any, sql: str, params: Sequence[Any] | None = None) -> None:
@@ -746,6 +875,30 @@ class _Backend:
     def snapshot(self, tables: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
         raise NotImplementedError
 
+    def counters(self) -> tuple[tuple[str, Any, Any], ...]:
+        raise NotImplementedError
+
+    def tables(self) -> list[str]:
+        raise NotImplementedError
+
+    def column_types(self, tables: Sequence[str]) -> dict[str, dict[str, str]]:
+        raise NotImplementedError
+
+    def reset_session(self) -> None:
+        raise NotImplementedError
+
+    def interrupt(self) -> None:
+        raise NotImplementedError
+
+    def reconnect(self) -> None:
+        raise NotImplementedError
+
+    def execute_aside(self, sql: str, params: Sequence[Any]) -> CallResult:
+        raise NotImplementedError
+
+    def restore_counters(self, state: Sequence[tuple[str, Any, Any]]) -> None:
+        raise NotImplementedError
+
     def close(self) -> None:
         raise NotImplementedError
 
@@ -946,8 +1099,33 @@ class _PostgresBackend(_Backend):
                 _execute(cur, _PG_CREATE_DB)
         finally:
             admin.close()
-        self._conn = psycopg2.connect(server.dsn(_RUNNER, _DATABASE, password))
-        self._conn.autocommit = True
+        self._password = password
+        self._type_names: dict[int, str] = {}
+        self._cancels = 0
+        self._terminated = False
+        self._conn = self._connect()
+
+    def _connect(self) -> Any:
+        """A runner connection that reads ``interval`` and ``json`` as the engine writes
+        them: ``'1 mon'`` is not ``'30 days'``, and ``json`` keeps its key order."""
+        ext = self._psycopg2.extensions
+        conn = self._psycopg2.connect(self._server.dsn(_RUNNER, _DATABASE, self._password))
+        conn.autocommit = True
+        for oids, array, name in (((1186,), (1187,), "INTERVAL"), ((114,), (199,), "JSON")):
+            as_text = ext.new_type(oids, f"{name}_AS_TEXT", lambda value, cur: value)
+            ext.register_type(as_text, conn)
+            ext.register_type(ext.new_array_type(array, f"{name}_AS_TEXT_ARRAY", as_text), conn)
+        return conn
+
+    def _types(self, description: Any) -> tuple[str, ...]:
+        if not self._type_names:
+            cur = self._conn.cursor()
+            try:
+                _execute(cur, "SELECT oid::int, format_type(oid, NULL) FROM pg_type")
+                self._type_names = {int(o): str(n) for o, n in cur.fetchall()}
+            finally:
+                cur.close()
+        return tuple(self._type_names.get(int(d.type_code), str(d.type_code)) for d in description)
 
     def load(self, ddl, rows, routines):  # type: ignore[no-untyped-def]
         cur = self._conn.cursor()
@@ -964,7 +1142,7 @@ class _PostgresBackend(_Backend):
                 self._kinds[routine.name] = routine.kind
                 cur.execute(routine.create_sql)
         except self._psycopg2.Error as exc:
-            raise EngineError(f"{type(exc).__name__}: {exc}".strip()) from exc
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
 
@@ -999,10 +1177,16 @@ class _PostgresBackend(_Backend):
         cur = self._conn.cursor()
         try:
             _execute(cur, sql, list(args))
-            rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
-            return CallResult(rows=rows)
+            if not cur.description:
+                return CallResult()
+            rows = [[_normalize(c) for c in r] for r in cur.fetchall()]
+            return CallResult(
+                rows=rows,
+                column_types=(self._types(cur.description),),
+                column_names=(tuple(str(d[0]) for d in cur.description),),
+            )
         except self._psycopg2.Error as exc:
-            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+            return _error_result(exc)
         finally:
             cur.close()
 
@@ -1013,9 +1197,22 @@ class _PostgresBackend(_Backend):
             rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
             return CallResult(rows=rows)
         except self._psycopg2.Error as exc:
-            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+            return _error_result(exc)
         finally:
             cur.close()
+
+    def column_types(self, tables):  # type: ignore[no-untyped-def]
+        out: dict[str, dict[str, str]] = {}
+        cur = self._conn.cursor()
+        try:
+            for table in tables:
+                _execute(cur, _PG_COLUMN_TYPES, [_quote_table(table, '"')])
+                out[table] = {str(n): str(t) for n, t in cur.fetchall()}
+        except self._psycopg2.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+        return out
 
     def snapshot(self, tables):  # type: ignore[no-untyped-def]
         out: dict[str, list[dict[str, Any]]] = {}
@@ -1030,10 +1227,84 @@ class _PostgresBackend(_Backend):
                 ]
                 out[table] = sorted(got, key=_sort_key)
         except self._psycopg2.Error as exc:
-            raise EngineError(f"{type(exc).__name__}: {exc}".strip()) from exc
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
         return out
+
+    def tables(self) -> list[str]:
+        cur = self._conn.cursor()
+        try:
+            _execute(cur, _PG_TABLES)
+            return [str(r[0]) for r in cur.fetchall()]
+        except self._psycopg2.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+
+    def reset_session(self) -> None:
+        # Every session change a call can make (SET, set_config, a temporary table) is
+        # transactional on PostgreSQL, so the rollback after each call undoes it.
+        return None
+
+    def interrupt(self) -> None:
+        """Cancel the statement (57014 in the call); a routine that catches the cancel is
+        ended after three, by terminating its backend from a second connection."""
+        self._cancels += 1
+        if self._cancels <= 3:
+            self._conn.cancel()  # psycopg2: safe from another thread
+            return
+        self._terminated = True
+        self.execute_aside("SELECT pg_terminate_backend(%s)", [int(self._conn.get_backend_pid())])
+
+    def reconnect(self) -> None:
+        """After :meth:`interrupt`: a new connection when the old one was terminated."""
+        self._cancels = 0
+        if self._terminated or self._conn.closed:
+            self._terminated = False
+            with contextlib.suppress(Exception):
+                self._conn.close()
+            self._conn = self._connect()
+
+    def execute_aside(self, sql, params):  # type: ignore[no-untyped-def]
+        conn = self._psycopg2.connect(self._server.dsn(_RUNNER, _DATABASE, self._password))
+        try:
+            conn.autocommit = True
+            cur = conn.cursor()
+            try:
+                _execute(cur, sql, list(params))
+                rows = (
+                    [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
+                )
+                return CallResult(rows=rows)
+            except self._psycopg2.Error as exc:
+                return _error_result(exc)
+        finally:
+            conn.close()
+
+    def counters(self) -> tuple[tuple[str, Any, Any], ...]:
+        """``(sequence, last value, start value)`` for every sequence of the database."""
+        cur = self._conn.cursor()
+        try:
+            _execute(cur, _PG_SEQUENCE_STATE)
+            return tuple((str(n), last, start) for n, last, start in cur.fetchall())
+        except self._psycopg2.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+
+    def restore_counters(self, state):  # type: ignore[no-untyped-def]
+        # setval is not undone by a rollback, so it puts each sequence back by hand; a
+        # sequence never drawn from goes back to its start, not yet called.
+        cur = self._conn.cursor()
+        try:
+            for name, last, start in state:
+                called = last is not None
+                _execute(cur, _PG_SET_SEQUENCE, [name, last if called else start, called])
+        except self._psycopg2.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -1051,6 +1322,8 @@ class _MySQLServer:
         self._proc: subprocess.Popen[bytes] | None = None
         self.pid: int | None = None
         self.password, self.runner_password = _passwords()
+        self._mysqld = mysqld
+        self.time_zones = False
         self._log = workdir / "mysqld.log"
         self._workdir = workdir
         self.socket_path: str | None = (
@@ -1162,9 +1435,42 @@ class _MySQLServer:
             _execute(cur, _MY_CREATE_DB)
             _execute(cur, _MY_CREATE_USER, [self.runner_password])
             _execute(cur, _MY_GRANT)
+            # its own session's user variables, for the comparison (#1944); no other privilege
+            with contextlib.suppress(self._mc.Error):
+                _execute(cur, _MY_GRANT_USER_VARIABLES)
             cur.close()
+            self.time_zones = self._load_time_zones(conn)
         finally:
             conn.close()
+
+    def _load_time_zones(self, conn: Any) -> bool:
+        """Load the named time zones (``Europe/Paris``) from the system's zoneinfo through
+        the ``mysql_tzinfo_to_sql`` beside ``mysqld``, as Aurora MySQL has them; False when
+        either is missing. The statements are the tool's own output, never customer text."""
+        tool = Path(self._mysqld).with_name("mysql_tzinfo_to_sql")
+        zoneinfo = Path("/usr/share/zoneinfo")
+        if not (os.access(tool, os.X_OK) and zoneinfo.is_dir()):
+            return False
+        try:
+            sql = subprocess.run(  # nosec B603 - a fixed tool and folder, no shell
+                [str(tool), str(zoneinfo)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=True,
+            ).stdout
+            cur = conn.cursor()
+            _execute(cur, "USE mysql")
+            for statement in sql.split(";\n"):
+                if statement.strip():
+                    with contextlib.suppress(self._mc.Error):  # a zone file the tool skips
+                        _execute(cur, statement)
+            _execute(cur, "SELECT CONVERT_TZ('2024-01-01 00:00:00', 'UTC', 'Europe/Paris')")
+            loaded = cur.fetchall()[0][0] is not None
+            cur.close()
+            return loaded
+        except (subprocess.SubprocessError, OSError, self._mc.Error):
+            return False
 
     def stop(self) -> None:
         _reap(self._proc, signal.SIGTERM)  # mysqld's own clean shutdown signal
@@ -1199,7 +1505,7 @@ class _MySQLBackend(_Backend):
                 self._kinds[routine.name] = routine.kind
                 cur.execute(routine.create_sql)
         except self._mc.Error as exc:
-            raise EngineError(f"{type(exc).__name__}: {exc}".strip()) from exc
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
 
@@ -1220,21 +1526,50 @@ class _MySQLBackend(_Backend):
                     _execute(cur, f"SET {_MY_ARG_VAR % i} = %s", [value])
                 _execute(cur, sql, [a for a, m in zip(args, modes, strict=True) if m == "IN"])
                 rows: list[list[Any]] = []
+                sizes: list[int] = []
                 with warnings.catch_warnings():  # the connector is moving this to a property
                     warnings.simplefilter("ignore", DeprecationWarning)
                     stored = cur.stored_results
                     results = list(stored() if callable(stored) else stored)
-                for result in results:
-                    rows.extend([_normalize(c) for c in r] for r in result.fetchall())
+                fetched = [result.fetchall() for result in results]
+                kinds = [_my_types(result.description) for result in results]
+                names = [_my_names(result.description) for result in results]
+                if not results:  # Connector 9.2 on: a CALL's result sets come through nextset
+                    while True:
+                        if cur.description:
+                            kinds.append(_my_types(cur.description))
+                            names.append(_my_names(cur.description))
+                            fetched.append(cur.fetchall())
+                        if not getattr(cur, "nextset", lambda: None)():
+                            break
+                for result_rows in fetched:
+                    got = [[_normalize(c) for c in r] for r in result_rows]
+                    sizes.append(len(got))
+                    rows.extend(got)
                 if outs:
                     read = ", ".join(_MY_ARG_VAR % i for i in outs)
                     _execute(cur, f"SELECT {read}")  # nosec B608 - fixed variable names
-                    rows.extend([_normalize(c) for c in r] for r in cur.fetchall())
-                return CallResult(rows=rows)
+                    kinds.append(_my_types(cur.description))
+                    names.append(_my_names(cur.description))
+                    got = [[_normalize(c) for c in r] for r in cur.fetchall()]
+                    sizes.append(len(got))
+                    rows.extend(got)
+                return CallResult(
+                    rows=rows,
+                    result_sets=tuple(sizes),
+                    column_types=tuple(kinds),
+                    column_names=tuple(names),
+                )
             _execute(cur, sql, list(args))
-            return CallResult(rows=[[_normalize(c) for c in r] for r in cur.fetchall()])
+            types = (_my_types(cur.description),)
+            labels = (_my_names(cur.description),)
+            return CallResult(
+                rows=[[_normalize(c) for c in r] for r in cur.fetchall()],
+                column_types=types,
+                column_names=labels,
+            )
         except self._mc.Error as exc:
-            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+            return _error_result(exc)
         finally:
             cur.close()
 
@@ -1245,7 +1580,7 @@ class _MySQLBackend(_Backend):
             rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
             return CallResult(rows=rows)
         except self._mc.Error as exc:
-            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+            return _error_result(exc)
         finally:
             cur.close()
 
@@ -1262,10 +1597,115 @@ class _MySQLBackend(_Backend):
                 ]
                 out[table] = sorted(got, key=_sort_key)
         except self._mc.Error as exc:
-            raise EngineError(f"{type(exc).__name__}: {exc}".strip()) from exc
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
         finally:
             cur.close()
         return out
+
+    def tables(self) -> list[str]:
+        cur = self._conn.cursor()
+        try:
+            _execute(cur, _MY_TABLES)
+            return [str(r[0]) for r in cur.fetchall()]
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+
+    def column_types(self, tables):  # type: ignore[no-untyped-def]
+        out: dict[str, dict[str, str]] = {}
+        cur = self._conn.cursor()
+        try:
+            for table in tables:
+                _execute(cur, _MY_COLUMN_TYPES, [table])
+                out[table] = {str(n): str(t) for n, t in cur.fetchall()}
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+        return out
+
+    def reset_session(self) -> None:
+        """User variables, temporary tables and session settings back to a new
+        connection's (``COM_RESET_CONNECTION``)."""
+        try:
+            self._conn.cmd_reset_connection()
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+
+    def _aside(self) -> Any:
+        server = self._server
+        return self._mc.connect(**server.connect_args(_RUNNER, server.runner_password, _DATABASE))
+
+    def interrupt(self) -> None:
+        """``KILL CONNECTION`` of the runner's connection, from a second runner connection
+        (a user may end its own connections), repeated until the connection is gone: a
+        ``KILL QUERY`` can be lost, and ends only one ``SLEEP`` of a loop of them."""
+        target = int(self._conn.connection_id)
+        conn = self._aside()
+        try:
+            cur = conn.cursor()
+            for _ in range(100):
+                with contextlib.suppress(self._mc.Error):  # gone already: unknown thread
+                    _execute(cur, "KILL CONNECTION %s", [target])
+                _execute(cur, _MY_THREAD_ALIVE, [target])
+                if not cur.fetchall():
+                    return
+                time.sleep(0.1)
+            cur.close()
+        finally:
+            conn.close()
+
+    def reconnect(self) -> None:
+        """A new runner connection after :meth:`interrupt` ended the old one."""
+        with contextlib.suppress(Exception):
+            self._conn.close()
+        server = self._server
+        self._conn = self._mc.connect(
+            **server.connect_args(_RUNNER, server.runner_password, _DATABASE)
+        )
+
+    def execute_aside(self, sql, params):  # type: ignore[no-untyped-def]
+        conn = self._aside()
+        try:
+            cur = conn.cursor()
+            try:
+                _execute(cur, sql, list(params))
+                rows = (
+                    [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
+                )
+                return CallResult(rows=rows)
+            except self._mc.Error as exc:
+                return _error_result(exc)
+        finally:
+            conn.close()
+
+    def counters(self) -> tuple[tuple[str, Any, Any], ...]:
+        """``(table, next AUTO_INCREMENT value, None)`` for every table that has one."""
+        cur = self._conn.cursor()
+        try:
+            with contextlib.suppress(self._mc.Error):  # 5.7 has no such variable
+                _execute(cur, _MY_STATS_NOW)
+            _execute(cur, _MY_AUTO_INCREMENTS)
+            return tuple((str(t), int(n), None) for t, n in cur.fetchall())
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
+
+    def restore_counters(self, state):  # type: ignore[no-untyped-def]
+        # A rollback does not give AUTO_INCREMENT values back. Setting the counter at or
+        # below the highest value in use sets it just past that value, which, once the
+        # rows are back as seeded, is where it was.
+        cur = self._conn.cursor()
+        try:
+            for table, value, _ in state:
+                target = _quote_table(table, "`")  # any spelling, the backtick doubled
+                _execute(cur, f"ALTER TABLE {target} AUTO_INCREMENT = {int(value)}")
+        except self._mc.Error as exc:
+            raise EngineError(f"{type(exc).__name__}: {exc}".strip(), _sqlstate(exc)) from exc
+        finally:
+            cur.close()
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -1578,6 +2018,96 @@ def snapshot(handle: EngineHandle, tables: Sequence[str]) -> dict[str, list[dict
     """Every row of each table, normalised and sorted, for a row-by-row comparison."""
     _check_live(handle)
     return handle._backend.snapshot(tables)
+
+
+def counters(handle: EngineHandle) -> tuple[tuple[str, Any, Any], ...]:
+    """The state of every counter a rollback does not undo: PostgreSQL's sequences
+    (``(name, last value, start value)``) and MySQL's ``AUTO_INCREMENT`` values
+    (``(table, next value, None)``), for :func:`restore_counters` (#1944)."""
+    _check_live(handle)
+    return handle._backend.counters()
+
+
+def restore_counters(handle: EngineHandle, state: Sequence[tuple[str, Any, Any]]) -> None:
+    """Put every counter back as :func:`counters` read it, so each call of a side-by-side
+    comparison draws the same sequence values on both engines. On MySQL this runs one
+    ``ALTER TABLE`` per table, which commits: call it outside a transaction."""
+    _check_live(handle)
+    handle._backend.restore_counters(state)
+
+
+def tables(handle: EngineHandle) -> list[str]:
+    """The base tables of the routines' own schema (PostgreSQL ``public``, the MySQL
+    database), so a table a call creates is seen (#1944)."""
+    _check_live(handle)
+    return handle._backend.tables()
+
+
+def column_types(handle: EngineHandle, tables: Sequence[str]) -> dict[str, dict[str, str]]:
+    """Each table's columns with the engine's own type (``numeric(10,2)``,
+    ``decimal(10,2)``), so two tables of one shape and other types are told apart."""
+    _check_live(handle)
+    return handle._backend.column_types(tables)
+
+
+def time_zones_loaded(handle: EngineHandle) -> bool:
+    """Whether the engine knows named time zones (``Europe/Paris``): PostgreSQL always;
+    MySQL when its zone tables were loaded at start."""
+    server = getattr(handle._backend, "_server", None)
+    return handle.engine == "postgresql" or bool(getattr(server, "time_zones", False))
+
+
+def reset_session(handle: EngineHandle) -> None:
+    """Put the session back as a new connection has it: on MySQL user variables,
+    temporary tables and session settings are dropped (``COM_RESET_CONNECTION``); on
+    PostgreSQL nothing is needed, because a rolled-back transaction undoes them."""
+    _check_live(handle)
+    handle._backend.reset_session()
+
+
+class Limit:
+    """What :func:`time_limit` yields: ``fired`` is True once the call ran out of time."""
+
+    def __init__(self) -> None:
+        self.fired = False
+
+
+@contextlib.contextmanager
+def time_limit(handle: EngineHandle, seconds: float) -> Iterator[Limit]:
+    """Stop the statement running on ``handle`` when it takes longer than ``seconds``, and
+    keep stopping it until it returns: PostgreSQL cancels it (57014); MySQL ends the
+    connection (``KILL CONNECTION``, repeated until it is gone), and the handle gets a new
+    one once the statement has returned. ``Limit.fired`` says whether it ran out of time;
+    nothing is sent after the statement returned."""
+    _check_live(handle)
+    limit = Limit()
+    done = threading.Event()
+
+    def watch() -> None:
+        if done.wait(seconds):
+            return
+        limit.fired = True
+        while not done.is_set():
+            with contextlib.suppress(Exception):
+                handle._backend.interrupt()
+            done.wait(0.5)
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    try:
+        yield limit
+    finally:
+        done.set()
+        watcher.join(timeout=60)
+        if limit.fired:
+            handle._backend.reconnect()
+
+
+def execute_aside(handle: EngineHandle, sql: str, params: Sequence[Any] = ()) -> CallResult:
+    """Run one statement on a second, new runner connection, outside the handle's own
+    transaction: what it reads is only what has been committed (#1944)."""
+    _check_live(handle)
+    return handle._backend.execute_aside(sql, list(params))
 
 
 def stop(handle: EngineHandle) -> None:

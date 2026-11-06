@@ -1367,3 +1367,63 @@ def test_the_pg_sleep_payload_never_reaches_the_engine():
         with pytest.raises(ValueError, match="not a type name"):
             de.call(h, "flag", ["true"], casts=["boolean and pg_sleep(3) is null"])
         assert de.call(h, "flag", ["true"], casts=["boolean"]).rows == [[1]]
+
+
+# ---------------------------------------------- a CALL's result sets, without a server (#1944)
+
+
+class _FakeMyCursor:
+    """A MySQL Connector 9.2+ cursor after ``CALL``: no stored results; each result set is
+    read, then ``nextset`` moves to the next one, and the last status packet has none."""
+
+    def __init__(self, sets):
+        self._sets = [list(s) for s in sets] + [None]
+        self.executed: list[str] = []
+
+    @property
+    def description(self):
+        return [("v", 3)] if self._sets and self._sets[0] is not None else None  # 3: LONG
+
+    def execute(self, sql, params=None):
+        self.executed.append(sql)
+
+    def stored_results(self):
+        return iter(())
+
+    def fetchall(self):
+        return self._sets[0] or []
+
+    def nextset(self):
+        self._sets.pop(0)
+        return bool(self._sets)
+
+    def close(self):
+        if self._sets and self._sets[0] is not None:
+            raise RuntimeError("Unread result found")
+
+
+class _FakeMyConnection:
+    def __init__(self, sets):
+        self.cursors: list[_FakeMyCursor] = []
+        self._sets = sets
+
+    def cursor(self):
+        cur = _FakeMyCursor(self._sets)
+        self.cursors.append(cur)
+        return cur
+
+
+def test_a_mysql_call_reads_every_result_set_through_nextset():
+    """The #1942 regression, gated: with Connector 9.2 on, ``stored_results`` is empty
+    after ``CALL`` and the result sets come through ``nextset``; before the fix the cursor
+    was closed with them unread (``Unread result found``)."""
+    import mysql.connector
+
+    backend = object.__new__(de._MySQLBackend)
+    backend._mc = mysql.connector
+    backend._kinds = {"two_sets": "procedure"}
+    backend._conn = _FakeMyConnection([[(1,)], [(2,), (3,)]])
+    result = de._MySQLBackend.call(backend, "two_sets", [])
+    assert result.error is None
+    assert result.rows == [[1], [2], [3]] and result.result_sets == (1, 2)
+    assert result.column_types == (("LONG",), ("LONG",))
