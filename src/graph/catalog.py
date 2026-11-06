@@ -604,21 +604,24 @@ CATALOG: tuple[CatalogEntry, ...] = (
         section="impact",
         title="Everything going to a given engine",
         question="Which queries, source tables and access patterns does this engine get?",
+        # Every list is built in the final aggregation: the rows before it carry
+        # scalars only, so memory grows with the rows, never with rows times the
+        # design's objects (#1974).
         cypher=(
             "MATCH (q:Query)-[t:TARGETS {effective: true}]->(o:TargetObject {engine: $engine}) "
             "WITH o, collect(DISTINCT CASE WHEN t.cache = true THEN 'c' ELSE 'a' END + q.id) "
-            "AS qids, count(DISTINCT CASE WHEN t.cache = true THEN q.id END) AS cache_queries "
-            "WITH collect({id: o.id, queries: size(qids), cache_queries: cache_queries}) "
-            "AS target_counts, "
-            "collect(CASE WHEN o.fallback = false THEN o.id END) AS targets, "
-            "collect(CASE WHEN o.fallback = true THEN o.id END) AS fallbacks, "
-            "collect(qids) AS groups "
-            "UNWIND groups AS grp UNWIND grp AS tagged "
+            "AS qids, count(DISTINCT CASE WHEN t.cache = true THEN q.id END) AS object_cache "
+            "WITH o, size(qids) AS object_queries, object_cache, qids "
+            "UNWIND qids AS tagged "
             "MATCH (q:Query) WHERE q.id = substring(tagged, 2, size(tagged)) "
             "OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) "
             "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
             "RETURN $engine AS destination, collect(DISTINCT st.id) AS source_tables, "
-            "collect(DISTINCT ap.id) AS access_patterns, targets, fallbacks, target_counts, "
+            "collect(DISTINCT ap.id) AS access_patterns, "
+            "collect(DISTINCT CASE WHEN o.fallback = false THEN o.id END) AS targets, "
+            "collect(DISTINCT CASE WHEN o.fallback = true THEN o.id END) AS fallbacks, "
+            "collect(DISTINCT {id: o.id, queries: object_queries, cache_queries: object_cache}) "
+            "AS target_counts, "
             "count(DISTINCT q) AS queries, "
             "count(DISTINCT CASE WHEN left(tagged, 1) = 'c' THEN q.id END) AS cache_queries "
             "ORDER BY queries DESC, destination"
