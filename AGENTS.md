@@ -108,7 +108,7 @@ and `ci/e2e-llm.sh` build it for you.
 | Lint | `make lint` (all pre-commit hooks) or `./ci/lint.sh` (ruff, black, isort, mypy, `validate_skills.py`) | style, types, markdownlint, secrets, command references | free: `ci/lint.sh` seconds, `make lint` about 2 minutes |
 | Unit/contract | `make test` / `./ci/test.sh -q` (the full suites; needs the AWS Transform SDK, see Setup); while iterating, targeted tests, e.g. `uv run pytest <paths> -n 4` | unit, contract, property, graph; `--fail-on-skip`, no network | free; the full suite takes minutes (15-20 on a laptop with parallel worktrees running; measured 924-1229 s) |
 | Deterministic e2e | `make e2e` (or `./ci/e2e.sh`) | full pipeline on both samples with no model, HTML in Chromium + WebKit, PDF, UI smoke, the built help site | free, minutes (UI build + browsers) |
-| Headless LLM e2e | `make e2e-llm` (both mode by default, `E2E_LLM_FIXTURE=wordpress` by default) | real `/modernize --auto` run, the same deliverable checks, a rubric judge | real tokens, both mode: wordpress about $4 and roughly 6 minutes; discourse about $18-20 and 14-15 minutes (session cap `E2E_LLM_MAX_BUDGET_USD`, default 50) |
+| Headless LLM e2e | `make e2e-llm` (both mode by default, `E2E_LLM_FIXTURE=wordpress` by default) | real `/modernize --auto` run, the same deliverable checks, a rubric judge; per PR only when `./ci/needs_llm_run.sh` prints `e2e-llm: required` (prompt tier), otherwise the maintainers' nightly run on `main` covers it | real tokens, both mode: wordpress about $4 and roughly 6 minutes; discourse about $18-20 and 14-15 minutes (session cap `E2E_LLM_MAX_BUDGET_USD`, default 50) |
 | Real-run replay | `./ci/replay.sh` (also run by `./ci/pre_merge.sh` and the `replay` e2e shard) | the saved real-model run in `tests/fixtures/real_runs/`: its transcript checks and the external-mode e2e checks over its report, re-rendered by the current code; it does not re-run synthesis or the facts layer (refresh the fixture after such a change, see ci/README.md) | free, about 15 seconds, `dev` extra only |
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 
@@ -119,7 +119,15 @@ and `ci/e2e-llm.sh` build it for you.
 - Pipeline output or `src/report/`: add `make e2e` (or
   `uv run pytest tests/e2e/test_pipeline.py -p no:xdist -q` for a quick pass).
 - `make e2e-llm` when `./ci/needs_llm_run.sh` prints `e2e-llm: required` (its
-  lists are the source of truth; `bedrock-smoke` covers Bedrock call sites).
+  tier lists are the source of truth; `bedrock-smoke` covers Bedrock call sites).
+  `required` is the prompt tier: files that write, word, frame or tag text sent
+  to a model (skills, commands, prompt and request builders, framing, catalog
+  prose that reaches a model word for word, model-output contracts, model
+  settings); it needs a result line in PR Evidence. `nightly` is pipeline logic
+  whose output a model only reads as data (routing, scoring, pattern catalogs,
+  collectors, synthesis math) and the model-call plumbing: no per-PR run and no
+  result line; the maintainers' nightly run on `main` covers it. Unsure of a
+  path's tier? Treat it as prompt tier (ci/README.md).
 - `E2E_LLM_MODE` is `chat`, `ui` or `both`; `E2E_LLM_FIXTURE` is `wordpress`
   (fast iteration) or `discourse` (scale).
 - Read e2e-llm results in `test-results/llm-<mode>-<fixture>/`: `results.json`

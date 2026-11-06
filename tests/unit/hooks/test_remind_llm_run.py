@@ -27,6 +27,15 @@ def test_no_reminder_when_nothing_required() -> None:
     assert hook.reminder([], str(REPO_ROOT)) is None
 
 
+def test_no_reminder_for_a_nightly_only_diff() -> None:
+    """#1965: nightly-tier paths need no run before merging, so the hook stays quiet."""
+    paths = ["src/tools/analysis/scoring.py", "scripts/run_synthesis.py"]
+    assert hook.reminder(paths, str(REPO_ROOT)) is None
+    # A prompt-tier path beside them is still reminded of, nightly paths listed.
+    message = hook.reminder([*paths, "src/skills/x.md"], str(REPO_ROOT))
+    assert message and "e2e-llm: required" in message and "(nightly)" in message
+
+
 def _stop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, paths: list[str], event: dict) -> None:
     monkeypatch.setattr(hook, "changed_paths", lambda: paths)
     monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))

@@ -272,9 +272,9 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
                      # all of that); or: ./ci/e2e.sh
    make e2e-llm     # headless /modernize run against a real model -- needs
                      # model access (CLAUDE_CODE_USE_BEDROCK+AWS_REGION or
-                     # ANTHROPIC_API_KEY); see ci/README.md. Not required for
-                     # every PR -- only when touching /modernize, the agent
-                     # skills, or ci/llm/*.
+                     # ANTHROPIC_API_KEY); see ci/README.md. Needed before
+                     # merging only when ./ci/needs_llm_run.sh prints
+                     # "e2e-llm: required"; "nightly" needs no run from you.
    ```
 
    While iterating, run targeted tests with at most 4 workers. Before asking
@@ -417,9 +417,9 @@ extra (`uv sync --extra e2e`), the `docs` extra (`uv sync --extra docs`,
 needed to build the help site this suite also checks), Node 22, and
 Playwright's browsers (`ci/e2e.sh` installs the browsers and builds the UI
 and the help site itself). `make e2e-llm` needs all of that plus model
-access and costs real tokens -- its approximate cost/time per run is to be
-measured on the first internal-pipeline run (see `ci/README.md`'s
-`e2e-llm.sh` section).
+access and costs real tokens (cost and time per run: AGENTS.md's test-tier
+table and `ci/README.md`'s `e2e-llm.sh` section). Beyond the per-PR runs the
+prompt tier needs, the maintainers run it nightly on `main`.
 
 ### Local Pipeline Testing
 
@@ -638,7 +638,16 @@ From contract `1.3` on, a release must read the results earlier releases wrote: 
    uv run python scripts/release_notes.py --since <previous tag>
    ```
 
-3. **Tag `main`.** `main` is protected, so the tag is the only step that publishes a release; nothing commits a version bump back to `main`.
+3. **Run the full pre-release check** on the `main` commit you will tag. The per-PR real-model runs cover only prompt-tier changes and the nightly run only wordpress (`ci/needs_llm_run.sh` in ci/README.md), so a release gets every tier, whatever the verdict says: all checks green (`./ci/pre_merge.sh` on `main`, which with an empty diff still runs lint and the full test suite, and `make e2e`), e2e-llm on both samples, and the Bedrock smoke run, which the maintainers start. Record each run's result line (`e2e-llm result: ...` per sample, `bedrock-smoke result: ...`) where the release is tracked, and tag only when every one passes:
+
+   ```bash
+   ./ci/pre_merge.sh
+   make e2e
+   make e2e-llm E2E_LLM_FIXTURE=wordpress
+   make e2e-llm E2E_LLM_FIXTURE=discourse
+   ```
+
+4. **Tag `main`.** `main` is protected, so the tag is the only step that publishes a release; nothing commits a version bump back to `main`.
 
    ```bash
    git checkout main && git pull
@@ -646,7 +655,7 @@ From contract `1.3` on, a release must read the results earlier releases wrote: 
    git push origin v0.4.0
    ```
 
-4. **Record the public contract's shipped shape**, so the next release is compared with it. `--write-released` refuses a tag that does not exist and reads the models at the tag itself (`git archive`), never the working tree, so run it after pushing the tag, in a pull request to main (a fix release's tag too):
+5. **Record the public contract's shipped shape**, so the next release is compared with it. `--write-released` refuses a tag that does not exist and reads the models at the tag itself (`git archive`), never the working tree, so run it after pushing the tag, in a pull request to main (a fix release's tag too):
 
    ```bash
    git fetch --tags
@@ -659,7 +668,7 @@ From contract `1.3` on, a release must read the results earlier releases wrote: 
    uv run python scripts/catalog_format_snapshot.py --write-released v0.4.0
    ```
 
-5. **Check the release.** The tag runs `.github/workflows/release.yml`, which checks out full history, verifies that the resolved `hatch-vcs` version matches the tag (the workflow fails if not) and publishes the GitHub release. The release body is built by `scripts/release_notes.py`: it picks the previous release with `scripts/release_notes.py --previous-tag <tag>` (the highest version tag below it: exact names, PEP 440 order, so `v0.3.0` follows `v0.3.0-beta.2` and `v0.4.1` follows `v0.4.0`), then runs `scripts/release_notes.py --since <previous tag> --until <tag>` and attaches its output to the release: the routing-snapshot diff since the previous release (from `tests/e2e/baselines/routing_snapshot.json`: engine changes first, then reason-code-only changes, then queries whose score alone moved), and one changelog line per rule change (a file under `src/catalog/`, with the commits that touched it) and per contract change (an internal contract's version move from `tests/contract/schema_snapshot.json`, and the public contract's from `tests/contract/assess_released_since_1_3.json`, or at a release before `1.3`, `tests/contract/assess_released_snapshot.json`), and, per catalog file, every value that moved since the previous release ("Catalog values changed since <previous tag>"). The release body (`--body`) lists the first 50 engine and reason-code changes, summarises score-only drift (counts per sample and per score change), keeps 40 changelog lines and stays under GitHub's body limit; `release-changes.md`, attached to the release, carries every row and line. The step is non-blocking: if it fails, the release is published with a warning line in its body. Step 2 previews it before tagging.
+6. **Check the release.** The tag runs `.github/workflows/release.yml`, which checks out full history, verifies that the resolved `hatch-vcs` version matches the tag (the workflow fails if not) and publishes the GitHub release. The release body is built by `scripts/release_notes.py`: it picks the previous release with `scripts/release_notes.py --previous-tag <tag>` (the highest version tag below it: exact names, PEP 440 order, so `v0.3.0` follows `v0.3.0-beta.2` and `v0.4.1` follows `v0.4.0`), then runs `scripts/release_notes.py --since <previous tag> --until <tag>` and attaches its output to the release: the routing-snapshot diff since the previous release (from `tests/e2e/baselines/routing_snapshot.json`: engine changes first, then reason-code-only changes, then queries whose score alone moved), and one changelog line per rule change (a file under `src/catalog/`, with the commits that touched it) and per contract change (an internal contract's version move from `tests/contract/schema_snapshot.json`, and the public contract's from `tests/contract/assess_released_since_1_3.json`, or at a release before `1.3`, `tests/contract/assess_released_snapshot.json`), and, per catalog file, every value that moved since the previous release ("Catalog values changed since <previous tag>"). The release body (`--body`) lists the first 50 engine and reason-code changes, summarises score-only drift (counts per sample and per score change), keeps 40 changelog lines and stays under GitHub's body limit; `release-changes.md`, attached to the release, carries every row and line. The step is non-blocking: if it fails, the release is published with a warning line in its body. Step 2 previews it before tagging.
 
 ---
 
@@ -680,7 +689,7 @@ Many pull requests land on `main` every day, so a branch that was green yesterda
 - After a red CI run, re-run its failed tests locally before you push again: `./ci/rerun_failed.sh` (the current branch's PR, or give the PR number). `./ci/pre_merge.sh` prints that command when the last run was red.
 - Do not take a contract version number yourself: declare the bump kind with `uv run python scripts/bump_contract.py` and run `uv run python scripts/resolve_contract_versions.py` after your last rebase (see Contract Changes, ADR-008 Decision 8).
 - Never hand-merge a generated snapshot (the routing snapshot, `tests/contract/schema_snapshot.json`, `tests/contract/value_set_snapshot.json`, rendered catalog docs). Take main's copy and regenerate it on top of it.
-- Run `./ci/needs_llm_run.sh` early. If it says `e2e-llm: required`, start that run before the review rounds, not after.
+- Run `./ci/needs_llm_run.sh` early. If it says `e2e-llm: required` (a change to what the model is told: commands, skills, prompt framing, model-input builders, model-output contracts), start that run before the review rounds, not after. `nightly` needs no run from you and no result line: the maintainers run e2e-llm and the Bedrock smoke on `main` each night (ci/README.md, `needs_llm_run.sh`).
 - `main` has a merge queue. Use "Merge when ready" to add your PR to it: the queue re-runs the required checks on top of main and the PRs ahead of yours, then merges it, or removes it from the queue and shows the failing check.
 
 ## Maintainer Sync

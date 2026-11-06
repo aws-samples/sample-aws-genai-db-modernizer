@@ -9,13 +9,16 @@ compares the PR body with it.
 
 The marker the body must carry (outside HTML comments, code spans, fenced and
 indented code blocks; a leading ``- `` or ``* `` is fine), one verdict line per run,
-exactly as ``ci/needs_llm_run.sh`` prints it. Prose such as "e2e-llm not required" is
-not read::
+exactly as ``ci/needs_llm_run.sh`` prints it (``required``, ``nightly`` or ``not required``).
+Prose such as "e2e-llm not required" is not read::
 
     e2e-llm: required
-    bedrock-smoke: not required
+    bedrock-smoke: nightly
 
-and, for every run the diff requires, a result line that begins with ``pass`` right
+A ``nightly`` run (the diff touches only the run's nightly tier, #1965) needs no result
+line: the maintainers' nightly run on main covers it. A result line it does have must
+still be a pass: a stated failure is an error, never ignored. For every run the diff requires, a
+result line that begins with ``pass`` right
 after the colon, or is a ``MODERNIZE_RESULT: complete`` line::
 
     e2e-llm result: pass (judge 3.9, $3.74)
@@ -50,7 +53,8 @@ Subcommands (``check`` needs only the standard library)::
                                     [--base REF] [--author-env VAR] [--require-results]
 
 ``render`` prints the Evidence section from the head commit: the verdict lines, a
-comment per required run saying to add its result line when the run finishes, the number of new and changed tests and their
+comment per required run saying to add its result line when the run finishes (per nightly
+run, one saying no result line is needed), the number of new and changed tests and their
 node ids (``ci/main_tests.py changed``), and a routing drift line. It exits 2 when
 ``ci/main_tests.py`` fails, never printing an empty list. How many tests fail on main
 comes from ``ci/pre_merge.sh --quick``'s main-tests line (pass it as
@@ -135,7 +139,7 @@ _BULLET = r"^[ \t]*(?:" + _LIST_MARKER + r")?"
 _LIST_ITEM = re.compile(r"^[ \t]*" + _LIST_MARKER)
 _RUN_ALT = "|".join(map(re.escape, RUNS))
 _VERDICT = re.compile(
-    _BULLET + r"(" + _RUN_ALT + r"):[ \t]*(not required|required)[ \t]*$", re.MULTILINE
+    _BULLET + r"(" + _RUN_ALT + r"):[ \t]*(not required|required|nightly)[ \t]*$", re.MULTILINE
 )
 _RESULT = re.compile(_BULLET + r"(" + _RUN_ALT + r") result:[ \t]*(.*)$", re.MULTILINE)
 _QUEUE_REF = re.compile(r"^(?:refs/heads/)?gh-readonly-queue/.+/pr-(\d+)-(?P<sha>[0-9a-f]{40})$")
@@ -239,7 +243,8 @@ def _visible(body: str, keep_spans: bool = False) -> str:
 
 
 def stated_verdicts(body: str) -> dict[str, set[str]]:
-    """Each run's stated verdicts (``required``/``not required``), comments ignored."""
+    """Each run's stated verdicts (``required``/``nightly``/``not required``), comments
+    ignored."""
     out: dict[str, set[str]] = {}
     for run, state in _VERDICT.findall(_visible(body)):
         out.setdefault(run, set()).add(state)
@@ -272,7 +277,7 @@ def _is_placeholder(text: str) -> bool:
     return not text or text.startswith("<")
 
 
-def pending_results(body: str, verdict: dict[str, list[str]]) -> list[str]:
+def pending_results(body: str, verdict: dict[str, str]) -> list[str]:
     """Required runs whose verdict line is right but that have no result line yet.
 
     A result line that is present but empty, a ``<...>`` placeholder or not a pass is
@@ -284,23 +289,25 @@ def pending_results(body: str, verdict: dict[str, list[str]]) -> list[str]:
     return [
         run
         for run in RUNS
-        if verdict.get(run)
+        if verdict.get(run) == needs_llm_run.REQUIRED
         and stated.get(run) == {"required"}
         and not results.get(run)
         and not near.get(run)
     ]
 
 
-def check(body: str, verdict: dict[str, list[str]], require_results: bool = False) -> list[str]:
-    """Problems with the body against the diff; empty when it agrees.
+def check(body: str, verdict: dict[str, str], require_results: bool = False) -> list[str]:
+    """Problems with the body against the diff (``verdict``: each run's state from
+    ``needs_llm_run.verdict``); empty when it agrees.
 
     A required run with no result line yet is pending, not a problem, unless
-    ``require_results`` is set (the merge queue's gate).
+    ``require_results`` is set (the merge queue's gate). A nightly run needs no result
+    line, with or without ``require_results``.
     """
     stated = stated_verdicts(body)
     results = stated_results(body)
     near = near_miss_results(body)
-    actual = {run: "required" if verdict.get(run) else "not required" for run in RUNS}
+    actual = {run: verdict.get(run, needs_llm_run.NOT_REQUIRED) for run in RUNS}
     errors: list[str] = []
     for run in RUNS:
         got = stated.get(run, set())
@@ -313,6 +320,16 @@ def check(body: str, verdict: dict[str, list[str]], require_results: bool = Fals
             errors.append(
                 f"the body says '{run}: {' / '.join(sorted(got))}' but ci/needs_llm_run.sh "
                 f"says '{run}: {actual[run]}'"
+            )
+        elif actual[run] == needs_llm_run.NIGHTLY and any(
+            not is_pass(run, t) for t in results.get(run, [])
+        ):
+            # A nightly run needs no result line, but a stated failure is never accepted.
+            shown = next(t for t in results[run] if not is_pass(run, t)) or "(empty)"
+            errors.append(
+                f"'{run}' runs nightly for this diff, but its '{run} result:' line is not a "
+                f"pass ('{shown}'): fix what failed and write {ACCEPTED_TEXT}, or remove the "
+                "line if no run was made"
             )
         elif actual[run] == "required" and near.get(run):
             errors.append(
@@ -531,7 +548,7 @@ def check_claims(body: str, changed: list[str], root: Path = REPO) -> list[str]:
 
 
 def render(
-    verdict: dict[str, list[str]],
+    verdict: dict[str, str],
     tests: list[str],
     changed: list[str],
     routing: set[str] | None = None,
@@ -539,11 +556,16 @@ def render(
 ) -> str:
     lines = ["## Evidence", ""]
     for run in RUNS:
-        lines.append(f"{run}: {'required' if verdict.get(run) else 'not required'}")
-        if verdict.get(run):
+        state = verdict.get(run, needs_llm_run.NOT_REQUIRED)
+        lines.append(f"{run}: {state}")
+        if state == needs_llm_run.REQUIRED:
             lines.append(
                 f"<!-- add the line '{run} result: pass (...)' when the run finishes; "
                 "until then the check reports it pending -->"
+            )
+        elif state == needs_llm_run.NIGHTLY:
+            lines.append(
+                f"<!-- '{run}' runs nightly on main for this diff: no result line is needed -->"
             )
     marked = sum(1 for t in tests if t.startswith("marked "))
     lines += ["", f"New and changed tests: {len(tests)} ({marked} marked passes_on_main)."]

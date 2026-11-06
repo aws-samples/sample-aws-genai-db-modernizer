@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from ci import needs_llm_run
 from ci.needs_llm_run import BEDROCK_SMOKE, E2E_LLM, MODEL_FACING, main, verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -32,11 +33,15 @@ CALL_SITE = re.compile(
 MIN_CALL_SITES = 25
 
 
-def _runs(*paths: str) -> dict[str, list[str]]:
+REQ, NIGHT, NO = "required", "nightly", "not required"
+
+
+def _runs(*paths: str) -> dict[str, str]:
     return verdict(list(paths))
 
 
-@pytest.mark.passes_on_main
+# One path from each tier list (#1965): the prompt tier is required per pull request, the
+# nightly tier is left to the maintainers' nightly run on main.
 @pytest.mark.parametrize(
     "path",
     [
@@ -46,28 +51,46 @@ def _runs(*paths: str) -> dict[str, list[str]]:
         ".claude/agents/pr-reviewer.md",
         ".claude/settings.ci.json",
         "src/skills/dynamodb-data-modeling.md",
+        "ci/e2e-llm.sh",
         "ci/llm/judge.py",
+        "ci/llm/judge_facts.py",
+        "ci/llm/rubric.md",
         "src/agents/schema_design/group_input.py",
-        "src/agents/referee/reality_check_request.py",
+        "src/agents/referee/carried_writes.py",
         "src/agents/referee/migration_waves.py",
         "src/agents/referee/migration_wave_builders.py",
         "src/agents/referee/migration_wave_tables.py",
+        "src/catalog/write_intents/bulk-status-flip.toml",
+        "src/shared/catalog/write_intents.py",
+        "src/agents/referee/reality_check_request.py",
+        "src/agents/referee/redesign_findings.py",
+        "src/agents/referee/engine_scope.py",
         "src/tools/schema/aurora_common/design_view.py",
+    ],
+)
+def test_e2e_llm_prompt_tier_is_required(path: str) -> None:
+    assert _runs(path) == {"e2e-llm": REQ, "bedrock-smoke": NO}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "ci/llm/run.py",
+        "ci/llm/token_usage.py",
+        "src/catalog/carried_writes.toml",
         "src/tools/analysis/documentdb_pattern_catalog.py",
         "src/tools/analysis/redis_analysis_tools.py",
         "src/tools/analysis/aurora_common_pattern_catalog.py",
         "src/tools/analysis/pattern_catalog_base.py",
         "src/tools/analysis/scoring.py",
-        "src/tools/schema/design_metrics.py",
         "src/agents/referee/table_resolution.py",
         "src/storage/assignment_versioning.py",
-        # The /explore step gives a catalog entry's rows to a model.
         "src/graph/catalog.py",
         "scripts/graph_query.py",
     ],
 )
-def test_headless_paths_need_e2e_llm_only(path: str) -> None:
-    assert _runs(path) == {"e2e-llm": [path], "bedrock-smoke": []}
+def test_e2e_llm_nightly_tier_runs_nightly(path: str) -> None:
+    assert _runs(path) == {"e2e-llm": NIGHT, "bedrock-smoke": NO}
 
 
 @pytest.mark.parametrize(
@@ -78,37 +101,68 @@ def test_headless_paths_need_e2e_llm_only(path: str) -> None:
         "src/tools/schema/aurora_common/bedrock_delta.py",
         "src/agents/answer_validation.py",
         "src/atx_orchestrator/orchestrator.py",
-        "src/atx_orchestrator/app.py",
         "src/atx_orchestrator/subagents/base.py",
-        "src/shared/role_bedrock_model.py",
+        "src/atx_orchestrator/tools.py",
+        "src/atx_orchestrator/mcp_tools.py",
+        "src/shared/bedrock_guardrail.py",
         "src/contracts/reality_check_model_response.py",
         "src/contracts/executive_summary_response.py",
         "src/contracts/dynamodb_pe_review.py",
     ],
 )
-def test_bedrock_only_paths_need_bedrock_smoke_only(path: str) -> None:
-    assert _runs(path) == {"e2e-llm": [], "bedrock-smoke": [path]}
+def test_bedrock_smoke_prompt_tier_is_required(path: str) -> None:
+    assert _runs(path) == {"e2e-llm": NO, "bedrock-smoke": REQ}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/atx_orchestrator/app.py",
+        "src/atx_orchestrator/runtime/store.py",
+        "src/shared/role_bedrock_model.py",
+        "scripts/test_local_phased.py",
+    ],
+)
+def test_bedrock_smoke_nightly_tier_runs_nightly(path: str) -> None:
+    assert _runs(path) == {"e2e-llm": NO, "bedrock-smoke": NIGHT}
 
 
 @pytest.mark.parametrize(
     "p",
     [
+        "src/agents/prompt_framing.py",
         "src/agents/referee/reality_check_handler.py",
         "src/agents/referee/consolidation_validator.py",
         "src/agents/referee/synthesis_handler.py",
+        "src/agents/referee/synthesis_report.py",
         "src/agents/schema_design/handler.py",
         "src/agents/analysis/dynamodb_analysis_agent.py",
-        "scripts/run_schema_design.py",
-        "src/shared/models.py",
         # #1281: answer models sent to Bedrock as tool schemas, also read headless.
         "src/tools/analysis/documentdb_analysis_tools.py",
         "src/tools/analysis/dynamodb_analysis_tools.py",
         "src/contracts/documentdb_model_output.py",
         "src/contracts/aurora_design_delta.py",
+        # Model settings, the summary request's budget, the correction-turn messages.
+        "src/shared/models.py",
+        "src/agents/referee/summary_input_budget.py",
+        "src/agents/referee/summary_input_slim.py",
+        "src/tools/schema/design_metrics.py",
+        "src/tools/schema/dynamodb_attribute_columns.py",
     ],
 )
-def test_shared_file_needs_both(p: str) -> None:
-    assert _runs(p) == {"e2e-llm": [p], "bedrock-smoke": [p]}
+def test_shared_prompt_file_requires_both(p: str) -> None:
+    assert _runs(p) == {"e2e-llm": REQ, "bedrock-smoke": REQ}
+
+
+@pytest.mark.parametrize("p", ["scripts/run_assessment.py", "scripts/run_synthesis.py"])
+def test_shared_plumbing_file_runs_both_nightly(p: str) -> None:
+    assert _runs(p) == {"e2e-llm": NIGHT, "bedrock-smoke": NIGHT}
+
+
+@pytest.mark.parametrize("p", ["scripts/run_analysis.py", "scripts/run_schema_design.py"])
+def test_run_scripts_that_build_the_external_request_require_e2e_llm(p: str) -> None:
+    """They build the external-mode request; their Bedrock branch only delegates."""
+    assert _runs(p) == {"e2e-llm": REQ, "bedrock-smoke": NIGHT}
 
 
 @pytest.mark.parametrize(
@@ -121,11 +175,28 @@ def test_shared_file_needs_both(p: str) -> None:
         "tests/unit/test_reality_check.py",
         "README.md",
         "ci/lint.sh",
+        "ci/needs_llm_run.py",
+        "ci/pr_evidence.py",
         "tests/e2e/routing_snapshot.json",
     ],
 )
 def test_deterministic_paths_need_neither(path: str) -> None:
-    assert _runs(path) == {"e2e-llm": [], "bedrock-smoke": []}
+    assert _runs(path) == {"e2e-llm": NO, "bedrock-smoke": NO}
+
+
+def test_empty_diff_needs_neither() -> None:
+    assert _runs() == {"e2e-llm": NO, "bedrock-smoke": NO}
+
+
+def test_prompt_tier_wins_in_a_mixed_diff() -> None:
+    mixed = ("src/tools/analysis/scoring.py", "src/skills/a.md", "scripts/run_synthesis.py")
+    assert _runs(*mixed) == {"e2e-llm": REQ, "bedrock-smoke": NIGHT}
+    assert _runs(*mixed, "src/contracts/dynamodb_pe_review.py") == {
+        "e2e-llm": REQ,
+        "bedrock-smoke": REQ,
+    }
+    # A deterministic path never lowers a verdict.
+    assert _runs("README.md", "src/tools/analysis/scoring.py")["e2e-llm"] == NIGHT
 
 
 def test_main_prints_verdict_per_run(capsys: pytest.CaptureFixture[str]) -> None:
@@ -134,12 +205,24 @@ def test_main_prints_verdict_per_run(capsys: pytest.CaptureFixture[str]) -> None
         "e2e-llm: not required",
         "bedrock-smoke: not required",
     ]
-    assert main(["AGENTS.md", "src/atx_orchestrator/app.py"]) == 0
+    assert main(["AGENTS.md", "src/atx_orchestrator/orchestrator.py"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         "e2e-llm: required",
         "  AGENTS.md",
         "bedrock-smoke: required",
-        "  src/atx_orchestrator/app.py",
+        "  src/atx_orchestrator/orchestrator.py",
+    ]
+    # Nightly-tier paths are listed under a required run, marked, after the prompt tier.
+    assert (
+        main(["src/tools/analysis/scoring.py", "src/skills/a.md", "scripts/run_synthesis.py"]) == 0
+    )
+    assert capsys.readouterr().out.splitlines() == [
+        "e2e-llm: required",
+        "  src/skills/a.md",
+        "  src/tools/analysis/scoring.py (nightly)",
+        "  scripts/run_synthesis.py (nightly)",
+        "bedrock-smoke: nightly",
+        "  scripts/run_synthesis.py",
     ]
 
 
@@ -195,6 +278,17 @@ def test_cli_diffs_against_merge_base(repo: Path) -> None:
     assert res.stdout.splitlines() == [
         "e2e-llm: required",
         "  src/skills/a.md",
+        "bedrock-smoke: not required",
+    ]
+
+
+def test_cli_nightly_tier_prints_nightly(repo: Path) -> None:
+    _commit(repo, "src/tools/analysis/scoring.py")
+    res = _cli(repo, "--base", "main")
+    assert res.returncode == 0
+    assert res.stdout.splitlines() == [
+        "e2e-llm: nightly",
+        "  src/tools/analysis/scoring.py",
         "bedrock-smoke: not required",
     ]
 
@@ -355,6 +449,96 @@ def test_llm_input_builders_are_in_e2e_llm() -> None:
     assert len(hits) >= 8, f"HEADLESS_SITE found only {len(hits)} files; fix the regex"
     missing = [p for p in hits if not _in(p, E2E_LLM)]
     assert not missing, f"add to E2E_LLM in ci/needs_llm_run.py: {missing}"
+
+
+# What marks a file as building what a model is told: a prompt or system prompt, framed
+# untrusted text, or an llm_input / request builder. Such a file is prompt tier in every run
+# that lists it (#1965), so a change to it gets its real-model run before merging.
+PROMPT_SITE = re.compile(
+    r"frame_untrusted\(|with_untrusted_notice\(|TOOL_RESULT_NOTICE|SYSTEM_PROMPT_DATA_DIRECTIVE"
+    r"|^SYSTEM_PROMPT\b\s*=|system_prompt="
+    r"|^def \w*_prompt\(|^def prepare_\w*llm_input\b|^def prepare_schema_design_input\b"
+    r"|^def (?:build|render)_\w*request\b",
+    re.MULTILINE,
+)
+
+
+# PROMPT_SITE hits that build no prompt, each with the reason.
+NOT_PROMPT_BUILDERS: dict[str, str] = {
+    "ci/llm/token_usage.py": "_phase_of_prompt reads prompts from a transcript to tag token use",
+}
+
+
+# A prompt builder that a run lists in its nightly tier on purpose, with the reason.
+NIGHTLY_FOR_RUN: dict[tuple[str, str], str] = {
+    (
+        "scripts/run_analysis.py",
+        "bedrock-smoke",
+    ): "builds the external request; Bedrock only delegates",
+    (
+        "scripts/run_schema_design.py",
+        "bedrock-smoke",
+    ): "builds the external request; Bedrock only delegates",
+}
+
+
+def _prompt_sites() -> list[str]:
+    files = _sources() + [
+        (f.relative_to(REPO_ROOT).as_posix(), f.read_text())
+        for f in sorted((REPO_ROOT / "ci" / "llm").rglob("*.py"))
+    ]
+    return [
+        p
+        for p, t in files
+        if PROMPT_SITE.search(t) and p not in NOT_PROMPT_BUILDERS and p != "ci/llm/__init__.py"
+    ]
+
+
+def test_prompt_builders_are_listed() -> None:
+    hits = _prompt_sites()
+    unlisted = [p for p in hits if not _in(p, MODEL_FACING)]
+    assert (
+        not unlisted
+    ), f"builds a prompt: add to a *_PROMPT list in ci/needs_llm_run.py: {unlisted}"
+
+
+@pytest.mark.passes_on_main  # a self-check of NOT_PROMPT_BUILDERS, which lives in this file
+def test_not_prompt_builders_are_still_scan_hits() -> None:
+    for path in NOT_PROMPT_BUILDERS:
+        assert PROMPT_SITE.search((REPO_ROOT / path).read_text()), f"no longer a hit; remove {path}"
+
+
+def test_prompt_builders_are_in_the_prompt_tier() -> None:
+    hits = _prompt_sites()
+    assert len(hits) >= 35, f"PROMPT_SITE found only {len(hits)} files; fix the regex"
+    missing = [
+        (p, run)
+        for p in hits
+        for run, listed, prompt in (
+            ("e2e-llm", E2E_LLM, needs_llm_run.E2E_LLM_PROMPT),
+            ("bedrock-smoke", BEDROCK_SMOKE, needs_llm_run.BEDROCK_SMOKE_PROMPT),
+        )
+        if _in(p, listed) and not _in(p, prompt) and (p, run) not in NIGHTLY_FOR_RUN
+    ]
+    assert not missing, f"move to the run's *_PROMPT list in ci/needs_llm_run.py: {missing}"
+
+
+# A self-check of PROMPT_SITE (the regex lives in this file, so it passes on main too).
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "known",
+    [
+        "src/agents/referee/synthesis_report.py",
+        "src/agents/answer_validation.py",
+        "src/atx_orchestrator/subagents/schema.py",
+        "src/tools/schema/aurora_common/design_view.py",
+        "src/atx_orchestrator/tools.py",
+        "scripts/run_schema_design.py",
+        "ci/llm/judge.py",
+    ],
+)
+def test_prompt_site_scan_finds_known_builders(known: str) -> None:
+    assert known in _prompt_sites()
 
 
 # Modules whose output goes into the designer input (llm_input) but that do not call a
