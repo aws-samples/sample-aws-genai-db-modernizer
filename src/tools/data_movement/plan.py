@@ -612,6 +612,8 @@ def _dms_replication(
         target_engine=target,
         target_engine_line=target_engine_line(collector, target) if target else None,
         sizing=size_from_collector(collector),
+        engine_version=dms_sizing().engine.version,
+        engine_version_why=dms_sizing().engine.why,
         multi_az_default=True,
         lob_max_size_kb=lob_max,
         lob_tables=lob_tables,

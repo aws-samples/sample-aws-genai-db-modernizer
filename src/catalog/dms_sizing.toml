@@ -53,6 +53,10 @@ included_storage_gb = 100
 why = "Memory-optimized (64 GiB), the starting point above 2 TB or 5,000 writes per second."
 note = "Above 2 TB or 5,000 writes per second, size the replication instance with the customer's team: split the tables across tasks or choose a larger class before the full load."
 
+[engine]
+version = "3.6.1"
+why = "On the default engine (3.5.4) the data validator can fail to read an endpoint secret and retry one table indefinitely, which stalls validation on large sources; on 3.6.1 it re-reads the secret and recovers."
+
 [gate]
 # The step 1 plan's gates.max_lag_seconds: the DMS gate (src/tools/data_movement/dms_gate.py)
 # fails when a CDCLatencySource or CDCLatencyTarget datapoint in its window reaches it.

@@ -47,6 +47,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.contracts.data_movement_plan import DataMovementPlan, DmsReplication, UnboundedVarchar
 from src.contracts.lineage_ops import CopyOp, UnsupportedOp
 from src.contracts.transformation_contract import Rule, StepContract
+from src.shared.catalog.dms_sizing import EngineRules, dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.shared.engine_names import display_engine
 from src.tools.transformation_contract.hashing import contract_sha256
@@ -627,9 +628,19 @@ def _certificate(who: str, settings_key: str) -> dict[str, Any]:
                  "(verify-full), otherwise the connection is encrypted only (require)", "")  # fmt: skip
 
 
+def engine_rules(replication: DmsReplication) -> EngineRules:
+    """The plan's DMS engine version and reason; a plan written before contract 1.3 has none."""
+    catalog = dms_sizing().engine
+    if replication.engine_version is None:
+        return catalog
+    return EngineRules(
+        version=replication.engine_version, why=replication.engine_version_why or catalog.why
+    )
+
+
 def _dms_parameters(inputs: Step1Inputs) -> dict[str, Any]:
     replication, database = _replication(inputs), inputs.plan.source.database
-    s = replication.sizing
+    s, engine = replication.sizing, engine_rules(replication)
     (_, source_key), (_, target_key) = _keys(inputs)
     secret = ("Full ARN of the Secrets Manager secret of the {who} (the DMS user): JSON keys username, password, "  # nosec B105 -- help text
               "host and port. Not the RDS-managed master secret, which has no host or port")  # fmt: skip
@@ -637,6 +648,8 @@ def _dms_parameters(inputs: Step1Inputs) -> dict[str, Any]:
     params: dict[str, Any] = {
         "InstanceClass": {"Type": "String", "Default": s.instance_class, "AllowedPattern": r"^dms\.[a-z0-9]+\.[a-z0-9]+$",
                           "Description": f"Replication instance class. Sized from the collection: {s.reason}"[:4000]},
+        "EngineVersion": {"Type": "String", "Default": engine.version, "AllowedPattern": r"^[0-9]+\.[0-9]+\.[0-9]+$",
+                          "Description": f"AWS DMS engine version of the replication instance. {engine.why}"[:4000]},
         "AllocatedStorage": {"Type": "Number", "Default": s.allocated_storage_gb, "MinValue": 5, "MaxValue": 6144,
                              "Description": "Replication instance storage in GB (task logs and cached changes)"},
         "MultiAZ": {"Type": "String", "Description": "Run the replication instance in two Availability Zones "
@@ -805,7 +818,8 @@ def render_dms_template(inputs: Step1Inputs) -> dict[str, Any]:
             "AllocatedStorage": {"Ref": "AllocatedStorage"},
             "MultiAZ": {"Fn::If": ["IsMultiAZ", True, False]},
             "PubliclyAccessible": False,
-            # No EngineVersion: DMS creates the instance on its latest engine version.
+            # Without an EngineVersion DMS uses its default engine (3.5.4), not its latest.
+            "EngineVersion": {"Ref": "EngineVersion"},
             "AutoMinorVersionUpgrade": True,
             "ReplicationSubnetGroupIdentifier": {"Ref": "SubnetGroup"},
             "VpcSecurityGroupIds": {"Ref": "SecurityGroupIds"},

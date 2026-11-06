@@ -28,6 +28,8 @@ Version History:
   HubPlan model starts at its own 1.0.
 - 1.2 (2026-11-04, #1798): Step 1 replication section: instance sizing, LOB settings,
   Aurora version line
+- 1.3 (2026-11-07, #2014): Added optional replication.engine_version and
+  engine_version_why (the DMS engine version of step 1's replication instance, and why).
 """
 
 from typing import Literal
@@ -367,6 +369,13 @@ class DmsReplication(BaseModel):
         ),
     )
     sizing: DmsSizing = Field(..., description="The replication instance chosen from the catalog")
+    engine_version: str | None = Field(
+        None,
+        description="The replication instance's DMS engine version; None in a plan written before 1.3",
+    )
+    engine_version_why: str | None = Field(
+        None, description="Why that engine version (the catalog's reason); None with it"
+    )
     multi_az_default: bool = Field(
         True, description="The stack's MultiAZ default (the cost prices it)"
     )
@@ -398,7 +407,7 @@ class DataMovementPlan(BaseModel):
     ``cdc`` the physical capture it reads: after step 1 that is the hub plan's."""
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The job the plan is built from")
     database_name: str = Field(..., description="The job's database name")

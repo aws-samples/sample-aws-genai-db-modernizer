@@ -219,6 +219,7 @@ def test_summary_quotes_the_disclaimer_and_the_plans_figures(tmp_path, capsys):
     assert out["contract"]["status"] == b.contract.status and out["contract"]["blocked_rules"] == []
     assert out["contract"]["warning_count"] == 1 and out["table_count"] == len(b.contract.rules)
     assert out["replication_instance"]["instance_class"] == b.plan.replication.sizing.instance_class
+    assert out["replication_instance"]["engine_version"] == "3.6.1"
     assert out["monthly_cost_usd"] == b.plan.monthly_cost_usd
     assert set(out["files"]) == {"aurora-target.yaml", "step-1.ddl.sql", "dms-step-1.yaml"}
     assert out["files_missing"] == []

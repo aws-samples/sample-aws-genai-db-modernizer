@@ -255,6 +255,7 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
     from src.storage.local_store import LocalArtifactStore
     from src.tools.data_movement.dms_step import (
         CUSTOMER_RESPONSIBILITY,
+        engine_rules,
         load_step1,
         not_moved,
         step1_files,
@@ -284,6 +285,7 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
         "replication_instance": None if replication is None else {
             "instance_class": replication.sizing.instance_class,
             "allocated_storage_gb": replication.sizing.allocated_storage_gb,
+            "engine_version": engine_rules(replication).version,
             "multi_az_default": replication.multi_az_default,
             "reason": replication.sizing.reason},
         "monthly_cost_usd": plan.monthly_cost_usd,
