@@ -31,17 +31,30 @@ and rendered files left out; ``ci/llm/run.py collect-job``), so the fixture hold
 assignment versions, collector output, triage, reality-check and schema outputs too
 (``job/``) and every external-mode check is replayed.
 
+A fixture file over ``MAX_FIXTURE_FILE_BYTES`` (900 KB; a JSON file is written compact
+first) is stored gzip-compressed as ``<name>.gz`` (#1847): the repo refuses a file over
+1000 KB (``check-added-large-files``), and a discourse run's transcript, report and
+largest job files are each several MB. The compressed bytes are deterministic (level 9,
+mtime 0, no file name), so saving the same run again writes the same bytes; a file still
+over ``MAX_COMPRESSED_FILE_BYTES`` compressed is refused. ``prepare`` unpacks every
+``.gz`` file before the replay runs, and ``ci/llm/private_scan.py`` scans the compressed
+files' text, which detect-secrets' own hook skips as binary.
+
+There is one fixture per sample (``FIXTURES``): ``ci/replay.sh`` replays each one that
+has been saved and skips the others with a line saying so.
+
 Usage::
 
     uv run python ci/llm/replay.py save --from test-results/llm-both-wordpress \\
         --to tests/fixtures/real_runs/wordpress-both
     uv run python ci/llm/replay.py prepare --fixture tests/fixtures/real_runs/wordpress-both \\
-        --root test-results/replay/artifacts
+        --root test-results/replay/artifacts [--transcript-out test-results/replay/transcript.jsonl]
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
 import shutil
@@ -54,9 +67,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ci.llm.private_scan import identity_findings, line_of, secret_findings  # noqa: E402
+from ci.llm.private_scan import (  # noqa: E402
+    COMPRESSED_SUFFIX,
+    identity_findings,
+    line_of,
+    read_text,
+    secret_findings,
+)
 
-DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "real_runs" / "wordpress-both"
+FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "real_runs"
+DEFAULT_FIXTURE = FIXTURES_DIR / "wordpress-both"
+# Every sample's fixture, in the order ci/replay.sh replays them; one not saved yet
+# (no run.json) is skipped there.
+FIXTURES = (DEFAULT_FIXTURE, FIXTURES_DIR / "discourse-both")
 
 # The synthesis files a saved run keeps: the report every deliverable renders, and
 # the model's input and answer (the judge's facts read the input's table scope).
@@ -121,17 +144,28 @@ KEEP_INPUT_KEYS = frozenset({"command", "prompt", "description", "file_path", "s
 # The job folder the fixture keeps next to the synthesis files (everything the
 # e2e-llm upload's job.tar.gz holds except synthesis/, which is the top-level files).
 JOB_DIR = "job"
-# The repo refuses files over 1000 KB; a larger job file is written compact first.
+# The repo refuses files over 1000 KB (check-added-large-files, --maxkb=1000, that is
+# 1,024,000 bytes): a larger file is written compact first, then, if still over this,
+# gzip-compressed as <name>.gz; one over MAX_COMPRESSED_FILE_BYTES compressed is refused.
 MAX_FIXTURE_FILE_BYTES = 900_000
-# A member of job.tar.gz is read into memory: the upload never writes one over 5 MB,
-# so a larger one (a crafted archive) is refused before it is read.
-MAX_ARCHIVE_MEMBER_BYTES = 6_000_000
+MAX_COMPRESSED_FILE_BYTES = 1_000_000
+# A member of job.tar.gz is read into memory: the upload never writes one over
+# ci/llm/run.py's JOB_MAX_FILE_BYTES (30 MB), so a larger one (a crafted archive) is
+# refused before it is read.
+MAX_ARCHIVE_MEMBER_BYTES = 30_000_000
 
 
 def _trim(value: Any) -> Any:
     if isinstance(value, str) and len(value) > TRIM_OVER:
-        cut = len(value) - 2 * TRIM_KEEP
-        return f"{value[:TRIM_KEEP]}\n[... {cut} characters trimmed ...]\n{value[-TRIM_KEEP:]}"
+        head, tail = TRIM_KEEP, len(value) - TRIM_KEEP
+        # Never cut through a number: twelve digits left of a 19-digit pattern id read
+        # as an AWS account id to private_data (#1847, seen on a discourse run).
+        while head > 0 and value[head - 1].isdigit() and value[head].isdigit():
+            head -= 1
+        while tail < len(value) and value[tail - 1].isdigit() and value[tail].isdigit():
+            tail += 1
+        cut = tail - head
+        return f"{value[:head]}\n[... {cut} characters trimmed ...]\n{value[tail:]}"
     if isinstance(value, list):
         return [_trim(v) for v in value]
     if isinstance(value, dict):
@@ -275,17 +309,53 @@ def _read_job_archive(archive: Path, db: str, job: str) -> tuple[dict[str, str],
                     f"{archive}: {member.name} is over {MAX_ARCHIVE_MEMBER_BYTES} bytes"
                 )
             text = raw.decode("utf-8")
-            if len(text.encode()) > MAX_FIXTURE_FILE_BYTES:
-                try:
-                    text = json.dumps(json.loads(text), separators=(",", ":")) + "\n"
-                except ValueError:
-                    pass
-                if len(text.encode()) > MAX_FIXTURE_FILE_BYTES:
-                    raise ValueError(f"{archive}: {rel} is too large for the repo even compact")
             files[rel] = text if text.endswith("\n") else text + "\n"
     if not files:
         raise ValueError(f"{archive}: holds no files of {prefix}")
     return files, max(versions, default=1)
+
+
+def stored_form(name: str, text: str) -> tuple[str, bytes]:
+    """The name and bytes fixture file ``name`` is written as: ``text`` as it is up to
+    ``MAX_FIXTURE_FILE_BYTES``; over it, a JSON file compact; and if still over,
+    gzip-compressed as ``<name>.gz`` with fixed header fields (level 9, mtime 0, no file
+    name), so the same text always gives the same bytes. Refused (``ValueError``) when
+    even the compressed bytes are over ``MAX_COMPRESSED_FILE_BYTES``."""
+    data = text.encode()
+    if len(data) <= MAX_FIXTURE_FILE_BYTES:
+        return name, data
+    try:
+        data = (json.dumps(json.loads(text), separators=(",", ":")) + "\n").encode()
+    except ValueError:
+        pass
+    if len(data) <= MAX_FIXTURE_FILE_BYTES:
+        return name, data
+    packed = gzip.compress(data, compresslevel=9, mtime=0)
+    if len(packed) > MAX_COMPRESSED_FILE_BYTES:
+        raise ValueError(
+            f"{name}: {len(packed)} bytes even gzip-compressed, over the "
+            f"{MAX_COMPRESSED_FILE_BYTES}-byte limit for a fixture file"
+        )
+    return name + COMPRESSED_SUFFIX, packed
+
+
+def fixture_file(fixture: Path, name: str) -> Path:
+    """The committed file of ``name`` in ``fixture``: ``name`` or ``name.gz``. Both at
+    once is refused, since nothing says which one is current."""
+    plain, packed = fixture / name, fixture / (name + COMPRESSED_SUFFIX)
+    if plain.is_file() and packed.is_file():
+        raise ValueError(f"{fixture}: both {name} and {packed.name}; keep one")
+    return packed if packed.is_file() else plain
+
+
+def fixture_text(fixture: Path, name: str) -> str:
+    """The text of ``name`` in ``fixture``, decompressed when it is stored as ``.gz``."""
+    return read_text(fixture_file(fixture, name))
+
+
+def saved_fixtures() -> list[Path]:
+    """The fixtures of ``FIXTURES`` that have been saved (they have a ``run.json``)."""
+    return [f for f in FIXTURES if (f / RUN_FILE).is_file()]
 
 
 def save(source: Path, dest: Path) -> dict[str, Any]:
@@ -326,16 +396,18 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
     if found:
         # The fixture is public: nothing is written until every file is clean.
         raise ValueError(f"{source}: the run names a machine or an account: {found[:10]}")
+    # Every file's stored form first, so a file too large even compressed writes nothing.
+    top = [stored_form(n, t if t.endswith("\n") else t + "\n") for n, t in files.items()]
+    job_stored = [stored_form(f"{JOB_DIR}/{n}", t) for n, t in job_files.items()]
     dest.mkdir(parents=True, exist_ok=True)
-    for name in SYNTHESIS_FILES:
+    for name in (*SYNTHESIS_FILES, TRANSCRIPT_FILE):
         (dest / name).unlink(missing_ok=True)
-    for name, text in files.items():
-        (dest / name).write_text(text if text.endswith("\n") else text + "\n")
+        (dest / (name + COMPRESSED_SUFFIX)).unlink(missing_ok=True)
     shutil.rmtree(dest / JOB_DIR, ignore_errors=True)
-    for name, text in job_files.items():
-        target = dest / JOB_DIR / name
+    for name, data in (*top, *job_stored):
+        target = dest / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        target.write_bytes(data)
     judge = source / "judge.json"
     judge_mean = _load(judge).get("mean") if judge.is_file() else None
     run = {
@@ -355,10 +427,30 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
     return run
 
 
-def prepare(fixture: Path, root: Path) -> dict[str, Any]:
+def _unpack_tree(src: Path, dest: Path) -> None:
+    """Copy ``src`` to ``dest`` with every ``<name>.gz`` file written as ``<name>``,
+    decompressed. A file present both ways is refused."""
+    for path in sorted(src.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(src)
+        if path.name.endswith(COMPRESSED_SUFFIX):
+            rel = rel.with_name(path.name[: -len(COMPRESSED_SUFFIX)])
+            if (src / rel).is_file():
+                raise ValueError(f"{src}: both {rel} and {rel}{COMPRESSED_SUFFIX}; keep one")
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if path.name.endswith(COMPRESSED_SUFFIX):
+            target.write_text(read_text(path), encoding="utf-8")
+        else:
+            shutil.copy2(path, target)
+
+
+def prepare(fixture: Path, root: Path, transcript_out: Path | None = None) -> dict[str, Any]:
     """Lay the saved run out as a job under ``root`` (its saved job folder and its
-    synthesis folder at the version it had) and render its deliverables with the
-    current renderers."""
+    synthesis folder at the version it had, every compressed file unpacked) and render
+    its deliverables with the current renderers. With ``transcript_out``, the saved
+    transcript is written there unpacked, for ``check-transcript``."""
     from scripts.run_report import run as render_job
 
     run = _load(fixture / RUN_FILE)
@@ -372,12 +464,15 @@ def prepare(fixture: Path, root: Path) -> dict[str, Any]:
             f"{fixture}: no {JOB_DIR}/ folder; refresh the fixture from a run that uploaded "
             "the whole job (ci/llm/replay.py save, #1463)"
         )
-    shutil.copytree(saved_job, job_dir)
+    _unpack_tree(saved_job, job_dir)
     synthesis = job_dir / "synthesis" / f"v{int(run.get('synthesis_version') or 1)}"
     synthesis.mkdir(parents=True)
     for name in SYNTHESIS_FILES:
-        if (fixture / name).is_file():
-            shutil.copy2(fixture / name, synthesis / name)
+        if fixture_file(fixture, name).is_file():
+            (synthesis / name).write_text(fixture_text(fixture, name), encoding="utf-8")
+    if transcript_out is not None:
+        transcript_out.parent.mkdir(parents=True, exist_ok=True)
+        transcript_out.write_text(fixture_text(fixture, TRANSCRIPT_FILE), encoding="utf-8")
     rendered = render_job(job, db, str(root), None)
     if rendered.get("status") != "complete":
         raise RuntimeError(f"rendering the saved report failed: {rendered}")
@@ -393,11 +488,12 @@ def main(argv: list[str] | None = None) -> int:
     p_prep = sub.add_parser("prepare", help="Lay the fixture out as a job and render it.")
     p_prep.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     p_prep.add_argument("--root", type=Path, required=True)
+    p_prep.add_argument("--transcript-out", type=Path, default=None)
     args = parser.parse_args(argv)
     if args.command == "save":
         print(json.dumps(save(args.source, args.dest)))
     elif args.command == "prepare":
-        info = prepare(args.fixture, args.root)
+        info = prepare(args.fixture, args.root, args.transcript_out)
         print(f"{info['db']} {info['job_id']} {info['mode']}")
     return 0
 

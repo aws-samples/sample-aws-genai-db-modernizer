@@ -184,7 +184,7 @@ jobs:
     # The deterministic end-to-end suite (ci/e2e.sh) split eight ways (#956): the
     # report checks of each sample, the two determinism suites, the report checks
     # tied to no sample, the UI smoke + help site checks, and the zero-token replay
-    # of the saved real-model run (ci/replay.sh, #1409). Only the `ui` shard builds the UI and the help
+    # of every saved real-model run (ci/replay.sh, #1409, #1847). Only the `ui` shard builds the UI and the help
     # site; the report shards need neither. The required check is the `e2e` job
     # below, which waits for every shard.
     name: e2e-shard (${{ matrix.shard }})

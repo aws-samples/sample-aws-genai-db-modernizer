@@ -1,0 +1,34 @@
+# Saved real-model runs: the zero-token replay fixtures
+
+Each folder is one passing headless `/modernize` run (`ci/e2e-llm.sh`, mode `both`) that `ci/replay.sh` replays with the current code and no model call (#1409; what the replay checks and what it does not: `ci/README.md`, `replay.sh`). There is one per sample, in the order the replay takes them (`FIXTURES` in `ci/llm/replay.py`):
+
+- `wordpress-both/`: the wordpress run. It is mixed (#1463): its `job/`, `report.json`, `llm_input.json` and `llm_response.json` come from a research run whose job id was relabelled to the transcript run's (`run.json`: `job_source` `research run (not e2e-llm)`, `job_relabelled_from`, `job_git_sha`, `job_timestamp`), while `transcript.jsonl` and run.json's `git_sha`, `timestamp`, `cost_usd`, `judge_mean` and `checks` belong to the e2e-llm run. Each refresh adds about 180 KB, compressed, to the history.
+- `discourse-both/` (#1847): the discourse run, the larger sample, where some checks only fire (the repeated wave sentence of #1644, for example). Until a passing run is saved here, the replay skips it with a line saying so. <!-- claim: tests/unit/ci/test_replay.py::test_replay_sh_skips_a_fixture_not_saved_yet_and_fails_when_none_ran -->
+
+## What a fixture holds
+
+- `run.json`: the run's db, job id, mode, git sha, timestamp, cost, judge mean, checks, `job_source` and the synthesis version its deliverables came from.
+- `report.json`, `llm_input.json`, `llm_response.json`: the synthesis files.
+- `transcript.jsonl`: the session transcript, trimmed (below).
+- `job/`: the job folder from the run's `job.tar.gz` (`ci/llm/run.py collect-job`): collector output, triage, analysis, assignment versions and access patterns, reality-check and schema outputs.
+
+### Compressed files
+
+A file over 900 KB is stored gzip-compressed as `<name>.gz` (for example `transcript.jsonl.gz`, `job/collector/output.json.gz`), because the repo refuses a file over 1000 KB (`check-added-large-files`) and a discourse run's transcript, report and largest job files are each several MB. A JSON file is written compact first, and compressed only if it is still over 900 KB. <!-- claim: tests/unit/ci/test_replay.py::test_save_stores_a_file_over_the_cap_gzip_compressed --> The bytes are deterministic (level 9, mtime 0, no file name), so saving the same run again gives the same bytes, and a re-save that no longer needs the `.gz` form removes it. <!-- claim: tests/unit/ci/test_replay.py::test_a_resave_writes_the_same_compressed_bytes, tests/unit/ci/test_replay.py::test_a_resave_replaces_the_other_form_of_a_file --> `save` refuses a file still over 1,000,000 bytes compressed, so every committed file stays under the 1000 KB limit. <!-- claim: tests/unit/ci/test_replay.py::test_save_refuses_a_file_too_large_even_compressed, tests/unit/ci/test_replay.py::test_every_compressed_fixture_file_stays_under_the_repo_large_file_limit --> `ci/llm/replay.py prepare` unpacks every `.gz` file, the transcript included, before the replay runs, and refuses a file kept both plain and compressed. <!-- claim: tests/unit/ci/test_replay.py::test_prepare_unpacks_every_compressed_file, tests/unit/ci/test_replay.py::test_prepare_refuses_a_file_kept_both_plain_and_compressed --> Read a compressed file with `gunzip -c <file>`, or `ci/llm/private_scan.py`'s `read_text` in Python.
+
+The detect-secrets pre-commit hook skips a compressed file without reading it. The `scan-compressed-fixtures` hook and `ci/lint.sh` run `ci/llm/private_scan.py` over the decompressed text of every `.gz` file here instead: the detect-secrets plugins (the entropy ones aside) and the host, address and account scan, with the transcript getting the credential-shape scan only, as `save` scans it. <!-- claim: tests/unit/ci/test_private_scan.py::test_detect_secrets_own_hook_reads_nothing_in_a_compressed_file, tests/unit/ci/test_private_scan.py::test_a_planted_secret_inside_a_compressed_fixture_file_is_caught, tests/unit/ci/test_private_scan.py::test_the_hook_and_lint_scan_every_compressed_fixture_file --> `tests/unit/ci/test_private_scan.py` scans every committed file of a saved job, compressed or not, the same way. <!-- claim: tests/unit/ci/test_private_scan.py::test_every_committed_file_of_a_saved_job_passes_the_scan -->
+
+## Refreshing a fixture
+
+Refresh after a change to the `SynthesisOutputContract` shape or to the facts layer that the renderers read, and otherwise rarely. Download the passing run's `test-results/llm-both-<sample>/` folder (it must hold `job.tar.gz`) and run:
+
+```bash
+uv run python ci/llm/replay.py save --from <that folder> --to tests/fixtures/real_runs/<sample>-both
+REPLAY_FIXTURE=tests/fixtures/real_runs/<sample>-both ./ci/replay.sh
+```
+
+`save` refuses a run whose `results.json` does not pass or that has no `job.tar.gz`. It copies the synthesis files, unpacks the job (an archive member over 30 MB, or one whose path climbs out of the job, is refused), writes `run.json` and a trimmed transcript: the runner's working directory replaced by `/workspace/repo`, home folders by `/home/user`, temp folders and sockets by `/tmp/claude`, tool results and written files over 1,000 characters cut to their ends (never through a number), thinking emptied; commands and dispatch prompts are kept whole, so `check-transcript` reads the same run. <!-- claim: tests/unit/ci/test_replay.py::test_long_results_and_written_files_are_cut_and_the_calls_kept, tests/unit/ci/test_replay.py::test_a_trim_never_cuts_through_a_number -->
+
+It writes nothing when any file still names an absolute path outside those placeholders, an AWS access key, account id (also inside a name such as `bucket-123456789012-logs`; a `group_key` value is a hash, not an account) or ARN, an AWS or internal hostname, a private IP, an email, a Windows or UNC path, or, in the synthesis and job files, any credential detect-secrets finds; the transcript gets the credential-shape scan only, not the key-name one that flags prose. A finding names its kind and line, never the value. <!-- claim: tests/unit/ci/test_replay.py::test_save_refuses_a_job_file_with_a_credential_host_or_person, tests/unit/ci/test_replay.py::test_a_finding_names_its_kind_and_line_never_the_value, tests/unit/ci/test_private_scan.py::test_an_all_digit_group_key_is_a_hash_not_an_account -->
+
+The plain files at a fixture's top level stay scanned by the detect-secrets hook, with only their known id shapes filtered by value (`.pre-commit-config.yaml`); `job/` is skipped by that hook by path, since it holds 12 to 16-hex keys and hashes and `save` has already scanned it.

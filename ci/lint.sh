@@ -17,6 +17,7 @@ log "mypy";  uv run mypy src/
 log "license headers"; uv run python scripts/license_headers.py --check
 log "commands"; uv run python scripts/validate_skills.py
 log "claim markers"; uv run python ci/claims.py check
+log "compressed fixtures"; uv run python ci/llm/private_scan.py tests/fixtures/real_runs
 log "ci/README budget"; uv run python ci/readme_budget.py
 log "catalog"; uv run python scripts/render_catalog.py --check
 log "graph catalog"; uv run python scripts/render_graph_catalog.py --check
