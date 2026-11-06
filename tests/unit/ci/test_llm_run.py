@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from ci.llm import run
+from tests.unit.hooks.test_hook_common import DENIED_SEARCH
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -189,6 +190,237 @@ def test_classify_denial_kinds() -> None:
     )
     assert classify("echo 'uv run python scripts/search_artifacts.py x'", prefixes) == "other"
     assert classify("rm -rf /tmp/whatever", prefixes) == "other"
+
+
+def test_classify_denial_of_an_allowlisted_command_with_a_shell_expansion() -> None:
+    """Claude Code denies an allowlisted command whose argument the shell would expand,
+    whatever the allow rules say: the model's quoting, not a broken allowlist."""
+    prefixes = ["uv run python scripts/search_artifacts.py"]
+    classify = run._classify_denial
+    assert classify(DENIED_SEARCH, prefixes) == "shell_expansion"
+    assert classify('uv run python scripts/search_artifacts.py "$(id)" p', prefixes) == (
+        "shell_expansion"
+    )
+    assert classify("uv run python scripts/search_artifacts.py '$x' p", prefixes) == "allowlist"
+    assert classify('uv run python scripts/search_artifacts.py "x$" p', prefixes) == "allowlist"
+    assert classify("uv run python scripts/search_artifacts.py $x | head", prefixes) == (
+        "rule_violation"
+    )
+    assert classify("echo $HOME", prefixes) == "other"
+
+
+def test_shell_expansion_denial_warns_and_does_not_fail(tmp_path: Path, capsys) -> None:
+    """The discourse run that printed MODERNIZE_RESULT: complete and failed on one search
+    whose double-quoted regex held ``\\\\$lookup``; the model retried and the run finished."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=j1 db=discourse mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-1",
+                        "tool_input": {"command": DENIED_SEARCH},
+                    }
+                ],
+            )
+        ],
+    )
+    summary = run.check_transcript(path, "chat")
+    assert summary["job_id"] == "j1"
+    assert summary["expansion_denials"] == {
+        "count": 1,
+        "commands": [run._truncate(f"Bash: {DENIED_SEARCH}")],
+    }
+    assert "denials" not in summary and "rule_violations" not in summary
+    assert "would expand" in capsys.readouterr().err
+
+
+_REPORT = "uv run python scripts/run_report.py --job-id j1"
+
+
+def _bash_use(tool_use_id: str, command: str, parent: str | None = None) -> dict:
+    return {
+        "type": "assistant",
+        "parent_tool_use_id": parent,
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_use_id,
+                    "name": "Bash",
+                    "input": {"command": command},
+                }
+            ]
+        },
+    }
+
+
+def _bash_result(tool_use_id: str, text: str = "ok", is_error: bool = False) -> dict:
+    return {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": text,
+                    "is_error": is_error,
+                }
+            ]
+        },
+    }
+
+
+def _denied_then(tmp_path: Path, denied: str, *later: dict, parent: str | None = "sub-1") -> Path:
+    """A transcript where ``denied`` was denied in ``parent``'s scope, then ``later`` records."""
+    return _transcript(
+        tmp_path,
+        [
+            _bash_use("tu-denied", denied, parent),
+            _bash_result("tu-denied", "Permission to use Bash has been denied.", is_error=True),
+            *later,
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-denied",
+                        "tool_input": {"command": denied},
+                    }
+                ],
+            ),
+        ],
+    )
+
+
+def test_allowlist_denial_retried_successfully_is_recovered_and_warns(
+    tmp_path: Path, capsys
+) -> None:
+    """The same subagent ran the same script successfully after the denial: a warning."""
+    path = _denied_then(
+        tmp_path,
+        _REPORT + " --artifact-root /",
+        _bash_use("tu-retry", _REPORT, "sub-1"),
+        _bash_result("tu-retry"),
+    )
+    summary = run.check_transcript(path, "chat")
+    assert summary["recovered_denials"] == {
+        "count": 1,
+        "commands": [f"Bash: {_REPORT} --artifact-root /"],
+    }
+    assert "recovered" in capsys.readouterr().err
+
+
+@pytest.mark.passes_on_main  # main fails every allowlist denial; the guard is that it still does
+@pytest.mark.parametrize(
+    "later",
+    [
+        pytest.param([], id="no-retry"),
+        pytest.param(
+            [_bash_use("tu-retry", _REPORT, "sub-2"), _bash_result("tu-retry")],
+            id="retry-in-another-subagent",
+        ),
+        pytest.param(
+            [_bash_use("tu-retry", _REPORT, "sub-1"), _bash_result("tu-retry", "boom", True)],
+            id="retry-failed",
+        ),
+        pytest.param(
+            [
+                _bash_use("tu-retry", "uv run python scripts/search_artifacts.py x p", "sub-1"),
+                _bash_result("tu-retry"),
+            ],
+            id="retry-of-another-script",
+        ),
+        pytest.param([_bash_use("tu-retry", _REPORT, "sub-1")], id="retry-never-answered"),
+        pytest.param(
+            [_bash_use("tu-retry", _REPORT + " | head", "sub-1"), _bash_result("tu-retry")],
+            id="retry-chained",
+        ),
+    ],
+)
+def test_allowlist_denial_without_a_successful_retry_still_fails(
+    tmp_path: Path, later: list[dict]
+) -> None:
+    path = _denied_then(tmp_path, _REPORT + " --artifact-root /", *later)
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        run.check_transcript(path, "chat")
+
+
+@pytest.mark.passes_on_main  # main fails every allowlist denial; the guard is that it still does
+def test_a_success_before_the_denial_does_not_recover_it(tmp_path: Path) -> None:
+    path = _transcript(
+        tmp_path,
+        [
+            _bash_use("tu-before", _REPORT, "sub-1"),
+            _bash_result("tu-before"),
+            _bash_use("tu-denied", _REPORT + " --x", "sub-1"),
+            _bash_result("tu-denied", "denied", is_error=True),
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-denied",
+                        "tool_input": {"command": _REPORT + " --x"},
+                    }
+                ],
+            ),
+        ],
+    )
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        run.check_transcript(path, "chat")
+
+
+def test_orchestrator_scope_recovers_too(tmp_path: Path) -> None:
+    path = _denied_then(
+        tmp_path,
+        _REPORT + " --x",
+        _bash_use("tu-retry", _REPORT, None),
+        _bash_result("tu-retry"),
+        parent=None,
+    )
+    assert run.check_transcript(path, "chat")["recovered_denials"]["count"] == 1
+
+
+def test_expansion_denial_warns_whether_or_not_it_was_retried(tmp_path: Path) -> None:
+    """The discourse run: a shell-expansion denial, then a retry with a plain regex in the
+    same subagent. It stays an expansion denial (a warning), never a recovered allowlist."""
+    retry = 'uv run python scripts/search_artifacts.py "lookup|sparse" artifacts/x'
+    for later, name in (([_bash_use("tu-retry", retry), _bash_result("tu-retry")], "a"), ([], "b")):
+        (tmp_path / name).mkdir()
+        summary = run.check_transcript(_denied_then(tmp_path / name, DENIED_SEARCH, *later), "chat")
+        assert summary["expansion_denials"]["count"] == 1
+        assert "recovered_denials" not in summary
+
+
+def test_results_carry_recovered_denials(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, recovered_denials={"count": 1, "commands": ["Bash: x"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["recovered_denials"] == {"count": 1, "commands": ["Bash: x"]}
+
+
+def test_results_carry_expansion_denials(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, expansion_denials={"count": 1, "commands": ["Bash: x"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["expansion_denials"] == {"count": 1, "commands": ["Bash: x"]}
 
 
 def test_exact_pipeline_command_denied_fails(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ import pytest
 
 from scripts.hooks import enforce_tool_use_rule as hook
 from tests.unit.hooks.conftest import REPO_ROOT, bash
+from tests.unit.hooks.test_hook_common import DENIED_SEARCH
 
 RULES = hook.allowed_rules()
 
@@ -22,6 +23,8 @@ ALLOWED = [
     "uv run python scripts/run_collect.py --job-id j --note 'a > b < c'",
     "uv run python scripts/run_reality_check.py --job-id j --resume-reality-check",
     "uv run python scripts/search_artifacts.py 'a|b; c' artifacts/db/job",
+    "uv run python scripts/search_artifacts.py '\\$lookup|\"version\"' artifacts/db/job",
+    'uv run python scripts/search_artifacts.py "\\"version\\"|x$|\\\\\\$defs" artifacts/db/job',
     "uv run python scripts/start_local_ui.py",
     "uv run python scripts/start_local_ui.py --stop",
     'uv run python scripts/check_decision.py --note "a && b"',
@@ -109,3 +112,31 @@ def test_non_bash_tools_and_bad_input_are_ignored(run_hook) -> None:
     assert run_hook("enforce_tool_use_rule.py", {"tool_name": "Read", "tool_input": {}}).code == 0
     assert run_hook("enforce_tool_use_rule.py", "").code == 0
     assert run_hook("enforce_tool_use_rule.py", {"tool_name": "Bash", "tool_input": {}}).code == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        DENIED_SEARCH,
+        'uv run python scripts/search_artifacts.py "$(cat /etc/hostname)" artifacts/db/job',
+        'uv run python scripts/search_artifacts.py "`id`" artifacts/db/job',
+        "uv run python scripts/search_artifacts.py x $HOME",
+        'uv run python scripts/run_collect.py --job-id "${JOB}"',
+    ],
+)
+def test_documented_command_with_a_shell_expansion_is_blocked_with_a_hint(
+    command: str, run_hook
+) -> None:
+    """Claude Code never auto-allows an argument the shell would expand, so the hook refuses
+    it first and says how to quote a regex instead of leaving a bare permission denial."""
+    assert not hook.is_documented_command(command, RULES)
+    res = run_hook("enforce_tool_use_rule.py", bash(command))
+    assert res.blocked
+    assert hook.RULE in res.stderr and hook.EXPANSION_HINT.strip() in res.stderr
+    assert res.stderr.count("\n") == 1
+
+
+@pytest.mark.passes_on_main
+def test_other_refusals_carry_no_expansion_hint(run_hook) -> None:
+    res = run_hook("enforce_tool_use_rule.py", bash("cat artifacts/x/output.json"))
+    assert res.blocked and "single quotes" not in res.stderr
