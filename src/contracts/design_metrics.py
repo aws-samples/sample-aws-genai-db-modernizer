@@ -24,9 +24,15 @@ Version History:
   EmbeddingSizeMetrics.counts_assumed (#1636): when the source has no row count for a
   table, row_count is the stated assumption (size over declared row width) instead of 0,
   and these flags say so. Backward compatible: both default to False.
+- 1.4 (2026-11-07, #1989): Added optional TableDesignMetrics.key_distinct_values
+  (KeyDistinctValues): the column sets whose distinct values the collection holds (a
+  unique key's row count, a column's cardinality), the evidence the per-partition-key
+  load estimate divides by. Backward compatible: defaults to empty.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
@@ -64,6 +70,23 @@ class QueryDesignMetrics(BaseModel):
         if data.get("member_query_ids") is None:
             data.pop("member_query_ids", None)
         return data
+
+
+class KeyDistinctValues(BaseModel):
+    """A column set of a source table whose number of distinct values the collection
+    holds (#1989): the evidence a per-partition-key load estimate divides by."""
+
+    columns: list[str] = Field(..., min_length=1, description="Lower-case column names")
+    distinct_values: int = Field(..., ge=1, description="Distinct values of the columns together")
+    basis: Literal["unique_key", "column_statistics"] = Field(
+        ...,
+        description=(
+            "unique_key: a primary key or unique index, so the table's row count (at least "
+            "1); column_statistics: the collector's column cardinality"
+        ),
+    )
+
+    model_config = ConfigDict(extra="allow")
 
 
 class TableDesignMetrics(BaseModel):
@@ -113,6 +136,14 @@ class TableDesignMetrics(BaseModel):
             "String-like columns whose max_length exceeds 1024 (TEXT/BLOB) and were counted at "
             "1024 bytes in schema_item_size_bytes: a stored value can still approach DynamoDB's "
             "400 KB item limit"
+        ),
+    )
+    key_distinct_values: list[KeyDistinctValues] = Field(
+        default_factory=list,
+        description=(
+            "Column sets whose distinct values the collection holds (#1989): a partition key "
+            "on them spreads its load over that many values; empty when none is collected "
+            "(per-key load not measured)"
         ),
     )
 
@@ -213,7 +244,7 @@ class DesignMetricsContract(BaseModel):
     """Every number the schema designer reads instead of computing (#626)."""
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     engine: str = Field(..., description="Target engine the metrics are for")
     growth_multiplier: float = Field(

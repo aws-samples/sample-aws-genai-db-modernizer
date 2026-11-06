@@ -74,7 +74,7 @@ The review process below is what every review checks: it is the floor, not the r
 
 **Hot partition analysis:**
 
-- `partition_limit`, `utilization_pct` and `at_risk` are computed by the pipeline's cost check and validated before this review, and each `design_rps` is the pipeline's own figure: do not redo that arithmetic (a `design_metrics: …` entry in `validation_failures` means a number still disagrees; ask for that fix). Judge instead whether each entry's `rcu_or_wcu_per_second` is a plausible load for one partition key value given its `contributing_patterns`.
+- `partition_limit`, `utilization_pct` and `at_risk` are computed by the pipeline's cost check and validated before this review, and each `design_rps` is the pipeline's own figure: do not redo that arithmetic (a `design_metrics: …` entry in `validation_failures` means a number still disagrees; ask for that fix). Each entry is a table or GSI total, an upper bound for one partition key value; the pipeline estimates the load per key value from the key's collected distinct values and sets the risk from that estimate, never from the total. Judge instead whether each entry's `rcu_or_wcu_per_second` is a plausible total given its `contributing_patterns`, and whether its key concentrates that load on few values (a constant key, a low-cardinality attribute, one key every request uses).
 - Are at-risk partitions (>80%) mitigated? Is the mitigation realistic?
 
 ### Phase 2: Scope Challenge Review

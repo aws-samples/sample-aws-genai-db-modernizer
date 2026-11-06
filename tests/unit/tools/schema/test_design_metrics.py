@@ -306,7 +306,9 @@ def test_unknown_query_ids_are_left_to_the_scope_check():
         (_hot(300, limit=1000, pct=30.0), ["partition_limit 1000 for a read must be 3000"]),
         (_hot(900, op="write", limit=1000, pct=90.0, risk=True), []),  # 90% is at risk
         (_hot(900, op="write", limit=1000, pct=90.0), ["at_risk must be true"]),
-        (_hot(4000, pct=100.0, risk=True), []),  # capped at 100, as the merge does
+        # #1989: never capped (4000 / 3000 = 133.3%), as the merge does
+        (_hot(4000, pct=133.3, risk=True), []),
+        (_hot(4000, pct=100.0, risk=True), ["utilization_pct 100 disagrees", "= 133.3"]),
         (_hot(2400, pct=80.0), []),  # exactly 80% is not above the threshold
     ],
 )
@@ -770,3 +772,84 @@ def test_coverage_counts_the_whole_log_after_the_assignment_filter():
     # q1 and q2 are in the log (q3 is OTHER): still 2 / 4, not 1 / 4.
     coverage = design_metrics_from_collector("documentdb", filtered)["coverage"]
     assert coverage["in_scope_patterns"] == 2 and coverage["coverage_ratio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# #1989: the load per partition key value
+# ---------------------------------------------------------------------------
+
+
+def test_the_table_metrics_carry_each_keys_distinct_values():
+    table = {
+        "table_id": "db.users",
+        "table_name": "users",
+        "row_count": 1_000,
+        "size_mb": 1.0,
+        "primary_key": ["id"],
+        "indexes": [{"index_name": "email", "columns": ["email"], "is_unique": True}],
+        "columns": [
+            {"column_name": "id", "normalized_data_type": "integer"},
+            {"column_name": "email", "normalized_data_type": "string", "max_length": 100},
+            {"column_name": "country", "normalized_data_type": "string", "cardinality": 30},
+        ],
+    }
+    (users,) = build_design_metrics("dynamodb", [table], []).model_dump(mode="json")["tables"]
+    assert users["key_distinct_values"] == [
+        {"columns": ["country"], "distinct_values": 30, "basis": "column_statistics"},
+        {"columns": ["email"], "distinct_values": 1_000, "basis": "unique_key"},
+        {"columns": ["id"], "distinct_values": 1_000, "basis": "unique_key"},
+    ]
+
+
+def test_a_design_metrics_file_written_before_1989_still_loads():
+    from src.contracts.design_metrics import DesignMetricsContract
+
+    old = {
+        "engine": "dynamodb",
+        "tables": [
+            {
+                "table_id": "db.users",
+                "row_count": 1,
+                "avg_row_size_bytes": 10,
+                "avg_row_size_kb": 0.01,
+                "size_estimated": False,
+                "schema_item_size_bytes": 10,
+                "data_gb": 0.0,
+            }
+        ],
+    }
+    assert DesignMetricsContract.model_validate(old).tables[0].key_distinct_values == []
+
+
+def test_the_cost_check_states_each_at_risk_entrys_load_per_key_value():
+    from src.tools.schema.dynamodb_cost_check import check_draft_costs
+
+    table = {
+        "table_id": "db.users",
+        "table_name": "users",
+        "row_count": 60_000,
+        "primary_key": ["id"],
+        "columns": [{"column_name": "id", "normalized_data_type": "integer"}],
+    }
+    metrics = build_design_metrics("dynamodb", [table], []).model_dump(mode="json")
+    entry = {**_hot(9_000, pct=300.0, risk=True)}
+    draft = {
+        "hot_partition_analysis": [entry],
+        "table_definitions": [
+            {
+                "table_name": "Users",
+                "partition_key": {"attribute_name": "id", "attribute_type": "N"},
+                "attributes": [
+                    {"name": "id", "type": "N", "source_table": "db.users", "source_column": "id"}
+                ],
+            }
+        ],
+    }
+    (finding,) = check_draft_costs(draft, metrics)["hot_partition_findings"]
+    assert finding["utilization_pct"] == 300.0  # the total, never capped
+    assert finding["per_key_basis"] == "distinct_values"
+    assert finding["distinct_key_values"] == 60_000
+    assert finding["per_key_utilization_pct"] == pytest.approx(0.005)
+    (unknown,) = check_draft_costs(draft)["hot_partition_findings"]
+    assert unknown["per_key_basis"] == "not_measured"
+    assert unknown["per_key_utilization_pct"] is None

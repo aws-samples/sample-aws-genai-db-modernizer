@@ -33,6 +33,11 @@ Version History:
   (``review`` for the design review notes, ``warning`` for the schema agents' warnings;
   left out of the JSON schema), so repeated trade-offs group by topic and the pipeline's
   notes are listed apart.
+- 1.7 (2026-11-07, #1989): HotPartitionEntry.utilization_pct is no longer capped at 100
+  (le=100 removed): an entry is a table or GSI total, and above 100 it states how far
+  the total is over one partition key value's limit, an upper bound the pipeline's
+  per-key estimate qualifies. Backward compatible: every entry written before still
+  validates.
 """
 
 from typing import Annotated, Any, Literal
@@ -656,12 +661,25 @@ class MigrationNote(BaseModel):
 
 
 class HotPartitionEntry(BaseModel):
+    """The load on one table or GSI: the total over all its partition key values, so an
+    upper bound for one key value. The pipeline estimates the load per key value from
+    the key's collected distinct values (#1989)."""
+
     table_name: str
     gsi_name: str | None = None
     operation: PARTITION_OPERATIONS
-    rcu_or_wcu_per_second: float = Field(..., ge=0)
+    rcu_or_wcu_per_second: float = Field(
+        ..., ge=0, description="The table's or GSI's total read or write units per second"
+    )
     partition_limit: float = Field(..., description="3000 for reads, 1000 for writes")
-    utilization_pct: float = Field(..., ge=0, le=100)
+    utilization_pct: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "rcu_or_wcu_per_second / partition_limit × 100, never capped: above 100 the "
+            "total is over one key value's limit (an upper bound)"
+        ),
+    )
     at_risk: bool = Field(..., description="True when utilization_pct > 80")
     contributing_patterns: list[str] = Field(
         ..., description="query_ids driving this partition's load"
@@ -751,7 +769,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.6",
+        default="1.7",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

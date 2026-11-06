@@ -143,6 +143,29 @@ def _nested(toplevel: object) -> bool | None:
     return str(toplevel).strip().lower() in ("false", "f")
 
 
+def n_distinct_count(n_distinct: object, reltuples: object) -> int | None:
+    """A column's distinct values from ``pg_stats.n_distinct`` (#1989 review).
+
+    A positive value is the count; a negative one is minus the fraction of the table's
+    rows (-1: every row distinct), so the count is ``-n_distinct × reltuples``; 0 means
+    PostgreSQL does not know. None when there is no count: 0, a negative value with no
+    (or a non-positive) row estimate, or a value that is not a number."""
+    try:
+        n = float(n_distinct)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if n > 0:
+        return int(round(n))
+    if n < 0:
+        try:
+            rows = float(reltuples)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        count = int(round(-n * rows))
+        return count if count > 0 else None
+    return None
+
+
 class PostgreSQLRemoteCollector:
     """Collects PostgreSQL metadata via SSM Run Command."""
 
@@ -262,16 +285,17 @@ class PostgreSQLRemoteCollector:
 
     def collect_column_cardinality(self, table_name: str) -> dict[str, int]:
         rows = self._query(f"""
-            SELECT attname AS col, n_distinct
-            FROM pg_stats
-            WHERE schemaname = 'public' AND tablename = '{table_name}'
+            SELECT s.attname AS col, s.n_distinct, c.reltuples
+            FROM pg_stats s
+            LEFT JOIN pg_namespace n ON n.nspname = s.schemaname
+            LEFT JOIN pg_class c ON c.relname = s.tablename AND c.relnamespace = n.oid
+            WHERE s.schemaname = 'public' AND s.tablename = '{table_name}'
         """)  # nosec B608 — table_name from information_schema, not user input
-        result = {}
-        for r in rows:
-            n = r.get("n_distinct")
-            if n is not None:
-                result[r["col"]] = int(n) if float(n) >= 0 else abs(int(float(n) * 1000))
-        return result
+        return {
+            r["col"]: count
+            for r in rows
+            if (count := n_distinct_count(r.get("n_distinct"), r.get("reltuples"))) is not None
+        }
 
     def collect_indexes(self, table_name: str) -> list[dict]:
         raw = self._query(f"""
