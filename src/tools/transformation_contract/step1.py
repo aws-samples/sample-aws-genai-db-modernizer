@@ -31,6 +31,7 @@ from src.tools.data_movement.plan import JobInputs, _aurora_wave, _Schema
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, source_data_types
 from src.tools.schema.aurora_common.source_family import classify_source_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
+from src.tools.transformation_contract.pg_enums import EnumColumns, EnumType, enum_columns
 
 AURORA_FOR = {"mysql": "aurora_mysql", "mariadb": "aurora_mysql", "postgresql": "aurora_postgresql"}
 
@@ -57,7 +58,8 @@ def target_tables(
     the saved design's columns replace the generated ones of the same name, per column
     (a design column the generator lacks is kept, a generated column the design lacks too).
     """
-    tables = _generated_tables(inputs, engine, collector or _load_collector(inputs))
+    collector = collector or _load_collector(inputs)
+    tables = _generated_tables(inputs, engine, collector)
     saved = inputs.schema_designs.get(engine)
     if saved:
         for d in saved[1].get("table_definitions") or []:
@@ -66,7 +68,21 @@ def target_tables(
             for c in d.get("columns") or []:
                 columns[c["name"]] = TargetColumn(c["name"], c["aurora_type"])
             tables[name] = TargetTable(name, tuple(columns.values()))
-    return tables
+    return _with_enum_types(tables, enum_columns(collector, engine))
+
+
+def _with_enum_types(tables: dict[str, TargetTable], enums: EnumColumns) -> dict[str, TargetTable]:
+    """Each column that keeps its PostgreSQL enum (#1834) declared as ``"<schema>"."<type>"``,
+    over the generator's and a saved design's type: neither saw the labels (a design's delta
+    cannot name such a type), so both fall back to TEXT for it."""
+    if not enums.types:
+        return tables
+    return {
+        name: TargetTable(name, tuple(
+            TargetColumn(c.name, enums.types[(name, c.name)].sql_type) if (name, c.name) in enums.types else c
+            for c in t.columns))
+        for name, t in tables.items()
+    }  # fmt: skip
 
 
 def _load_collector(inputs: JobInputs) -> CollectorOutputContract:
@@ -131,10 +147,16 @@ def _canonical_source_type(column: Column, source_engine: str, engine: str) -> s
 
 
 def _field(
-    table_id: str, column: Column, target: TargetColumn, source_engine: str, engine: str
+    table_id: str,
+    column: Column,
+    target: TargetColumn,
+    source_engine: str,
+    engine: str,
+    enum: EnumType | None = None,
 ) -> FieldRule:
+    """``enum``: the PostgreSQL enum the column keeps (#1834), its source type too."""
     ref = ColumnRef(table_id=table_id, column=column.column_name)
-    source_type = _canonical_source_type(column, source_engine, engine)
+    source_type = enum.sql_type if enum else _canonical_source_type(column, source_engine, engine)
     op: CopyOp | TransformOp | UnsupportedOp
     try:
         validate_aurora_type(target.aurora_type, engine)
@@ -221,6 +243,7 @@ def build_step1(inputs: JobInputs) -> StepContract:
     view_ids = {v.view_id for v in collector.database_schema.views or []}
     names = Counter(t.table_name for t in collector.database_schema.tables)
     targets = target_tables(inputs, engine, collector)
+    enums = enum_columns(collector, engine).types
     rules: list[Rule] = []
     views: list[str] = []
     status: RuleStatus
@@ -265,7 +288,8 @@ def build_step1(inputs: JobInputs) -> StepContract:
             target = targets.get(t.table_name)
             by_name = {c.name: c for c in (target.columns if target else ())}
             fields = [
-                _field(table_id, c, by_name[c.column_name], source_engine, engine)
+                _field(table_id, c, by_name[c.column_name], source_engine, engine,
+                       enums.get((t.table_name, c.column_name)))  # fmt: skip
                 for c in _ordered(list(t.columns))
                 if c.column_name in by_name
             ]

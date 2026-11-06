@@ -14,6 +14,7 @@ from src.contracts.lineage_ops import UnsupportedOp
 from src.contracts.transformation_contract import Finding, Rule, Severity, StepContract
 from src.shared.contract_versioning import load_contract
 from src.tools.data_movement.plan import JobInputs, _aurora_wave
+from src.tools.transformation_contract.pg_enums import enum_columns
 from src.tools.transformation_contract.step1 import (
     TargetTable,
     _load_collector,
@@ -130,6 +131,17 @@ def _revalidated(rule: Rule, tables: dict[str, Table], targets: dict[str, Target
     return _checked(rule, list(unique.values()))
 
 
+def _with_enum_findings(rule: Rule, fallbacks: dict[tuple[str, str], tuple[str, str]]) -> Rule:
+    """A warning per field of the rule that stays TEXT although its PostgreSQL type may be
+    an enum (#1834): no labels collected, or a type step 1 refuses to create."""
+    added = []
+    for f in rule.fields:
+        if (rule.source_table, f.source_column) in fallbacks:
+            code, why = fallbacks[(rule.source_table, f.source_column)]
+            added.append(_f(code, "warning", why, rule.source_table, f.source_column))
+    return rule.model_copy(update={"findings": [*rule.findings, *added]}) if added else rule
+
+
 def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     """A new contract with each rule's findings and status, and the step's counts, recomputed."""
     if contract.status in ("no_relational_anchor", "staged_move_pending"):
@@ -137,7 +149,10 @@ def validate_step1(contract: StepContract, inputs: JobInputs) -> StepContract:
     collector = _load_collector(inputs)
     tables = {t.table_id: t for t in collector.database_schema.tables}
     targets = target_tables(inputs, contract.target.engine, collector)
-    rules = [_revalidated(r, tables, targets) for r in contract.rules]
+    fallbacks = enum_columns(collector, contract.target.engine).fallbacks
+    rules = [
+        _with_enum_findings(_revalidated(r, tables, targets), fallbacks) for r in contract.rules
+    ]
     waves = sorted(inputs.report.get("migration_waves") or [], key=lambda w: int(w["wave"]))
     wave = (_aurora_wave(waves) if waves else None) or {}
     ruled = {r.source_table for r in rules} | set(contract.views)
