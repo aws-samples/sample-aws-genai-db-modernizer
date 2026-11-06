@@ -73,6 +73,7 @@ from src.shared.models import (
     converse_request_fields,
     profile_for,
     resolve_model_id,
+    sends_strict_tools,
 )
 from src.shared.progress import say
 from src.shared.skill_sections import skill_sections, skill_subsections
@@ -1063,14 +1064,13 @@ def _response_tool_request(model_id: str) -> dict:
     accepts it, with thinking disabled where Bedrock needs that for a forced
     choice, and ``auto`` (plus the prompt's "call the tool") where a forced
     choice is rejected: the rule ``RoleBedrockModel`` applies to the Strands
-    path (``src.shared.models.profile_for``). Under ``auto`` the tool is strict
-    (the validator role's ``strict_tools``), so its input matches the schema.
+    path (``src.shared.models.profile_for``). The tool is strict wherever the
+    family takes strict tools, forced or ``auto`` (``sends_strict_tools``, the
+    rule the role's Strands model follows, #744), so its input matches the schema.
     """
     profile = profile_for(model_id)
     forced = profile.accepts_forced_tool_choice
-    # Strict where the family rejects a forced choice, as the role's Strands
-    # model does (``build_bedrock_model``'s ``strict_tools``).
-    strict = ROLE_SPECS[Role.VALIDATOR].strict_tools and not forced
+    strict = sends_strict_tools(Role.VALIDATOR, profile)
     request: dict = {
         "toolConfig": {
             "tools": [

@@ -935,36 +935,47 @@ class TestRequestRecords:
         assert rec["sql_chars"] == 800
 
 
+_TOOL = "RealityCheckModelResponse"
+
+
 class TestTheValidatorAnswersThroughOneTool:
     """#746 item 5: the boto3 validator asks for its answer as a call of the
     RealityCheckModelResponse tool, forced where the model family accepts a
     forced choice (the rule the Strands path follows, ``profile_for``)."""
 
     @pytest.mark.parametrize(
-        ("model", "choice", "thinking_off"),
+        ("model", "choice", "thinking_off", "strict"),
         [
-            ("us.anthropic.claude-sonnet-5-5", {"auto": {}}, False),
-            ("us.anthropic.claude-opus-5-5", {"auto": {}}, False),
-            (
-                "us.anthropic.claude-haiku-5-5",
-                {"tool": {"name": "RealityCheckModelResponse"}},
-                False,
-            ),
-            (
-                "us.anthropic.claude-sonnet-4-6",
-                {"tool": {"name": "RealityCheckModelResponse"}},
-                False,
-            ),
-            ("us.anthropic.claude-sonnet-5", {"tool": {"name": "RealityCheckModelResponse"}}, True),
+            ("us.anthropic.claude-sonnet-5-5", {"auto": {}}, False, True),
+            ("us.anthropic.claude-opus-5-5", {"auto": {}}, False, True),
+            ("us.anthropic.claude-haiku-5-5", {"tool": {"name": _TOOL}}, False, True),
+            ("us.anthropic.claude-sonnet-4-6", {"tool": {"name": _TOOL}}, False, False),
+            ("us.anthropic.claude-sonnet-5", {"tool": {"name": _TOOL}}, True, True),
+            # Opus 5 takes a forced choice on Bedrock (measured, #744); Fable 5 is
+            # unmeasured there, so it gets auto.
+            ("us.anthropic.claude-opus-5", {"tool": {"name": _TOOL}}, False, True),
+            ("us.anthropic.claude-fable-5", {"auto": {}}, False, True),
             (
                 "arn:aws:bedrock:us-east-1:111122223333:application-inference-profile/x",
                 {"auto": {}},
                 False,
+                False,
             ),
         ],
-        ids=["sonnet-5.5", "opus-5.5", "haiku-5.5", "sonnet-4.6", "sonnet-5", "unknown"],
+        ids=[
+            "sonnet-5.5",
+            "opus-5.5",
+            "haiku-5.5",
+            "sonnet-4.6",
+            "sonnet-5",
+            "opus-5",
+            "fable-5",
+            "unknown",
+        ],
     )
-    def test_the_tool_choice_follows_the_family(self, monkeypatch, model, choice, thinking_off):
+    def test_the_tool_choice_follows_the_family(
+        self, monkeypatch, model, choice, thinking_off, strict
+    ):
         from src.agents.referee import consolidation_validator as cv
         from src.contracts.reality_check_model_response import RealityCheckModelResponse
 
@@ -981,8 +992,8 @@ class TestTheValidatorAnswersThroughOneTool:
             RealityCheckModelResponse.model_json_schema()
         )
         assert kwargs["toolConfig"]["toolChoice"] == choice
-        # Strict exactly where the choice is auto (#746 review).
-        assert tool["toolSpec"].get("strict", False) is (choice == {"auto": {}})
+        # Strict wherever the family compiles strict schemas, forced or not (#744).
+        assert tool["toolSpec"].get("strict", False) is strict
         thinking = (kwargs.get("additionalModelRequestFields") or {}).get("thinking")
         assert (thinking == {"type": "disabled"}) is thinking_off
 
