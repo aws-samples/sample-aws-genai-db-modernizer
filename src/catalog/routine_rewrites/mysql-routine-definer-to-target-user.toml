@@ -1,0 +1,13 @@
+# Routine rewrite mysql-routine-definer-to-target-user (#1937). Fields: src/shared/catalog/routine_rewrites.py.
+# Source: MySQL 8.0 Reference Manual, Stored Object Access Control (error 1449); Amazon Aurora User Guide, Role-based privilege model.
+id = "mysql-routine-definer-to-target-user"
+feature = "The DEFINER clause names the target user"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+reason = "A DEFINER naming an account that does not exist on the target makes every call fail with error 1449, so the DEFINER clause is rewritten to the user that creates the routine on Aurora MySQL; only that clause of the header changes, never the body; a routine that runs as its definer (SQL SECURITY DEFINER, and every trigger and event) then runs with the target user's privileges, and its record says so."
+docs = "MySQL 8.0 Reference Manual, Stored Object Access Control; Amazon Aurora User Guide, Role-based privilege model"
+
+[match]
+rewrite = "definer"
+resolves = ["mysql-routine-definer"]

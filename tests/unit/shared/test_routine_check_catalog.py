@@ -52,7 +52,13 @@ def _write(
 def test_the_shipped_rules_cover_each_check_once_for_postgresql() -> None:
     # The catalog is shared with MySQL's routine checks (#1936): only PostgreSQL's here.
     rules = [r for r in routine_check_rules() if r.source_engines == ("postgresql",)]
-    assert sorted(r.match.check for r in rules) == ["extensions", "language", "ownership", "parse"]
+    assert sorted(r.match.check for r in rules) == [
+        "dependencies",
+        "extensions",
+        "language",
+        "ownership",
+        "parse",
+    ]
     for rule in rules:
         assert rule.source_engines == ("postgresql",)
         assert rule.targets == ("aurora_postgresql",)

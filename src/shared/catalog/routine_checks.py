@@ -71,7 +71,10 @@ ROUTINE_KINDS: tuple[RoutineKind, ...] = ("function", "procedure", "trigger", "e
 #   owner and security mode (``ownership``);
 # - MySQL: its DECLARE order (``declare_order``), its handlers (``handler``), its
 #   DEFINER (``definer``), the statements in its body (``statement``), its stored
-#   sql_mode (``sql_mode``) and the dynamic SQL it prepares (``dynamic_sql``).
+#   sql_mode (``sql_mode``) and the dynamic SQL it prepares (``dynamic_sql``);
+# - every engine: the tables and routines it names move in the same step
+#   (``dependencies``, #1937). The dependency check needs the set of objects the step
+#   moves, so it runs in :mod:`src.tools.routines.dependencies`, not in the checkers.
 RoutineCheck = Literal[
     "parse",
     "language",
@@ -83,6 +86,7 @@ RoutineCheck = Literal[
     "statement",
     "sql_mode",
     "dynamic_sql",
+    "dependencies",
 ]
 
 # The checks that read a function's or procedure's own pg_proc metadata (language,
@@ -168,6 +172,9 @@ class RoutineCheckMatch(BaseModel):
     # dynamic_sql (MySQL): a PREPARE whose statement text is not a string literal the
     # checker can read fails, since the statement checks cannot see what it runs.
     dynamic_sql: bool = False
+    # dependencies (every engine, #1937): a table or routine the routine names that is not
+    # in the set of objects moved in the same step fails.
+    dependencies_moved_together: bool = False
 
     @property
     def check(self) -> RoutineCheck:
@@ -202,6 +209,8 @@ class RoutineCheckMatch(BaseModel):
             found.append("sql_mode")
         if self.dynamic_sql:
             found.append("dynamic_sql")
+        if self.dependencies_moved_together:
+            found.append("dependencies")
         return found
 
     @model_validator(mode="after")
@@ -210,8 +219,8 @@ class RoutineCheckMatch(BaseModel):
             raise ValueError(
                 "[match] needs exactly one of parses, languages, extensions, "
                 "security_definer_owned_by_superuser, declare_order, valid_handlers, "
-                "definer_not_target_user, a statement list, sql_modes, unknown_sql_modes "
-                "or dynamic_sql"
+                "definer_not_target_user, a statement list, sql_modes, unknown_sql_modes, "
+                "dynamic_sql or dependencies_moved_together"
             )
         if self.trusted_extension_languages and not self.languages:
             raise ValueError("trusted_extension_languages goes with languages")

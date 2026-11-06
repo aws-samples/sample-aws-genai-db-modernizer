@@ -20,7 +20,9 @@ that applies to its source engine, target engine and kind, and returns one
   (#1921); ``dependencies_complete`` is False when some statement could not be read for
   them (a checker that records none leaves both at their defaults).
 - ``needs_attention`` (and ``status``): some rule failed with an impact other than
-  ``informational``.
+  ``informational``. A rule whose outcome is ``unknown`` (it could not be checked, such as
+  the dependency check on an incomplete dependency list, #1937) never blocks, and is listed
+  in ``unknown_rules`` so it is never read as a pass.
 
 The exact routine text keeps its literals and stays apart from reports, logs and model
 inputs (epic #1925): nothing here holds it.
@@ -66,14 +68,14 @@ class ParseFailure(BaseModel):
 
 class RoutineCheckResult(BaseModel):
     """One rule's result for one routine. ``findings`` names what failed (the
-    language, the extensions the target line lacks, the statement forms), never routine
-    text."""
+    language, the extensions the target line lacks, the statement forms), or why an
+    ``unknown`` outcome could not be checked, never routine text."""
 
     model_config = _HIDDEN
 
     rule_id: str
     check: RoutineCheck
-    outcome: Literal["pass", "fail"]
+    outcome: Literal["pass", "fail", "unknown"]
     impact: GapImpact
     reason: str
     fix_hint: str
@@ -81,13 +83,16 @@ class RoutineCheckResult(BaseModel):
 
 
 class RoutineDependency(BaseModel):
-    """A table or routine the routine names, as written (lower case)."""
+    """A table or routine the routine names, as written (lower case). ``routine_kind`` says
+    which kind of routine it is when the text tells (a ``CALL`` names a procedure, a call
+    in an expression a function, ``FOLLOWS`` a trigger, #1937); None when it does not."""
 
     model_config = _HIDDEN
 
     kind: Literal["table", "routine"]
     name: str = Field(min_length=1)
     schema_name: str | None = None
+    routine_kind: RoutineKind | None = None
 
 
 class RoutineVerdict(BaseModel):
@@ -117,6 +122,12 @@ class RoutineVerdict(BaseModel):
     @property
     def failed_rules(self) -> tuple[str, ...]:
         return tuple(c.rule_id for c in self.checks if c.outcome == "fail")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def unknown_rules(self) -> tuple[str, ...]:
+        """The rules that could not be checked (outcome ``unknown``): never a pass."""
+        return tuple(c.rule_id for c in self.checks if c.outcome == "unknown")
 
     @computed_field  # type: ignore[prop-decorator]
     @property

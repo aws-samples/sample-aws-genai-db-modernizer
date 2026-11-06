@@ -1826,6 +1826,7 @@ Generated from `src/catalog/routine_checks/*.toml` (#1935; field definitions: `s
 |---|---|---|---|---|---|
 | [`mysql-routine-declare-order`](#mysql-routine-declare-order) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | every DECLARE opens its BEGIN ... END block: variables and conditions first, then cursors, then handlers <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_declare_order --> |
 | [`mysql-routine-definer`](#mysql-routine-definer) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a DEFINER naming a user other than the target user (a CURRENT_USER form passes), for a routine that runs as its definer: a procedure or function unless it is SQL SECURITY INVOKER, and always a trigger or event <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_definer_check, tests/unit/tools/routines/test_mysql_routine_checks.py::test_sql_security_invoker_skips_the_definer_check_only_for_procedures_and_functions --> |
+| [`mysql-routine-dependency-not-moved`](#mysql-routine-dependency-not-moved) | mysql | Aurora MySQL | procedure, function, trigger, event | Blocks the move | a table or routine the routine names that the step does not move, given the objects the step moves (an unqualified name is the routine's own schema, and a routine matches only its own kind); an incomplete dependency list is unknown, never a pass, and does not block: it is confirmed when the routine loads <!-- claim: tests/unit/tools/routines/test_routine_dependencies.py::test_a_dependency_the_step_does_not_move_fails_and_is_named, tests/unit/tools/routines/test_routine_dependencies.py::test_an_unqualified_name_is_the_routines_own_schema, tests/unit/tools/routines/test_routine_dependencies.py::test_a_routine_dependency_matches_only_its_own_kind, tests/unit/tools/routines/test_routine_dependencies.py::test_an_incomplete_list_is_unknown_never_pass_and_fails_only_on_names --> |
 | [`mysql-routine-dynamic-sql`](#mysql-routine-dynamic-sql) | mysql | Aurora MySQL | procedure, function, trigger, event | Behaves differently | a PREPARE from a user variable, whose text at run time no check can see (the string literals the routine assigns to it are checked) <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
 | [`mysql-routine-file-output`](#mysql-routine-file-output) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a body statement that contains `INTO OUTFILE`, `INTO DUMPFILE` (not `INTO OUTFILE S3`); a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
 | [`mysql-routine-handler`](#mysql-routine-handler) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | every handler is CONTINUE or EXIT and names valid, declared, distinct conditions <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_invalid_handlers --> |
@@ -1841,6 +1842,7 @@ Generated from `src/catalog/routine_checks/*.toml` (#1935; field definitions: `s
 | [`mysql-routine-set-global`](#mysql-routine-set-global) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a SET of a `GLOBAL`, `PERSIST`, `PERSIST_ONLY` variable; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
 | [`mysql-routine-sql-log-bin`](#mysql-routine-sql-log-bin) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | a SET of `sql_log_bin`; a prepared statement's literal text counts too <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_super_only_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_more_privileged_statements, tests/unit/tools/routines/test_mysql_routine_checks.py::test_dynamic_sql --> |
 | [`mysql-routine-unparseable`](#mysql-routine-unparseable) | mysql | Aurora MySQL | procedure, function, trigger, event | Needs a rewrite | one CREATE PROCEDURE, FUNCTION, TRIGGER or EVENT statement of the routine's kind whose header and compound body statements read <!-- claim: tests/unit/tools/routines/test_mysql_routine_checks.py::test_bodies_that_do_not_close_are_unparseable, tests/unit/tools/routines/test_mysql_routine_checks.py::test_headers_that_do_not_read_are_unparseable --> |
+| [`postgresql-routine-dependency-not-moved`](#postgresql-routine-dependency-not-moved) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Blocks the move | a table or routine the routine names that the step does not move, given the objects the step moves (an unqualified name is the routine's own schema, and a routine matches only its own kind); an incomplete dependency list is unknown, never a pass, and does not block: it is confirmed when the routine loads <!-- claim: tests/unit/tools/routines/test_routine_dependencies.py::test_a_dependency_the_step_does_not_move_fails_and_is_named, tests/unit/tools/routines/test_routine_dependencies.py::test_an_unqualified_name_is_the_routines_own_schema, tests/unit/tools/routines/test_routine_dependencies.py::test_a_routine_dependency_matches_only_its_own_kind, tests/unit/tools/routines/test_routine_dependencies.py::test_an_incomplete_list_is_unknown_never_pass_and_fails_only_on_names --> |
 | [`postgresql-routine-extension-not-offered`](#postgresql-routine-extension-not-offered) | postgresql | Aurora PostgreSQL | function, procedure, trigger | Blocks the move | every extension the routine uses is offered on the target version line (`src/catalog/aurora_postgresql_extensions.toml`, by name) <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_every_extension_the_target_line_lacks_fails_and_is_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_an_extension_only_a_later_line_offers_fails_on_the_earlier_line --> |
 | [`postgresql-routine-language`](#postgresql-routine-language) | postgresql | Aurora PostgreSQL | function, procedure | Blocks the move | the metadata's language and the statement's LANGUAGE agree, and the language is `plpgsql` or `sql`, or one of `plperl`, `pltcl`, `plv8`, `plcoffee`, `plls` where the target version line offers it as an extension; any other language fails <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_plpgsql_and_sql_pass, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_untrusted_c_and_unknown_languages_fail_and_are_named, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_trusted_language_passes_only_where_the_target_line_offers_it, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_metadata_and_the_statements_language_must_agree --> |
 | [`postgresql-routine-superuser-security-definer`](#postgresql-routine-superuser-security-definer) | postgresql | Aurora PostgreSQL | function, procedure | Needs a rewrite | a SECURITY DEFINER routine whose owner is a superuser on the source <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_superusers_security_definer_routine_is_flagged, tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes --> |
@@ -1861,6 +1863,14 @@ A DEFINER naming a user other than the target user: needs a rewrite. The routine
 Fix: Set DEFINER to the target user \(or CURRENT\_USER\), or create the named account on the target before the routine is used.
 
 Documentation: MySQL 8.0 Reference Manual, Stored Object Access Control; Amazon Aurora User Guide, Role-based privilege model.
+
+### mysql-routine-dependency-not-moved
+
+A routine that names a table or routine not moved in the same step: blocks the move. The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs \(or, for a trigger, cannot be created\) until that object moves too.
+
+Fix: Move the named tables and routines in the same step as this routine, or move the routine in the step that moves them.
+
+Documentation: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement.
 
 ### mysql-routine-dynamic-sql
 
@@ -1982,6 +1992,14 @@ Fix: Re-collect the routine with SHOW CREATE, or fix the text so it loads on the
 
 Documentation: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION Statements; Compound Statement Syntax.
 
+### postgresql-routine-dependency-not-moved
+
+A routine that names a table or routine not moved in the same step: blocks the move. The routine reads, writes or calls an object that is not created on the target in the same step, so it fails when it runs \(or, for a trigger, cannot be created\) until that object moves too.
+
+Fix: Move the named tables and routines in the same step as this routine, or move the routine in the step that moves them.
+
+Documentation: PostgreSQL documentation, CREATE FUNCTION; PostgreSQL documentation, CREATE TRIGGER.
+
 ### postgresql-routine-extension-not-offered
 
 A routine that uses an extension the target Aurora PostgreSQL version does not offer: blocks the move. The routine depends on an extension that Aurora PostgreSQL does not offer on the target version line, so it cannot be created there.
@@ -2013,6 +2031,41 @@ A routine whose CREATE statement does not parse: needs a rewrite. PostgreSQL's o
 Fix: Re-collect the routine with pg\_get\_functiondef or pg\_get\_triggerdef, or correct the statement so it parses, then check it again.
 
 Documentation: PostgreSQL documentation, CREATE FUNCTION; CREATE PROCEDURE; CREATE TRIGGER.
+
+## Routine rewrites: what changes on its own
+
+Generated from `src/catalog/routine_rewrites/*.toml` (#1937; field definitions: `src/shared/catalog/routine_rewrites.py`). Each rewrite changes a routine's header only, never its body; each is recorded with its rule, its reason and a diff that never holds a literal, and a routine that still fails a check after its rewrites still needs attention. <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_the_record_never_holds_a_literal, tests/unit/tools/routines/test_routine_rewrites.py::test_a_definer_rewrite_never_changes_the_body, tests/unit/tools/routines/test_routine_rewrites.py::test_a_search_path_pin_never_changes_the_body, tests/unit/tools/routines/test_routine_rewrites.py::test_other_failed_checks_keep_the_routine_needing_attention, tests/unit/tools/routines/test_routine_rewrites.py::test_the_same_input_gives_byte_identical_output --> A rewrite may still change how the routine runs, as each row says: a DEFINER or owner rewrite makes a routine that runs as its definer run with the target user's privileges, which its record notes, and a search_path pin keeps the source's name resolution even for a caller whose path differs. <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_a_definer_rewrite_notes_when_the_routine_runs_as_the_target_user, tests/unit/tools/routines/test_routine_rewrites.py::test_an_owner_rewrite_notes_a_security_definer_routine, tests/unit/tools/routines/test_routine_rewrites.py::test_a_security_definer_routine_pins_the_search_path -->
+
+| Rule | Sources | Targets | Kinds | Rewrites | Resolves |
+|---|---|---|---|---|---|
+| [`mysql-routine-definer-to-target-user`](#mysql-routine-definer-to-target-user) | mysql | Aurora MySQL | procedure, function, trigger, event | a DEFINER clause naming a user other than the target user is replaced by one naming the target user, and a text with no clause whose metadata names another user gets one; a CURRENT_USER form is left as it is, and a target user with no host is user@% <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_a_named_definer_becomes_the_target_user, tests/unit/tools/routines/test_routine_rewrites.py::test_a_definer_that_is_the_target_user_or_current_user_is_left_as_is, tests/unit/tools/routines/test_routine_rewrites.py::test_a_text_with_no_definer_clause_gets_one_only_when_its_metadata_names_another_user, tests/unit/tools/routines/test_routine_rewrites.py::test_a_target_user_with_no_host_is_any_host --> | [`mysql-routine-definer`](#mysql-routine-definer) |
+| [`postgresql-routine-owner-to-target-user`](#postgresql-routine-owner-to-target-user) | postgresql | Aurora PostgreSQL | function, procedure | a function or procedure is owned by the target user; its CREATE statement names no owner, so only the record changes <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_the_owner_becomes_the_target_user --> | - |
+| [`postgresql-routine-pin-search-path`](#postgresql-routine-pin-search-path) | postgresql | Aurora PostgreSQL | function, procedure | a SECURITY DEFINER function or procedure that sets no search_path gets a SET search_path clause naming the source's effective path, to keep its name resolution (no pg_temp is added); a SECURITY INVOKER routine, or one whose body reads, sets or resets the search_path, is left as it is <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_a_security_definer_routine_pins_the_search_path, tests/unit/tools/routines/test_routine_rewrites.py::test_an_existing_set_search_path_is_left_as_is, tests/unit/tools/routines/test_routine_rewrites.py::test_a_security_invoker_routine_is_not_pinned, tests/unit/tools/routines/test_routine_rewrites.py::test_a_body_that_reads_or_changes_the_search_path_is_not_pinned --> | - |
+| [`routine-dependency-order`](#routine-dependency-order) | mysql, postgresql | Aurora MySQL, Aurora PostgreSQL | function, procedure, trigger, event | every routine is created after the routines of the step it names, ties in routine id order; a dependency cycle is reported, and its routines are created together in routine id order <!-- claim: tests/unit/tools/routines/test_routine_dependencies.py::test_routines_follow_what_they_call_ties_in_id_order, tests/unit/tools/routines/test_routine_dependencies.py::test_cycles_are_reported_and_never_followed_round --> | - |
+
+### mysql-routine-definer-to-target-user
+
+The DEFINER clause names the target user. A DEFINER naming an account that does not exist on the target makes every call fail with error 1449, so the DEFINER clause is rewritten to the user that creates the routine on Aurora MySQL; only that clause of the header changes, never the body; a routine that runs as its definer \(SQL SECURITY DEFINER, and every trigger and event\) then runs with the target user's privileges, and its record says so.
+
+Documentation: MySQL 8.0 Reference Manual, Stored Object Access Control; Amazon Aurora User Guide, Role-based privilege model.
+
+### postgresql-routine-owner-to-target-user
+
+A function or procedure is owned by the target user. A function's CREATE statement names no owner, so on Aurora PostgreSQL the routine is owned by the user that creates it; the record names that user in place of the source owner, and the statement does not change; a SECURITY DEFINER routine then runs with the target user's privileges, and its record says so.
+
+Documentation: PostgreSQL documentation, CREATE FUNCTION; PostgreSQL documentation, ALTER FUNCTION.
+
+### postgresql-routine-pin-search-path
+
+A SECURITY DEFINER routine pins the source's effective search\_path. A SECURITY DEFINER routine that sets no search\_path resolves unqualified names in its caller's search\_path, so a SET search\_path clause naming the source's effective path is added to its header to keep the name resolution it had on the source \(it is not hardening: no pg\_temp is added, and a caller whose path differs now resolves names in the pinned one\); a routine that already sets one, or whose body reads, sets or resets the search\_path, is left as it is.
+
+Documentation: PostgreSQL documentation, CREATE FUNCTION.
+
+### routine-dependency-order
+
+Routines and triggers are created in dependency order. Each routine and trigger is created after the routines it names, ties in routine id order, so what it calls exists when it is created; a dependency cycle is reported, and its routines are created one after another in routine id order.
+
+Documentation: PostgreSQL documentation, CREATE TRIGGER; MySQL 8.0 Reference Manual, CREATE TRIGGER Statement.
 
 ## Write intents: serving a carried write the target's way
 

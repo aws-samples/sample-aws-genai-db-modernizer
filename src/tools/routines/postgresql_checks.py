@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import pgparse
@@ -57,10 +58,16 @@ from src.shared.catalog.routine_checks import (
     routine_check_rules,
 )
 from src.tools.analysis.relational_gaps import extension_landing_line
-from src.tools.routines.verdict import ParseFailure, RoutineCheckResult, RoutineVerdict
+from src.tools.routines.verdict import (
+    ParseFailure,
+    RoutineCheckResult,
+    RoutineDependency,
+    RoutineVerdict,
+)
 
 __all__ = [
     "SOURCE_ENGINE",
+    "PostgresHeader",
     "PostgresKind",
     "ParseFailure",
     "PostgresRoutine",
@@ -68,7 +75,9 @@ __all__ = [
     "RoutineVerdict",
     "check_postgresql_routine",
     "parse_routine",
+    "postgresql_header",
     "routine_target_line",
+    "trigger_references",
 ]
 
 # The collector source engine these routines come from (the rules' source_engines).
@@ -308,7 +317,8 @@ def check_postgresql_routine(
     """The verdict for ``routine`` on ``target_engine``'s ``target_line`` (``"16"``).
 
     Every rule for a PostgreSQL source, ``target_engine`` and the routine's kind runs,
-    in check order (parse, language, extensions, ownership). ``rules`` and
+    in check order (parse, language, extensions, ownership); the dependency check is
+    :func:`src.tools.routines.dependencies.check_dependencies`'s. ``rules`` and
     ``extension_lines`` default to the catalog's. A ``target_line`` the extension list
     does not name is a ValueError.
     """
@@ -328,6 +338,8 @@ def check_postgresql_routine(
             if SOURCE_ENGINE in r.source_engines
             and target_engine in r.targets
             and routine.kind in r.kinds
+            # The dependency check needs the step's moved objects (dependencies.py).
+            and r.match.check in _CHECK_ORDER
         ),
         key=lambda r: (_CHECK_ORDER.index(r.match.check), r.id),
     )
@@ -359,3 +371,116 @@ def check_postgresql_routine(
         parse_failure=parse_failure,
         checks=tuple(results),
     )
+
+
+# --------------------------------------------------------------------------- the header, for rewrites
+
+
+@dataclass(frozen=True)
+class PostgresHeader:
+    """What the rewrites (#1937) read from a function's or procedure's ``CREATE``, from
+    PostgreSQL's own parse tree (never a pattern over the text):
+
+    - ``security_definer``: the statement says ``SECURITY DEFINER``;
+    - ``sets_search_path``: it already has a ``SET search_path`` clause (any form);
+    - ``insert_at``: the character offset a new clause goes in at: the start of its ``AS``
+      clause, or of its first option when the body is an SQL-standard one
+      (``RETURN ...``, ``BEGIN ATOMIC ...``); None when it has neither;
+    - ``body``: the quoted body (``AS '...'``) as the parser reads it, None for an
+      SQL-standard body. The text keeps its literals: it is never recorded.
+    """
+
+    security_definer: bool
+    sets_search_path: bool
+    insert_at: int | None
+    body: str | None
+
+
+def _char_offset(text: str, byte_offset: int) -> int:
+    """The character offset of a parse-tree location (libpg_query counts UTF-8 bytes)."""
+    return len(text.encode("utf-8")[:byte_offset].decode("utf-8", errors="ignore"))
+
+
+def _function_statement(create_sql: str, kind: PostgresKind) -> Mapping[str, Any] | None:
+    """The one ``CreateFunctionStmt`` (or ``CreateTrigStmt``) of a statement that parses as
+    ``kind``, body included; None otherwise."""
+    if parse_routine(create_sql, kind) is not None:
+        return None
+    stmt_node = pgparse.parse(create_sql)[0].get("stmt") or {}
+    stmt = stmt_node.get(_STATEMENT_KINDS[kind])
+    return stmt if isinstance(stmt, Mapping) else None
+
+
+def postgresql_header(create_sql: str, kind: PostgresKind) -> PostgresHeader | None:
+    """The :class:`PostgresHeader` of a function's or procedure's ``CREATE``; None for a
+    trigger, or a statement that does not parse as ``kind``. Never raises."""
+    if kind == "trigger":
+        return None
+    try:
+        stmt = _function_statement(create_sql, kind)
+    except Exception:  # noqa: BLE001 -- parse_routine read it; anything else is no header
+        return None
+    if stmt is None:
+        return None
+    security = sets_path = False
+    as_at: int | None = None
+    first: int | None = None
+    body: str | None = None
+    for option in stmt.get("options") or ():
+        elem = option.get("DefElem") if isinstance(option, Mapping) else None
+        if not isinstance(elem, Mapping):
+            continue
+        location = elem.get("location")
+        if isinstance(location, int) and location >= 0:
+            first = location if first is None else min(first, location)
+        name, arg = elem.get("defname"), elem.get("arg")
+        if name == "security" and isinstance(arg, Mapping):
+            security = bool((arg.get("Boolean") or {}).get("boolval"))
+        elif name == "set" and isinstance(arg, Mapping):
+            var = arg.get("VariableSetStmt") or {}
+            sets_path = sets_path or str(var.get("name", "")).lower() == "search_path"
+        elif name == "as" and isinstance(location, int) and location >= 0:
+            as_at = location
+            body = _function_options(stmt)[1]
+    if as_at is None and stmt.get("sql_body") is None:
+        first = None
+    at = as_at if as_at is not None else first
+    return PostgresHeader(
+        security_definer=security,
+        sets_search_path=sets_path,
+        insert_at=_char_offset(create_sql, at) if at is not None else None,
+        body=body,
+    )
+
+
+def trigger_references(create_sql: str) -> tuple[RoutineDependency, ...] | None:
+    """The table a ``CREATE TRIGGER`` is on and the function it runs, from the parse tree
+    (lower case, schema None when unqualified); None when it does not parse as one
+    trigger. Never raises."""
+    try:
+        stmt = _function_statement(create_sql, "trigger")
+    except Exception:  # noqa: BLE001 -- parse_routine read it; anything else is no answer
+        return None
+    if stmt is None:
+        return None
+    relation = stmt.get("relation") or {}
+    names = [n for n in (_string(item) for item in stmt.get("funcname") or ()) if n]
+    out: list[RoutineDependency] = []
+    if relation.get("relname"):
+        out.append(
+            RoutineDependency(
+                kind="table",
+                name=str(relation["relname"]).lower(),
+                schema_name=(str(relation.get("schemaname") or "").lower() or None),
+            )
+        )
+    if names:
+        out.append(
+            RoutineDependency(
+                kind="routine",
+                name=names[-1].lower(),
+                schema_name=names[-2].lower() if len(names) > 1 else None,
+                routine_kind="function",
+            )
+        )
+    return tuple(sorted(out, key=lambda d: (d.kind, d.schema_name or "", d.name)))

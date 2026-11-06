@@ -64,6 +64,10 @@ from src.shared.catalog.routine_checks import (  # noqa: E402
     RoutineCheckRule,
     routine_check_rules,
 )
+from src.shared.catalog.routine_rewrites import (  # noqa: E402
+    RoutineRewriteRule,
+    routine_rewrite_rules,
+)
 from src.shared.catalog.routing import gates_file, routing_file, triage_signals_file  # noqa: E402
 from src.shared.catalog.write_intents import (  # noqa: E402
     CarriedWriteSettings,
@@ -314,6 +318,9 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
         gap_rules(), aurora_version_lines(), {e.id: e.display_name for e in entries}
     )
     out += render_routine_checks_md(routine_check_rules(), {e.id: e.display_name for e in entries})
+    out += render_routine_rewrites_md(
+        routine_rewrite_rules(), {e.id: e.display_name for e in entries}
+    )
     out += render_write_intents_md(
         write_intents(),
         carried_write_settings(),
@@ -593,7 +600,21 @@ _ROUTINE_CHECK_TEXT = {
         "a PREPARE from a user variable, whose text at run time no check can see (the string "
         "literals the routine assigns to it are checked)"
     ),
+    "dependencies": (
+        "a table or routine the routine names that the step does not move, given the "
+        "objects the step moves (an unqualified name is the routine's own schema, and a "
+        "routine matches only its own kind); an incomplete dependency list is unknown, "
+        "never a pass, and does not block: it is confirmed when the routine loads"
+    ),
 }
+# The dependency check's tests, the same for every engine (#1937).
+_DEPENDENCY_TESTS = "tests/unit/tools/routines/test_routine_dependencies.py::"
+_DEPENDENCY_CHECK_CLAIM = (
+    _DEPENDENCY_TESTS + "test_a_dependency_the_step_does_not_move_fails_and_is_named",
+    _DEPENDENCY_TESTS + "test_an_unqualified_name_is_the_routines_own_schema",
+    _DEPENDENCY_TESTS + "test_a_routine_dependency_matches_only_its_own_kind",
+    _DEPENDENCY_TESTS + "test_an_incomplete_list_is_unknown_never_pass_and_fails_only_on_names",
+)
 _ROUTINE_CHECK_CLAIMS = {
     "parse": (
         _ROUTINE_TESTS + "test_parse_passes_each_routine_shape",
@@ -616,6 +637,7 @@ _ROUTINE_CHECK_CLAIMS = {
         _ROUTINE_TESTS + "test_a_superusers_security_definer_routine_is_flagged",
         _ROUTINE_TESTS + "test_a_definer_owned_by_a_role_or_an_invoker_owned_by_a_superuser_passes",
     ),
+    "dependencies": _DEPENDENCY_CHECK_CLAIM,
 }
 
 
@@ -644,6 +666,7 @@ _MYSQL_ROUTINE_CHECK_CLAIMS = {
         + "test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules",
     ),
     "dynamic_sql": (_MYSQL_ROUTINE_TESTS + "test_dynamic_sql",),
+    "dependencies": _DEPENDENCY_CHECK_CLAIM,
 }
 
 
@@ -743,6 +766,106 @@ def render_routine_checks_md(
             f"{md_text(r.feature)}: {_IMPACT_LABELS[r.impact].lower()}. {md_text(r.reason)}",
             "",
             f"Fix: {md_text(r.fix_hint)}",
+            "",
+            f"Documentation: {md_text(r.docs)}.",
+            "",
+        ]
+    return out
+
+
+# The routine rewrite section's tests (#1937).
+_REWRITE_TESTS = "tests/unit/tools/routines/test_routine_rewrites.py::"
+_REWRITE_SECTION_CLAIM = (
+    _REWRITE_TESTS + "test_the_record_never_holds_a_literal",
+    _REWRITE_TESTS + "test_a_definer_rewrite_never_changes_the_body",
+    _REWRITE_TESTS + "test_a_search_path_pin_never_changes_the_body",
+    _REWRITE_TESTS + "test_other_failed_checks_keep_the_routine_needing_attention",
+    _REWRITE_TESTS + "test_the_same_input_gives_byte_identical_output",
+)
+_REWRITE_NOTE_CLAIM = (
+    _REWRITE_TESTS + "test_a_definer_rewrite_notes_when_the_routine_runs_as_the_target_user",
+    _REWRITE_TESTS + "test_an_owner_rewrite_notes_a_security_definer_routine",
+    _REWRITE_TESTS + "test_a_security_definer_routine_pins_the_search_path",
+)
+_REWRITE_TEXT = {
+    "definer": (
+        "a DEFINER clause naming a user other than the target user is replaced by one naming "
+        "the target user, and a text with no clause whose metadata names another user gets "
+        "one; a CURRENT_USER form is left as it is, and a target user with no host is user@%"
+    ),
+    "owner": (
+        "a function or procedure is owned by the target user; its CREATE statement names no "
+        "owner, so only the record changes"
+    ),
+    "search_path": (
+        "a SECURITY DEFINER function or procedure that sets no search_path gets a SET "
+        "search_path clause naming the source's effective path, to keep its name "
+        "resolution (no pg_temp is added); a SECURITY INVOKER routine, or one whose body "
+        "reads, sets or resets the search_path, is left as it is"
+    ),
+    "dependency_order": (
+        "every routine is created after the routines of the step it names, ties in routine id "
+        "order; a dependency cycle is reported, and its routines are created together in "
+        "routine id order"
+    ),
+}
+_REWRITE_CLAIMS = {
+    "definer": (
+        _REWRITE_TESTS + "test_a_named_definer_becomes_the_target_user",
+        _REWRITE_TESTS + "test_a_definer_that_is_the_target_user_or_current_user_is_left_as_is",
+        _REWRITE_TESTS
+        + "test_a_text_with_no_definer_clause_gets_one_only_when_its_metadata_names_another_user",
+        _REWRITE_TESTS + "test_a_target_user_with_no_host_is_any_host",
+    ),
+    "owner": (_REWRITE_TESTS + "test_the_owner_becomes_the_target_user",),
+    "search_path": (
+        _REWRITE_TESTS + "test_a_security_definer_routine_pins_the_search_path",
+        _REWRITE_TESTS + "test_an_existing_set_search_path_is_left_as_is",
+        _REWRITE_TESTS + "test_a_security_invoker_routine_is_not_pinned",
+        _REWRITE_TESTS + "test_a_body_that_reads_or_changes_the_search_path_is_not_pinned",
+    ),
+    "dependency_order": (
+        _DEPENDENCY_TESTS + "test_routines_follow_what_they_call_ties_in_id_order",
+        _DEPENDENCY_TESTS + "test_cycles_are_reported_and_never_followed_round",
+    ),
+}
+
+
+def render_routine_rewrites_md(
+    rules: tuple[RoutineRewriteRule, ...], labels: dict[str, str]
+) -> list[str]:
+    """The routine rewrite rules section of the rule-catalog page (#1937)."""
+    out = [
+        "## Routine rewrites: what changes on its own",
+        "",
+        "Generated from `src/catalog/routine_rewrites/*.toml` (#1937; field definitions: "
+        "`src/shared/catalog/routine_rewrites.py`). Each rewrite changes a routine's header "
+        "only, never its body; each is recorded with its rule, its reason and a diff that "
+        "never holds a literal, and a routine that still fails a check after its rewrites "
+        "still needs attention."
+        + _claim(_REWRITE_SECTION_CLAIM)
+        + " A rewrite may still change how the routine runs, as each row says: a DEFINER or "
+        "owner rewrite makes a routine that runs as its definer run with the target user's "
+        "privileges, which its record notes, and a search_path pin keeps the source's name "
+        "resolution even for a caller whose path differs." + _claim(_REWRITE_NOTE_CLAIM),
+        "",
+        "| Rule | Sources | Targets | Kinds | Rewrites | Resolves |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in rules:
+        targets = ", ".join(labels.get(t, t) for t in r.targets)
+        resolves = ", ".join(f"[`{c}`](#{c})" for c in r.match.resolves) or "-"
+        out.append(
+            f"| [`{r.id}`](#{r.id}) | {', '.join(r.source_engines)} | {md_cell(targets)} | "
+            f"{', '.join(r.kinds)} | {md_cell(_REWRITE_TEXT[r.match.rewrite])}"
+            f"{_claim(_REWRITE_CLAIMS[r.match.rewrite])} | {resolves} |"
+        )
+    out.append("")
+    for r in rules:
+        out += [
+            f"### {r.id}",
+            "",
+            f"{md_text(r.feature)}. {md_text(r.reason)}",
             "",
             f"Documentation: {md_text(r.docs)}.",
             "",
