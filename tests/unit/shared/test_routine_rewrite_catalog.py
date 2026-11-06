@@ -119,7 +119,9 @@ def test_the_dependency_check_rules_are_not_the_checkers() -> None:
     mysql = MySqlRoutine(
         routine_id="s.p", kind="procedure", create_sql="CREATE PROCEDURE p() BEGIN END"
     )
-    verdict = check_mysql_routine(mysql, target_engine="aurora_mysql", target_user="admin")
+    verdict = check_mysql_routine(
+        mysql, target_engine="aurora_mysql", target_user="admin", source_version="8.0.36"
+    )
     assert all(c.check != "dependencies" for c in verdict.checks)
     pg = PostgresRoutine(
         routine_id="public.f()",

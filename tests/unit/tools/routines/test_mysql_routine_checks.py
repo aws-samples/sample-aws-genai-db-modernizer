@@ -30,6 +30,7 @@ from src.shared.catalog.routine_checks import (
     RoutineCheckRule,
     load_routine_check_rules,
     routine_check_rules,
+    version_change_scope,
 )
 from src.tools.routines.mysql_builtins import is_builtin_function
 from src.tools.routines.mysql_checks import (
@@ -65,6 +66,7 @@ def _proc(text: str, **fields: Any) -> MySqlRoutine:
 
 
 def _check(routine: MySqlRoutine, **kwargs: Any) -> RoutineVerdict:
+    kwargs.setdefault("source_version", None)
     return check_mysql_routine(routine, target_engine="aurora_mysql", **kwargs)
 
 
@@ -87,15 +89,28 @@ def _deps(verdict: RoutineVerdict) -> list[str]:
 
 @pytest.mark.parametrize("entry", MANIFEST, ids=lambda e: e["file"])
 def test_each_corpus_routine_gets_its_expected_verdict(entry: dict[str, Any]) -> None:
-    verdict = _check(_routine(entry), target_user=TARGET_USER)
+    verdict = _check(
+        _routine(entry),
+        target_user=TARGET_USER,
+        source_version=entry.get("source_version"),
+        target_line=entry.get("target_line"),
+    )
     assert verdict.status == entry["status"]
     assert verdict.parsed is entry["parsed"]
     assert _ids(verdict) == entry["findings"]
     assert _deps(verdict) == entry["dependencies"]
     assert verdict.dependencies_complete is entry.get("dependencies_complete", True)
     assert verdict.target_engine == "aurora_mysql" and verdict.kind == entry["kind"]
-    # One result per MySQL rule, in check order, passed or failed.
-    assert {c.rule_id for c in verdict.checks} == {r.id for r in _mysql_rules()}
+    # One result per MySQL rule, in check order, passed or failed, but for the version-change
+    # rules this move does not cross (#1952).
+    lines = (entry["target_line"],) if entry.get("target_line") else ("8.0", "8.4")
+    crossed = {
+        r.id
+        for r in _mysql_rules()
+        if version_change_scope(r, "mysql", entry.get("source_version"), lines)
+        != "not_a_version_change"
+    }
+    assert {c.rule_id for c in verdict.checks} == crossed
     assert verdict.parsed is (verdict.parse_failure is None)
 
 
@@ -512,6 +527,8 @@ def test_the_bundled_routine_rules_load_and_validate() -> None:
         "statement",
         "sql_mode",
         "dynamic_sql",
+        "reserved_word",
+        "group_by",
         "dependencies",
     }
     for rule in mysql:
@@ -598,7 +615,10 @@ def test_the_target_must_be_a_listed_aurora_mysql_line(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         check_mysql_routine(
-            _proc("CREATE PROCEDURE p() SELECT 1"), target_engine=engine, target_line=line
+            _proc("CREATE PROCEDURE p() SELECT 1"),
+            target_engine=engine,
+            target_line=line,
+            source_version=None,
         )
 
 
@@ -699,6 +719,16 @@ SQLGLOT_CANNOT_READ = {
     "dynamic-sql-literal.sql": "error",
     "dynamic-sql-variable.sql": "error",
     "kill.sql": "error",
+    # The MySQL 5.7 routines (#1952): IN parameters, DECLARE, cursors, events, and the
+    # syntax 8.0 removed (GROUP BY ... DESC, SQL_CACHE).
+    "v57-clean.sql": "error",
+    "v57-reserved-words.sql": "error",
+    "v57-found-rows.sql": "error",
+    "v57-group-by.sql": "error",
+    "v57-removed-functions.sql": "error",
+    "v57-sql-cache.sql": "command",
+    "v57-removed-variables.sql": "partial",
+    "v80-to-84.sql": "error",
 }
 
 
@@ -729,9 +759,11 @@ def test_sqlglot_alone_does_not_tell_a_broken_body_from_a_valid_one() -> None:
         assert _sqlglot_reading(stmt) in {"error", "full"}, entry["file"]
 
 
+@pytest.mark.passes_on_main
 def test_every_dml_statement_of_the_parsed_corpus_reads_with_sqlglot() -> None:
     """The other half: once the reader has split a body, sqlglot reads every statement it
-    gets in the corpus (only the dynamic-SQL routine's dependencies stay incomplete)."""
+    gets in the corpus (only the dynamic-SQL routines' dependencies stay incomplete, and
+    those of the 5.7 routines whose statements use syntax or functions 8.0 removed, #1952)."""
     incomplete = [
         e["file"] for e in MANIFEST if e["parsed"] and not e.get("dependencies_complete", True)
     ]
@@ -739,6 +771,10 @@ def test_every_dml_statement_of_the_parsed_corpus_reads_with_sqlglot() -> None:
         "dynamic-sql.sql",
         "dynamic-sql-literal.sql",
         "dynamic-sql-variable.sql",
+        "v57-group-by.sql",
+        "v57-removed-functions.sql",
+        "v57-sql-cache.sql",
+        "v80-to-84.sql",
     ]
 
 

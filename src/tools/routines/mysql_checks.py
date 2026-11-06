@@ -55,7 +55,19 @@ The checks (each rule's ``[match]`` says which):
 - ``sql_mode``: the routine's stored ``sql_mode`` holds a listed mode, or one that no
   rule of the catalog names and MySQL does not list;
 - ``dynamic_sql``: a ``PREPARE`` from a user variable, whose text at run time no check
-  can see (the literals assigned to it are checked, but the variable may hold anything).
+  can see (the literals assigned to it are checked, but the variable may hold anything);
+- ``reserved_word`` (#1952): a listed word written as an unquoted identifier after the
+  routine's name (not after a ``.``, not an ``@``/``@@`` variable's name, not inside a
+  listed keyword context), in the text or in a ``PREPARE``'s literal text;
+- ``group_by`` (#1952): a SELECT whose own GROUP BY has no ORDER BY after it, a GROUP BY
+  with a LIMIT and no ORDER BY at its level, or a GROUP BY that sorts its columns
+  (``ASC``/``DESC``).
+
+A rule with a ``[version_change]`` (#1952) runs only when the move crosses that version:
+the source's line (``source_version``) is older than the rule's line and the target line
+has it (:func:`~src.shared.catalog.routine_checks.version_change_scope`). On a same-major
+target it is left out of the verdict; when the source's version is unknown, or no single
+target line is chosen and only some lines have the change, its outcome is ``unknown``.
 
 ``parse``, ``declare_order`` and ``handler`` fail together with a ``parse_failure``; the
 ``definer`` check runs when the header reads, the ``sql_mode`` check always (it reads
@@ -82,6 +94,7 @@ from src.shared.catalog.routine_checks import (
     RoutineCheckRule,
     RoutineKind,
     routine_check_rules,
+    version_change_scope,
 )
 from src.tools.routines.mysql_builtins import is_builtin_function
 from src.tools.routines.verdict import (
@@ -426,6 +439,8 @@ class _Header:
     trigger_order: tuple[str | None, str] | None = None
     # The DEFINER clause's tokens, ``DEFINER`` up to the account's last token (exclusive).
     definer_tokens: tuple[int, int] | None = None
+    # The first token after the object's name (its parameters, or what follows the name).
+    name_end: int = 0
 
 
 class _Cursor:
@@ -603,6 +618,7 @@ def _header(toks: list[Token]) -> _Header:
         security=None,
         body_start=0,
         definer_tokens=definer_tokens,
+        name_end=cur.i,
     )
     if kind in {"PROCEDURE", "FUNCTION"}:
         cur.skip_parens()
@@ -1244,6 +1260,8 @@ _CHECK_ORDER: tuple[RoutineCheck, ...] = (
     *_STRUCTURE_CHECKS,
     "definer",
     "statement",
+    "reserved_word",
+    "group_by",
     "dynamic_sql",
     "sql_mode",
 )
@@ -1270,6 +1288,26 @@ def _words(part: Sequence[Token]) -> list[str]:
 def _phrase_at(words: list[str], i: int, phrase: str) -> bool:
     want = phrase.split()
     return words[i : i + len(want)] == want
+
+
+# Why a version-change rule could not be checked (#1952): the finding of its ``unknown``
+# outcome.
+_UNKNOWN_SCOPES: dict[str | None, str] = {
+    "source_unknown": "source version unknown",
+    "target_unknown": "target line not chosen",
+}
+
+
+def _unknown(rule: RoutineCheckRule, why: str) -> RoutineCheckResult:
+    return RoutineCheckResult(
+        rule_id=rule.id,
+        check=rule.match.check,
+        outcome="unknown",
+        impact=rule.impact,
+        reason=rule.reason,
+        fix_hint=rule.fix_hint,
+        findings=(why,),
+    )
 
 
 def _result(rule: RoutineCheckRule, findings: Iterable[str]) -> RoutineCheckResult:
@@ -1364,13 +1402,23 @@ def _mode_findings(rule: RoutineCheckRule, modes: list[str], named: set[str]) ->
     return out
 
 
+# A listed name followed by ``(`` is not a call to the built-in after these words: a
+# qualified name's later part (``shop.area(x)``, a user's function) or a table name
+# (``INSERT INTO area (id)``, ``CREATE TABLE x (...)``), #2006 review.
+_NOT_A_CALL_AFTER = frozenset({".", "INTO", "UPDATE", "JOIN", "FROM", "TABLE"})
+
+
 def _statement_findings(rule: RoutineCheckRule, statements: Iterable[_Statement]) -> list[str]:
     match = rule.match
     out: list[str] = []
     for stmt in statements:
         words = _words(_expanded(stmt.tokens))
         for i, word in enumerate(words):
-            if word in match.function_calls and words[i + 1 : i + 2] == ["("]:
+            if (
+                word in match.function_calls
+                and words[i + 1 : i + 2] == ["("]
+                and (i == 0 or words[i - 1] not in _NOT_A_CALL_AFTER)
+            ):
                 out.append(f"{word}()")
         if stmt.expression:
             continue
@@ -1387,7 +1435,138 @@ def _statement_findings(rule: RoutineCheckRule, statements: Iterable[_Statement]
                     out.append(f"SET {scope}")
                 if scope != "@" and variable in match.set_variables:
                     out.append(f"SET {variable}")
+                if scope != "@" and variable in match.system_variables:
+                    out.append(f"SET {variable}")
+    if match.system_variables:
+        out += _system_variable_reads(match.system_variables, statements)
     return sorted(out)
+
+
+def _system_variable_reads(variables: Sequence[str], statements: Iterable[_Statement]) -> list[str]:
+    """``@@name`` / ``@@scope.name`` reads of one of ``variables`` (a SET's left side too:
+    ``SET @@x = 1`` is the SET form, already found, so it is not counted twice)."""
+    out: list[str] = []
+    for stmt in statements:
+        toks = _expanded(stmt.tokens)
+        sets = (
+            {variable for scope, variable, _ in _set_assignments(toks) if scope != "@"}
+            if toks and _word(toks[0]) == "SET"
+            else set()
+        )
+        for i, tok in enumerate(toks):
+            if tok.kind != "SESSION_PARAMETER":
+                continue
+            j = i + 1
+            if j + 1 < len(toks) and toks[j + 1].kind == "DOT":
+                j += 2
+            if j < len(toks):
+                name = toks[j].text.lower()
+                if name in variables and name not in sets:
+                    out.append(f"@@{name}")
+    return out
+
+
+# The token before a word that makes the word a name, not a keyword: a qualified name's
+# later part (``t.rank``), a user variable (``@rank``) or a system variable (``@@rank``).
+_NAMING_KINDS = {"DOT", "SESSION_PARAMETER"}
+
+
+def _identifier_words(tokens: Sequence[Token]) -> list[tuple[str, bool]]:
+    """Each word of ``tokens`` with whether it is written as a plain word that could be
+    read as a keyword: False for a quoted token and for a word after a naming token. A
+    command's rest (``CALL p(rank)``) is read as tokens."""
+    out: list[tuple[str, bool]] = []
+    prev: Token | None = None
+    for tok in tokens:
+        if tok.command_rest:
+            try:
+                inner = _tokens(tok.text)
+            except _Unparseable:
+                inner = []
+            out += _identifier_words(inner)
+            prev = tok
+            continue
+        named = prev is not None and (
+            prev.kind in _NAMING_KINDS or (prev.kind == "PARAMETER" and prev.text == "@")
+        )
+        plain = tok.kind not in _QUOTED and not named
+        for word in (_word(tok) or "?").split():
+            out.append((word, plain))
+        prev = tok
+    return out
+
+
+def _reserved_word_findings(rule: RoutineCheckRule, parts: Iterable[Sequence[Token]]) -> list[str]:
+    """The listed words each part (the text after the routine's name, each PREPARE's
+    literal) writes as an unquoted identifier, outside the rule's keyword contexts."""
+    match = rule.match
+    listed = set(match.reserved_words)
+    out: list[str] = []
+    for part in parts:
+        pairs = _identifier_words(part)
+        words = [w for w, _ in pairs]
+        covered: set[int] = set()
+        for context in match.reserved_word_contexts:
+            size = len(context.split())
+            for i in range(len(words)):
+                if _phrase_at(words, i, context):
+                    covered.update(range(i, i + size))
+        out += [
+            w for i, (w, plain) in enumerate(pairs) if plain and w in listed and i not in covered
+        ]
+    return sorted(set(out))
+
+
+# The words that end a GROUP BY's column list at its own level.
+_GROUP_BY_ENDS = {"HAVING", "ORDER", "LIMIT", "WINDOW", "UNION", "PROCEDURE", "INTO", "FOR"}
+_GROUP_BY_ENDS |= {"LOCK", "WITH"}
+
+
+def _group_by_findings(rule: RoutineCheckRule, statements: Iterable[_Statement]) -> list[str]:
+    """What fails a ``group_by`` rule, one finding per statement form."""
+    mode = rule.match.group_by
+    out: list[str] = []
+    for stmt in statements:
+        if stmt.expression:
+            continue
+        words = _words(_expanded(stmt.tokens))
+        depths: list[int] = []
+        depth = 0
+        for word in words:
+            if word == ")":
+                depth -= 1
+            depths.append(depth)
+            if word == "(":
+                depth += 1
+        groups = [i for i in range(len(words)) if _phrase_at(words, i, "GROUP BY")]
+        if mode == "without_order_by":
+            for g in groups:
+                level = depths[g]
+                ordered = limited = False
+                for k in range(g + 2, len(words)):
+                    if depths[k] < level:
+                        break
+                    if depths[k] == level:
+                        ordered = ordered or _phrase_at(words, k, "ORDER BY")
+                        limited = limited or words[k] == "LIMIT"
+                if ordered:
+                    continue
+                if level == 0 and words[:1] == ["SELECT"]:
+                    out.append("GROUP BY without ORDER BY")
+                elif limited:
+                    # A grouped subquery or INSERT ... SELECT whose LIMIT kept the first
+                    # rows of the source's sorted groups (#2006 review).
+                    out.append("GROUP BY with LIMIT, without ORDER BY")
+            continue
+        for g in groups:
+            level = depths[g]
+            for k in range(g + 2, len(words)):
+                if depths[k] < level or (depths[k] == level and words[k] in _GROUP_BY_ENDS):
+                    break
+                if depths[k] == level and words[k] in {"ASC", "DESC"}:
+                    out.append(f"GROUP BY {words[k]}")
+                    break
+    return sorted(set(out))
 
 
 def _dependencies(
@@ -1450,6 +1629,9 @@ class _Read:
     statements: list[_Statement] = field(default_factory=list)
     reading: _Reading = field(default_factory=_Reading)
     from_variable: bool = False
+    # The parts the reserved-word check reads: the text after the routine's name, then
+    # each PREPARE's literal text.
+    identifier_parts: list[list[Token]] = field(default_factory=list)
 
 
 def _read(routine: MySqlRoutine) -> _Read:
@@ -1488,6 +1670,8 @@ def _read(routine: MySqlRoutine) -> _Read:
             out.reading.complete = False
     prepared, out.from_variable = _prepared(out.statements)
     out.statements += prepared
+    if out.header is not None:
+        out.identifier_parts = [toks[out.header.name_end :], *(p.tokens for p in prepared)]
     return out
 
 
@@ -1497,17 +1681,22 @@ def check_mysql_routine(
     target_engine: str,
     target_line: str | None = None,
     target_user: str | None = None,
+    source_version: str | None,
     rules: Iterable[RoutineCheckRule] | None = None,
 ) -> RoutineVerdict:
     """The verdict for ``routine`` on ``target_engine`` (``target_line`` ``"8.0"`` or
-    ``"8.4"``, or None for every line).
+    ``"8.4"``, or None for every line), from a source at ``source_version`` (the
+    collection's server version, ``"5.7.44-log"``; None when unknown). ``source_version``
+    is required, so no caller leaves the version-change rules unknown by accident.
 
     Every rule for a MySQL source, ``target_engine`` and the routine's kind runs, in check
     order (parse, declare order, handlers, definer, statements, dynamic SQL, sql_mode);
     the dependency check is :func:`src.tools.routines.dependencies.check_dependencies`'s.
     ``target_user`` is the user the routines are created as on the target (``admin`` or
     ``admin@%``); a ``DEFINER`` naming anyone else, or any named ``DEFINER`` when it is
-    None, fails the definer check. ``rules`` defaults to the catalog's. A target engine
+    None, fails the definer check. A ``[version_change]`` rule runs only when the move
+    crosses its version (see the module docstring). ``rules`` defaults to the catalog's. A
+    target engine
     that is not a MySQL source's Aurora engine, a ``target_line`` it does not list, or a
     ``target_user`` that is not an account name is a ValueError; the routine's text never
     raises.
@@ -1530,6 +1719,13 @@ def check_mysql_routine(
     ]
     # The loader keeps every other MySQL rule's check one this module implements.
     applicable.sort(key=lambda r: (_CHECK_ORDER.index(r.match.check), r.id))
+    # #1952: a version-change rule runs only when the move crosses its version.
+    lines_considered = (target_line,) if target_line is not None else lines.lines
+    scopes = {
+        r.id: version_change_scope(r, SOURCE_ENGINE, source_version, lines_considered)
+        for r in applicable
+    }
+    applicable = [r for r in applicable if scopes[r.id] != "not_a_version_change"]
 
     read = _read(routine)
     header, failure = read.header, read.failure
@@ -1553,7 +1749,10 @@ def check_mysql_routine(
     results: list[RoutineCheckResult] = []
     for rule in applicable:
         check = rule.match.check
-        if check in _STRUCTURE_CHECKS:
+        scope = scopes[rule.id]
+        if scope in _UNKNOWN_SCOPES:
+            results.append(_unknown(rule, _UNKNOWN_SCOPES[scope]))
+        elif check in _STRUCTURE_CHECKS:
             failed = failure is not None and failure.check == check
             results.append(_result(rule, [failure.evidence] if failed and failure else []))
         elif check == "definer":
@@ -1563,6 +1762,10 @@ def check_mysql_routine(
             results.append(_result(rule, _statement_findings(rule, read.statements)))
         elif check == "dynamic_sql":
             results.append(_result(rule, ["dynamic SQL"] if read.from_variable else []))
+        elif check == "reserved_word":
+            results.append(_result(rule, _reserved_word_findings(rule, read.identifier_parts)))
+        elif check == "group_by":
+            results.append(_result(rule, _group_by_findings(rule, read.statements)))
         else:
             results.append(_result(rule, _mode_findings(rule, routine.modes, named)))
 

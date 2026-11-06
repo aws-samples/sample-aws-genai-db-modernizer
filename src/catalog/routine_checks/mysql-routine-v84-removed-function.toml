@@ -1,0 +1,17 @@
+# Routine check mysql-routine-v84-removed-function (#2006 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed: WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS()); the native function list (sql/item_create.cc) of the 8.0 and 8.4 lines.
+id = "mysql-routine-v84-removed-function"
+feature = "A function MySQL 8.4 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine calls WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS(), which MySQL 8.4 removed, so on Aurora MySQL version 8.4 the call fails when the routine runs."
+fix_hint = "Call WAIT_FOR_EXECUTED_GTID_SET() instead, with the same GTID set and timeout."
+docs = "MySQL 8.4 Reference Manual, What Is New in MySQL 8.4 since MySQL 8.0 (Features Removed)"
+
+[version_change]
+line = "8.4"
+
+[match]
+function_calls = ["WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS"]
