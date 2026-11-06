@@ -18,9 +18,11 @@ from ci import pr_evidence
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "pr-evidence.yml"
-BOTH_NO: dict[str, list[str]] = {"e2e-llm": [], "bedrock-smoke": []}
-E2E: dict[str, list[str]] = {"e2e-llm": ["AGENTS.md"], "bedrock-smoke": []}
-BOTH: dict[str, list[str]] = {"e2e-llm": ["x"], "bedrock-smoke": ["y"]}
+# Each run's state, as ci/needs_llm_run.verdict returns it.
+BOTH_NO: dict[str, str] = {"e2e-llm": "not required", "bedrock-smoke": "not required"}
+E2E: dict[str, str] = {"e2e-llm": "required", "bedrock-smoke": "not required"}
+BOTH: dict[str, str] = {"e2e-llm": "required", "bedrock-smoke": "required"}
+BOTH_NIGHTLY: dict[str, str] = {"e2e-llm": "nightly", "bedrock-smoke": "nightly"}
 
 
 def body(*lines: str) -> str:
@@ -155,6 +157,65 @@ def test_html_comments_are_ignored():
     assert len(pr_evidence.check(text, BOTH_NO)) == 2
 
 
+def test_nightly_runs_need_no_result_line_even_in_the_queue():
+    """#1965: a nightly verdict is accepted with no result line, in the queue too."""
+    text = body("e2e-llm: nightly", "bedrock-smoke: nightly")
+    assert pr_evidence.stated_verdicts(text) == {
+        "e2e-llm": {"nightly"},
+        "bedrock-smoke": {"nightly"},
+    }
+    assert pr_evidence.check(text, BOTH_NIGHTLY, require_results=True) == []
+    assert pr_evidence.pending_results(text, BOTH_NIGHTLY) == []
+
+
+def test_a_required_run_beside_a_nightly_one_still_needs_its_result():
+    verdict = {"e2e-llm": "required", "bedrock-smoke": "nightly"}
+    text = body("e2e-llm: required", "bedrock-smoke: nightly")
+    assert pr_evidence.check(text, verdict) == []
+    assert pr_evidence.pending_results(text, verdict) == ["e2e-llm"]
+    errs = pr_evidence.check(text, verdict, require_results=True)
+    assert len(errs) == 1 and "'e2e-llm' is required and has no result yet" in errs[0]
+    passed = body("e2e-llm: required", "e2e-llm result: pass", "bedrock-smoke: nightly")
+    assert pr_evidence.check(passed, verdict, require_results=True) == []
+
+
+@pytest.mark.parametrize(
+    "line", ["e2e-llm result: fail (judge 2.1)", "e2e-llm result: ", "e2e-llm result: <excerpt>"]
+)
+def test_a_failing_result_line_on_a_nightly_run_fails(line: str):
+    """No result line is needed on a nightly run, but a stated failure is never accepted."""
+    text = body("e2e-llm: nightly", line, "bedrock-smoke: nightly")
+    errs = pr_evidence.check(text, BOTH_NIGHTLY)
+    assert len(errs) == 1 and "'e2e-llm' runs nightly for this diff" in errs[0]
+    passed = body("e2e-llm: nightly", "e2e-llm result: pass (judge 4.0)", "bedrock-smoke: nightly")
+    assert pr_evidence.check(passed, BOTH_NIGHTLY, require_results=True) == []
+
+
+@pytest.mark.parametrize(
+    ("stated", "actual"),
+    [
+        ("nightly", "required"),  # a prompt-tier diff cannot be put off to the nightly run
+        ("nightly", "not required"),
+        ("not required", "nightly"),
+        ("required", "nightly"),
+    ],
+)
+def test_a_nightly_verdict_must_match_the_diff(stated: str, actual: str):
+    verdict = {"e2e-llm": actual, "bedrock-smoke": "not required"}
+    errs = pr_evidence.check(body(f"e2e-llm: {stated}", "bedrock-smoke: not required"), verdict)
+    assert errs == [
+        f"the body says 'e2e-llm: {stated}' but ci/needs_llm_run.sh says 'e2e-llm: {actual}'"
+    ]
+
+
+def test_render_writes_the_nightly_lines_and_check_accepts_them():
+    text = pr_evidence.render(BOTH_NIGHTLY, [], ["src/shared/models.py"], set())
+    assert "e2e-llm: nightly\n" in text and "bedrock-smoke: nightly\n" in text
+    assert "runs nightly on main for this diff: no result line is needed" in text
+    assert "result: pass" not in text
+    assert pr_evidence.check(text, BOTH_NIGHTLY, require_results=True) == []
+
+
 def test_result_line_for_a_run_does_not_count_as_its_verdict():
     assert pr_evidence.stated_verdicts("e2e-llm result: required") == {}
 
@@ -257,6 +318,23 @@ def test_cli_missing_result_warns_and_exits_0_unless_results_are_required(repo: 
     assert "::error::" not in soft.stdout
     hard = _run(repo, "check", "--body-env", "B", "--require-results", env=env)
     assert hard.returncode == 1 and "::error::" in hard.stdout
+
+
+def test_cli_nightly_diff_passes_with_require_results_and_no_result(repo: Path):
+    """The real scripts on a nightly-tier diff: accepted with no result line (#1965)."""
+    f = repo / "scripts" / "run_synthesis.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("x")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "nightly")
+    ok = body("e2e-llm: nightly", "bedrock-smoke: nightly")
+    res = _run(repo, "check", "--body-env", "B", "--require-results", env={"B": ok})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "pending" not in res.stdout
+    stale = body("e2e-llm: required", "bedrock-smoke: required")
+    res = _run(repo, "check", "--body-env", "B", env={"B": stale})
+    assert res.returncode == 1
+    assert "ci/needs_llm_run.sh says 'e2e-llm: nightly'" in res.stdout
 
 
 @pytest.mark.passes_on_main
@@ -551,7 +629,7 @@ def test_e2e_llm_accepted_forms(result: str):
     "result", ["bedrock-smoke result: pass", "bedrock-smoke result: pass (errors: [])"]
 )
 def test_bedrock_smoke_accepted_forms(result: str):
-    verdict: dict[str, list[str]] = {"e2e-llm": [], "bedrock-smoke": ["y"]}
+    verdict: dict[str, str] = {"e2e-llm": "not required", "bedrock-smoke": "required"}
     ok = body("e2e-llm: not required", "bedrock-smoke: required", result)
     assert pr_evidence.check(ok, verdict) == []
     for bad_result in (

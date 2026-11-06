@@ -7,7 +7,8 @@
 Runs ``ci/needs_llm_run.py`` over the files this branch changed since its
 merge-base with ``origin/main`` (committed, uncommitted and untracked; files
 that only main changed do not count) and, when ``e2e-llm`` or ``bedrock-smoke``
-is required, shows its verdict to the user as a ``systemMessage``. Shown once
+is required (a prompt-tier path; a ``nightly`` verdict needs no run before merging,
+#1965), shows its verdict to the user as a ``systemMessage``. Shown once
 per session, and again only when the verdict changes. A reminder only: it never
 blocks (always exits 0), stays silent when nothing is required or anything goes
 wrong, and does nothing in headless runs (``MODERNIZER_CI_SANDBOX=1``) or when

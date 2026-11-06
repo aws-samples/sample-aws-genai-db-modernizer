@@ -1,9 +1,10 @@
 name: PR Evidence
 
 # Compares the PR body's needs_llm_run verdict with ci/needs_llm_run.sh for the PR's diff,
-# and asks for a result line on every required real-model run (#1153). A required run
-# with no result line yet is pending (a warning), never a red check (#1850); a
-# contradiction, a placeholder or negative result text still fails. Not a required
+# and asks for a result line on every required real-model run (#1153). A nightly run
+# (#1965: the diff touches only paths the maintainers' nightly run on main covers) needs no
+# result line. A required run with no result line yet is pending (a warning), never a red
+# check (#1850); a contradiction, a placeholder or negative result text still fails. Not a required
 # check (a maintainer decision). The second job, "PR Evidence results", is the one to
 # make required. On a pull request it passes; in the merge queue it runs the whole check
 # with --require-results (verdict lines, contradictions, result lines, and a missing
