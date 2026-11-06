@@ -37,7 +37,7 @@ def test_the_gate_lag_limit_is_30_seconds_with_a_reason():
 
 def _write(tmp_path: Path, rows: str) -> Path:
     path = tmp_path / "dms_sizing.toml"
-    path.write_text(rows + '\n[gate]\nmax_lag_seconds = 30\nwhy = "w"\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
+    path.write_text(rows + '\n[engine]\nversion = "3.6.1"\nwhy = "w"\n[gate]\nmax_lag_seconds = 30\nwhy = "w"\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
                     'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\n'
                     '[lob.types]\nmysql = ["text"]\npostgresql = ["text"]\n'
                     '[lob.scalars]\npostgresql = ["int4"]\n')  # fmt: skip
@@ -100,6 +100,21 @@ _FIRST = _ROW.format(id="a", cls="dms.t3.medium", bounds=_BOUNDED)
 def test_each_row_rule_is_enforced(tmp_path, rows, message):
     with pytest.raises(CatalogError, match=message):
         load_dms_sizing(_write(tmp_path, rows))
+
+
+@pytest.mark.parametrize("version", ["3.6", "latest", "3.6.1\n", ""])
+def test_an_engine_version_must_be_three_numbers(tmp_path, version):
+    path = _write(tmp_path, _FIRST + _LAST)
+    path.write_text(
+        path.read_text().replace('version = "3.6.1"', f'version = "{version}"'.replace("\n", "\\n"))
+    )
+    with pytest.raises(CatalogError):
+        load_dms_sizing(path)
+
+
+def test_the_catalog_names_the_engine_version_with_its_reason():
+    engine = dms_sizing().engine
+    assert engine.version == "3.6.1" and "3.5.4" in engine.why
 
 
 def test_default_above_limited_is_refused(tmp_path):
