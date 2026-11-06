@@ -7876,7 +7876,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -7961,7 +7995,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8063,7 +8131,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8148,7 +8250,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8233,7 +8369,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8293,6 +8463,23 @@
                           ]
                         }
                       },
+                      "period_seconds": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
                       "read_iops": {
                         "required": false,
                         "schema": {
@@ -8318,7 +8505,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8403,7 +8624,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8488,7 +8743,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8548,6 +8837,23 @@
                           ]
                         }
                       },
+                      "window_days": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
                       "write_iops": {
                         "required": false,
                         "schema": {
@@ -8573,7 +8879,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -8658,7 +8998,41 @@
                                     ]
                                   }
                                 },
+                                "datapoints": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
                                 "max": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "max_period_avg": {
                                   "required": false,
                                   "schema": {
                                     "kind": "anyOf",
@@ -10119,8 +10493,8 @@
         }
       }
     },
-    "schema_hash": "8c6d2fe87db4f91e27ac92cbe5000d2369c22e4b0c18d07257d00a78342c68db",
-    "version": "5.12"
+    "schema_hash": "46a421e0f6d9fc3dbf982349a93241f7c4b4da5b28aa11c34f1dd9eeb884d024",
+    "version": "5.13"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -12106,6 +12480,27 @@
           ]
         }
       },
+      "peak_basis": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "enum",
+              "values": [
+                "cloudwatch",
+                "customer",
+                "not_measured",
+                "sampled"
+              ]
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "peak_to_avg_ratio": {
         "required": false,
         "schema": {
@@ -12290,8 +12685,8 @@
         }
       }
     },
-    "schema_hash": "c7138ea9b2e739be1f1da60948ccca73bb7391e8ea8edacbed628ff291402cc9",
-    "version": "1.4"
+    "schema_hash": "93a63d7b5c912b226d38e4da998c3443a22b5aee0d976b0e7b6482e70492646b",
+    "version": "1.5"
   },
   "dms_gate.DmsGate": {
     "fields": {
@@ -17785,7 +18180,7 @@
       }
     },
     "schema_hash": "ab5c5900708167c7ed576bcf11903badbe9102925dc4607dff7bd18ea55fd13d",
-    "version": "1.7"
+    "version": "1.8"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {
@@ -20916,7 +21311,7 @@
       }
     },
     "schema_hash": "b67c17572baf472c7b9da27f7635f617d980ab32f5483dd45ebf45925bee1c57",
-    "version": "1.2"
+    "version": "1.3"
   },
   "phase_models.PhaseProgression": {
     "fields": {
@@ -23872,7 +24267,7 @@
       }
     },
     "schema_hash": "fb03486c2d38bd24e3424182dd12dd66624d2426aac8371f2937c94a8c50e8fd",
-    "version": "1.6"
+    "version": "1.7"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {
@@ -26129,6 +26524,105 @@
                     ]
                   }
                 },
+                "assumptions": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "assumptions": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "basis": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "key": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "line": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "origin": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "collected",
+                                        "customer",
+                                        "default"
+                                      ]
+                                    }
+                                  },
+                                  "setting": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "lines": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "auto_decided_by_engine": {
                   "required": false,
                   "schema": {
@@ -27797,6 +28291,110 @@
                                       "kind": "scalar",
                                       "minimum": 0,
                                       "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "growth_scenarios": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "busiest_key": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "object"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "growth": {
+                            "required": true,
+                            "schema": {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "number"
+                            }
+                          },
+                          "lines": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "origin": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "customer",
+                                "default"
+                              ]
+                            }
+                          },
+                          "scenarios": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "busiest_key_pct_of_limit": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "number"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "growth": {
+                                    "required": true,
+                                    "schema": {
+                                      "exclusiveMinimum": 0,
+                                      "kind": "scalar",
+                                      "type": "number"
+                                    }
+                                  },
+                                  "monthly_cost_usd": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
                                     }
                                   }
                                 }
@@ -35118,8 +35716,8 @@
         }
       }
     },
-    "schema_hash": "a2407d2968e1a73904dd6f3f2c797933416858f7669ac7db24f18caca4525f71",
-    "version": "1.82"
+    "schema_hash": "edb302b8995cbae1c5d8bf53dbe0fe6f44840b82ad72f0119540d9e8ca9c8325",
+    "version": "1.83"
   },
   "transformation_contract.StepContract": {
     "fields": {

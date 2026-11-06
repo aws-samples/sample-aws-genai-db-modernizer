@@ -39,7 +39,7 @@ cost, the ranking and every deliverable's cost table agree, with one assumption 
   nothing on every call is far likelier a gap in the collection than real zero work, and
   counting it as zero would hide its cost. Only
   for the queries the assignment gives the engine in scope. ``design_rps`` is not used:
-  it carries the design's peak and growth factors.
+  it carries the design's measured peak factor (#1990).
 
 Reads are not added: a read through a GSI is one of its query's reads, which the
 estimate already prices. A row sized to no query keeps its figure. With no schema design

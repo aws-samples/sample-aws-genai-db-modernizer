@@ -37,8 +37,9 @@ from src.agents.schema_design.group_input import CONTEXT_TABLE_RULE
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
-from src.contracts.dynamodb_pe_review import PEReviewResult, ReviewVerdict  # noqa: F401
+from src.contracts.dynamodb_pe_review import PEReviewResult  # noqa: F401
 from src.contracts.schema_design_input import project_schema_design_input
+from src.shared.assumptions import peak_assumption
 from src.shared.contract_versioning import load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.progress import say
@@ -180,7 +181,11 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
         "context": agent_context.model_dump(mode="json"),
     }
     projected["design_metrics"] = design_metrics_from_projection(
-        "dynamodb", projected, unfiltered_pattern_count(raw_collector)
+        "dynamodb",
+        projected,
+        unfiltered_pattern_count(raw_collector),
+        # #1990: the peak factor from the whole collection's metrics.
+        peak_assumption(raw_collector, projected["context"]),
     )
     return projected
 

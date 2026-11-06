@@ -37,6 +37,7 @@ from src.contracts.opensearch_decision_trace import OpenSearchDecisionTrace
 from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.contracts.schema_design_output import TradeOff
+from src.shared.assumptions import peak_assumption
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
@@ -274,7 +275,11 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
         "decision_trace": decision_trace,
     }
     projected["design_metrics"] = design_metrics_from_projection(
-        "opensearch", projected, unfiltered_pattern_count(raw_collector)
+        "opensearch",
+        projected,
+        unfiltered_pattern_count(raw_collector),
+        # #1990: the peak factor from the whole collection's metrics.
+        peak_assumption(raw_collector, projected["context"]),
     )
     return projected
 

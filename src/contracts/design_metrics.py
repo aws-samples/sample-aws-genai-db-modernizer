@@ -28,6 +28,10 @@ Version History:
   (KeyDistinctValues): the column sets whose distinct values the collection holds (a
   unique key's row count, a column's cardinality), the evidence the per-partition-key
   load estimate divides by. Backward compatible: defaults to empty.
+- 1.5 (2026-11-07, #1990): growth_multiplier defaults to 5 and is never applied to
+  design_rps; peak_to_avg_ratio defaults to 1 and is the source metrics' measured ratio;
+  added peak_basis (cloudwatch, sampled, not_measured, customer). A file written before
+  still loads.
 """
 
 from __future__ import annotations
@@ -36,9 +40,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
-#: Default AgentContextInput multipliers (``design_rps = base_rps × peak × growth``).
-DEFAULT_GROWTH_MULTIPLIER = 10.0
-DEFAULT_PEAK_TO_AVG_RATIO = 3.0
+#: The growth the deliverables' scenario line states unless the customer sets one (#1990).
+#: Never applied to ``design_rps``: ``src.shared.assumptions.DEFAULT_GROWTH``.
+DEFAULT_GROWTH_MULTIPLIER = 5.0
+#: The peak factor when the source's metrics measure none (#1990): no synthetic peak.
+DEFAULT_PEAK_TO_AVG_RATIO = 1.0
 
 
 class QueryDesignMetrics(BaseModel):
@@ -49,7 +55,13 @@ class QueryDesignMetrics(BaseModel):
         ..., ge=0, description="Measured rate: calls_per_second, else frequency_per_hour / 3600"
     )
     design_rps: float = Field(
-        ..., ge=0, description="base_rps × peak_to_avg_ratio × growth_multiplier, 4 decimals"
+        ...,
+        ge=0,
+        description=(
+            "base_rps × the peak factor, 4 decimals (#1990): peak_to_avg_ratio for a "
+            "long-window average when the peak is measured, else 1 (a sampled rate, or "
+            "peak not measured). Growth is never applied"
+        ),
     )
     member_query_ids: list[str] | None = Field(
         None,
@@ -244,14 +256,35 @@ class DesignMetricsContract(BaseModel):
     """Every number the schema designer reads instead of computing (#626)."""
 
     contract_version: str = Field(
-        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     engine: str = Field(..., description="Target engine the metrics are for")
     growth_multiplier: float = Field(
-        DEFAULT_GROWTH_MULTIPLIER, gt=0, description="AgentContextInput growth_multiplier"
+        DEFAULT_GROWTH_MULTIPLIER,
+        gt=0,
+        description=(
+            "The growth the deliverables state as a separate scenario (#1990): never "
+            "applied to design_rps. A file written before #1990 records the 10× it applied"
+        ),
     )
     peak_to_avg_ratio: float = Field(
-        DEFAULT_PEAK_TO_AVG_RATIO, gt=0, description="AgentContextInput peak_to_avg_ratio"
+        DEFAULT_PEAK_TO_AVG_RATIO,
+        gt=0,
+        description=(
+            "The peak factor applied to each long-window average rate (#1990): the source "
+            "metrics' observed peak-to-average ratio (peak_basis cloudwatch), the "
+            "customer's (customer), else 1.0. A file written before #1990 records the 3× "
+            "it applied"
+        ),
+    )
+    peak_basis: Literal["cloudwatch", "sampled", "not_measured", "customer"] | None = Field(
+        None,
+        description=(
+            "Where the peak factor comes from (#1990, src.shared.assumptions): cloudwatch "
+            "(7 to 14 days of the source's metrics), sampled (every rate is the collection's "
+            "sampled window, no extra factor), not_measured (factor 1) or customer; None in "
+            "a file written before #1990, whose peak_to_avg_ratio was a fixed default"
+        ),
     )
     queries: list[QueryDesignMetrics] = Field(
         default_factory=list, description="Per query, sorted by query_id"

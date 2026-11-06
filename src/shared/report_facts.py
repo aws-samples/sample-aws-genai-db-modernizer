@@ -3525,6 +3525,14 @@ def unreviewed_move_count(report: dict[str, Any]) -> int:
     return total
 
 
+def assumptions_block(items: Iterable[Mapping[str, Any]] | None) -> dict[str, Any] | None:
+    """The assumptions block (#1990): its items, and the line each deliverable prints."""
+    if items is None:
+        return None
+    rows = [dict(i) for i in items]
+    return {"assumptions": rows, "lines": [str(i["line"]) for i in rows if i.get("line")]}
+
+
 def compute_report_facts(
     report: dict[str, Any],
     waves: list[dict[str, Any]] | None = None,
@@ -3538,6 +3546,8 @@ def compute_report_facts(
     rate_windows: Mapping[str, Any] | None = None,
     hot_partitions: Iterable[Mapping[str, Any]] | None = None,
     busiest_partition_key: Mapping[str, Any] | None = None,
+    assumptions: Iterable[Mapping[str, Any]] | None = None,
+    growth_scenarios: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3570,6 +3580,11 @@ def compute_report_facts(
     partition key value's limit, with its load per key value estimated
     (``src.shared.partition_load.hot_partition_rows``, #1989), which needs the design and
     the collection: synthesis passes it, and a report rebuilt later has None.
+    ``assumptions`` is the one assumptions block (``src.shared.assumptions.assumption_items``,
+    #1990: growth, peak source, rate window, region and prices, each with its origin) and
+    ``growth_scenarios`` the cost and busiest partition key value at 1×, 5× and 10× growth
+    (``growth_scenario_facts``), which need the collection and the TCO: synthesis passes
+    them, and a report rebuilt later has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3733,6 +3748,9 @@ def compute_report_facts(
         "busiest_partition_key": (
             dict(busiest_partition_key) if busiest_partition_key is not None else None
         ),
+        # #1990: the assumptions block and the growth scenario, stated once.
+        "assumptions": assumptions_block(assumptions),
+        "growth_scenarios": dict(growth_scenarios) if growth_scenarios is not None else None,
     }
 
 

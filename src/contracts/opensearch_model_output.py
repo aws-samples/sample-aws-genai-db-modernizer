@@ -16,6 +16,8 @@ Version History:
   (``review`` for the design review notes, ``warning`` for the schema agents' warnings;
   left out of the JSON schema), so repeated trade-offs group by topic and the pipeline's
   notes are listed apart.
+- 1.3 (2026-11-07, #1990): The access pattern design_rps described as the measured rate
+  times the measured peak factor, with no growth.
 """
 
 from __future__ import annotations
@@ -296,7 +298,12 @@ class AccessPattern(BaseModel):
         ..., description="Operation type: search, aggregate, get_by_id, bulk_index"
     )
     design_rps: float = Field(
-        ..., ge=0, description="calls_per_second * peak_to_avg_ratio * growth_multiplier"
+        ...,
+        ge=0,
+        description=(
+            "Copied from design_metrics.queries: the measured rate times the peak factor "
+            "the source's metrics measured (1 when not measured); no growth"
+        ),
     )
     in_scope: bool = Field(default=True, description="False for patterns OpenSearch cannot serve")
     out_of_scope_reason: str | None = Field(
@@ -345,7 +352,7 @@ class OpenSearchModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.2",
+        default="1.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

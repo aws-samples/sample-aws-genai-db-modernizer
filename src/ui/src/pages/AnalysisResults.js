@@ -79,7 +79,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2084,6 +2084,16 @@ const AnalysisResultsPage = memo(() => {
                   {rateWindowStatementOf(synthesis) && (
                     <Box fontSize="body-s" color="text-body-secondary">
                       <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
+                    </Box>
+                  )}
+                  {/* #1990: the assumptions block and the growth scenario (report facts) */}
+                  {assumptionLinesOf(synthesis).length > 0 && (
+                    <Box fontSize="body-s" color="text-body-secondary" data-figure="assumptions">
+                      <ul>
+                        {assumptionLinesOf(synthesis).map((line) => (
+                          <li key={line}>{line}.</li>
+                        ))}
+                      </ul>
                     </Box>
                   )}
                   <Box fontSize="body-s" color="text-body-secondary">

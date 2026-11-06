@@ -258,7 +258,11 @@ class TestPreAggregatedSummaries:
             assert set(result[key]) >= {"avg", "max"}
             assert isinstance(result[key]["avg"], float)
             assert result[key]["max"] == 30.0  # one summary, not 168 data points
-        assert len(result) <= len(rds_tools._CW_METRICS) + 1  # the metrics plus "available"
+        # The metrics plus "available", "period_seconds" and "window_days" (#1990).
+        assert len(result) <= len(rds_tools._CW_METRICS) + 3
+        assert result["period_seconds"] == 3600
+        assert result["window_days"] == 7
+        assert result["read_iops"]["datapoints"] == 168
 
     def test_performance_insights_asks_for_seven_days_hourly_and_a_bounded_top_list(self) -> None:
         cred_mgr = StubbedCredMgr()
@@ -296,3 +300,28 @@ class TestPreAggregatedSummaries:
         assert top_sql["GroupBy"]["Limit"] == 25
         assert top_sql["Metric"] == "db.load.avg"
         assert [q["query_id"] for q in result["query_patterns"]] == ["S1"]
+
+
+def test_cloudwatch_figures_record_their_period_and_datapoints() -> None:
+    """#1990: the days a peak-to-average ratio is observed over are datapoints × period."""
+    from src.tools.aws.rds_tools import _convert_metric, _get_metric_stats
+
+    class _CW:
+        def get_metric_statistics(self, **_: object) -> dict:
+            return {
+                "Datapoints": [
+                    {"Average": 10.0, "Maximum": 30.0, "Minimum": 1.0},
+                    {"Average": 20.0, "Maximum": 50.0, "Minimum": 2.0},
+                ]
+            }
+
+    stats = _get_metric_stats(_CW(), "db-1", "ReadIOPS", "Count/Second", None, None, 3600)
+    assert stats == {
+        "avg": 15.0,
+        "max": 50.0,
+        "min": 1.0,
+        "datapoints": 2,
+        "max_period_avg": 20.0,
+    }
+    memory = _convert_metric("freeable_memory_gb", {"avg": 1024**3, "datapoints": 2})
+    assert memory == {"avg": 1.0, "datapoints": 2}

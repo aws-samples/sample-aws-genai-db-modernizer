@@ -51,6 +51,7 @@ import pytest
 
 from src.agents.referee.table_assignments import retained_engine_for
 from src.report.formatting import price_list_text
+from src.shared.assumptions import assumption_items
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
 from src.shared.partition_load import busiest_key, hot_partition_rows
@@ -246,8 +247,21 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
         busiest_partition_key=busiest_key(
             _schema_designs_of_the_job(run), collector["database_schema"]["tables"]
         ),
+        # #1990: the assumptions block from the collection, the growth synthesis read and
+        # the price dates; the growth scenario re-prices the TCO, which needs synthesis's
+        # data, so its stored block is taken as it is (its own tests check its figures).
+        assumptions=assumption_items(
+            collector,
+            growth=stored["growth_scenarios"]["growth"],
+            growth_origin=stored["growth_scenarios"]["origin"],
+            price_basis=_price_list_from_the_job(report),
+            rate_window_statement=rate_window_facts(collector["queries"]["query_patterns"])[
+                "statement"
+            ],
+        ),
+        growth_scenarios=stored["growth_scenarios"],
     )
-    assert stored == recomputed
+    assert stored == recomputed, [k for k in stored if stored[k] != recomputed.get(k)]
 
 
 def _schema_designs_of_the_job(run: PipelineResult) -> dict[str, Any]:

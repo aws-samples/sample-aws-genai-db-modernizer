@@ -6,7 +6,7 @@
 The design-time costs synthesis adds to the DynamoDB TCO row (the GSI cost, ``gsi_cost``,
 and the derived copies' stream sync, ``derived_copy_sync``) price a write pattern on the
 load the rest of the TCO is priced on: the average load, never ``design_rps``, which
-carries the design's peak and growth factors (3x and 10x by default). One rule, here, so
+carries the design's peak factor (the source metrics' measured ratio, #1990). One rule, here, so
 both read the same rate:
 
 - A pattern's queries are its ``query_ids`` that the collection has and, with an

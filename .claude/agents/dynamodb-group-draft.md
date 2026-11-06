@@ -70,7 +70,7 @@ The pipeline has already scoped it to this engine and, for large workloads, spli
 
 **`design_metrics` — numbers computed for you. Read them; never recompute them.** Validation rejects a design whose numbers disagree with these:
 
-- `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied). A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
+- `queries[]`: per `query_id`, `design_rps` (the measured rate times the peak the source's metrics measured, `peak_to_avg_ratio` when `peak_basis` is `cloudwatch`, else the rate as measured; growth is never applied, the deliverables state it as a separate scenario). A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
 - `tables[]`: per `table_id`, `row_count` (the collector's; when `row_count_assumed` is true the source has no count for the table and this is the stated assumption, its data size over `schema_item_size_bytes`: where a figure rests on it, say in `trade_offs` that the row count is derived from the table's size), `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute) and `key_distinct_values` (the column sets whose distinct values the collection holds: a primary key or unique index has the table's row count, a column its collected cardinality; the cost check spreads a hot-partition entry's total over them to estimate one key value's load, and says "not measured" for a key on none of them)
 - `coverage`: `in_scope_patterns`, `total_queries_analyzed` and `coverage_ratio`. Absent in a design group, which holds only its share of the queries: skip the coverage check then
 - `dynamodb_partition_limits`: the per-partition-key-value limits and the at-risk threshold
@@ -395,6 +395,8 @@ Version History:
   the total is over one partition key value's limit, an upper bound the pipeline's
   per-key estimate qualifies. Backward compatible: every entry written before still
   validates.
+- 1.8 (2026-11-07, #1990): AccessPattern.design_rps described as the measured rate times
+  the measured peak factor, with no growth.
 """
 
 from typing import Annotated, Any, Literal
@@ -964,7 +966,12 @@ class AccessPattern(BaseModel):
         "For writes, describe the item being written.",
     )
     design_rps: float = Field(
-        ..., ge=0, description="calls_per_second × peak_to_avg_ratio × growth_multiplier"
+        ...,
+        ge=0,
+        description=(
+            "Copied from design_metrics.queries: the measured rate times the peak factor "
+            "the source's metrics measured (1 when not measured); no growth"
+        ),
     )
     avg_items_returned: float | None = Field(
         None, ge=0, description="Average items per request. None for writes."
@@ -1126,7 +1133,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.7",
+        default="1.8",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

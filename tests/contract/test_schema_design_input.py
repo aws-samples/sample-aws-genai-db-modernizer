@@ -37,8 +37,9 @@ class TestAgentInputValidation:
 
     def test_context_defaults(self):
         ctx = AgentContextInput()
-        assert ctx.growth_multiplier == 10.0
-        assert ctx.peak_to_avg_ratio == 3.0
+        # #1990: growth 5 (a scenario, never applied); no peak unless the customer sets one.
+        assert ctx.growth_multiplier == 5.0
+        assert ctx.peak_to_avg_ratio is None
         assert ctx.default_read_slo_ms == 10.0
         assert ctx.default_write_slo_ms == 20.0
         assert ctx.slo_overrides == {}
@@ -142,8 +143,8 @@ class TestProjectionFunction:
         assert agent_analysis.table_recommendations[0].table_id == "public.users"
 
         # Context defaults
-        assert agent_context.growth_multiplier == 10.0
-        assert agent_context.peak_to_avg_ratio == 3.0
+        assert agent_context.growth_multiplier == 5.0
+        assert agent_context.peak_to_avg_ratio is None
 
     def test_projection_carries_the_index_method(self, valid_collector_output_data):
         """#293: ``AgentIndex.index_type`` follows ``Index.index_type``, so the Aurora
@@ -312,10 +313,10 @@ class TestProjectionFunction:
         )
 
         _, _, ctx = project_schema_design_input(
-            collector, analysis, context={"growth_multiplier": 5.0}
+            collector, analysis, context={"growth_multiplier": 3.0}
         )
-        assert ctx.growth_multiplier == 5.0
-        assert ctx.peak_to_avg_ratio == 3.0  # default preserved
+        assert ctx.growth_multiplier == 3.0
+        assert ctx.peak_to_avg_ratio is None  # default preserved
 
 
 class TestQueryLogSourceEnumSync:
