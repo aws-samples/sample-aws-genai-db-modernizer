@@ -185,6 +185,7 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 `./artifacts`):
 
 - `collector/output.json`, `collector/sql_shadow.json` (sqlglot facade vs regex table references; the facade drives `tables_accessed`, #557, #553), `referee-triage/triage.json`
+- `collector/routine_sources.json` and `collector/routine_sources/part-<n>.json.gz`: each PostgreSQL, MySQL and MariaDB routine's `CREATE`, literals included (#1652; `exact` says whether it is the server's own text); the one unredacted part of a job, which no report, model input or API response reads
 - `analysis-<engine>/analysis.json` (+ `decision-trace.json`)
 - `assignment/v<N>/assignment.json`: versioned; reality check and customer
   edits write a new version, never overwrite one

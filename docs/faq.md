@@ -4,6 +4,10 @@
 
 No table rows. The collection scripts are read-only: they run `SELECT` on the catalog and statistics views only, and the collection holds the schema, query shapes and counters. Query text and view, procedure and trigger definitions can still carry literal values, so review a collection before you share it. A collection made before this rule that still carries table rows has them dropped, with a count, from every copy the tool writes.
 
+## Does the tool keep my stored procedure code?
+
+For PostgreSQL, MySQL and MariaDB, yes, in one place of the job, its routine sources (`collector/routine_sources.json` and its compressed chunks), so that a move can carry each routine to Aurora as written (a MySQL routine read by the collection script, rather than the live collector, is marked when its rebuilt `CREATE` may not be exact). Every other file the tool writes holds the code with its string literals redacted. To keep no routine code at all, collect with `include_routine_bodies = 0` (see [Analyzing your own database](use-claude-code.md#analyzing-your-own-database)). <!-- claim: tests/unit/agents/test_routine_sources_wiring.py::test_run_assessment_keeps_bodies_only_in_the_routine_sources, tests/unit/agents/test_routine_sources_wiring.py::test_opting_out_writes_no_routine_sources_and_no_body -->
+
 ## Does the database name have to match the collection?
 
 No. `/modernize` names the run from the file name (`shop-collection.json` becomes `shop`), and `scripts/run_assessment.py` from `--db`, but the tables are keyed by the database name the collection records, so any name gives the same plan. When the two differ, the `collect` line also shows the collected name as `collected_database_name`. One case stops the run with an error: a collection that records no database name and whose statements belong to several databases, none of them the name you gave; name the run after the database you collected.

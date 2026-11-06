@@ -32,6 +32,7 @@ from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.index_keys import add_index_key
 from src.tools.database.live_sql import LiveQueryReader
+from src.tools.database.routine_links import routine_id
 from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
@@ -347,7 +348,10 @@ class OracleRemoteCollector:
                 TABLE_NAME AS table_name,
                 TABLE_OWNER AS schema_name,
                 TRIGGER_TYPE AS timing,
-                TRIGGERING_EVENT AS event_type
+                TRIGGERING_EVENT AS event_type,
+                -- #1652: the raw orientation ('BEFORE EACH ROW') and state ('ENABLED')
+                TRIGGER_TYPE AS for_each,
+                STATUS AS is_enabled
             FROM ALL_TRIGGERS
             WHERE OWNER = '{owner}'
             ORDER BY TABLE_NAME, TRIGGER_NAME
@@ -360,6 +364,49 @@ class OracleRemoteCollector:
             # an unknown one is kept for the builder to skip.
             r["timing"] = trigger_timing(r.get("timing")) or r.get("timing")
         return rows
+
+    def collect_routine_sources(self, owner: str | None = None) -> list[dict]:
+        """Every procedure, function, package and trigger body line of ``owner`` (#1652),
+        one ``ALL_SOURCE`` line per row (``owner``, ``name``, ``type``, ``line``,
+        ``text``), as the offline script's ``routine_sources`` section writes them."""
+        owner = owner or self.get_current_schema()
+        rows = self._query(f"""
+            SELECT LOWER(OWNER) AS owner, LOWER(NAME) AS name, TYPE AS type,
+                   LINE AS line, TEXT AS text
+            FROM ALL_SOURCE
+            WHERE OWNER = '{owner}'
+              AND TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER')
+            ORDER BY TYPE, NAME, LINE
+        """)  # nosec B608 — owner from sys catalog
+        return rows
+
+    def collect_query_routines(self, owner: str | None = None) -> dict[str, list[str]] | None:
+        """``{query key: [routine_id, ...]}``: the PL/SQL units each statement shape ran
+        in (#1652), from ``V$SQL.PROGRAM_ID``, as ``<owner>.<name>`` in lower case, sorted;
+        the offline script's ``query_routines`` section. None when the read fails: the
+        collection then records no links rather than an empty one."""
+        try:
+            owner = owner or self.get_current_schema()
+            rows = self._query(f"""
+                SELECT DISTINCT
+                    CASE WHEN NVL(s.FORCE_MATCHING_SIGNATURE, 0) <> 0
+                         THEN 'fms_' || TO_CHAR(s.FORCE_MATCHING_SIGNATURE)
+                         ELSE s.SQL_ID END AS query_id,
+                    LOWER(o.OWNER) AS routine_schema,
+                    LOWER(o.OBJECT_NAME) AS routine_name
+                FROM V$SQL s
+                JOIN ALL_OBJECTS o ON o.OBJECT_ID = s.PROGRAM_ID
+                WHERE s.PARSING_SCHEMA_NAME = '{owner}' AND s.PROGRAM_ID <> 0
+            """)  # nosec B608 — owner from sys catalog
+        except Exception as exc:  # noqa: BLE001 - the links are optional, the shapes are not
+            logger.warning("oracle_tools: statement routines not read: %s", exc)
+            return None
+        out: dict[str, set[str]] = {}
+        for r in rows or []:
+            rid = routine_id(r.get("routine_schema"), r.get("routine_name"))
+            if r.get("query_id") and rid:
+                out.setdefault(str(r["query_id"]), set()).add(rid)
+        return {qid: sorted(ids) for qid, ids in out.items()}
 
     # -------------------------------------------------------------------
     # Query patterns (V$SQLSTATS-based)
@@ -601,6 +648,14 @@ class OracleRemoteCollector:
                 }
             )
         reader.log_fallbacks()
+        if patterns:
+            # #1652: the PL/SQL unit each shape ran in (V$SQL.PROGRAM_ID); None when the
+            # read fails, so the collection records no links rather than empty ones.
+            routines = self.collect_query_routines(owner)
+            for p in patterns:
+                p["parent_routine_ids"] = (
+                    None if routines is None else routines.get(str(p["query_id"]), [])
+                )
         return patterns
 
     def stats_window(self) -> ServerWindow | None:

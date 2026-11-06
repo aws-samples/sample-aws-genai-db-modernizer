@@ -46,6 +46,23 @@ def _capture_options() -> dict[str, int]:
     return options
 
 
+def _routine_body_option() -> dict[str, bool]:
+    """``INCLUDE_ROUTINE_BODIES`` (#1652): ``0`` lists routines by name and size only and
+    keeps no routine sources; unset keeps them.
+
+    Raises:
+        ValueError: it is set to anything but 0/1 (false/true, no/yes).
+    """
+    text = os.environ.get("INCLUDE_ROUTINE_BODIES", "").strip().lower()
+    if not text:
+        return {}
+    if text in ("1", "true", "yes"):
+        return {"include_routine_bodies": True}
+    if text in ("0", "false", "no"):
+        return {"include_routine_bodies": False}
+    raise ValueError(f"INCLUDE_ROUTINE_BODIES must be 0 or 1, got {text!r}")
+
+
 def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None:
     """Run the collector agent. Reads config from env vars, writes output via ArtifactStore."""
     cluster_endpoint = os.environ.get("CLUSTER_ENDPOINT", "")
@@ -111,7 +128,7 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     # #384: the statement cap and minimum execution count, none and 10 when unset;
     # #1908: the sampling interval, 300 seconds when unset.
     try:
-        input_data["collection_options"] = _capture_options()
+        input_data["collection_options"] = {**_capture_options(), **_routine_body_option()}
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -138,6 +155,11 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
         from src.shared.query_capture import cap_collection
 
         cap_collection(output, input_contract.collection_options.query_limit)
+    if not input_contract.collection_options.include_routine_bodies:
+        # #1652: the opt-out keeps no routine body, whatever the engine or mode read.
+        from src.agents.collector.routine_sources import drop_routine_bodies
+
+        drop_routine_bodies(output)
     if input_contract.engines_in_use:
         from src.shared.engines_in_use import merge_engines_in_use
 
@@ -146,8 +168,27 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
             metadata.get("engines_in_use"), input_contract.engines_in_use
         )
     store.write_json(key, output)
-
     print(f"Collector output written to {key}")
+
+    # #1652: the CREATE statements, in the job's routine sources apart from the
+    # redacted output: from the file as read (offline), or as the live collector read
+    # them outside its checkpoints. None when the caller opted out.
+    from src.agents.collector.routine_sources import (
+        clear_routine_sources,
+        iter_collection_sources,
+        routine_sources_of,
+        write_routine_sources,
+    )
+
+    if input_contract.collection_options.include_routine_bodies:
+        sources = iter_collection_sources(raw) if mode == "offline" else routine_sources_of(result)
+        written = write_routine_sources(store, database_name, job_id, output, sources)
+        if written:
+            print(f"Routine CREATE statements written to {written}")
+    else:
+        # A re-run with the opt-out keeps no earlier run's routine code.
+        clear_routine_sources(store, database_name, job_id)
+
     print(
         f"Tables: {len(result.database_schema.tables)}, Queries: {len(result.queries.query_patterns)}"
     )

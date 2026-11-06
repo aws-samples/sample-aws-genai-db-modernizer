@@ -98,6 +98,15 @@ Version History:
   schema_name, type_name, labels): PostgreSQL's enum types with their labels in sort
   order (pg_enum), so a same-engine step 1 keeps enum columns. Backward compatible:
   defaults to None (not collected), and step 1 then keeps TEXT for them.
+- 5.12 (2026-11-08, #1652): Optional routine fields: Metadata.routine_stats_source
+  (RoutineStatsSource) and Metadata.routine_capture (RoutineCapture, with
+  parameters_counted); Trigger.function_id, owner, action_order, depends_on;
+  Procedure.specific_name, owner, security_definer, depends_on; on procedures, triggers
+  and Schema.events (ScheduledEvent, EventStatus): body_status (RoutineBodyStatus),
+  body_status_reason, body_chars and body_exact (False: a MySQL CREATE rebuilt around a
+  literal may not be exact); QueryPattern.nested. A PostgreSQL trigger's definition is
+  now its whole CREATE TRIGGER (#1651's was the EXECUTE FUNCTION clause). Backward
+  compatible: every new field defaults to None or empty
 """
 
 import re
@@ -106,7 +115,15 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 
 class DatabaseEngine(str, Enum):
@@ -222,6 +239,97 @@ class TriggerTiming(str, Enum):
 class TriggerForEach(str, Enum):
     ROW = "ROW"
     STATEMENT = "STATEMENT"
+
+
+class RoutineStatsStatus(str, Enum):
+    """How a collection read procedure and trigger execution counts (#1652)."""
+
+    tracked = "tracked"  # the engine keeps them and the collection read them
+    not_tracked = "not_tracked"  # tracking is off, not permitted, or the engine keeps none
+    offline = "offline"  # read from DDL alone: bodies, no counts
+
+
+class RoutineStatsSource(BaseModel):
+    status: RoutineStatsStatus = Field(..., description="How routine execution counts were read")
+    reason: str | None = Field(
+        None,
+        max_length=500,
+        description="Why, in one sentence (e.g. 'track_functions is none'); None when tracked",
+    )
+
+
+class RoutineBodyStatus(str, Enum):
+    """Whether a routine's CREATE statement was collected (#1652). The statement
+    itself is kept apart from this contract, in the job's routine sources."""
+
+    collected = "collected"
+    not_readable = "not_readable"  # the collection user may not read the body
+    opted_out = "opted_out"  # the collection ran with include_routine_bodies = 0
+    not_supported = "not_supported"  # no loadable CREATE can be made from the catalog
+
+
+class RoutineDependency(BaseModel):
+    kind: Literal["table", "view", "sequence", "function", "type", "trigger"] = Field(
+        ..., description="What the routine depends on"
+    )
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=1024,
+        description=(
+            "The object's name as the source prints it: PostgreSQL regclass, regprocedure "
+            "or regtype text; MySQL the trigger a trigger follows"
+        ),
+    )
+
+
+class RoutineCapture(BaseModel):
+    """How a collection read routine bodies (#1652)."""
+
+    include_bodies: bool = Field(
+        True, description="False: the collection ran with include_routine_bodies = 0"
+    )
+    routines_counted: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Routines, triggers and events the server counts (MySQL); None when not "
+            "reported. More than routines_listed means a list came back cut"
+        ),
+    )
+    routines_listed: int | None = Field(
+        None, ge=0, description="Routines, triggers and events the collection lists"
+    )
+    parameters_counted: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "MySQL: the routine parameters the server counts; None when not reported. "
+            "Parameters it counts but the collection lacks mean the list came back cut, "
+            "and no routine's CREATE is rebuilt from it"
+        ),
+    )
+    privileges_not_seen: list[str] = Field(
+        default_factory=list,
+        description=(
+            "MySQL privileges that decide what is visible (SHOW_ROUTINE, TRIGGER, EVENT) "
+            "not granted to the collection user directly; a role may still grant one"
+        ),
+    )
+
+    @field_validator("privileges_not_seen")
+    @classmethod
+    def _privilege_names(cls, v: list[str]) -> list[str]:
+        out = sorted({p.strip().upper() for p in v})
+        for p in out:
+            if not re.fullmatch(r"[A-Z_]+", p):
+                raise ValueError(f"privileges_not_seen holds privilege names, got {p!r}")
+        return out
+
+
+class EventStatus(str, Enum):
+    enabled = "enabled"
+    disabled = "disabled"
 
 
 class RDSInstanceMetadata(BaseModel):
@@ -405,6 +513,20 @@ class Metadata(BaseModel):
         description=(
             "The extensions installed in the source database, with their versions "
             "(PostgreSQL's pg_extension, #1078); None when the collection did not read them"
+        ),
+    )
+    routine_stats_source: RoutineStatsSource | None = Field(
+        None,
+        description=(
+            "How procedure and trigger execution counts were read (#1652); None for a "
+            "collection that predates the field"
+        ),
+    )
+    routine_capture: RoutineCapture | None = Field(
+        None,
+        description=(
+            "How the collection read routine bodies (#1652); None for a collection that "
+            "predates the field"
         ),
     )
 
@@ -791,6 +913,58 @@ class Procedure(BaseModel):
     execution_stats: ExecutionStats | None = Field(
         None, description="Optional execution statistics if available"
     )
+    specific_name: str | None = Field(
+        None,
+        max_length=512,
+        description=(
+            "The source's own unique name for the routine among overloads (#1652): "
+            "PostgreSQL '<name>_<oid>', MySQL the routine name (a procedure and a function "
+            "may share it; procedure_type tells them apart)"
+        ),
+    )
+    owner: str | None = Field(
+        None, description="PostgreSQL: the owning role; MySQL: the DEFINER, 'user@host'"
+    )
+    security_definer: bool | None = Field(
+        None,
+        description=(
+            "True when the routine runs with its owner's privileges (PostgreSQL SECURITY "
+            "DEFINER, MySQL SQL SECURITY DEFINER)"
+        ),
+    )
+    depends_on: list[RoutineDependency] | None = Field(
+        None,
+        description=(
+            "The objects the catalog records the routine depends on (PostgreSQL pg_depend: "
+            "argument and result types, and the tables and functions a SQL-standard body "
+            "names); [] for none; None when not collected"
+        ),
+    )
+    body_status: RoutineBodyStatus | None = Field(
+        None,
+        description=(
+            "Whether the CREATE statement was collected (#1652); None for a "
+            "collection that predates the field"
+        ),
+    )
+    body_status_reason: str | None = Field(
+        None, max_length=500, description="Why the body was not collected, in one sentence"
+    )
+    body_chars: int | None = Field(
+        None, ge=0, description="The body's length in characters, kept when the body is not"
+    )
+    body_exact: bool | None = Field(
+        None,
+        description=(
+            "Whether the routine sources hold its CREATE exactly as the server prints it "
+            "(#1652): True for PostgreSQL and for a MySQL routine read with SHOW CREATE, or "
+            "rebuilt from a body with no string or hex literal; False for a MySQL CREATE "
+            "rebuilt from the catalog around a literal, whose character-set introducer the "
+            "catalog may have dropped (_binary'a' reads 'a'): re-collect with the live "
+            "collector, or supply SHOW CREATE output, to carry it. None when no CREATE was "
+            "kept"
+        ),
+    )
 
 
 class TriggerExecutionStats(BaseModel):
@@ -836,6 +1010,92 @@ class Trigger(BaseModel):
     execution_stats: TriggerExecutionStats | None = Field(
         None, description="Optional execution statistics if available"
     )
+    function_id: str | None = Field(
+        None,
+        description=(
+            "PostgreSQL: the name of the function the trigger executes (#1652), whose "
+            "definition is the trigger's body"
+        ),
+    )
+    owner: str | None = Field(None, description="MySQL: the DEFINER, 'user@host'")
+    action_order: int | None = Field(
+        None,
+        ge=1,
+        description="MySQL: the trigger's place among its table's triggers of one timing and event",
+    )
+    depends_on: list[RoutineDependency] | None = Field(
+        None,
+        description="PostgreSQL: the function the trigger executes; MySQL: the trigger it follows",
+    )
+    body_status: RoutineBodyStatus | None = Field(
+        None,
+        description=(
+            "Whether the CREATE statement was collected (#1652); None for a "
+            "collection that predates the field"
+        ),
+    )
+    body_status_reason: str | None = Field(
+        None, max_length=500, description="Why the body was not collected, in one sentence"
+    )
+    body_chars: int | None = Field(
+        None, ge=0, description="The body's length in characters, kept when the body is not"
+    )
+    body_exact: bool | None = Field(
+        None,
+        description=(
+            "Whether the routine sources hold its CREATE exactly as the server prints it "
+            "(#1652): True for PostgreSQL and for a MySQL routine read with SHOW CREATE, or "
+            "rebuilt from a body with no string or hex literal; False for a MySQL CREATE "
+            "rebuilt from the catalog around a literal, whose character-set introducer the "
+            "catalog may have dropped (_binary'a' reads 'a'): re-collect with the live "
+            "collector, or supply SHOW CREATE output, to carry it. None when no CREATE was "
+            "kept"
+        ),
+    )
+
+
+class ScheduledEvent(BaseModel):
+    """A MySQL scheduled event (#1652): routine code the server runs on a schedule."""
+
+    event_id: str = Field(..., description="Unique identifier for this event (its name)")
+    event_name: str = Field(..., description="Event name")
+    schema_name: str | None = Field(None, description="Schema or database name")
+    definition: str | None = Field(
+        None, description="The event body (DO ...), with string literals redacted (#1625)"
+    )
+    owner: str | None = Field(None, description="The DEFINER account, 'user@host'")
+    status: EventStatus | None = Field(None, description="Whether the event is enabled")
+    schedule: str | None = Field(
+        None, max_length=200, description="The ON SCHEDULE clause, e.g. 'EVERY 1 DAY'"
+    )
+    sql_mode: str | None = Field(
+        None, max_length=4096, description="The sql_mode the body was created with"
+    )
+    body_status: RoutineBodyStatus | None = Field(
+        None,
+        description=(
+            "Whether the CREATE statement was collected (#1652); None for a "
+            "collection that predates the field"
+        ),
+    )
+    body_status_reason: str | None = Field(
+        None, max_length=500, description="Why the body was not collected, in one sentence"
+    )
+    body_chars: int | None = Field(
+        None, ge=0, description="The body's length in characters, kept when the body is not"
+    )
+    body_exact: bool | None = Field(
+        None,
+        description=(
+            "Whether the routine sources hold its CREATE exactly as the server prints it "
+            "(#1652): True for PostgreSQL and for a MySQL routine read with SHOW CREATE, or "
+            "rebuilt from a body with no string or hex literal; False for a MySQL CREATE "
+            "rebuilt from the catalog around a literal, whose character-set introducer the "
+            "catalog may have dropped (_binary'a' reads 'a'): re-collect with the live "
+            "collector, or supply SHOW CREATE output, to carry it. None when no CREATE was "
+            "kept"
+        ),
+    )
 
 
 class SourceEnumType(BaseModel):
@@ -866,6 +1126,9 @@ class Schema(BaseModel):
             "PostgreSQL's enum types with their labels (pg_enum, #1834); None when the "
             "collection did not read them"
         ),
+    )
+    events: list[ScheduledEvent] | None = Field(
+        None, description="MySQL scheduled events (#1652); None when not collected"
     )
 
 
@@ -1052,6 +1315,13 @@ class QueryPattern(BaseModel):
             "prepared statement). A shape that runs both ad hoc and in a routine lists "
             "the routine only: an ad hoc run leaves no objectid. None: the collection "
             "does not record it"
+        ),
+    )
+    nested: bool | None = Field(
+        None,
+        description=(
+            "PostgreSQL pg_stat_statements.toplevel read backwards (#1652): True when the "
+            "statement ran inside a function or procedure; None when not reported"
         ),
     )
     rows_returned_avg: float | None = Field(
@@ -1295,7 +1565,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.11",
+        default="5.12",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1311,6 +1581,11 @@ class CollectorOutputContract(BaseModel):
     metrics: Metrics = Field(..., description="Performance and CloudWatch metrics")
 
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
+
+    # #1652: the CREATE statements a live collector read, for the collector
+    # handler to write to the job's routine sources. Private: never serialised, never in
+    # the schema, so no reader of the collector output sees them.
+    _routine_sources: list[Any] = PrivateAttr(default_factory=list)
 
     @model_validator(mode="after")
     def _redact_literals(self) -> "CollectorOutputContract":
@@ -1337,7 +1612,7 @@ class CollectorOutputContract(BaseModel):
                 tags = [redact_comment(tag, engine) for tag in pattern.query_tags]
                 pattern.query_tags = list(dict.fromkeys(tags))
         schema = self.database_schema
-        for items in (schema.views, schema.procedures, schema.triggers):
+        for items in (schema.views, schema.procedures, schema.triggers, schema.events):
             for item in items or []:
                 if item.definition:
                     item.definition = redact_definition(item.definition, engine, settings)

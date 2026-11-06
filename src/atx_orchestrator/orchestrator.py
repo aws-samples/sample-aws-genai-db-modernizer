@@ -190,7 +190,7 @@ Workflow:
            * PostgreSQL:
              psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql > my-collection.json
            * MySQL or MariaDB:
-             mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
+             mysql -N --raw -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
            * SQL Server (2016 or later), with the password in the SQLCMDPASSWORD
              environment variable rather than on the command line:
              sqlcmd -S <host>,<port> -U <user> -d <database> -C -y 0 -i scripts/collect-sqlserver.sql > my-collection.json

@@ -491,6 +491,7 @@ def phase_collect(
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
     sql_shadow = None  # the facade-vs-regex cross-check, raw collections only (#553)
+    raw_collection = None  # #1652: the raw file as read, for its routine sources
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
     absent_sections: list[str] = []  # #131: common sections a raw collection lacks
 
@@ -521,6 +522,7 @@ def phase_collect(
         from src.shared.sample_rows import raw_collection_without_sample_rows
 
         input_data, sample_rows_dropped = raw_collection_without_sample_rows(input_data)
+        raw_collection = input_data
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         # ... and with its literal values redacted (#1625); the parser reads the
         # collection as given and redacts what it keeps.
@@ -579,6 +581,17 @@ def phase_collect(
         meta["engines_in_use"] = merge_engines_in_use(meta.get("engines_in_use"), engines_in_use)
     # An uploaded collector output may be at an older MINOR: written at today's (#1018).
     store.write_json(collector_path, stamp_artifact_version(collector_path, collector_data))
+    if raw_collection is not None:
+        # #1652: the CREATE statements, from the file as read (its stored copy is
+        # redacted), in the job's routine sources, one chunk at a time.
+        from src.agents.collector.routine_sources import (
+            iter_collection_sources,
+            write_routine_sources,
+        )
+
+        write_routine_sources(
+            store, db_name, job_id, collector_data, iter_collection_sources(raw_collection)
+        )
 
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])

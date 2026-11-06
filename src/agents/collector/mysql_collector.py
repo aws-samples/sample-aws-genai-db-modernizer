@@ -29,7 +29,28 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.agents.collector.routine_rows import dml_trigger, log_skipped_triggers
+from src.agents.collector.mysql_routine_create import trigger_follows
+from src.agents.collector.routine_rows import (
+    attach_routine_stats,
+    dml_trigger,
+    execution_stats,
+    log_skipped_triggers,
+    merge_trigger_rows,
+    routine_stats_status,
+    trigger_enabled,
+    trigger_for_each,
+    trigger_function_name,
+)
+from src.agents.collector.routine_sources import (
+    apply_body_statuses,
+    attach_to_contract,
+    build_routine_sources,
+    event_fields,
+    procedure_fields,
+    routine_capture,
+    routine_capture_model,
+    trigger_fields,
+)
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -52,6 +73,7 @@ from src.contracts.collector_output import (
     QueryType,
     RDSCloudWatchMetrics,
     RDSInstanceMetadata,
+    ScheduledEvent,
     Schema,
     SourceDatabase,
     SourceEnumType,
@@ -64,6 +86,7 @@ from src.contracts.collector_output import (
     TriggerTiming,
     View,
 )
+from src.contracts.routine_sources import RoutineSource
 from src.shared.contract_versioning import load_contract
 from src.shared.query_capture import live_query_capture, query_stage_rows, statement_query_failed
 from src.shared.row_counts import (
@@ -86,7 +109,7 @@ from src.tools.aws.rds_tools import (
 from src.tools.aws.s3_storage import init_storage, load_json, save_json
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
-from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
+from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl, parse_ddl_routines
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 from src.tools.database.offline_parser import offline_table_qualifier
 from src.tools.sql.query_tags import QueryTags
@@ -401,7 +424,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     use_span_settings(span_settings(inp.engine.value, meta_raw.get("settings")))
 
     # Stage 2: schema
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
+    include = inp.collection_options.include_routine_bodies
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, include_bodies=include))
 
     # Stage 3: queries from performance_schema
     queries_raw = ckpt.load_or_run(
@@ -412,7 +436,9 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     # Stage 4: AWS metrics (RDS, CloudWatch, PI, DI)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
-    # Assemble
+    # Assemble. #1652: the CREATE statements, read outside every checkpoint; the
+    # (checkpointed, redacted) schema rows get their body status before the builders.
+    routine_sources = _live_routines(db, schema_raw, include_bodies=include)
     tables = _build_tables(
         schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw,
         inp.database_name,
@@ -448,7 +474,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         ),
     )
 
-    return _build_output(
+    output = _build_output(
         inp,
         start,
         version=meta_raw["version"],
@@ -462,7 +488,26 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+        **live_routine_fields(schema_raw),
     )
+    attach_to_contract(output, routine_sources)
+    return output
+
+
+def live_routine_fields(schema_raw: object) -> dict[str, Any]:
+    """``_build_output`` keyword arguments for a live MySQL or MariaDB schema stage's
+    routine sections (#1652): its events, how routine counts and bodies were read. An
+    older checkpoint has none."""
+    if not isinstance(schema_raw, dict):
+        return {}
+    return {
+        "events": _build_events(schema_raw.get("events") or []),
+        "routine_stats_source": schema_raw.get("routine_stats_status"),
+        "routine_capture": routine_capture(
+            schema_raw.get("routine_capture"),
+            listed=sum(len(schema_raw.get(k) or []) for k in ("procedures", "triggers", "events")),
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +522,9 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     # Stage 1: DDL schema
     schema_raw = ckpt.load_or_run("ddl_schema", lambda: _parse_ddl_raw(inp, region))
+
+    # #1652: the procedures, functions and triggers the upload defines.
+    routines_raw = ddl_routines_stage(inp, ckpt, region)
 
     # Stage 2: AWS metrics
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
@@ -503,6 +551,9 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         queries=queries,
         metrics=metrics,
         rds_meta=rds_meta,
+        procedures=_build_procedures(routines_raw.get("procedures") or []),
+        triggers=_build_triggers(merge_trigger_rows(routines_raw.get("triggers") or [])),
+        routine_stats_source=routines_raw.get("routine_stats_status"),
     )
 
 
@@ -574,8 +625,9 @@ def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> Coll
 # ---------------------------------------------------------------------------
 
 
-def _collect_schema_raw(db: MySQLRemoteCollector) -> dict:
-    """Collect raw schema data via SSM as serializable dict."""
+def _collect_schema_raw(db: MySQLRemoteCollector, include_bodies: bool = True) -> dict:
+    """Collect raw schema data via SSM as serializable dict. ``include_bodies`` (#1652):
+    False reads no routine, trigger or event body."""
     raw_tables = db.collect_tables()
     tables = []
     for t in raw_tables:
@@ -598,13 +650,31 @@ def _collect_schema_raw(db: MySQLRemoteCollector) -> dict:
     except Exception:
         logger.warning("Failed to collect views")
     try:
-        procedures = db.collect_procedures()
+        procedures = db.collect_procedures(include_bodies=include_bodies)
     except Exception:
         logger.warning("Failed to collect procedures")
     try:
-        triggers = db.collect_triggers()
+        triggers = db.collect_triggers(include_bodies=include_bodies)
     except Exception:
         logger.warning("Failed to collect triggers")
+    # #1652: scheduled events, the counts performance_schema keeps per program, and how
+    # routine bodies were read. Each read on its own, so one a server lacks costs only it.
+    events: list[dict] = []
+    try:
+        events = db.collect_events(include_bodies=include_bodies)
+    except Exception:
+        logger.warning("Failed to collect events")
+    routine_status: dict | None = None
+    try:
+        routine_stats, routine_status = db.collect_routine_stats()
+        attach_routine_stats(procedures, triggers, routine_stats)
+    except Exception:
+        logger.warning("Failed to collect routine stats")
+    capture: dict = {"include_bodies": include_bodies}
+    try:
+        capture.update(db.collect_routine_capture())
+    except Exception:
+        logger.warning("Failed to read the routine capture")
 
     global_stats = {}
     try:
@@ -617,8 +687,66 @@ def _collect_schema_raw(db: MySQLRemoteCollector) -> dict:
         "views": views,
         "procedures": procedures,
         "triggers": triggers,
+        "events": events,
+        "routine_stats_status": routine_status,
+        "routine_capture": capture,
         "global_stats": global_stats,
     }
+
+
+def _collect_routine_creates_raw(db: MySQLRemoteCollector, include_bodies: bool) -> dict[str, Any]:
+    """The routine rows again, bodies included, read outside every checkpoint (#1652):
+    a checkpoint stage is redacted (#1625), and a CREATE must keep its literals. Each
+    readable routine, trigger and event also gets the server's own text (``SHOW
+    CREATE``, exact) where the user may run it; elsewhere it is rebuilt from the catalog.
+    ``parameters`` stays None when they could not be read: no CREATE is then rebuilt
+    from them. Nothing is read when the caller opted out."""
+    out: dict[str, Any] = {"procedures": [], "triggers": [], "events": [], "parameters": None}
+    if not include_bodies:
+        return out
+    reads = (
+        ("procedures", lambda: db.collect_procedures(include_bodies=True)),
+        ("triggers", lambda: db.collect_triggers(include_bodies=True)),
+        ("events", lambda: db.collect_events(include_bodies=True)),
+        ("parameters", db.collect_routine_parameters),
+    )
+    for key, read in reads:
+        try:
+            out[key] = read()
+        except Exception:
+            logger.warning("Failed to read routine %s for their CREATE statements", key)
+    shown = 0
+    for key, name_key in (("procedures", "routine_name"), ("triggers", "trigger_name"),
+                          ("events", "event_name")):  # fmt: skip
+        for row in out[key] or []:
+            if not isinstance(row, dict) or row.get("body_status") != "collected":
+                continue
+            kind = str(row.get("routine_type") or "").lower() if key == "procedures" else key[:-1]
+            text = db.show_create(kind, str(row.get(name_key) or "")) if row.get(name_key) else None
+            if text:
+                row["show_create"] = text
+                shown += 1
+    logger.info("Read %d routine CREATE statements with SHOW CREATE", shown)
+    return out
+
+
+def _live_routines(
+    db, schema_raw: object, *, include_bodies: bool, engine: str = "mysql"
+) -> list[RoutineSource]:
+    """The live collection's CREATE statements (#1652); marks each schema row with its
+    body status first, so the builders record it. A failed read costs the sources only."""
+    if not isinstance(schema_raw, dict):
+        return []
+    creates = _collect_routine_creates_raw(db, include_bodies)
+    build = build_routine_sources(engine, **creates)
+    apply_body_statuses(
+        build,
+        engine,
+        procedures=schema_raw.get("procedures") or [],
+        triggers=schema_raw.get("triggers") or [],
+        events=schema_raw.get("events") or [],
+    )
+    return build.sources
 
 
 def _collect_queries_raw(db: MySQLRemoteCollector, opts) -> list[dict] | dict[str, str]:
@@ -647,6 +775,25 @@ def _parse_ddl_raw(inp, region) -> list[dict]:
     # by default (handles MySQL backticks and T-SQL brackets), but the param
     # documents intent and is reserved for future dialect-specific behavior.
     return parse_ddl(ddl_text, database_name=inp.database_name, dialect=inp.engine.value)
+
+
+def _parse_ddl_routines_raw(inp, region) -> dict:
+    """The procedures, functions and triggers of the DDL upload (#1652): bodies, no
+    counts. A file it cannot read costs the routines only."""
+    try:
+        ddl_text = fetch_ddl_from_s3(
+            bucket=inp.ddl_config.s3_bucket, key=inp.ddl_config.s3_key, region=region
+        )
+        return parse_ddl_routines(ddl_text, _engine_name(inp))
+    except Exception:
+        logger.warning("Failed to read routines from the DDL upload")
+        return {"procedures": [], "triggers": [], "routine_stats_status": None}
+
+
+def ddl_routines_stage(inp, ckpt, region) -> dict:
+    """The DDL path's routine stage (#1652), checkpointed like the schema stage."""
+    routines = ckpt.load_or_run("ddl_routines", lambda: _parse_ddl_routines_raw(inp, region))
+    return routines if isinstance(routines, dict) else {}
 
 
 def _engine_name(inp) -> str:
@@ -1002,6 +1149,8 @@ def _build_queries(
             query_tags_dropped=p.get("query_tags_dropped") or 0,
             # The routines the statement ran in (#1891); None when not collected.
             parent_routine_ids=p.get("parent_routine_ids"),
+            # #1652: PostgreSQL's toplevel read backwards; None when not reported.
+            nested=p.get("nested"),
             has_text_search=p.get("has_text_search"),
             text_search_type=p.get("text_search_type"),
             has_time_range_filter=p.get("has_time_range_filter"),
@@ -1115,6 +1264,7 @@ def _dict_to_query_pattern(d: dict, *, source_engine: str | None) -> QueryPatter
         query_tags_dropped=d.get("query_tags_dropped") or 0,
         # The routines the statement ran in (#1891); None when the collection has none.
         parent_routine_ids=d.get("parent_routine_ids"),
+        nested=d.get("nested"),
         has_text_search=d.get("has_text_search"),
         text_search_type=d.get("text_search_type"),
         # A collector that read the flag keeps its answer, False included: the live
@@ -1398,6 +1548,7 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
                 if p.get("routine_type") == "FUNCTION"
                 else ProcedureType.PROCEDURE
             ),
+            schema_name=_text_or_none(p.get("schema_name")),
             definition=p.get("definition"),
             # #471: the collection's routine language (e.g. PLPGSQL, C, TSQL), which the
             # relational-move gap check reads.
@@ -1405,6 +1556,10 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
             return_type=p.get("return_type"),
             # #1482: the sql_mode MySQL parses this body under (its own, not the server's).
             sql_mode=_text_or_none(p.get("sql_mode")),
+            # #1652: the execution count the engine keeps, when the collection read it,
+            # and the routine-migration fields (owner, dependencies, body status).
+            execution_stats=execution_stats(p),
+            **procedure_fields(p),
         )
         for p in raw
     ]
@@ -1419,27 +1574,66 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
 
     triggers = []
     skipped: list[dict] = []
+    # #1652: the MySQL trigger each one follows (its action_order predecessor).
+    follows = trigger_follows([t for t in raw if isinstance(t, dict)])
     for t in raw:
         shape = dml_trigger(t)
         if shape is None:
             skipped.append(t)
             continue
         events, timing = shape
+        table = str(t.get("table_name") or "")
         triggers.append(
             Trigger(
                 trigger_id=t.get("trigger_name", ""),
                 trigger_name=t.get("trigger_name", ""),
-                table_id=t.get("table_name") or "",
+                schema_name=_text_or_none(t.get("schema_name")),
+                table_id=table,
                 event_type=TriggerEventType(events[0]),
                 events=[TriggerEventType(e) for e in events],
                 timing=TriggerTiming(timing),
-                definition=t.get("definition"),
+                **trigger_shape_fields(t),
                 sql_mode=_text_or_none(t.get("sql_mode")),
+                **trigger_fields(
+                    t,
+                    follows.get(
+                        (str(t.get("schema_name") or ""), table, str(t.get("trigger_name") or ""))
+                    ),
+                ),
             )
         )
 
     log_skipped_triggers(logger, skipped)
     return triggers or None
+
+
+def trigger_shape_fields(t: Mapping[str, Any]) -> dict[str, Any]:
+    """``Trigger`` keyword arguments every builder reads the same way from a raw row
+    (#1652): its orientation (any spelling: 'ROW', 'BEFORE EACH ROW'), its body, its
+    enabled flag (any spelling: 1, 'ENABLED', PostgreSQL 'O'), the function it executes
+    (PostgreSQL: from its function signature or its EXECUTE FUNCTION clause) and the
+    execution count the engine keeps."""
+    return {
+        "for_each": trigger_for_each(t.get("for_each") or t.get("timing")),
+        "definition": t.get("definition"),
+        "is_enabled": trigger_enabled(t.get("is_enabled")),
+        "function_id": trigger_function_name(
+            f"EXECUTE FUNCTION {t['function_signature']}"
+            if t.get("function_signature")
+            else t.get("definition")
+        ),
+        "execution_stats": execution_stats(t),
+    }
+
+
+def _build_events(raw: object) -> list[ScheduledEvent] | None:
+    """MySQL scheduled events (#1652); None when the collection lists none."""
+    events = [
+        ScheduledEvent(**event_fields(e))
+        for e in (raw if isinstance(raw, list) else [])
+        if isinstance(e, dict) and e.get("event_name")
+    ]
+    return events or None
 
 
 # ---------------------------------------------------------------------------
@@ -1542,6 +1736,9 @@ def _build_output(
     query_capture: QueryCapture | None = None,
     extensions: object = None,
     enum_types: object = None,
+    events: list[ScheduledEvent] | None = None,
+    routine_stats_source: object = None,
+    routine_capture: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
@@ -1552,7 +1749,10 @@ def _build_output(
     execution count and count a live collection captured (#384). ``extensions``: the
     installed extensions an offline PostgreSQL collection lists (#1078), kept as
     :func:`source_extensions` reads them. ``enum_types``: an offline PostgreSQL
-    collection's enum types and labels (#1834), kept as :func:`source_enum_types` reads them."""
+    collection's enum types and labels (#1834), kept as :func:`source_enum_types` reads them.
+    ``events``: MySQL scheduled events;
+    ``routine_stats_source``: how routine execution counts were read; ``routine_capture``:
+    how routine bodies were read (#1652); each ignored when it is not one."""
     elapsed = time.monotonic() - start
     output = CollectorOutputContract(
         job_id=inp.job_id,
@@ -1577,6 +1777,8 @@ def _build_output(
             ),
             query_capture=query_capture,
             extensions=source_extensions(extensions),
+            routine_stats_source=routine_stats_status(routine_stats_source),
+            routine_capture=routine_capture_model(routine_capture),
         ),
         database_schema=Schema(
             tables=tables,
@@ -1584,6 +1786,7 @@ def _build_output(
             procedures=procedures,
             triggers=triggers,
             enum_types=source_enum_types(enum_types),
+            events=events,
         ),
         queries=queries,
         metrics=metrics,

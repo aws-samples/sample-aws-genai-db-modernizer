@@ -275,6 +275,10 @@ def _live(engine: str, snapshots: list[list[dict]], uptime: float = 86_400.0):
             # SQL Server's read of each statement's routine (#1891), before the sample.
             sent.append("routines")
             return []
+        if "program_id" in lowered:
+            # Oracle's read of each statement's PL/SQL unit (#1652), after the statements.
+            sent.append("routines")
+            return []
         sent.append("statements")
         return [_statement_row(engine, 1_300)]
 
@@ -298,7 +302,8 @@ def test_a_live_collector_rates_each_statement_between_its_two_snapshots(engine)
         [p] = c.collect_query_patterns(rate_sample_seconds=300)
     sleep.assert_called_once_with(300)
     routines = ["routines"] if engine == "sqlserver" else []
-    assert sent == routines + ["snapshot", "statements", "snapshot", "server window"]
+    after = ["routines"] if engine == "oracle" else []
+    assert sent == routines + ["snapshot", "statements", "snapshot", "server window"] + after
     assert p["rate_window_basis"] == "sampled"
     assert p["rate_window_seconds"] == 300.0
     assert p["calls_per_second"] == pytest.approx(360 / 300)

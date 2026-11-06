@@ -13,18 +13,20 @@
 --   User needs SELECT on performance_schema and information_schema
 --
 -- Usage:
---   mysql -N --max-allowed-packet=1G -u <user> -p -h <host> -D <database> < collect-mysql.sql > collection.json
+--   mysql -N --max-allowed-packet=1G --raw -u <user> -p -h <host> -D <database> < collect-mysql.sql > collection.json
 --
 -- --max-allowed-packet=1G lets the client receive a large collection. The statement
 -- list is built on the server, whose max_allowed_packet (64 MB by default) bounds it:
 -- past that the server returns it as NULL with a warning. The script records how many
 -- statements it selected, so the ingest reports a list that came back short.
 --
--- The -N flag suppresses column headers so the output is valid JSON.
+-- The -N flag suppresses column headers so the output is valid JSON. --raw keeps the
+-- client from escaping backslashes and newlines in the output, which would break the
+-- JSON escapes of any text holding a double quote (routine bodies often do, #1652).
 -- If you forgot -N, the parser will strip the header line automatically.
 --
 -- Optional settings (#384), as session variables set when the client connects:
---   mysql --init-command="SET @query_limit=20000, @min_executions=5" -N --max-allowed-packet=1G ... < collect-mysql.sql
+--   mysql --init-command="SET @query_limit=20000, @min_executions=5" -N --max-allowed-packet=1G --raw ... < collect-mysql.sql
 --   @query_limit     keep only the costliest statements by total time
 --                    (default: no cap, every statement is kept)
 --   @min_executions  keep statements that ran at least this often (default: 10)
@@ -43,6 +45,23 @@
 -- Both reads are SELECTs into session variables: nothing is changed or reset. The
 -- first read's counts go into metadata.rate_sample.first_counts, keyed as each
 -- statement row's sample_key, and the ingest pairs them.
+--
+-- Procedure, function, trigger and event code (#1652), as a session variable:
+--   mysql --init-command="SET @include_routine_bodies=0" ...
+--   @include_routine_bodies  0: list routines, triggers and events by name and size
+--                            only, without their code (default: 1, code kept)
+-- Privileges for routine code. Without them nothing fails: a routine whose body the
+-- user may not read is listed with body_status 'not_readable', and
+-- metadata.routine_capture.privileges_not_seen names what is not granted directly.
+-- The script never uses them to write.
+--   GRANT SHOW_ROUTINE ON *.* TO <user>;     -- MySQL 8.0.20+: read every routine body
+--                                            -- (before 8.0.20: global SELECT ON *.*)
+--   GRANT TRIGGER ON <database>.* TO <user>; -- list triggers (also allows creating them)
+--   GRANT EVENT ON <database>.* TO <user>;   -- list events (also allows creating them)
+-- SHOW CREATE cannot run inside a SELECT, so the script reads the information_schema
+-- columns it prints from, and the ingest rebuilds each CREATE from them. Routine
+-- execution counts come from performance_schema.events_statements_summary_by_program
+-- when the server has it; no setting is changed.
 -- ==========================================================================
 
 SET @db = DATABASE();
@@ -53,6 +72,8 @@ SET @min_executions = IF(CAST(@min_executions AS CHAR) REGEXP '^[1-9][0-9]*$', C
 SET @query_limit = IF(CAST(@query_limit AS CHAR) REGEXP '^[1-9][0-9]*$', CAST(@query_limit AS UNSIGNED), NULL);
 SET @rate_sample_seconds = IF(CAST(@rate_sample_seconds AS CHAR) REGEXP '^[0-9]+$', CAST(@rate_sample_seconds AS UNSIGNED), 300);
 SET SESSION group_concat_max_len = 1048576;
+-- #1652: routine code is kept unless the session set @include_routine_bodies to 0.
+SET @include_routine_bodies = IF(CAST(@include_routine_bodies AS CHAR) = '0', 0, 1);
 
 -- We build each section as a JSON fragment, then combine at the end.
 
@@ -174,13 +195,31 @@ SELECT JSON_ARRAYAGG(v_obj) INTO @views FROM (
 
 -- ===================== 8. Procedures & Functions =====================
 -- sql_mode: the mode each body was created with, which MySQL parses it under (#1482).
+-- #1652: every column SHOW CREATE prints a routine from, and the session it was
+-- created in; ROUTINE_DEFINITION is NULL when the user may not read the body (not its
+-- DEFINER, no SHOW_ROUTINE).
 SELECT JSON_ARRAYAGG(p_obj) INTO @procedures FROM (
   SELECT JSON_OBJECT(
     'routine_name', routine_name,
+    'schema_name', routine_schema,
+    'specific_name', specific_name,
     'routine_type', routine_type,
     'return_type', data_type,
-    'definition', routine_definition,
-    'sql_mode', sql_mode
+    'definer', definer,
+    'security_type', security_type,
+    'is_deterministic', is_deterministic,
+    'sql_data_access', sql_data_access,
+    'routine_comment', routine_comment,
+    'external_language', external_language,
+    'sql_mode', sql_mode,
+    'character_set_client', character_set_client,
+    'collation_connection', collation_connection,
+    'database_collation', database_collation,
+    'body_chars', CHAR_LENGTH(routine_definition),
+    'definition', IF(@include_routine_bodies = 1, routine_definition, NULL),
+    'body_status', CASE WHEN @include_routine_bodies = 0 THEN 'opted_out'
+                        WHEN routine_definition IS NULL THEN 'not_readable'
+                        ELSE 'collected' END
   ) AS p_obj
   FROM information_schema.routines
   WHERE routine_schema = @db
@@ -188,19 +227,124 @@ SELECT JSON_ARRAYAGG(p_obj) INTO @procedures FROM (
 ) AS p;
 
 -- ===================== 9. Triggers =====================
+-- #1652: listed only with the TRIGGER privilege; orientation, DEFINER, order among the
+-- table's triggers, and the session each was created in.
 SELECT JSON_ARRAYAGG(tr_obj) INTO @triggers FROM (
   SELECT JSON_OBJECT(
     'trigger_name', trigger_name,
+    'schema_name', trigger_schema,
     'event_type', event_manipulation,
     'table_name', event_object_table,
     'timing', action_timing,
-    'definition', action_statement,
-    'sql_mode', sql_mode
+    'for_each', action_orientation,
+    'sql_mode', sql_mode,
+    'definer', definer,
+    'action_order', action_order,
+    'character_set_client', character_set_client,
+    'collation_connection', collation_connection,
+    'database_collation', database_collation,
+    'body_chars', CHAR_LENGTH(action_statement),
+    'definition', IF(@include_routine_bodies = 1, action_statement, NULL),
+    'body_status', IF(@include_routine_bodies = 1, 'collected', 'opted_out')
   ) AS tr_obj
   FROM information_schema.triggers
   WHERE trigger_schema = @db
   ORDER BY event_object_table, trigger_name
 ) AS tr;
+
+-- ===================== 9b. Routine stats (#1652) =====================
+-- performance_schema keeps per-program counts (MySQL 5.7+); the script reads them only
+-- when the table exists (MariaDB may not have it) and never changes a setting.
+-- SUM_TIMER_WAIT is in picoseconds.
+SELECT COUNT(*) INTO @has_by_program FROM information_schema.tables
+ WHERE table_schema = 'performance_schema' AND table_name = 'events_statements_summary_by_program';
+SET @routine_stats_sql = IF(@has_by_program > 0,
+  'SELECT JSON_ARRAYAGG(JSON_OBJECT(''routine_name'', OBJECT_NAME, ''schema_name'', OBJECT_SCHEMA,
+     ''object_type'', OBJECT_TYPE, ''execution_count'', COUNT_STAR,
+     ''total_time_ms'', ROUND(SUM_TIMER_WAIT / 1000000000, 3)))
+     INTO @routine_stats
+     FROM performance_schema.events_statements_summary_by_program
+    WHERE OBJECT_SCHEMA = @db',
+  'SELECT NULL INTO @routine_stats');
+PREPARE routine_stats_stmt FROM @routine_stats_sql;
+EXECUTE routine_stats_stmt;
+DEALLOCATE PREPARE routine_stats_stmt;
+SET @routine_stats_status = IF(@has_by_program > 0 AND @@performance_schema = 1,
+  JSON_OBJECT('status', 'tracked'),
+  JSON_OBJECT('status', 'not_tracked', 'reason',
+              'performance_schema program statistics are not available'));
+
+-- ===================== 9c. Routine parameters (#1652) =====================
+-- Each routine's parameters and a function's return type (ordinal 0), with the
+-- character set and collation each resolved to: the CREATE is rebuilt from them.
+SELECT JSON_ARRAYAGG(prm_obj) INTO @routine_parameters FROM (
+  SELECT JSON_OBJECT(
+    'routine_name', specific_name, 'schema_name', specific_schema, 'routine_type', routine_type,
+    'ordinal', ordinal_position, 'mode', parameter_mode, 'parameter_name', parameter_name,
+    'data_type', data_type, 'dtd_identifier', dtd_identifier,
+    'character_set_name', character_set_name, 'collation_name', collation_name
+  ) AS prm_obj
+  FROM information_schema.parameters
+  WHERE specific_schema = @db
+  ORDER BY routine_type, specific_name, ordinal_position
+) AS prm;
+
+-- ===================== 9d. Events (#1652) =====================
+-- The scheduled events, with what SHOW CREATE EVENT prints them from; the times are in
+-- each event's own time_zone, which its CREATE is replayed in. Listed only with EVENT.
+SELECT JSON_ARRAYAGG(e_obj) INTO @events FROM (
+  SELECT JSON_OBJECT(
+    'event_name', event_name, 'schema_name', event_schema, 'definer', definer,
+    'time_zone', time_zone, 'event_type', event_type,
+    'execute_at', DATE_FORMAT(execute_at, '%Y-%m-%d %H:%i:%s'),
+    'interval_value', CAST(interval_value AS CHAR), 'interval_field', interval_field,
+    'starts', DATE_FORMAT(starts, '%Y-%m-%d %H:%i:%s'),
+    'ends', DATE_FORMAT(ends, '%Y-%m-%d %H:%i:%s'),
+    'status', status, 'on_completion', on_completion, 'event_comment', event_comment,
+    'sql_mode', sql_mode, 'character_set_client', character_set_client,
+    'collation_connection', collation_connection, 'database_collation', database_collation,
+    'body_chars', CHAR_LENGTH(event_definition),
+    'definition', IF(@include_routine_bodies = 1, event_definition, NULL),
+    'body_status', IF(@include_routine_bodies = 1, 'collected', 'opted_out')
+  ) AS e_obj
+  FROM information_schema.events
+  WHERE event_schema = @db
+  ORDER BY event_name
+) AS e;
+
+-- ===================== 9e. Routine capture (#1652) =====================
+-- How many routines, triggers and events the server counts, so the ingest reports a
+-- list max_allowed_packet turned into NULL (as for the statements), and which of the
+-- privileges that decide what is visible this user lacks as a direct grant (a role may
+-- still grant one: a hint, never a failure).
+SET @grantee = CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''',
+                      SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''');
+SELECT (SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = @db)
+     + (SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = @db)
+     + (SELECT COUNT(*) FROM information_schema.events WHERE event_schema = @db)
+  INTO @routines_counted;
+-- The parameters it counts: a parameter list that comes back NULL is a cut one, never
+-- an empty one, and the ingest then rebuilds no routine from it.
+SELECT COUNT(*) INTO @parameters_counted FROM information_schema.parameters
+ WHERE specific_schema = @db;
+SELECT JSON_ARRAYAGG(p.privilege) INTO @privileges_not_seen FROM (
+  SELECT 'SHOW_ROUTINE' AS privilege UNION ALL SELECT 'TRIGGER' UNION ALL SELECT 'EVENT'
+) AS p
+WHERE NOT EXISTS (
+        SELECT 1 FROM information_schema.user_privileges u
+         WHERE u.grantee = @grantee
+           AND (u.privilege_type = p.privilege
+                OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')))
+  AND NOT EXISTS (
+        SELECT 1 FROM information_schema.schema_privileges s
+         WHERE s.grantee = @grantee AND s.table_schema = @db
+           AND s.privilege_type = p.privilege);
+SET @routine_capture = JSON_OBJECT(
+  -- JSON_EXTRACT, not CAST(... AS JSON), which MariaDB does not have.
+  'include_bodies', JSON_EXTRACT(IF(@include_routine_bodies = 1, 'true', 'false'), '$'),
+  'routines_counted', @routines_counted,
+  'parameters_counted', @parameters_counted,
+  'privileges_not_seen', IFNULL(JSON_EXTRACT(@privileges_not_seen, '$'), JSON_ARRAY()));
 
 -- ===================== 10. Query Patterns (performance_schema) =====================
 -- #1908: the first read of the counters, the wait, and the server's clock at each read
@@ -285,7 +429,9 @@ SELECT JSON_OBJECT(
   'metadata', JSON_SET(@metadata, '$.query_capture.statements', @query_rows,
     -- #1908: the wait used and the seconds the server's clock measured between the reads.
     '$.rate_sample', JSON_OBJECT('seconds', @rate_sample_seconds, 'elapsed_seconds', @rate_sample_elapsed,
-      'first_counts', IFNULL(JSON_EXTRACT(@rate_sample_start, '$'), JSON_OBJECT()))),
+      'first_counts', IFNULL(JSON_EXTRACT(@rate_sample_start, '$'), JSON_OBJECT())),
+    -- #1652: how routine code was read.
+    '$.routine_capture', JSON_EXTRACT(@routine_capture, '$')),
   'tables', IFNULL(JSON_EXTRACT(@tables, '$'), JSON_ARRAY()),
   'columns', IFNULL(JSON_EXTRACT(@columns, '$'), JSON_ARRAY()),
   'indexes', IFNULL(JSON_EXTRACT(@indexes, '$'), JSON_ARRAY()),
@@ -294,6 +440,10 @@ SELECT JSON_OBJECT(
   'views', IFNULL(JSON_EXTRACT(@views, '$'), JSON_ARRAY()),
   'procedures', IFNULL(JSON_EXTRACT(@procedures, '$'), JSON_ARRAY()),
   'triggers', IFNULL(JSON_EXTRACT(@triggers, '$'), JSON_ARRAY()),
+  'routine_stats', IFNULL(JSON_EXTRACT(@routine_stats, '$'), JSON_ARRAY()),
+  'routine_stats_status', JSON_EXTRACT(@routine_stats_status, '$'),
+  'routine_parameters', IF(@parameters_counted = 0, JSON_ARRAY(), JSON_EXTRACT(@routine_parameters, '$')),
+  'events', IFNULL(JSON_EXTRACT(@events, '$'), JSON_ARRAY()),
   'queries', IFNULL(JSON_EXTRACT(@queries, '$'), JSON_ARRAY()),
   'global_stats', IFNULL(JSON_EXTRACT(@global_stats, '$'), JSON_OBJECT())
 ) AS collection_output;

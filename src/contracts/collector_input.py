@@ -14,7 +14,15 @@ Two collection modes:
 import re
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 # The minimum execution count every collector uses when none is given (#384). There is
 # no default statement cap: every statement that ran this often is captured.
@@ -108,6 +116,13 @@ class CollectionOptions(BaseModel):
             "time between them, by the database's clock. 0 takes one snapshot, as before"
         ),
     )
+    include_routine_bodies: StrictBool = Field(
+        default=True,
+        description=(
+            "Collect each routine's body and CREATE statement (#1652); False lists "
+            "routines by name and size only and keeps no routine sources"
+        ),
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -182,10 +197,13 @@ class CollectorInput(BaseModel):
       (default 300, a whole number 0 or more): the seconds every live collector waits
       between its two snapshots of the statement counters; 0 takes one snapshot, as
       before. Backward compatible: a request without it samples for 300 seconds.
+    - 4.3 (2026-11-07, #1652): Optional CollectionOptions.include_routine_bodies (#1652,
+      default true): false lists routines by name and size only, drops every engine's
+      bodies and keeps no routine sources
     """
 
     contract_version: str = Field(
-        default="4.2", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="4.3", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(description="Unique job identifier")
 

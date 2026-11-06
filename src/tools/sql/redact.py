@@ -1012,7 +1012,11 @@ def _number_edits(masked: str, dialect: str) -> list[tuple[int, int]]:
 
 # -- whole collections ------------------------------------------------------------
 
-_DEFINITIONS = ("views", "procedures", "triggers")
+_DEFINITIONS = ("views", "procedures", "triggers", "events")
+
+#: Comments a raw collection carries on its routines and events (#1652): a value can hide
+#: in one, as in any comment.
+_COMMENTS = (("procedures", "routine_comment"), ("events", "event_comment"))
 
 
 def collector_output_engine(payload: Mapping[str, Any]) -> str:
@@ -1131,13 +1135,55 @@ def redact_raw_collection(data: Mapping[str, Any]) -> Mapping[str, Any]:
             rows.append(row)
         if changed:
             out = {**data, "queries": rows}
+    sources = data.get("routine_sources")
+    if isinstance(sources, list) and sources:
+        # #1652: Oracle's routine bodies come one source line per row, and a literal can
+        # span lines; the copy keeps them joined on their routines, redacted there.
+        out = _with_joined_sources(out if out is not None else data, sources)
     for key in _DEFINITIONS:
-        if key in data:
-            fixed = _redacted_definitions(data[key], engine, settings)
-            if fixed is not data[key]:
-                out = dict(out if out is not None else data)
+        current = out if out is not None else data
+        if key in current:
+            fixed = _redacted_definitions(current[key], engine, settings)
+            if fixed is not current[key]:
+                out = dict(current)
+                out[key] = fixed
+    for key, comment in _COMMENTS:
+        current = out if out is not None else data
+        if key in current:
+            fixed = _redacted_comments(current[key], comment, engine)
+            if fixed is not current[key]:
+                out = dict(current)
                 out[key] = fixed
     return out if out is not None else data
+
+
+def _with_joined_sources(data: Mapping[str, Any], sources: list[Any]) -> dict[str, Any]:
+    """``data`` without its ``routine_sources`` lines, each routine's and trigger's body
+    joined from them onto its ``definition`` (``routine_rows.attach_routine_sources``)."""
+    from src.agents.collector.routine_rows import attach_routine_sources
+
+    out = {k: v for k, v in data.items() if k != "routine_sources"}
+    procedures = [dict(p) if isinstance(p, Mapping) else p for p in data.get("procedures") or []]
+    triggers = [dict(t) if isinstance(t, Mapping) else t for t in data.get("triggers") or []]
+    attach_routine_sources(procedures, triggers, sources)
+    if "procedures" in data or procedures:
+        out["procedures"] = procedures
+    if "triggers" in data or triggers:
+        out["triggers"] = triggers
+    return out
+
+
+def _redacted_comments(items: object, key: str, engine: str) -> object:
+    if not isinstance(items, list):
+        return items
+    out: list[Any] = []
+    for item in items:
+        if isinstance(item, Mapping) and isinstance(item.get(key), str):
+            text = redact_comment(item[key], engine)
+            if text != item[key]:
+                item = {**item, key: text}
+        out.append(item)
+    return out if any(a is not b for a, b in zip(out, items, strict=True)) else items
 
 
 def raw_collection_settings(source_engine: str | None, metadata: object) -> SpanSettings:
@@ -1175,6 +1221,9 @@ _TEXT_KEYS = {
     # again so a later path that builds it otherwise cannot keep a literal.
     "view_resolved_text": redact_literals,
     "definition": redact_definition,
+    # #1652: a routine's or a MySQL event's comment, which can hold a value as any comment.
+    "routine_comment": lambda text, engine, _settings: redact_comment(text, engine),
+    "event_comment": lambda text, engine, _settings: redact_comment(text, engine),
 }
 
 
