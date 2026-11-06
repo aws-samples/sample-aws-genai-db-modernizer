@@ -606,3 +606,75 @@ def test_range_failures_print_the_example_once_after_all_violations(monkeypatch,
     out = capsys.readouterr().out
     assert out.count("A message that passes") == 1
     assert out.rindex("bbb2222: bad") < out.index("A message that passes")
+
+
+# ---------------------------------------------------------------------------
+# Merge detection in a linked worktree (#1968): real temporary repos, no network.
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repo_with_pending_merge(path):
+    """A repo whose ``git merge --no-commit`` of a side branch is in progress."""
+    path.mkdir()
+    _git(path, "init", "-q", "-b", "main")
+    (path / "a.txt").write_text("a\n")
+    _git(path, "add", ".")
+    _git(path, "commit", "-q", "-m", "base")
+    _git(path, "checkout", "-q", "-b", "side")
+    (path / "b.txt").write_text("b\n")
+    _git(path, "add", ".")
+    _git(path, "commit", "-q", "-m", "side")
+    _git(path, "checkout", "-q", "main")
+    (path / "c.txt").write_text("c\n")
+    _git(path, "add", ".")
+    _git(path, "commit", "-q", "-m", "main change")
+    return path
+
+
+def test_merge_in_progress_is_seen_in_a_normal_clone(tmp_path) -> None:
+    repo = _repo_with_pending_merge(tmp_path / "repo")
+    _git(repo, "merge", "--no-commit", "--no-ff", "side")
+    assert mod.merge_in_progress(repo) is True
+
+
+def test_merge_in_progress_is_seen_in_a_linked_worktree(tmp_path) -> None:
+    repo = _repo_with_pending_merge(tmp_path / "repo")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(worktree), "main")
+    assert (worktree / ".git").is_file()
+    _git(worktree, "merge", "--no-commit", "--no-ff", "side")
+    assert mod.merge_in_progress(worktree) is True
+
+
+def test_no_merge_in_progress_in_a_worktree_is_not_a_merge(tmp_path) -> None:
+    repo = _repo_with_pending_merge(tmp_path / "repo")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(worktree), "main")
+    assert mod.merge_in_progress(worktree) is False
+    assert mod.merge_in_progress(repo) is False
+
+
+def test_non_merge_message_in_a_worktree_is_still_checked(tmp_path, monkeypatch) -> None:
+    repo = _repo_with_pending_merge(tmp_path / "repo")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(worktree), "main")
+    monkeypatch.setattr(mod, "_merge_in_progress", lambda: mod.merge_in_progress(worktree))
+    assert mod.check_single_message("fix: no body and no trailer\n") != []
+
+
+def test_merge_message_in_a_worktree_merge_is_skipped(tmp_path, monkeypatch) -> None:
+    repo = _repo_with_pending_merge(tmp_path / "repo")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(worktree), "main")
+    _git(worktree, "merge", "--no-commit", "--no-ff", "side")
+    monkeypatch.setattr(mod, "_merge_in_progress", lambda: mod.merge_in_progress(worktree))
+    assert mod.check_single_message("anything that is not the house shape\n") == []

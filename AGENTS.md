@@ -289,7 +289,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
   explanation, review notes and test results go in the issue and the PR,
   not the commit (see CONTRIBUTING.md's Commit Message Format). A
   `check-commit-message` pre-commit hook and `ci/check_commits.sh` enforce
-  this; merge and fixup/squash/amend commits are skipped (#570).
+  this; merge (also in a linked worktree, #1968) and fixup/squash/amend commits are skipped (#570). <!-- claim: tests/unit/scripts/test_check_commit_message.py::test_merge_message_in_a_worktree_merge_is_skipped, tests/unit/scripts/test_conventional_commit_hook.py::test_merge_in_progress_in_a_worktree_skips_the_conventional_check -->
 - Claude Code hooks in `scripts/hooks/` (wired in `.claude/settings.json` and `.claude/settings.ci.json`) refuse `git commit --no-verify`, hand edits of generated baselines and of contract versions (declare a bump with `scripts/bump_contract.py`), schema design before `/modernize` has run the approval gate on its own, a Bash call that prints a cloud credential helper's output, a push from a fork PR's worktree to a repository other than the fork and, in headless runs, any Bash call that breaks the tool-use rule and a `/modernize --auto` turn that would end with nothing running and no `MODERNIZE_RESULT` line; see ci/README.md.
 - Never add `Co-Authored-By` trailers (also hook-enforced, see above); never use `--no-verify`. <!-- claim: tests/unit/scripts/test_check_commit_message.py::test_co_authored_by_trailer_fails_even_with_a_valid_closes_trailer -->
 - Write tests first; keep PRs small; open them against `main`.
