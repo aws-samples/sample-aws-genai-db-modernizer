@@ -38,7 +38,11 @@ pytestmark = pytest.mark.deterministic
 # instead of 24 hours: wordpress $512.58 to $749.21 (Aurora MySQL's sized load, 96.5 to
 # 118.3 calls/s, takes the next instance size) and trailgear $433.15 to $432.19.
 # discourse is unchanged: a PostgreSQL collection with no stats reset time assumes 24 hours.
-WHOLE_DOLLARS = {"wordpress": 749, "discourse": 535, "trailgear": 432}
+# #1955 refreshes the wordpress sample (163 statements under a seeded workload, rates over
+# its ~27-minute window): $749.21 to $1,204.30. DynamoDB $79.68 to $522.46 (its sized load
+# 126 to 1,082 calls/s, 31 to 191 writes/s, on-demand), Aurora MySQL $484.94 to $497.25
+# (118 to 490 calls/s), ElastiCache unchanged at $184.59.
+WHOLE_DOLLARS = {"wordpress": 1204, "discourse": 535, "trailgear": 432}
 
 
 def _report(run: PipelineResult) -> dict:

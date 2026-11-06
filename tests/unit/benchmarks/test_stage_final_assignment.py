@@ -67,7 +67,7 @@ def test_run_final_assignment_case_maps_every_query(wordpress_run, tmp_path):
     collection = json.loads(
         (tmp_path / "artifacts/wordpress/case/collector/output.json").read_text()
     )
-    assert len(got) == len(collection["queries"]["query_patterns"]) == 107
+    assert len(got) == len(collection["queries"]["query_patterns"]) == 163  # #1955 sample
 
 
 def test_without_a_reality_check_version_the_stage_reads_v1(tmp_path):

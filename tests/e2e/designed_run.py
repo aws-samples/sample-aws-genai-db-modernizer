@@ -34,7 +34,14 @@ from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContra
 from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
-from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
+from tests.e2e.pipeline import (
+    REPO,
+    PipelineResult,
+    _run,
+    run_pipeline,
+    run_pipeline_from_file,
+    unzip_pre_1955_wordpress,
+)
 
 TEMPLATE_PATH = (
     REPO / "docs/examples/wordpress/load-test-results/schema-dynamodb/v2/schema_output.json"
@@ -59,6 +66,11 @@ def run_partial_designed_wordpress(artifact_root: Path, job_id: str) -> Pipeline
     return run_designed_wordpress(
         artifact_root, job_id, dynamodb_leave_out=PARTIAL_LEAVE_OUT, dynamodb_extra=PARTIAL_EXTRA
     )
+
+
+def run_pre_1955_designed_wordpress(artifact_root: Path, job_id: str) -> PipelineResult:
+    """The designed job on the collection bundled before #1955 (see ``pre_1955``)."""
+    return run_designed_wordpress(artifact_root, job_id, pre_1955=True)
 
 
 def run_merge_review_wordpress(artifact_root: Path, job_id: str) -> PipelineResult:
@@ -485,13 +497,19 @@ def run_designed_wordpress(
     dynamodb_leave_out: Collection[str] = (),
     dynamodb_extra: Collection[str] = (),
     merge_review: bool = False,
+    pre_1955: bool = False,
 ) -> PipelineResult:
     """The designed wordpress job; ``dynamodb_leave_out`` drops source tables from
     the DynamoDB design's table map and ``dynamodb_extra`` adds ones DynamoDB does
     not serve (see ``write_dynamodb_design``); ``merge_review`` replaces the DynamoDB
     design with a group merge that leaves an overlap for review
-    (``write_merge_review_design``)."""
-    result = run_pipeline("wordpress", artifact_root, job_id)
+    (``write_merge_review_design``); ``pre_1955`` runs it on the collection bundled
+    before #1955 (``pipeline.PRE_1955_WORDPRESS``) instead of the bundled sample."""
+    if pre_1955:
+        src = unzip_pre_1955_wordpress(artifact_root.parent / f"input-pre-1955-{job_id}")
+        result = run_pipeline_from_file(src, "wordpress", artifact_root, job_id)
+    else:
+        result = run_pipeline("wordpress", artifact_root, job_id)
     store = LocalArtifactStore(base_dir=str(artifact_root))
     version = resolve_downstream_assignment_version(store, "wordpress", job_id)
     patterns = write_dynamodb_design(

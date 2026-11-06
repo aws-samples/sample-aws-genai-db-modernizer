@@ -2,6 +2,27 @@
 
 Why a committed case's query list changed, case by case, for whoever reviews its sheet. The lists are written by `uv run python -m benchmarks.runner.anti_pattern_cases`, never by hand; these notes only record the evidence for a change. They say which queries joined or left a case, not which rows the pipeline flags: that stays out of the review, as the blind sheets require (ADR-030 Amendment 2).
 
+## 2026-11-06, #1955: the refreshed wordpress sample
+
+The wordpress sample was collected again, after a statistics reset and a seeded workload through the shop's web and REST interfaces (`docs/examples/wordpress/README.md`): 163 statements instead of 107, with the writes the old file lacked, and every statement's window about 27 minutes of that workload. Rates rose for almost every statement and new tables gained traffic, so the builder selected the three wordpress cases again; the selection rule did not change, and all three cases are still unreviewed. Rates below are calls per second, on the old file and then on the new one, both over each statement's own window (`-` for a statement the old file does not hold).
+
+### wordpress-frequent-full-scan
+
+- Left: `52da34b1…` (`SELECT p.ID FROM wp_posts p WHERE post_type = ? AND p.post_title = ? …`): 1.732 → 19.249; `d4bf16d6…` (`SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts WHERE … post_parent = ? …`): 1.625 → 3.471.
+- Joined: `1794daed…` (`SELECT key_id, user_id, permissions, consumer_key, … FROM wp_woocommerce_api_keys …`): 1.351 → 8.497; `413c99e4…` (`SELECT option_name, option_value FROM wp_options WHERE autoload = ?`): 0.867 → 9.627.
+- Stayed: `329367a2…` (`SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME`): 1.649 → 9.147.
+
+### wordpress-no-relational-need
+
+- Left: `2c0093ed…` and `33dfdb12…` (`UPDATE wp_postmeta SET meta_value = meta_value ± ? …`): 0.291 → 0.865 and 0.292 → 0.865; `59163c18…` (`SELECT a.action_id FROM wp_actionscheduler_actions a LEFT JOIN wp_actionscheduler_groups g …`): 0.743 → 3.160; `966f5a33…` (`SELECT t.term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt …`): 0.381 → 2.627; `97834e68…` (`SELECT p.ID FROM wp_posts p INNER JOIN wp_term_relationships tr …`): 0.743 → 3.160.
+- Joined: `22726c84…` (`SELECT t.term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt …`): 0.676 → 3.867; `413c99e4…` (`SELECT option_name, option_value FROM wp_options WHERE autoload = ?`): 0.867 → 9.627; `41b2f2d1…` (`UPDATE wp_usermeta SET meta_value = ? WHERE user_id = ? AND meta_key = ?`): - → 1.274; `4b856e29…` (`UPDATE wp_woocommerce_order_itemmeta SET meta_value = ? …`): 0.317 → 1.464; `67fcc3ec…` (`SELECT umeta_id AS meta_id, meta_key, meta_value FROM wp_usermeta WHERE user_id = ? …`): - → 8.309; `d4bf16d6…` (`SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts WHERE … post_parent = ? …`): 1.625 → 3.471; `eb232c6c…` (`SELECT umeta_id FROM wp_usermeta WHERE meta_key = ? AND user_id = ?`): - → 10.975; `f37cfe51…` (`SELECT DISTINCTROW t.term_id, tr.object_id FROM wp_terms AS t …`): 0.276 → 1.926.
+- Stayed: `34b8682e…` (0.414 → 1.985), `3c5c8a79…` (0.292 → 1.222), `50b46567…` (0.409 → 2.136), `ee386e4a…` (0.875 → 3.768).
+
+### wordpress-simple-cache-read
+
+- Joined: `1da3b858…` (`SELECT a.*, g.slug AS group FROM wp_actionscheduler_actions a LEFT JOIN …`): 2.164 → 23.974; `22cb9563…` (`SELECT meta_id FROM wp_woocommerce_order_itemmeta WHERE meta_key = ? AND order_item_id = ?`): 3.164 → 14.632; `8485f064…` (`SELECT order_item_id, meta_key, meta_value FROM wp_woocommerce_order_itemmeta WHERE order_item_id IN (...) …`): 14.222 → 41.115; `96ca5829…` (`SELECT meta_id AS meta_id, meta_key, meta_value FROM wp_woocommerce_order_itemmeta WHERE order_item_id = ? …`): 10.393 → 24.770; `bdb34acb…` (`SELECT SUM(order_item_meta__qty.meta_value) AS order_item_count FROM wp_posts AS posts …`): 0.058 → 0.293; `f86b4be6…` (`SELECT im.meta_value FROM wp_posts AS p INNER JOIN wp_postmeta AS pm …`): - → 0.122.
+- Stayed: `3dbc7d9a…` (23.765 → 92.244), `4f024754…` (17.022 → 89.421), `71b98418…` (7.839 → 37.247).
+
 ## 2026-11-05, #1893: call rates over each statement's own window
 
 Every collector used to divide a statement's execution count by 24 hours. Since #1893 it divides it by the window the count covers: on wordpress (MySQL) and trailgear (SQL Server), each statement's own `first_seen` to `last_seen` (discourse, a PostgreSQL collection with no statistics reset time, keeps its 24-hour rates and its cases did not change). The selection rule did not change; the cases were rebuilt with the builder because the rates it reads moved. Rates below are calls per second, over 24 hours before and over the statement's own window after (the sheets' `calls/s` column shows the new ones).

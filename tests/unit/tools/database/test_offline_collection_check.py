@@ -504,11 +504,11 @@ def test_the_absent_sections_warning_never_repeats_a_document_key(
 
 
 def test_a_sentinel_at_the_end_of_queries_is_not_a_statement() -> None:
-    """On main a trailing sentinel was counted as a statement: 108 for wordpress's 107."""
+    """On main a trailing sentinel was counted as a statement: 108 for wordpress's 107 (#1955: 163 now)."""
     raw = sample_collection("wordpress")
     raw["queries"].append({"_sentinel": True})
 
-    assert len(_loads(raw)["queries"]["query_patterns"]) == 107
+    assert len(_loads(raw)["queries"]["query_patterns"]) == 163  # the refreshed sample (#1955)
 
 
 def test_a_sentinel_anywhere_else_is_kept() -> None:

@@ -82,7 +82,9 @@ def test_the_scope_is_recorded_and_routes_wordpress_within_it(tmp_path) -> None:
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
     lines = {x["phase"]: x for x in map(json.loads, proc.stdout.splitlines()) if "phase" in x}
     assert lines["triage"]["engine_scope"] == ["aurora_postgresql", "dynamodb"]
-    assert lines["assignment"]["distribution"] == {"dynamodb": 40, "aurora_postgresql": 67}
+    # 58 and 105 since #1955: the refreshed sample's 163 statements split as the routing
+    # snapshot's wordpress engines do, Aurora PostgreSQL standing in for Aurora MySQL.
+    assert lines["assignment"]["distribution"] == {"dynamodb": 58, "aurora_postgresql": 105}
     job = lines["collect"]["job_id"]
     decision = json.loads(
         (tmp_path / "a" / "wordpress" / job / "decisions" / "engine_scope.json").read_text()

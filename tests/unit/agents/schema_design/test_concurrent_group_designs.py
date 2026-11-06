@@ -10,10 +10,10 @@ group in flight a designer read the input of whichever group set them last
 (on wordpress at concurrency 3, two of the three DynamoDB drafts held another
 group's queries and none of their own).
 
-This runs the real grouped DynamoDB path on the deterministic wordpress run (39
-DynamoDB queries, 3 groups) at concurrency 3 with the model
+This runs the real grouped DynamoDB path on the deterministic wordpress run (58
+DynamoDB queries, 4 groups) at concurrency 4 with the model
 calls replayed. The stand-in designer calls the input tool it was given, as a model
-does, after a barrier that holds every group's designer until all three are in
+does, after a barrier that holds every group's designer until all of them are in
 flight, then designs one access pattern per input entry the tool returned. Each group's draft must
 hold exactly its own group's queries. No test calls a model.
 """
@@ -42,8 +42,9 @@ DB, JOB = "wordpress", "job-concurrent-groups"
 # 4 since #992: a table's writes land on one engine, so wp_postmeta's three UPDATEs
 # and wp_woocommerce_order_itemmeta's UPDATE join their tables' other writes on
 # DynamoDB (35 -> 39 queries), and the splitter makes a fourth group. 3 since #1602:
-# the splitter caps a group at 20 access patterns, not 20 statements.
-GROUPS = 3
+# the splitter caps a group at 20 access patterns, not 20 statements. 4 since #1955: the
+# refreshed sample routes 58 queries to DynamoDB (39 before), split 22/20/7/9.
+GROUPS = 4
 TEMPLATE = json.loads(
     (
         REPO / "docs/examples/wordpress/load-test-results/schema-dynamodb/v2/schema_output.json"
