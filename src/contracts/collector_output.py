@@ -94,6 +94,10 @@ Version History:
 - 5.10 (2026-11-07, #1918): Added optional ``Column.max_value_bytes``: the longest
   stored value of a LOB column in bytes, measured by the PostgreSQL collection script,
   which sizes the step 1 DMS LobMaxSize.
+- 5.11 (2026-11-07, #1834): Added optional ``Schema.enum_types`` (``SourceEnumType``:
+  schema_name, type_name, labels): PostgreSQL's enum types with their labels in sort
+  order (pg_enum), so a same-engine step 1 keeps enum columns. Backward compatible:
+  defaults to None (not collected), and step 1 then keeps TEXT for them.
 """
 
 import re
@@ -834,6 +838,19 @@ class Trigger(BaseModel):
     )
 
 
+class SourceEnumType(BaseModel):
+    """One PostgreSQL enum type (#1834): ``pg_enum``'s labels, in ``enumsortorder`` order.
+    A same-engine step 1 creates it on Aurora PostgreSQL before the tables that use it."""
+
+    schema_name: str = Field(..., min_length=1, max_length=128, description="The type's schema")
+    type_name: str = Field(
+        ..., min_length=1, max_length=128, description="The type's name (a column's data_type)"
+    )
+    labels: list[str] = Field(
+        default_factory=list, description="The enum's labels, in the order PostgreSQL sorts them"
+    )
+
+
 class Schema(BaseModel):
     tables: list[Table] = Field(..., min_length=1, description="List of database tables")
     views: list[View] | None = Field(None, description="View definitions (all databases support)")
@@ -842,6 +859,13 @@ class Schema(BaseModel):
     )
     triggers: list[Trigger] | None = Field(
         None, description="Trigger definitions (all databases support)"
+    )
+    enum_types: list[SourceEnumType] | None = Field(
+        None,
+        description=(
+            "PostgreSQL's enum types with their labels (pg_enum, #1834); None when the "
+            "collection did not read them"
+        ),
     )
 
 
@@ -1271,7 +1295,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.10",
+        default="5.11",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

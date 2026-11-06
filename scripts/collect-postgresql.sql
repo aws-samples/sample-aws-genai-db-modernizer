@@ -449,9 +449,27 @@ extensions_data AS (
     SELECT extname AS name, extversion AS version
     FROM pg_extension
   ) e
+),
+
+-- ===================== 13. Enum Types =====================
+-- Every enum type and its labels in the order PostgreSQL sorts them (#1834): a
+-- same-engine move creates each type on Aurora PostgreSQL before its tables.
+enum_types_data AS (
+  SELECT coalesce(json_agg(et ORDER BY et.schema_name, et.type_name), '[]'::json) AS data
+  FROM (
+    SELECT
+      n.nspname AS schema_name,
+      t.typname AS type_name,
+      json_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+    FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    JOIN pg_enum e ON e.enumtypid = t.oid
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+    GROUP BY n.nspname, t.typname
+  ) et
 )
 
--- ===================== 13. Assemble Final JSON =====================
+-- ===================== 14. Assemble Final JSON =====================
 SELECT json_build_object(
   'collection_version', '1.0',
   'collected_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -466,5 +484,6 @@ SELECT json_build_object(
   'triggers', (SELECT data FROM triggers_data),
   'queries', (SELECT data FROM queries_data),
   'global_stats', (SELECT data FROM global_stats_data),
-  'extensions', (SELECT data FROM extensions_data)
+  'extensions', (SELECT data FROM extensions_data),
+  'enum_types', (SELECT data FROM enum_types_data)
 );

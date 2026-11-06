@@ -181,6 +181,8 @@ def build_offline_contract(
         triggers=triggers,
         # #1078: the installed extensions the PostgreSQL script read.
         extensions=parsed.get("extensions"),
+        # #1834: the PostgreSQL script's enum types and their labels.
+        enum_types=parsed.get("enum_types"),
         # #949: AWS engines the application already runs next to the source.
         engines_in_use=offline_meta.get("engines_in_use"),
         database_name=collected_name,
