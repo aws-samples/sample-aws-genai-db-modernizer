@@ -21,7 +21,8 @@ from typing import Any
 MIN_WORDS = 10
 
 _FENCE = re.compile(r"^(```|~~~).*?^\1\s*$", re.M | re.S)
-_CODE_SPAN = re.compile(r"`[^`\n]*`")
+# A code span of any number of backticks: a run opens it, a run of the same length closes it.
+_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)")
 _NUMBER = re.compile(r"\d[\d,.]*")
 
 

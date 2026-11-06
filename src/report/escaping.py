@@ -98,22 +98,44 @@ def md_code(value: Any) -> str:
 
 # A word as the report's id checks read one (#1078 review): letters, digits, "_" and "-".
 _ID_WORD = re.compile(r"[0-9A-Za-z_-]+")
+_TICKS = re.compile(r"`+")
+
+
+def _code_spans(text: str) -> list[tuple[int, int]]:
+    """The ``(start, end)`` of each code span in ``text``: a run of n backticks opens
+    one the next run of exactly n closes, as in Markdown; an unpaired run is text."""
+    spans: list[tuple[int, int]] = []
+    runs = list(_TICKS.finditer(text))
+    i = 0
+    while i < len(runs):
+        width = len(runs[i].group(0))
+        close = next((j for j in range(i + 1, len(runs)) if len(runs[j].group(0)) == width), None)
+        if close is None:
+            i += 1
+            continue
+        spans.append((runs[i].start(), runs[close].end()))
+        i = close + 1
+    return spans
 
 
 def md_text_with_ids(value: Any, query_ids: Collection[str]) -> str:
     """:func:`md_text`, with each of the report's query ids (full, or its 8-character
     prefix, as the report's tables name one) that ``value`` holds as a whole word set
     as a code span, as the report prints every other query id. Only the ids the
-    report itself holds count, so a hash or UUID in model prose stays prose; every
-    other part of ``value`` is escaped exactly as :func:`md_text` escapes it."""
+    report itself holds count, so a hash or UUID in model prose stays prose; an id
+    already in a code span (the schema-design gate writes every cited id as one, #1321)
+    is left as written, never quoted twice (#1981); every other part of ``value`` is
+    escaped exactly as :func:`md_text` escapes it."""
     text = str(value)
     known = set(query_ids) | {q[:8] for q in query_ids if len(q) >= 8}
     if not known:
         return md_text(text)
+    spans = _code_spans(text)
     out: list[str] = []
     last = 0
     for match in _ID_WORD.finditer(text):
-        if match.group(0) in known:
+        quoted = any(start < match.start() and match.end() < end for start, end in spans)
+        if match.group(0) in known and not quoted:
             out += [md_text(text[last : match.start()]), f"`{md_code(match.group(0))}`"]
             last = match.end()
     out.append(md_text(text[last:]))

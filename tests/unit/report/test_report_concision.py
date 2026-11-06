@@ -97,6 +97,7 @@ def test_no_bare_query_id_and_no_raw_label(md: str, saved) -> None:
     assert raw_labels(md) == []
 
 
+@pytest.mark.passes_on_main  # guards the test helper (tests/report_concision.py), not src/
 def test_the_guards_find_what_they_look_for() -> None:
     """The per-table risk differed only in its table and count; it is caught with
     or without a ';' in it. A known id outside a code span is caught; a hash a
@@ -109,6 +110,9 @@ def test_the_guards_find_what_they_look_for() -> None:
     ids = {"f31a66f5" + "0" * 56}
     assert bare_ids("see f31a66f5 for it", ids) == ["f31a66f5"]
     assert bare_ids("see `f31a66f5` and the UUID 3f2a1b4c-9d8e as a key", ids) == []
+    # A span of two backticks is a code span too (#1981); an unpaired run is not one.
+    assert bare_ids("see ``f31a66f5`` for it", ids) == []
+    assert bare_ids("see `` f31a66f5 ` for it", ids) == ["f31a66f5"]
 
 
 # --- Sources of truth and replicas ---------------------------------------------
@@ -462,3 +466,29 @@ def test_only_known_query_ids_become_code_spans_and_the_text_stays_data(report) 
         "&lt;b&gt;x&lt;/b&gt;"
     )
     assert "](http" not in line
+
+
+def test_a_query_id_already_in_a_code_span_is_not_quoted_twice(report) -> None:
+    """The wordpress e2e-llm run printed "replacing the three-table join of query
+    ``d5ae7abb``" in the ElastiCache design's migration notes (#1981): the model (or the
+    schema-design citation gate, #1321) had already written the id as a code span, and
+    the note quoted it again, which the concision check reads as a bare id. An id in a
+    code span is left as written; a bare one in the same note still becomes one."""
+    qid = _a_query_id(report)
+    report["schema_designs"]["dynamodb"]["migration_notes"] = [
+        {
+            "object_name": f"join of query `{qid[:8]}`",
+            "object_type": "view",
+            "application_logic_required": (
+                f"Replace the join of queries `{qid[:8]}` and ``{qid}`` with hash reads, "
+                f"as query {qid[:8]} does."
+            ),
+        }
+    ]
+    md = render_engineering_report_md(report)
+    assert bare_ids(md, known_query_ids(report)) == []
+    line = next(ln for ln in md.splitlines() if ln.startswith("- **view** join of query"))
+    assert line == (
+        f"- **view** join of query `{qid[:8]}`: Replace the join of queries `{qid[:8]}` and "
+        f"``{qid}`` with hash reads, as query `{qid[:8]}` does."
+    )
