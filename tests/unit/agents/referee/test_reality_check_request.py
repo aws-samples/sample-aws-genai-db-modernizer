@@ -348,7 +348,12 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     1.24 calls/s, 0.95 before) drops to DynamoDB 73, tied with Aurora MySQL, and the check's
     tie goes to the source-compatible engine (``tie_break.break_tie``): it moves to Aurora
     MySQL. The check moves 8 to Aurora MySQL and 3 to DynamoDB, and the flag goes on
-    ``413c99e4`` (the wp_options autoload read), a DynamoDB move since #1197."""
+    ``413c99e4`` (the wp_options autoload read), a DynamoDB move since #1197.
+
+    #1955 (the refreshed sample, 163 statements): DocumentDB first-assigns 19 queries
+    (12 of them new statements); the check moves 15 to Aurora MySQL and 4 to DynamoDB
+    (``0278ef63``, ``1c1e3f90``, ``413c99e4``, ``65f7884e``), and ``413c99e4`` is still
+    a DynamoDB move."""
 
     FLAGGED = "413c99e4"
 
@@ -362,8 +367,8 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
             if c["from_engine"] == "documentdb"
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
-        assert sorted(moved.values()).count("dynamodb") == 3
-        assert sorted(moved.values()).count("aurora_mysql") == 8
+        assert sorted(moved.values()).count("dynamodb") == 4
+        assert sorted(moved.values()).count("aurora_mysql") == 15
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 
@@ -407,8 +412,10 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         assert decision["destination_engine"] == "aurora_mysql"
         # Aurora MySQL's 56: its base 76 less the 20-point penalty, the score the routing
         # snapshot records for the wp_options autoload read on Aurora MySQL (#1893: the
-        # flagged query is no longer 3a74580e, whose Aurora MySQL score was 73).
-        assert decision["score_after"] == 56
+        # flagged query is no longer 3a74580e, whose Aurora MySQL score was 73). 54 since
+        # #1955: the refreshed sample's snapshot records base 74 for this read (76 on the
+        # earlier collection); the frequent-full-scan penalty it carries is unchanged.
+        assert decision["score_after"] == 54
         assert engine_of[flagged] == "aurora_mysql"
         for qid, target in moved.items():
             if qid != flagged:

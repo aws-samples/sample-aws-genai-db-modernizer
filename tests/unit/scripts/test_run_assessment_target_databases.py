@@ -83,7 +83,9 @@ def test_the_scope_is_recorded_and_routes_wordpress_within_it(tmp_path) -> None:
     lines = {x["phase"]: x for x in map(json.loads, proc.stdout.splitlines()) if "phase" in x}
     assert lines["triage"]["engine_scope"] == ["aurora_postgresql", "dynamodb"]
     # #1994: one read simple-cache-read used to penalize on Aurora moved there.
-    assert lines["assignment"]["distribution"] == {"dynamodb": 39, "aurora_postgresql": 68}
+    # 55 and 108 since #1955: the refreshed sample's 163 statements split as the routing
+    # snapshot's wordpress engines do, Aurora PostgreSQL standing in for Aurora MySQL.
+    assert lines["assignment"]["distribution"] == {"dynamodb": 55, "aurora_postgresql": 108}
     job = lines["collect"]["job_id"]
     decision = json.loads(
         (tmp_path / "a" / "wordpress" / job / "decisions" / "engine_scope.json").read_text()

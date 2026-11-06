@@ -131,12 +131,13 @@ def test_the_discourse_samples_unknown_counts_stay_unknown() -> None:
 
 @pytest.mark.passes_on_main  # main already kept these zeros (as it kept every unknown)
 def test_the_wordpress_samples_one_page_zeros_are_empty_tables() -> None:
-    # Each of wordpress's 31 InnoDB zeros is a one-page (0.02 MB) table: empty, not
+    # Each of wordpress's 28 InnoDB zeros (31 before the refreshed sample of #1955, whose
+    # workload filled three more tables) is a one-page (0.02 MB) table: empty, not
     # unknown, so no deliverable may say its count is missing.
     raw = {t["table_name"]: t for t in _sample("wordpress")["tables"]}
     tables = _offline("wordpress")["database_schema"]["tables"]
     zeros = [t for t in tables if t["row_count"] == 0]
-    assert len(zeros) == 31
+    assert len(zeros) == 28
     assert all(raw[t["table_name"]]["data_size_mb"] <= 0.02 for t in zeros)
     assert not [t for t in tables if t["row_count"] is None]
 

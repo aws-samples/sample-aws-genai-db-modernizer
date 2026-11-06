@@ -203,9 +203,11 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     # settles on DynamoDB when the reality check removes DocumentDB. 64% after #1994 (68 of
     # 107): wp_postmeta's ``SELECT meta_id ... WHERE meta_key = ? AND post_id = ?`` is no
     # longer a simple-cache-read below Aurora's documented read capacity, so it stays.
+    # 66% since #1955 (108 of 163): the refreshed sample, per query in the routing
+    # snapshot's history.
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(64% of queries); DynamoDB for key-value access; ElastiCache for "
+        "(66% of queries); DynamoDB for key-value access; ElastiCache for "
         "caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )

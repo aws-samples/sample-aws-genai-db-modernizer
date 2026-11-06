@@ -49,13 +49,14 @@ def _write_sample(name: str, dest: Path) -> Path:
 
 
 def test_the_hit_ratio_is_read_from_the_counts_not_the_rounded_percent() -> None:
-    # wordpress: 5,026,219,966 logical reads, 3,501 from disk. The parser's own
-    # percent is rounded to 2 places (100.0); the contract keeps 99.99993.
+    # wordpress: 15,473,890,786 logical reads, 3,659 from disk (the refreshed sample,
+    # #1955; 5,026,219,966 and 3,501 before). The parser's own percent is rounded to 2
+    # places (100.0); the contract keeps 99.999976.
     host = _build_source_host(parse_offline_collection(_sample("wordpress")))
     assert host is not None
-    assert host.buffer_cache_read_requests == 5_026_219_966
-    assert host.buffer_cache_reads_from_disk == 3_501
-    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.99993, abs=1e-5)
+    assert host.buffer_cache_read_requests == 15_473_890_786
+    assert host.buffer_cache_reads_from_disk == 3_659
+    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.999976, abs=1e-6)
     assert host.buffer_cache_hit_ratio_pct < 100.0
     # The MySQL script reports no host figures.
     assert host.cpu_count is None and host.physical_memory_gb is None
@@ -170,7 +171,7 @@ def test_the_transform_ingest_writes_source_host() -> None:
 
     store = _Store()
     out = core.ingest_offline_collection(store, "job-1", "wordpress", _sample("wordpress"))
-    assert out["metrics"]["source_host"]["buffer_cache_read_requests"] == 5_026_219_966
+    assert out["metrics"]["source_host"]["buffer_cache_read_requests"] == 15_473_890_786
 
 
 # --- older files still load -----------------------------------------------------------
@@ -244,7 +245,7 @@ def test_the_offline_collector_keeps_the_ratio_once_and_unrounded() -> None:
     contract = mysql_collector._collect_offline(inp, ckpt)
     host = contract.metrics.source_host
     assert host is not None
-    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.99993, abs=1e-5)
+    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.999976, abs=1e-6)
     assert all(p.cache_hit_ratio_pct is None for p in _wordpress_contract_queries(contract))
     est = estimate_documentdb_costs(contract.model_dump(mode="json"))
     assert est.cost_components["read_io_hit_ratio_basis"] == "collection"
@@ -317,7 +318,7 @@ def test_the_live_collector_keeps_the_ratio_once_and_unrounded() -> None:
         contract = mysql_collector._collect_live(inp, ckpt)
     host = contract.metrics.source_host
     assert host is not None
-    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.99993, abs=1e-5)
+    assert host.buffer_cache_hit_ratio_pct == pytest.approx(99.999976, abs=1e-6)
     assert all(p.cache_hit_ratio_pct is None for p in _wordpress_contract_queries(contract))
 
 

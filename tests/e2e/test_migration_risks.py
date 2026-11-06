@@ -36,7 +36,7 @@ from tests.e2e.pipeline import (
     PipelineResult,
     _run,
     run_pipeline_from_file,
-    unzip_sample,
+    unzip_pre_1955_wordpress,
 )
 from tests.report_concision import section
 
@@ -234,13 +234,21 @@ def designed(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
     return run_designed_wordpress(tmp_path_factory.mktemp("risks-designed"), "risks-desi")
 
 
-def test_the_sync_risk_counts_every_table_read_off_its_owner(designed: PipelineResult) -> None:
+@pytest.mark.parametrize(
+    "job_name",
+    ["designed", pytest.param("designed_pre_1955", marks=pytest.mark.passes_on_main)],
+)
+def test_the_sync_risk_counts_every_table_read_off_its_owner(
+    job_name: str, request: pytest.FixtureRequest
+) -> None:
     """Both directions of a migrating engine's copies (the discourse judge read "81"
     plus "37 more" tables against the gate's 70 dual-read and 64 kept-in-sync ones): a
     table a migrating engine owns that another engine reads, or one it reads that another
     engine owns, is in its wave's sync risk, as a CDC copy or a one-time copy, and the
-    risk's own total is the tables it lists."""
-    report = _report(designed)
+    risk's own total is the tables it lists. Run on the bundled sample's designed job and
+    on the same job on the collection bundled before #1955 (``designed_pre_1955``), whose
+    risk has CDC copies and one-time copies."""
+    report = _report(request.getfixturevalue(job_name))
     sync = [r for r in _new(report) if r["rule"] == "sync.wave"]
     synced = {t for r in sync for t in r["affected_tables"]}
     migrating = {e for w in report["facts"]["waves"] if w["migrating"] for e in w["engines"]}
@@ -251,8 +259,10 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(designed: PipelineR
         if line["also_read_by"] and (migrating & {line["owner"], *line["also_read_by"]})
     }
     assert read_off_owner and read_off_owner <= synced, sorted(read_off_owner - synced)
-    # The designed job's risk has CDC copies and one-time copies: it states their total,
-    # and the total is the tables it lists.
+    # A risk with CDC copies and one-time copies states their total, and the total is the
+    # tables it lists: the job before #1955 has both. On the refreshed sample every mapped
+    # table's writes are on DynamoDB, so no table is copied once: its risk states the CDC
+    # copies only, and their counts are its own evidence too.
     totals = [
         (
             r,
@@ -263,7 +273,13 @@ def test_the_sync_risk_counts_every_table_read_off_its_owner(designed: PipelineR
         )
         for r in sync
     ]
-    assert any(m for _, m in totals), [r["description"] for r in sync]
+    if job_name == "designed_pre_1955":
+        assert any(m for _, m in totals), [r["description"] for r in sync]
+    else:
+        assert not any(m for _, m in totals), [r["description"] for r in sync]
+        for r in sync:
+            reads, tables, once = _sync_figures(r["description"])
+            assert (reads, tables, once) == (len(r["query_ids"]), len(r["affected_tables"]), 0)
     # The review on #1644: the risk's tables and the facts' count are one computation
     # (``non_owner_read_tables_by_wave``), so the waves' tables add up to it.
     owners = report["facts"]["table_owner_lines"]
@@ -340,8 +356,10 @@ def flagged(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
     # #1893: the stored 1.41 report below (OLD_1_41) was written when every call rate
     # assumed a 24-hour window. Its job is rerun the same way, with the statements' first
     # and last seen times and the uptime removed, so the rates, and the routing the two
-    # registers rest on, are that job's again (every rate is ``assumed_24h``).
-    raw = unzip_sample("wordpress", root / "input")
+    # registers rest on, are that job's again (every rate is ``assumed_24h``). #1955
+    # refreshed the bundled sample; that job ran on the earlier collection, kept for it in
+    # tests/fixtures/wordpress_pre_1955/.
+    raw = unzip_pre_1955_wordpress(root / "input")
     text = raw.read_text()
     collection = json.loads(text[text.index("{") :])
     for row in collection["queries"]:

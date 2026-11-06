@@ -167,7 +167,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46
   InstanceParameterGroup:
     Type: AWS::RDS::DBParameterGroup
     Properties:
@@ -183,7 +183,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46
   SubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -196,7 +196,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46
   Cluster:
     Type: AWS::RDS::DBCluster
     DeletionPolicy: Snapshot
@@ -236,7 +236,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46
   Writer:
     Type: AWS::RDS::DBInstance
     Metadata:
@@ -259,7 +259,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 7eb935f5826c52d8da86f092e1f815095a6ab4355f3ac487c5520b5795f40a46
       DBParameterGroupName:
         Ref: InstanceParameterGroup
 Outputs:

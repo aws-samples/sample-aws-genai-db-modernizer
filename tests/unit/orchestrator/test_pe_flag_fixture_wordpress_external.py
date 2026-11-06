@@ -563,7 +563,16 @@ def cascade(headless, tmp_path_factory) -> dict:
     on_dynamodb = sorted(q for q, e in _engine_of(v2).items() if e == "dynamodb")
     grouped = {m for g in v2.get("co_dependency_groups") or [] if len(g) > 1 for m in g}
     singles = [q for q in on_dynamodb if q != headless["id"] and q not in grouped]
-    second, third = singles[0], singles[1]
+    # The third flag must still be on DynamoDB at v4, so it reads none of the second's
+    # tables (#1955: on the refreshed sample the first two singles are wp_commentmeta's
+    # INSERT and a read of it; moving the INSERT took the read off DynamoDB too, and the
+    # router ignores a flag on a query no longer on the flagging engine).
+    collected = LocalArtifactStore(base_dir=str(headless["v2_root"])).read_json(
+        f"{prefix}/collector/output.json"
+    )["queries"]["query_patterns"]
+    tables = {q["query_id"]: set(q.get("tables_accessed") or []) for q in collected}
+    second = singles[0]
+    third = next(q for q in singles[1:] if not tables[q] & tables[second])
     rounds = [[headless["id"]], [second], [third]]
 
     root = tmp_path_factory.mktemp("cascade-headless") / "artifacts"

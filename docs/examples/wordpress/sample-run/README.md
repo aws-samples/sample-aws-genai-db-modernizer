@@ -1,6 +1,6 @@
 # WordPress sample run
 
-The recorded assessment the help site's [Sample report](https://aws-samples.github.io/sample-aws-genai-db-modernizer/sample/) renders: one complete `/modernize` run of the WordPress sample (`docs/examples/wordpress/wordpress.zip`).
+The recorded assessment the help site's [Sample report](https://aws-samples.github.io/sample-aws-genai-db-modernizer/sample/) renders: one complete `/modernize` run of the WordPress sample as it was bundled before #1955 (the earlier, 107-statement collection; `docs/examples/wordpress/wordpress.zip` now holds a newer one).
 
 | | |
 |---|---|
@@ -20,7 +20,7 @@ Only what the deliverable renderers read, under the job folder's own layout:
 
 The rest of the job (per-phase outputs, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
 
-The recorded run predates #1893: its call rates divide each statement's execution count by 24 hours. A run with the current code divides it by the statement's own first-to-last-seen window in the collection, so its rates, cache candidates and costs come from a different window than these (a deterministic run projects $749.21 a month; this report shows $512.58). Refreshing the sample for the next release brings the page in line. <!-- claim: tests/unit/shared/test_rate_window.py::test_the_observed_window_divides_the_count, tests/e2e/test_executive_summary_structure.py::test_the_summary_has_the_three_parts_with_the_facts_figures -->
+The recorded run predates #1893: its call rates divide each statement's execution count by 24 hours. A run with the current code divides it by the statement's own first-to-last-seen window in the collection, so its rates, cache candidates and costs come from a different window than these (a deterministic run of the bundled collection projects $1,178.33 a month; this report shows $512.58). Refreshing the sample for the next release brings the page in line. It also predates the refreshed collection in `wordpress.zip` (#1955): it was recorded from the earlier, 107-statement one, and is re-recorded from the current one by the maintainer. <!-- claim: tests/unit/shared/test_rate_window.py::test_the_observed_window_divides_the_count, tests/e2e/test_executive_summary_structure.py::test_the_summary_has_the_three_parts_with_the_facts_figures -->
 
 ## How it is used
 

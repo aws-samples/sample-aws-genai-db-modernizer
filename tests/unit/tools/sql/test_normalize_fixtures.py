@@ -23,8 +23,9 @@ from src.tools.sql.normalize import normalize_digest_text
 REPO = Path(__file__).resolve().parents[4]
 
 # 0-based indices into wordpress-collection.json's "queries" list whose
-# digest text is genuinely truncated.
-_WORDPRESS_TRUNCATED_INDICES = frozenset({2, 50, 79})
+# digest text is genuinely truncated. {1, 23, 105} since #1955: the refreshed sample
+# holds the same three statements (digests a0b655ea, cb3300c6, 119b7fbf) at new positions.
+_WORDPRESS_TRUNCATED_INDICES = frozenset({1, 23, 105})
 
 
 def _load_query_texts(sample: str) -> list[str]:
