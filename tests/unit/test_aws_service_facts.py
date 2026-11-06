@@ -71,6 +71,14 @@ STALE_FACTS: list[tuple[str, str, str]] = [
         "https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html",
     ),
     (
+        # #399: cache-aside is the tool's recommendation, not a limit of the service:
+        # ElastiCache for Valkey 9.0+ offers durability on Multi-AZ clusters.
+        r"never holds the only copy of the data|ElastiCache[^.\n]{0,40}\b(?:cannot|can't) (?:be durable|persist)",
+        "ElastiCache for Valkey 9.0 and later offers durability on Multi-AZ node-based clusters "
+        "(synchronous or asynchronous writes); the tool's cache-aside layer is its recommendation",
+        "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/durability.html",
+    ),
+    (
         # #1483: a GSI's key values need not be unique and an application-side
         # check races, so neither enforces a DynamoDB unique attribute.
         r"uniqueness[^.\n]{0,40}at the application layer|single unique identifier \+ GSI",

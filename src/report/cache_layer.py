@@ -50,12 +50,23 @@ def cache_change_notes(report: dict[str, Any]) -> list[str]:
     return [sentence] if sentence else []
 
 
+def cache_role_notes(report: dict[str, Any]) -> list[str]:
+    """The cache layer as the assessment's recommendation, with its reason, from
+    ``facts.cache_layer.role_sentence`` (#399, ADR-032); empty with no cache engine."""
+    cache = report_facts(report).get("cache_layer")
+    if not isinstance(cache, dict) or not cache.get("engine"):
+        return []
+    sentence = cache.get("role_sentence")
+    return [sentence] if isinstance(sentence, str) and sentence else []
+
+
 def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report section for the cache layer (#296); empty without one.
 
-    The cache owns no query: each cached read stays with its owner engine and the
-    cache serves it cache-aside. The section states the eligibility rule so the
-    build team can see why these reads, and only these, are cached.
+    Each cached read stays with its owner engine and the cache serves it cache-aside,
+    as the assessment recommends (``cache_role_notes``, #399). The section states the
+    eligibility rule so the build team can see why these reads, and only these, are
+    cached.
 
     #459 round 3: a full safety-net drop clears ``engine`` (``overlay_summary``
     returns ``None`` with nothing cached) -- the heading omits the engine name
@@ -110,12 +121,13 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             if fronted
             else ("the current source database")
         )
+        role = " ".join(escaping.md_text(x) for x in cache_role_notes(report))
         out += [
             f"{escaping.md_text(name)} fronts {n} designed cached {plural_noun(n, 'read')} "
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
-            f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
-            "none of the workload: each cached read stays with its owner engine, which "
-            "serves every miss and every write. " + cache_wave_note(front),
+            f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside: each "
+            "cached read stays with its owner engine, which serves every miss and every "
+            "write. " + (f"{role} " if role else "") + cache_wave_note(front),
             "",
             f"- Owner engines: {owned or '-'}",
             f"- Read shapes: {shapes or '-'}",

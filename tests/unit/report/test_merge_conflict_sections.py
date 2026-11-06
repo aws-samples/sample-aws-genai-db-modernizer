@@ -45,6 +45,7 @@ from tests.unit.agents.schema_design.valid_designs import (
     ddb_pattern,
     ddb_table,
 )
+from tests.unit.report.cache_role import with_cache_role_sentence
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "src/ui/src/components/__tests__/fixtures/dynamodbMergeConflicts.json"
@@ -307,7 +308,7 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     # Read back unchanged, but for the trade-off topic groups a block written before
     # #1221 gains from the same function.
     rest = {k: v for k, v in facts.items() if k != "trade_off_topics"}
-    assert rest == old["facts"]
+    assert rest == with_cache_role_sentence(old["facts"])
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, old["facts"]["reality_check_trade_offs"]
     )

@@ -25214,6 +25214,22 @@
                               "minimum": 0,
                               "type": "integer"
                             }
+                          },
+                          "role_sentence": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
                           }
                         }
                       },
@@ -33654,8 +33670,8 @@
         }
       }
     },
-    "schema_hash": "21602683bbd1980be64a347d7248a249c3de6e7a3445573c4e56e4d2fb8b1037",
-    "version": "1.80"
+    "schema_hash": "08840523d84983ab414495d61e85646ec903f160c1c06454b3180c8066125926",
+    "version": "1.81"
   },
   "transformation_contract.StepContract": {
     "fields": {

@@ -282,7 +282,10 @@ def _ownership_failure(
         if is_locking_read(query, source_engine) and not is_write_query(query, source_engine)
         else "a write"
     )
-    return GATE_KIND_WRITE, f"is {kind}, and {display_engine(engine)} is not a system of record"
+    return (
+        GATE_KIND_WRITE,
+        f"is {kind}, and this plan does not use {display_engine(engine)} as a system of record",
+    )
 
 
 def _direct_exclusion_message(
@@ -611,9 +614,9 @@ def _apply_cache_override(
             )
         elif override.assigned_engine in CACHE_OVERLAY_ENGINES:
             note = (
-                f"Query {qa.query_id}: requested engine {override.assigned_engine} is a "
-                f"cache layer, not a system of record; it stays owned by {qa.assigned_engine} "
-                f"and is cached by {cache}."
+                f"Query {qa.query_id}: requested engine {override.assigned_engine} is the "
+                "cache layer, which this plan does not use as a system of record; it stays "
+                f"owned by {qa.assigned_engine} and is cached by {cache}."
             )
         d = qa.model_dump()
         pin_customer_cache(d, cache, query, heavy, source_engine)
