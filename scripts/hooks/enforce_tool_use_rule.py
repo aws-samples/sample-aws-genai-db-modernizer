@@ -11,10 +11,11 @@ a single simple command matching a ``Bash(...)`` allow rule in
 ``.claude/settings.ci.json`` (read at call time, so the allowlist stays the one
 source of truth). Pipes, chains (``&&``, ``;``, ``||``, ``&``), subshells,
 command substitution, heredocs and every other tool (``cat``, ``jq``,
-``python3 -c``, ``sed``, ``ls``, ``cd``, ``grep``) are refused. So is any
-redirection to or from a file: the scripts write their own artifacts and file
-writes go through Edit/Write, whose allow rules (``artifacts/**``) bound them;
-only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Replaying 105 saved headless
+``python3 -c``, ``sed``, ``ls``, ``cd``, ``grep``) are refused. So is a shell
+expansion in an argument (``$name``, ``${...}``, a backtick), which Claude Code
+never auto-allows, with a hint on how to quote it, and any redirection to or
+from a file: the scripts write their own artifacts and file writes go through
+Edit/Write, whose allow rules (``artifacts/**``) bound them; only ``2>&1``-style fd duplication and ``/dev/null`` are fine. Replaying 105 saved headless
 transcripts (2679 Bash calls) through it refused 26 calls, all genuine violations (pipes into
 ``head``/``tail``/``cut``/``grep``, ``ls``, ``find``, a ``VAR=...;`` chain, ``echo``), and none of
 the documented pipeline commands. Stdin: the hook event JSON. Exit 0 allows, exit 2
@@ -42,6 +43,12 @@ RULE = (
     "Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, "
     "`python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. "
     "Use a search's output as is: never pipe, chain or post-process it."
+)
+
+# Claude Code never auto-allows a command the shell would expand, so say how to quote it (#1982).
+EXPANSION_HINT = (
+    " The shell would expand a `$name`, `${`, `$(` or backtick in this command's arguments: "
+    "put a regex in single quotes, or write a literal dollar sign as `\\$`."
 )
 
 
@@ -72,6 +79,8 @@ def is_documented_command(command: str, rules: list[tuple[str, bool]]) -> bool:
     if len(segments) != 1:
         return False
     if has_file_redirection(command):
+        return False
+    if hook_common.has_shell_expansion(command):
         return False
     segment = segments[0]
     return any(
@@ -108,7 +117,8 @@ def main() -> int:
         return 0  # no allowlist to enforce; the permission rules still apply
     if is_documented_command(command, rules):
         return 0
-    return int(hook_common.block(f"Blocked by the tool-use rule: {RULE}"))
+    hint = EXPANSION_HINT if hook_common.has_shell_expansion(command) else ""
+    return int(hook_common.block(f"Blocked by the tool-use rule: {RULE}{hint}"))
 
 
 if __name__ == "__main__":

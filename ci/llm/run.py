@@ -93,6 +93,16 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   is named the same way (``Skill: update-config``). If the tool or skill is
   on the allowlist the denial counts as a broken allowlist; otherwise it is
   recorded under ``unlisted_tool_denials`` and only warns.
+  A denied allowlisted command whose arguments the shell would expand
+  (``$name``, ``${...}``, a backtick) is the model's quoting mistake, not a
+  broken allowlist: Claude Code never auto-allows an expansion. It is recorded
+  as ``expansion_denials: {count, commands}`` and only warns.
+  A denial that would count as a broken allowlist is **recovered** when the same
+  session or subagent (same ``parent_tool_use_id``) later ran a single command
+  with the same allowlisted prefix and it succeeded (a ``tool_result`` that is
+  not ``is_error`` and not denied): it is recorded as
+  ``recovered_denials: {count, commands}`` and only warns. With no such retry
+  it still fails.
   A denial whose ``tool_result`` is one of this repo's PreToolUse hook refusals
   (``PreToolUse:<Tool> hook error: Blocked ...``, see ``scripts/hooks/``) was
   refused before it ran: it is ``prevented_by_hook`` (count and commands in
@@ -172,6 +182,8 @@ from defusedxml import ElementTree as ET
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:  # run as a script: ci.llm.judge is importable too
     sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.hooks import hook_common  # noqa: E402 -- stdlib only, after the path setup
 
 _COMPLETE_RE = re.compile(r"MODERNIZE_RESULT:\s*complete\s+job_id=(\S+)\s+db=(\S+)\s+mode=(\S+)")
 _FAILED_RE = re.compile(r"MODERNIZE_RESULT:\s*failed\s+phase=(\S+)\s+reason=(.+)")
@@ -1162,15 +1174,101 @@ def _classify_denial(command: str, allow_prefixes: list[str]) -> str:
     * Heredocs are not parsed: the body is split line by line like any other
       text, so a heredoc that quotes an allowlisted command reads as a rule
       violation, never as ``"allowlist"`` (heredocs are forbidden anyway).
+    * ``"shell_expansion"``: an allowlisted command whose arguments the shell
+      would expand (``$name``, ``${...}``, a backtick). Claude Code never
+      auto-allows such a command, so the denial is right and the allowlist is
+      fine: the model quoted its argument wrong.
     * ``"other"``: anything else (the model's own exploratory tool use)."""
     segments = _split_compound_command(command)
     allowed = [seg for seg in segments if any(seg.startswith(p) for p in allow_prefixes)]
     if not allowed:
         return "other"
+    if len(segments) == 1 and hook_common.has_shell_expansion(command):
+        return "shell_expansion"
     # Claude Code checks each part of a compound command against the rules, so when
     # every part is allowlisted and the command was still denied, the allowlist is
     # the likelier culprit.
     return "allowlist" if len(allowed) == len(segments) else "rule_violation"
+
+
+def _bash_calls(records: list[dict[str, Any]]) -> list[tuple[str, str, str | None]]:
+    """``(tool_use_id, command, scope)`` for every Bash ``tool_use``, in transcript order. The
+    scope is the record's ``parent_tool_use_id``: one subagent's calls share it, and the
+    orchestrator's own calls have none."""
+    calls: list[tuple[str, str, str | None]] = []
+    for rec in records:
+        message = rec.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if rec.get("type") != "assistant" or not isinstance(content, list):
+            continue
+        parent = rec.get("parent_tool_use_id")
+        scope = parent if isinstance(parent, str) else None
+        for block in content:
+            if not (isinstance(block, dict) and block.get("type") == "tool_use"):
+                continue
+            tool_input = block.get("input")
+            command = tool_input.get("command") if isinstance(tool_input, dict) else None
+            if block.get("name") == "Bash" and isinstance(block.get("id"), str):
+                if isinstance(command, str):
+                    calls.append((block["id"], command, scope))
+    return calls
+
+
+def _failed_tool_results(records: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    """``(answered, failed)``: the ``tool_use_id`` of every ``tool_result``, and of those
+    flagged ``is_error``."""
+    answered: set[str] = set()
+    failed: set[str] = set()
+    for rec in records:
+        message = rec.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if rec.get("type") != "user" or not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and isinstance(block.get("tool_use_id"), str)
+            ):
+                answered.add(block["tool_use_id"])
+                if block.get("is_error"):
+                    failed.add(block["tool_use_id"])
+    return answered, failed
+
+
+def _allow_prefix(command: str, allow_prefixes: list[str]) -> str | None:
+    """The longest allowlisted prefix ``command`` runs (``<prefix>`` or ``<prefix> ...``)."""
+    stripped = command.strip()
+    matching = [p for p in allow_prefixes if stripped == p or stripped.startswith(p + " ")]
+    return max(matching, key=len) if matching else None
+
+
+def _recovered(
+    tool_use_id: str,
+    allow_prefixes: list[str],
+    calls: list[tuple[str, str, str | None]],
+    results: tuple[set[str], set[str]],
+    denied_ids: set[str],
+) -> bool:
+    """True when, after the denied call, the same session or subagent ran an allowlisted
+    command of the same script and it succeeded (answered, not ``is_error``, not denied)."""
+    answered, failed = results
+    position = next((i for i, call in enumerate(calls) if call[0] == tool_use_id), None)
+    if position is None:
+        return False
+    _id, denied_command, scope = calls[position]
+    script = _allow_prefix(denied_command, allow_prefixes)
+    if script is None:
+        return False
+    return any(
+        call_scope == scope
+        and call_id not in denied_ids
+        and call_id in answered
+        and call_id not in failed
+        and len(_split_compound_command(command)) == 1
+        and _allow_prefix(command, allow_prefixes) == script
+        for call_id, command, call_scope in calls[position + 1 :]
+    )
 
 
 def _truncate(text: str, limit: int = 120) -> str:
@@ -1292,11 +1390,15 @@ def check_transcript(
     result_texts = _tool_result_texts(records)
 
     # (label, kind) per denial. Labels read "<Tool>: <target>". Kinds:
-    # "allowlist" (the denied call IS allowlisted: broken allowlist),
+    # "allowlist" (the denied call IS allowlisted: broken allowlist), "recovered" (an
+    # allowlist denial the same scope then ran successfully: warns), "shell_expansion",
     # "rule_violation", "other" (exploratory Bash) and "unlisted_tool" (a
     # non-Bash tool call outside the allowlist: the model's own misstep or an
     # allowlist gap to review, never a failure).
     classified: list[tuple[str, str]] = []
+    calls = _bash_calls(records)
+    call_results = _failed_tool_results(records)
+    denied_ids = {str(d.get("tool_use_id")) for d in all_denials}
     if all_denials:
         for denial in all_denials:
             tool = _denial_tool(denial)
@@ -1306,7 +1408,12 @@ def check_transcript(
             if _refused_by_hook(denial, result_texts):
                 classified.append((label, "prevented_by_hook"))
             elif tool == "Bash":
-                classified.append((label, _classify_denial(target, allow_prefixes)))
+                kind = _classify_denial(target, allow_prefixes)
+                if kind == "allowlist" and _recovered(
+                    str(denial.get("tool_use_id")), allow_prefixes, calls, call_results, denied_ids
+                ):
+                    kind = "recovered"
+                classified.append((label, kind))
             elif _tool_is_allowlisted(tool, target, allow_rules, deny_rules, cwd):
                 classified.append((label, "allowlist"))
             else:
@@ -1320,6 +1427,8 @@ def check_transcript(
     pipeline_denials = [cmd for cmd, kind in classified if kind == "allowlist"]
     rule_violations = [cmd for cmd, kind in classified if kind == "rule_violation"]
     other_denials = [cmd for cmd, kind in classified if kind == "other"]
+    expansion_denials = [cmd for cmd, kind in classified if kind == "shell_expansion"]
+    recovered_denials = [cmd for cmd, kind in classified if kind == "recovered"]
     unlisted_tool_denials = [cmd for cmd, kind in classified if kind == "unlisted_tool"]
     prevented = [cmd for cmd, kind in classified if kind == "prevented_by_hook"]
 
@@ -1365,6 +1474,32 @@ def check_transcript(
             file=sys.stderr,
         )
         fields = {**fields, "denials": denials_summary}
+
+    if expansion_denials:
+        expansion_summary = {
+            "count": len(expansion_denials),
+            "commands": [_truncate(cmd) for cmd in expansion_denials[:20]],
+        }
+        print(
+            f"warning: {len(expansion_denials)} allowlisted command(s) denied because the shell "
+            f"would expand an argument ($name, ${{...}}, a backtick; the allowlist is fine, the "
+            f"model quoted it wrong): {expansion_summary['commands']!r}",
+            file=sys.stderr,
+        )
+        fields = {**fields, "expansion_denials": expansion_summary}
+
+    if recovered_denials:
+        recovered_summary = {
+            "count": len(recovered_denials),
+            "commands": [_truncate(cmd) for cmd in recovered_denials[:20]],
+        }
+        print(
+            f"warning: {len(recovered_denials)} denial(s) of an allowlisted command that the same "
+            f"session or subagent then ran successfully with the same script (recovered, not a "
+            f"failure): {recovered_summary['commands']!r}",
+            file=sys.stderr,
+        )
+        fields = {**fields, "recovered_denials": recovered_summary}
 
     if unlisted_tool_denials:
         tools_summary = {
@@ -1879,6 +2014,8 @@ def build_results_row(
     denials: dict[str, Any] | None = None
     rule_violations: dict[str, Any] | None = None
     unlisted_tool_denials: dict[str, Any] | None = None
+    expansion_denials: dict[str, Any] | None = None
+    recovered_denials: dict[str, Any] | None = None
     prevented_by_hook: dict[str, Any] | None = None
     hook_errors: dict[str, Any] | None = None
 
@@ -1911,6 +2048,10 @@ def build_results_row(
         rule_violations = violations_raw if isinstance(violations_raw, dict) else None
         unlisted_raw = summary.get("unlisted_tool_denials")
         unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
+        expansion_raw = summary.get("expansion_denials")
+        expansion_denials = expansion_raw if isinstance(expansion_raw, dict) else None
+        recovered_raw = summary.get("recovered_denials")
+        recovered_denials = recovered_raw if isinstance(recovered_raw, dict) else None
         prevented_raw = summary.get("prevented_by_hook")
         prevented_by_hook = prevented_raw if isinstance(prevented_raw, dict) else None
         hook_errors_raw = summary.get("hook_errors")
@@ -2032,6 +2173,8 @@ def build_results_row(
         "denials": denials,
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
+        "expansion_denials": expansion_denials,
+        "recovered_denials": recovered_denials,
         "prevented_by_hook": prevented_by_hook,
         "hook_errors": hook_errors,
         "token_usage": token_usage,

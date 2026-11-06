@@ -115,6 +115,39 @@ def mask_quoted(command: str) -> str:
     return "".join(out)
 
 
+_EXPANSION_START = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789{(@*#?$!-"
+)
+
+
+def has_shell_expansion(command: str) -> bool:
+    """True when the shell would expand part of ``command`` before running it.
+
+    That is a ``$name``, ``${...}``, ``$(...)``, special parameter (``$1``, ``$@``, ...) or
+    backtick outside single quotes and not escaped. Claude Code never auto-allows such a
+    command, whatever its allow rules, since the argument can't be known before it runs. A
+    ``$`` that ends a regex (``"x$"``, ``"x$|y"``) or is escaped (``"\\$x"``) is literal."""
+    quote: str | None = None
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+        elif ch == "\\":
+            i += 1  # escapes the next character, in or out of double quotes
+        elif ch == '"':
+            quote = None if quote == '"' else '"'
+        elif ch == "'" and quote is None:
+            quote = "'"
+        elif ch == "`":
+            return True
+        elif ch == "$" and command[i + 1 : i + 2] in _EXPANSION_START:
+            return True
+        i += 1
+    return False
+
+
 def has_unquoted(command: str, needle: str) -> bool:
     """True when ``needle`` appears outside single- and double-quoted text."""
     quote: str | None = None
