@@ -1670,7 +1670,11 @@ def check_explore(
     for names, count in wanted:
         others = [v for other, _ in figures if other is not names for v in other]
         answered.append(_row_answered(units, names, others, count))
-    missing = [f"{names[0]}: {count}" for (names, count), ok in zip(wanted, answered) if not ok]
+    missing = [
+        f"{names[0]}: {count}"
+        for (names, count), ok in zip(wanted, answered, strict=True)
+        if not ok
+    ]
     if rows == "top" and any(answered):
         missing = []
 
@@ -1785,7 +1789,7 @@ def _load_token_usage(path: Path | None) -> tuple[dict[str, Any] | None, str | N
 
 def _total_cost(cost_usd: Any, explore: dict[str, Any] | None) -> float | None:
     costs = [c for c in (cost_usd, (explore or {}).get("cost_usd")) if _is_number(c)]
-    return round(sum(costs), 6) if costs else None
+    return round(float(sum(costs)), 6) if costs else None
 
 
 DEFAULT_BUDGETS = Path(__file__).resolve().with_name("budgets.toml")

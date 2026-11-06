@@ -418,43 +418,12 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   }
   step judge run_judge
 
-  # The headless run may have left its own local API/UI up (ui/both); the e2e
-  # fixtures below start their own on the same ports, so stop any leftovers first.
-  uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
-
-  run_install_browsers() {
-    # The shared helpers from lib.sh (#1363): retry with a watchdog, and apt only when a
-    # browser cannot launch (the all-in-one install flag stalled whole jobs on a slow mirror, #1375).
-    playwright_install_with_retry chromium webkit
-    if [ "${CI:-}" = "true" ]; then
-      playwright_ensure_deps chromium webkit
-    fi
-  }
-  step install-browsers run_install_browsers
-
-  # test_docs_site.py checks the help site, not this run's deliverables; ci/e2e.sh
-  # builds the site and runs it (Chromium only).
-  run_report_tests() {
-    E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
-      uv run pytest tests/e2e -m "e2e and not deterministic" -p no:xdist --fail-on-skip \
-      --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py \
-      --browser chromium --browser webkit \
-      --output="$OUT/pw-reports" --junitxml="$OUT/reports-junit.xml" -q
-  }
-  step report-tests run_before_deadline run_report_tests
-
-  if [ "$MODE" != "chat" ]; then
-    run_ui_tests() {
-      E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
-        uv run pytest tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip --browser chromium \
-        --output="$OUT/pw-ui" --junitxml="$OUT/ui-junit.xml" -q
-    }
-    step ui-tests run_before_deadline run_ui_tests
-  fi
-
-  # /explore (#307), after the browser tests so it never takes their time (#1593): one
-  # fixed question about the job, in plain words rather than the catalog's, that needs a
-  # parameter (the engine). It runs in its own headless session with the same CLI,
+  # /explore (#307), right after the judge (#1977): every model call of the run ends
+  # before the long browser tests, so a run that outlives its CI job's model
+  # credentials still has them for /explore. It stays under the job budget and its own
+  # timeout, so it cannot hold the browser tests past those (#1593). One fixed question
+  # about the job, in plain words rather than the catalog's, that needs a parameter (the
+  # engine). It runs in its own headless session with the same CLI,
   # permissions and sandbox as /modernize and a small budget and turn cap of its own.
   # The check compares the answer with the catalog entry's own result, which this
   # script runs itself (no model): the session must have run that entry on the job with
@@ -511,6 +480,40 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
     }
     step check-explore run_check_explore
     EXPLORE_ARGS=(--explore "$OUT/explore.json")
+  fi
+
+  # The headless run may have left its own local API/UI up (ui/both); the e2e
+  # fixtures below start their own on the same ports, so stop any leftovers first.
+  uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
+
+  run_install_browsers() {
+    # The shared helpers from lib.sh (#1363): retry with a watchdog, and apt only when a
+    # browser cannot launch (the all-in-one install flag stalled whole jobs on a slow mirror, #1375).
+    playwright_install_with_retry chromium webkit
+    if [ "${CI:-}" = "true" ]; then
+      playwright_ensure_deps chromium webkit
+    fi
+  }
+  step install-browsers run_install_browsers
+
+  # test_docs_site.py checks the help site, not this run's deliverables; ci/e2e.sh
+  # builds the site and runs it (Chromium only).
+  run_report_tests() {
+    E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
+      uv run pytest tests/e2e -m "e2e and not deterministic" -p no:xdist --fail-on-skip \
+      --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py \
+      --browser chromium --browser webkit \
+      --output="$OUT/pw-reports" --junitxml="$OUT/reports-junit.xml" -q
+  }
+  step report-tests run_before_deadline run_report_tests
+
+  if [ "$MODE" != "chat" ]; then
+    run_ui_tests() {
+      E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
+        uv run pytest tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip --browser chromium \
+        --output="$OUT/pw-ui" --junitxml="$OUT/ui-junit.xml" -q
+    }
+    step ui-tests run_before_deadline run_ui_tests
   fi
 else
   log "no job_id/db parsed from the transcript (check-transcript failed) -- skipping deliverable checks and judge"
