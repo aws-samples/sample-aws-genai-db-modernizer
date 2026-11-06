@@ -287,20 +287,51 @@ def test_the_hunk_cap_leaves_the_rest_unchecked_and_says_so(tmp_path):
     assert len([line for line in out.splitlines() if line.startswith("capped ")]) == 3
 
 
-def test_a_run_over_the_timeout_is_reported_as_timed_out_not_unnoticed(tmp_path):
-    base = "import time\n\n\ndef slow():\n    time.sleep(60)\n    return 1\n"
-    head = "import time\n\n\ndef slow():\n    return 1\n"
-    test = "from src.slow import slow\n\n\ndef test_slow():\n    assert slow() == 1\n"
+# The reverted code never returns: it blocks until its process group is killed, so its
+# run is over any limit whatever the machine load (#1999).
+BLOCKING = "import threading\n\n\ndef slow():\n    threading.Event().wait()\n    return 1\n"
+UNBLOCKED = "import threading\n\n\ndef slow():\n    return 1\n"
+TEST_SLOW = "from src.slow import slow\n\n\ndef test_slow():\n    assert slow() == 1\n"
+# The reverted runs' limit: far under pytest's start-up, so they are always over it.
+TINY_TIMEOUT = 0.05
+
+
+@pytest.mark.passes_on_main  # #1999: the behaviour is main's; the old test was load-bound
+def test_a_run_over_the_timeout_is_reported_as_timed_out_not_unnoticed(
+    tmp_path, monkeypatch, saved_signals, capsys
+):
+    """The baseline run on HEAD keeps --timeout (generous: it only has to start pytest),
+    the reverted runs get a tiny one; the test reads the reported state, never a clock."""
     repo = _scratch(
-        tmp_path, {"src/slow.py": base}, {"src/slow.py": head, "tests/test_slow.py": test}
+        tmp_path,
+        {"src/slow.py": BLOCKING},
+        {"src/slow.py": UNBLOCKED, "tests/test_slow.py": TEST_SLOW},
     )
-    # The reverted code sleeps 60 seconds: the 50-second subprocess limit fails the test
-    # unless that run is killed at --timeout.
-    proc = _run(repo, "--timeout", "3", timeout=50)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert _lines(proc.stdout, "timeout ") == ["src/slow.py:5"], proc.stdout
-    assert _lines(proc.stdout, "unnoticed ") == []
-    assert _run(repo, "--timeout", "3", "--strict").returncode == 0
+    pgids: list[tuple[int, str | None]] = []
+    check = Runner.check
+
+    def tiny_limit(self, item):
+        self.timeout = TINY_TIMEOUT
+        try:
+            return check(self, item)
+        finally:
+            pgids.extend(hunk_revert._recorded(self.root / "pgids"))
+
+    monkeypatch.setattr(Runner, "check", tiny_limit)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.chdir(repo)
+    assert main(["--base", "main", "--timeout", "600"]) == 0
+    out = capsys.readouterr().out
+    assert _lines(out, "timeout ") == ["src/slow.py:5"], out
+    assert _lines(out, "unnoticed ") == [], out
+    assert "summary: 1 checked: 0 noticed, 0 unnoticed, 1 timed out" in out, out
+    # Both runs were recorded (baseline, then the reverted one), and the reverted run,
+    # which would block for ever, is gone: it was killed at the limit.
+    assert len(pgids) == 2, pgids
+    assert all(_gone(pid, start) for pid, start in pgids), pgids
+    # A timed-out hunk is undecided, never unnoticed: --strict does not fail on it.
+    assert main(["--base", "main", "--timeout", "600", "--strict"]) == 0
+    assert _lines(capsys.readouterr().out, "timeout ") == ["src/slow.py:5"]
 
 
 def test_no_changed_test_means_every_hunk_goes_unnoticed_without_a_run(tmp_path):
@@ -525,7 +556,7 @@ def _recorded_runs(run_dir: Path) -> list[tuple[int, str]]:
     return [(pid, start) for pid, start in hunk_revert._recorded(run_dir / "pgids") if start]
 
 
-def _gone(pid: int, start: str) -> bool:
+def _gone(pid: int, start: str | None) -> bool:
     """Whether the recorded run is gone (a zombie or a reused pid counts as gone), polled
     at most 100 times 0.1 s: a killed process may wait a moment to be reaped."""
     for _ in range(100):
