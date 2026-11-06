@@ -395,3 +395,147 @@ def _split_top_level(body: str) -> list[str]:
     if buf:
         parts.append("".join(buf))
     return parts
+
+
+# ---------------------------------------------------------------------------
+# Procedures, functions and triggers in a DDL upload (#1652): the zero-load path
+# ---------------------------------------------------------------------------
+
+_BATCH_SPLITTERS = {
+    # T-SQL: GO on its own line ends a batch.
+    "sqlserver": re.compile(r"^\s*GO\s*;?\s*$", re.I | re.M),
+    # Oracle SQL*Plus: a lone slash ends a PL/SQL block.
+    "oracle": re.compile(r"^\s*/\s*$", re.M),
+}
+_NAME = r"(?:`[^`]+`|\[[^\]]+\]|\"[^\"]+\"|[\w$#]+)"
+_QUALIFIED = rf"(?:{_NAME}\s*\.\s*)?{_NAME}"
+_ROUTINE_HEAD = re.compile(
+    r"\bCREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?(?:DEFINER\s*=\s*\S+\s+)?"
+    r"(?:(?:NON)?EDITIONABLE\s+)?(?:CONSTRAINT\s+)?"
+    rf"(PROCEDURE|PROC|FUNCTION|TRIGGER)\s+({_QUALIFIED})",
+    re.I,
+)
+_EVENT_LIST = r"(?:INSERT|UPDATE|DELETE)(?:\s+OF\s+[\w\s,\"`]+?)?"
+_TRIGGER_TAIL = re.compile(
+    rf"(BEFORE|AFTER|INSTEAD\s+OF|FOR)\s+({_EVENT_LIST}(?:\s*(?:,|\bOR\b)\s*{_EVENT_LIST})*)"
+    rf"\s+ON\s+({_QUALIFIED})",
+    re.I,
+)
+# T-SQL: CREATE TRIGGER x ON t AFTER INSERT, UPDATE
+_TRIGGER_ON_FIRST = re.compile(
+    rf"\s+ON\s+({_QUALIFIED})\s+(?:WITH\s+[\w\s,]+?\s+)?(AFTER|INSTEAD\s+OF|FOR)\s+"
+    r"((?:INSERT|UPDATE|DELETE)(?:\s*,\s*(?:INSERT|UPDATE|DELETE))*)",
+    re.I,
+)
+_DDL_STATS_STATUS = {"status": "offline", "reason": "read from DDL: bodies, no stats"}
+
+
+def _routine_name(name: str) -> tuple[str | None, str]:
+    parts = [_unquote(p) for p in re.split(r"\s*\.\s*", name.strip())]
+    return (parts[-2], parts[-1]) if len(parts) >= 2 else (None, parts[0])
+
+
+def _routine_blocks(ddl_text: str, dialect: str) -> list[str]:
+    """Statements that may hold a routine: batch-split for T-SQL and Oracle, the
+    DELIMITER regions for MySQL, and dollar-quote-aware ``;`` splitting otherwise."""
+    if dialect in _BATCH_SPLITTERS:
+        return [b for b in _BATCH_SPLITTERS[dialect].split(ddl_text) if b.strip()]
+    if dialect in ("mysql", "mariadb"):
+        blocks: list[str] = []
+        delimiter = ";"
+        buffer = ""
+        for line in ddl_text.splitlines(keepends=True):
+            m = re.match(r"\s*DELIMITER\s+(\S+)\s*$", line, re.I)
+            if m:
+                if buffer.strip():
+                    blocks.append(buffer)
+                buffer = ""
+                delimiter = m.group(1)
+                continue
+            buffer += line
+            if buffer.rstrip().endswith(delimiter):
+                blocks.append(buffer.rstrip()[: -len(delimiter)])
+                buffer = ""
+        return [b for b in [*blocks, buffer] if b.strip()]
+    # PostgreSQL: split on ';' outside $tag$ ... $tag$ bodies.
+    out: list[str] = []
+    parts: list[str] = []
+    tag: str | None = None
+    for token in re.split(r"(\$[A-Za-z_]\w*\$|\$\$|;)", ddl_text):
+        if not token:
+            continue
+        if re.fullmatch(r"\$(?:[A-Za-z_]\w*)?\$", token):
+            if tag is None:
+                tag = token
+            elif tag == token:
+                tag = None
+        if token == ";" and tag is None:  # nosec B105 -- a statement end, not a password
+            out.append("".join(parts))
+            parts = []
+            continue
+        parts.append(token)
+    out.append("".join(parts))
+    return [b for b in out if b.strip()]
+
+
+def parse_ddl_routines(ddl_text: str, dialect: str) -> dict:
+    """The procedures, functions and triggers in a DDL upload (#1652), as raw rows with
+    the collection scripts' keys (``routine_name``, ``schema_name``, ``routine_type``,
+    ``definition``; ``trigger_name``, ``table_name``, ``timing``, ``events``,
+    ``for_each``, ``definition``). Bodies only: a DDL file holds no execution counts, so
+    ``routine_stats_status`` is ``offline``. A block this cannot read is left out."""
+    procedures: list[dict] = []
+    triggers: list[dict] = []
+    for block in _routine_blocks(ddl_text or "", dialect):
+        head = _ROUTINE_HEAD.search(block)
+        if not head:
+            continue
+        kind = head.group(1).upper()
+        schema, name = _routine_name(head.group(2))
+        definition = block[head.start() :].strip()
+        if kind != "TRIGGER":
+            row = {
+                "routine_name": name,
+                "routine_type": "FUNCTION" if kind == "FUNCTION" else "PROCEDURE",
+                "definition": definition,
+            }
+            if schema:
+                row["schema_name"] = schema
+            procedures.append(row)
+            continue
+        rest = block[head.end() :]
+        on_first = _TRIGGER_ON_FIRST.match(rest)
+        tail = None if on_first else _TRIGGER_TAIL.search(rest)
+        if on_first:
+            table, timing, events = on_first.group(1), on_first.group(2), on_first.group(3)
+        elif tail:
+            timing, events, table = tail.group(1), tail.group(2), tail.group(3)
+        else:
+            continue
+        timing = "AFTER" if timing.upper() == "FOR" else re.sub(r"\s+", " ", timing.upper())
+        table_schema, table_name = _routine_name(table)
+        schema = schema or table_schema  # a PostgreSQL trigger takes its table's schema
+        event_names = re.findall(r"\b(INSERT|UPDATE|DELETE)\b", events, re.I)
+        trigger: dict[str, str | None] = {
+            "trigger_name": name,
+            "table_name": table_name,
+            "timing": timing,
+            "events": " OR ".join(e.upper() for e in event_names),
+            "event_type": event_names[0].upper() if event_names else "",
+            "for_each": (
+                "ROW"
+                if re.search(r"FOR\s+EACH\s+ROW", rest, re.I)
+                else (
+                    "STATEMENT" if dialect == "sqlserver" or "STATEMENT" in rest.upper() else None
+                )
+            ),
+            "definition": definition,
+        }
+        if schema:
+            trigger["schema_name"] = schema
+        triggers.append(trigger)
+    return {
+        "procedures": procedures,
+        "triggers": triggers,
+        "routine_stats_status": dict(_DDL_STATS_STATUS),
+    }

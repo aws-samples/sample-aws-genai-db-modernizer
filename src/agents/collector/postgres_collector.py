@@ -29,11 +29,29 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _normalize_index_type,
     _parse_ddl_raw,
+    ddl_routines_stage,
     source_enum_types,
     source_extensions,
     source_settings,
+    trigger_shape_fields,
 )
-from src.agents.collector.routine_rows import dml_trigger, log_skipped_triggers, merge_trigger_rows
+from src.agents.collector.routine_rows import (
+    attach_routine_stats,
+    dml_trigger,
+    execution_stats,
+    log_skipped_triggers,
+    merge_trigger_rows,
+    routine_stats_status,
+)
+from src.agents.collector.routine_sources import (
+    apply_body_statuses,
+    attach_to_contract,
+    build_routine_sources,
+    procedure_fields,
+    routine_capture,
+    routine_capture_model,
+    trigger_fields,
+)
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -57,6 +75,7 @@ from src.contracts.collector_output import (
     TriggerTiming,
     View,
 )
+from src.contracts.routine_sources import RoutineSource
 from src.shared.contract_versioning import load_contract
 from src.shared.query_capture import live_query_capture, query_stage_rows, statement_query_failed
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
@@ -183,7 +202,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     use_span_settings(span_settings("postgresql", meta_raw.get("settings")))
 
     # Stage 2: schema
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
+    include = inp.collection_options.include_routine_bodies
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, include_bodies=include))
 
     # Stage 3: queries
     queries_raw = ckpt.load_or_run(
@@ -194,7 +214,9 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     # Stage 4: AWS metrics
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
-    # Assemble
+    # Assemble. #1652: the CREATE statements, read outside every checkpoint; the
+    # (checkpointed, redacted) schema rows get their body status first.
+    routine_sources = _live_routines(db, schema_raw, include_bodies=include)
     tables = _build_tables(schema_raw)
     views = _build_views(schema_raw.get("views", []))
     procs = _build_procedures(schema_raw.get("procedures", []))
@@ -227,7 +249,7 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     if "PostgreSQL" in version_str:
         version_str = version_str.split()[1] if len(version_str.split()) > 1 else version_str
 
-    return CollectorOutputContract(
+    output = CollectorOutputContract(
         job_id=inp.job_id,
         metadata=Metadata(
             collection_timestamp=datetime.now(UTC),
@@ -246,6 +268,15 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
             # #1078: an older checkpoint's schema stage has none.
             extensions=source_extensions(schema_raw.get("extensions")),
+            # #1652: how routine counts and bodies were read (none in an older checkpoint).
+            routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
+            routine_capture=routine_capture_model(
+                routine_capture(
+                    schema_raw.get("routine_capture"),
+                    listed=len(schema_raw.get("procedures") or [])
+                    + len(schema_raw.get("triggers") or []),
+                )
+            ),
         ),
         database_schema=Schema(
             tables=tables,
@@ -258,6 +289,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         queries=queries,
         metrics=metrics,
     )
+    attach_to_contract(output, routine_sources)
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +304,8 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cred_mgr = _build_cred_mgr(inp)
 
     schema_raw = ckpt.load_or_run("ddl_schema", lambda: _parse_ddl_raw(inp, region))
+    # #1652: the procedures, functions and triggers the upload defines (bodies, no counts).
+    routines_raw = ddl_routines_stage(inp, ckpt, region)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
@@ -303,8 +338,13 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,
             ),
+            routine_stats_source=routine_stats_status(routines_raw.get("routine_stats_status")),
         ),
-        database_schema=Schema(tables=tables),
+        database_schema=Schema(
+            tables=tables,
+            procedures=_build_procedures(routines_raw.get("procedures") or []),
+            triggers=_build_triggers(routines_raw.get("triggers") or []),
+        ),
         queries=queries,
         metrics=metrics,
     )
@@ -326,7 +366,7 @@ def _build_queries_from_aws(aws_patterns: list[dict]) -> Queries:
 # ---------------------------------------------------------------------------
 
 
-def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
+def _collect_schema_raw(db: PostgreSQLRemoteCollector, include_bodies: bool = True) -> dict:
     raw_tables = db.collect_tables()
     tables = []
     for t in raw_tables:
@@ -352,13 +392,20 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
     except Exception:
         logger.warning("Failed to collect views")
     try:
-        procedures = db.collect_procedures()
+        procedures = db.collect_procedures(include_bodies=include_bodies)
     except Exception:
         logger.warning("Failed to collect procedures")
     try:
-        triggers = db.collect_triggers()
+        triggers = db.collect_triggers(include_bodies=include_bodies)
     except Exception:
         logger.warning("Failed to collect triggers")
+    # #1652: the call counts PostgreSQL keeps, and how they were read.
+    routine_status: dict | None = None
+    try:
+        routine_stats, routine_status = db.collect_routine_stats()
+        attach_routine_stats(procedures, triggers, routine_stats)
+    except Exception:
+        logger.warning("Failed to collect routine stats")
 
     global_stats = {}
     try:
@@ -385,10 +432,49 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector) -> dict:
         "views": views,
         "procedures": procedures,
         "triggers": triggers,
+        "routine_stats_status": routine_status,
+        "routine_capture": {"include_bodies": include_bodies, "privileges_not_seen": []},
         "global_stats": global_stats,
         "extensions": extensions,
         "enum_types": enum_types,
     }
+
+
+def _collect_routine_creates_raw(
+    db: PostgreSQLRemoteCollector, include_bodies: bool
+) -> dict[str, list[dict]]:
+    """The routine rows again, bodies included, read outside every checkpoint (#1652):
+    a checkpoint stage is redacted (#1625), and a CREATE must keep its literals. Nothing
+    is read when the caller opted out."""
+    out: dict[str, list[dict]] = {"procedures": [], "triggers": []}
+    if not include_bodies:
+        return out
+    reads = (
+        ("procedures", lambda: db.collect_procedures(include_bodies=True)),
+        ("triggers", lambda: db.collect_triggers(include_bodies=True)),
+    )
+    for key, read in reads:
+        try:
+            out[key] = read()
+        except Exception:
+            logger.warning("Failed to read routine %s for their CREATE statements", key)
+    return out
+
+
+def _live_routines(db, schema_raw: object, *, include_bodies: bool) -> list[RoutineSource]:
+    """The live collection's CREATE statements (#1652); marks each schema row with its
+    body status first, so the builders record it. A failed read costs the sources only."""
+    if not isinstance(schema_raw, dict):
+        return []
+    creates = _collect_routine_creates_raw(db, include_bodies)
+    build = build_routine_sources("postgresql", **creates)
+    apply_body_statuses(
+        build,
+        "postgresql",
+        procedures=schema_raw.get("procedures") or [],
+        triggers=schema_raw.get("triggers") or [],
+    )
+    return build.sources
 
 
 def _collect_queries_raw(db: PostgreSQLRemoteCollector, opts) -> list[dict] | dict[str, str]:
@@ -512,6 +598,12 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
             ),
             return_type=p.get("return_type"),
             language=p.get("language"),
+            # #1652: the schema, the whole CREATE (redacted), the call counts kept and
+            # the routine-migration fields.
+            schema_name=p.get("schema_name"),
+            definition=p.get("definition"),
+            execution_stats=execution_stats(p),
+            **procedure_fields(p),
         )
         for p in raw
     ]
@@ -535,10 +627,14 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
             Trigger(
                 trigger_id=t.get("trigger_name", ""),
                 trigger_name=t.get("trigger_name", ""),
+                schema_name=t.get("schema_name"),
                 table_id=t.get("table_name", ""),
                 event_type=TriggerEventType(events[0]),
                 events=[TriggerEventType(e) for e in events],
                 timing=TriggerTiming(timing),
+                # #1652: orientation, state, function, whole CREATE and the counts kept.
+                **trigger_shape_fields(t),
+                **trigger_fields(t),
             )
         )
     log_skipped_triggers(logger, skipped)
@@ -580,6 +676,8 @@ def _build_queries(raw: list[dict]) -> Queries:
             parsed_facts=p.get("parsed_facts"),
             query_tags=p.get("query_tags") or [],
             query_tags_dropped=p.get("query_tags_dropped") or 0,
+            # #1652: toplevel read backwards; None when not reported.
+            nested=p.get("nested"),
             has_text_search=p.get("has_text_search"),
             text_search_type=p.get("text_search_type"),
             has_time_range_filter=p.get("has_time_range_filter"),

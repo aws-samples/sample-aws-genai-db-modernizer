@@ -1623,6 +1623,9 @@ def build_collection(seed: int = SEED) -> dict[str, Any]:
         # The statement-to-routine links (#1891): the synthetic workload runs ad hoc, so
         # no statement ran in a routine.
         "query_routines": [],
+        # The routine execution counts (#1652): the synthetic workload runs no routine.
+        "routine_stats": [],
+        "routine_stats_status": {"status": "tracked"},
         "global_stats": {
             "innodb_buffer_pool_read_requests": 918_442_310,
             "innodb_buffer_pool_reads": 4_118_224,

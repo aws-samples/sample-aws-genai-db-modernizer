@@ -77,6 +77,17 @@ COMMON_SECTIONS: tuple[str, ...] = (
 #: never reported absent.
 ENGINE_SECTIONS: tuple[str, ...] = ("io_stats", "wait_events", "os_stats", "query_routines")
 
+#: Optional routine sections some scripts write since #1652 (routine execution counts and
+#: how they were read; Oracle's routine source lines; MySQL's routine parameters and
+#: scheduled events): never reported absent, never unknown.
+ROUTINE_SECTIONS: tuple[str, ...] = (
+    "events",
+    "routine_parameters",
+    "routine_sources",
+    "routine_stats",
+    "routine_stats_status",
+)
+
 #: Sections the transform iterates entry by entry: a non-empty one is a list of objects.
 ITERATED_SECTIONS: tuple[str, ...] = (
     "tables",
@@ -98,7 +109,7 @@ OBJECT_SECTIONS: tuple[str, ...] = ("global_stats", "os_stats")
 _HEADER_KEYS: frozenset[str] = frozenset({"collection_version", "collected_at"})
 
 _KNOWN_KEYS: frozenset[str] = frozenset(
-    {*REQUIRED_SECTIONS, *COMMON_SECTIONS, *ENGINE_SECTIONS, *_HEADER_KEYS}
+    {*REQUIRED_SECTIONS, *COMMON_SECTIONS, *ENGINE_SECTIONS, *ROUTINE_SECTIONS, *_HEADER_KEYS}
 )
 
 #: The keys the transform and the builder read from every entry with no default.

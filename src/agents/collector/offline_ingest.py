@@ -99,6 +99,7 @@ def build_offline_contract(
     """
     from src.agents.collector.mysql_collector import (
         _build_cloudwatch,
+        _build_events,
         _build_metrics,
         _build_output,
         _build_procedures,
@@ -183,6 +184,10 @@ def build_offline_contract(
         extensions=parsed.get("extensions"),
         # #1834: the PostgreSQL script's enum types and their labels.
         enum_types=parsed.get("enum_types"),
+        # #1652: MySQL scheduled events, and how routine bodies and counts were read.
+        events=_build_events(parsed.get("events") or []),
+        routine_stats_source=parsed.get("routine_stats_status"),
+        routine_capture=parsed.get("routine_capture"),
         # #949: AWS engines the application already runs next to the source.
         engines_in_use=offline_meta.get("engines_in_use"),
         database_name=collected_name,
