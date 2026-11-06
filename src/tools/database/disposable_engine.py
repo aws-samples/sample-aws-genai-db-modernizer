@@ -19,6 +19,20 @@ everything again::
 
 ``running(...)`` wraps the same calls in a context manager.
 
+``execute(handle, sql, params)`` runs one more statement with bound values (a test
+row change that fires a trigger, #1942); ``row_change_sql`` builds the ``INSERT``,
+``UPDATE`` or ``DELETE`` for one with every identifier checked and quoted. ``call``
+takes each argument's mode (``IN``, ``OUT``, ``INOUT``): MySQL passes an ``OUT`` or
+``INOUT`` argument through a session variable and returns its value as one more row.
+On PostgreSQL ``call`` also takes each argument's type, written as a cast
+(``%s::integer``) so the call reaches that overload. ``pg_cast_type`` parses the type
+first: a built-in type the Aurora PostgreSQL allowlist reads, or a user type of one or two
+identifiers written back with each part quoted; anything else is refused. After the rows
+load, PostgreSQL sets every identity or serial sequence of a loaded table to its highest
+loaded value, as MySQL's ``AUTO_INCREMENT`` does on its own, so a routine's own
+``INSERT`` does not collide with a synthetic key and a column already at its type's
+highest value does not overflow the load.
+
 Binding. The engine never listens on a network interface. PostgreSQL and MySQL
 both use a Unix socket inside a private (0700) temporary folder. Only where Unix
 sockets do not exist does MySQL fall back to ``127.0.0.1`` on a random free port.
@@ -127,6 +141,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from src.contracts.aurora_design_delta import validate_aurora_type
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_ENGINES = ("postgresql", "mysql")
@@ -170,6 +186,14 @@ _MY_CREATE_DB = f"CREATE DATABASE `{_DATABASE}`"
 _MY_CREATE_USER = f"CREATE USER '{_RUNNER}'@'localhost' IDENTIFIED BY %s"
 # Only this one schema: no FILE, no SUPER, no other global privilege.
 _MY_GRANT = f"GRANT ALL PRIVILEGES ON `{_DATABASE}`.* TO '{_RUNNER}'@'localhost'"
+_MY_ARG_VAR = "@modernizer_arg_%d"  # the session variable an OUT or INOUT argument uses
+# A loaded table's identity and serial columns, with their sequences (the table twice:
+# pg_get_serial_sequence takes its name as text, the filter as a regclass).
+_PG_TABLE_SEQUENCES = (
+    "SELECT attname, seq FROM (SELECT a.attname, pg_get_serial_sequence(%s, a.attname) AS seq "
+    "FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+    "AND NOT a.attisdropped) s WHERE seq IS NOT NULL ORDER BY attname"
+)
 _MY_SET_ROOT_PASSWORD = "ALTER USER 'root'@'localhost' IDENTIFIED BY %s"  # nosec B105 - a bound parameter, not a password
 
 
@@ -284,14 +308,103 @@ def _select_all_sql(table: str, mark: str) -> str:
     return f"SELECT * FROM {_quote(table, mark)}"  # nosec B608 - see _SQL_NOTE
 
 
-def _call_sql(name: str, kind: str, nargs: int, mark: str, engine: str) -> str:
-    marks = ", ".join(["%s"] * nargs)
+def _call_sql(
+    name: str, kind: str, nargs: int, mark: str, engine: str, slots: Sequence[str] | None = None
+) -> str:
+    marks = ", ".join(slots if slots is not None else ["%s"] * nargs)
     target = _quote(name, mark)
     if kind == "procedure":
         return f"CALL {target}({marks})"
     if engine == "postgresql":
         return f"SELECT * FROM {target}({marks})"  # nosec B608 - see _SQL_NOTE
     return f"SELECT {target}({marks})"  # nosec B608 - see _SQL_NOTE
+
+
+# A user type a cast may name: one or two identifiers (schema, type), each plain or
+# double-quoted ("" inside a quoted one), then array brackets. Parsed, never matched
+# loosely: the output is rebuilt from the parts, each one quoted.
+_PG_TYPE_PART = re.compile(r'"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_$]*)')
+_PG_SERIALS = {"smallserial", "serial", "bigserial", "serial2", "serial4", "serial8"}
+_PG_NAME_MAX = 63  # NAMEDATALEN - 1
+
+
+def _pg_user_type(text: str) -> str:
+    parts: list[str] = []
+    i = 0
+    while True:
+        m = _PG_TYPE_PART.match(text, i)
+        if m is None:
+            raise ValueError("not a type name")
+        name = m.group(1).replace('""', '"') if m.group(1) is not None else m.group(2).lower()
+        if "\x00" in name or len(name.encode()) > _PG_NAME_MAX:
+            raise ValueError("not a type name")
+        parts.append(name)
+        i = m.end()
+        if text.startswith(".", i) and len(parts) < 2:
+            i += 1
+            continue
+        break
+    arrays = text[i:]
+    if arrays.replace("[]", ""):
+        raise ValueError("not a type name")
+    return ".".join('"' + n.replace('"', '""') + '"' for n in parts) + arrays
+
+
+def pg_cast_type(type_name: str) -> str:
+    """The type a PostgreSQL cast writes for ``type_name``, or ``ValueError``.
+
+    Either a built-in type, exactly as the Aurora PostgreSQL type allowlist reads it
+    (``validate_aurora_type``: a base name from its list, an optional ``(n)`` or
+    ``(p, s)``, ``WITH TIME ZONE`` and ``[]``), or a user type, ``name`` or
+    ``schema.name`` with each part plain or double-quoted, written back with every part
+    quoted (``public."Mood"`` gives ``"public"."Mood"``, ``"char"`` gives ``"char"``).
+    Anything else is refused, so no expression can reach the SQL around the cast.
+    """
+    text = type_name.strip()
+    if not text or len(text) > 200:
+        raise ValueError(f"not a type name a cast may write: {type_name!r}")
+    if text.split("(")[0].split("[")[0].strip().lower() in _PG_SERIALS:
+        raise ValueError(f"a serial type is not a cast: {type_name!r}")
+    try:
+        return validate_aurora_type(text, "aurora_postgresql")
+    except ValueError:
+        pass
+    try:
+        return _pg_user_type(text)
+    except ValueError:
+        raise ValueError(f"not a type name a cast may write: {type_name!r}") from None
+
+
+RowEvent = Literal["INSERT", "UPDATE", "DELETE"]
+ArgMode = Literal["IN", "OUT", "INOUT"]
+_MARKS = {"postgresql": '"', "mysql": "`"}
+
+
+def row_change_sql(
+    engine: str,
+    event: RowEvent,
+    table: str,
+    columns: Sequence[str] = (),
+    where: Sequence[str] = (),
+) -> str:
+    """The statement for one row change, values left as ``%s`` marks: ``INSERT`` of
+    ``columns``, ``UPDATE`` setting ``columns``, or ``DELETE``, each row matched on
+    ``where`` (``column = %s`` each). Every name must be a plain identifier."""
+    mark = _MARKS[_canonical(engine)]
+    target = _quote(table, mark)
+    match = " AND ".join(f"{_quote(c, mark)} = %s" for c in where)
+    if event == "INSERT":
+        return _insert_sql(table, columns, mark)
+    if not where:
+        raise ValueError("an UPDATE or DELETE needs the columns that match its row")
+    if event == "UPDATE":
+        if not columns:
+            raise ValueError("an UPDATE needs a column to set")
+        sets = ", ".join(f"{_quote(c, mark)} = %s" for c in columns)
+        return f"UPDATE {target} SET {sets} WHERE {match}"  # nosec B608 - see _SQL_NOTE
+    if event == "DELETE":
+        return f"DELETE FROM {target} WHERE {match}"  # nosec B608 - see _SQL_NOTE
+    raise ValueError(f"not a row event: {event!r}")
 
 
 def _execute(cur: Any, sql: str, params: Sequence[Any] | None = None) -> None:
@@ -618,7 +731,16 @@ class _Backend:
     ) -> None:
         raise NotImplementedError
 
-    def call(self, routine: SourceRoutine | str, args: Sequence[Any]) -> CallResult:
+    def call(
+        self,
+        routine: SourceRoutine | str,
+        args: Sequence[Any],
+        modes: Sequence[ArgMode] | None = None,
+        casts: Sequence[str | None] | None = None,
+    ) -> CallResult:
+        raise NotImplementedError
+
+    def execute(self, sql: str, params: Sequence[Any]) -> CallResult:
         raise NotImplementedError
 
     def snapshot(self, tables: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
@@ -836,6 +958,8 @@ class _PostgresBackend(_Backend):
                 for row in table_rows:
                     cols = list(row)
                     _execute(cur, _insert_sql(table, cols, '"'), [row[c] for c in cols])
+            for table in rows:
+                self._advance_sequences(cur, table)
             for routine in routines:
                 self._kinds[routine.name] = routine.kind
                 cur.execute(routine.create_sql)
@@ -844,12 +968,48 @@ class _PostgresBackend(_Backend):
         finally:
             cur.close()
 
-    def call(self, routine, args):  # type: ignore[no-untyped-def]
+    @staticmethod
+    def _advance_sequences(cur: Any, table: str) -> None:
+        """Every identity or serial sequence of ``table`` continues past its highest value."""
+        quoted = _quote(table, '"')
+        _execute(cur, _PG_TABLE_SEQUENCES, [quoted, quoted])
+        for column, sequence in cur.fetchall():
+            if not _IDENT.match(column):
+                continue
+            col = _quote(column, '"')
+            # setval(seq, max, true): the next value is max + 1, and a row already at the
+            # type's highest value does not overflow the sequence; an empty table keeps it
+            highest = f"SELECT max({col}) AS m FROM {quoted}"  # nosec B608 - see _SQL_NOTE
+            _execute(
+                cur,
+                f"SELECT setval(%s, m, true) FROM ({highest}) s WHERE m IS NOT NULL",  # nosec B608 - see _SQL_NOTE
+                [sequence],
+            )
+
+    def call(self, routine, args, modes=None, casts=None):  # type: ignore[no-untyped-def]
+        # PostgreSQL takes OUT arguments of a procedure as values (NULL) and returns them
+        # as the call's row; a function's OUT arguments are not passed at all. A cast
+        # names the overload: f(%s::integer) is never f(bigint) or f(text).
         name, kind = _routine_kind(self._kinds, routine)
-        sql = _call_sql(name, kind, len(args), '"', "postgresql")
+        casts = list(casts or [None] * len(args))
+        if len(casts) != len(args):
+            raise ValueError("one cast (or None) per argument")
+        slots = [f"%s::{pg_cast_type(c)}" if c else "%s" for c in casts]
+        sql = _call_sql(name, kind, len(args), '"', "postgresql", slots)
         cur = self._conn.cursor()
         try:
             _execute(cur, sql, list(args))
+            rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
+            return CallResult(rows=rows)
+        except self._psycopg2.Error as exc:
+            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+        finally:
+            cur.close()
+
+    def execute(self, sql, params):  # type: ignore[no-untyped-def]
+        cur = self._conn.cursor()
+        try:
+            _execute(cur, sql, list(params))
             rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
             return CallResult(rows=rows)
         except self._psycopg2.Error as exc:
@@ -1043,13 +1203,22 @@ class _MySQLBackend(_Backend):
         finally:
             cur.close()
 
-    def call(self, routine, args):  # type: ignore[no-untyped-def]
+    def call(self, routine, args, modes=None, casts=None):  # type: ignore[no-untyped-def]
+        # MySQL has no overloads, so a cast is never needed and is not written.
         name, kind = _routine_kind(self._kinds, routine)
-        sql = _call_sql(name, kind, len(args), "`", "mysql")
+        modes = list(modes or ["IN"] * len(args))
+        if len(modes) != len(args):
+            raise ValueError("one mode per argument")
+        slots = [_MY_ARG_VAR % i if m != "IN" else "%s" for i, m in enumerate(modes)]
+        sql = _call_sql(name, kind, len(args), "`", "mysql", slots)
         cur = self._conn.cursor()
         try:
             if kind == "procedure":
-                _execute(cur, sql, list(args))
+                outs = [i for i, m in enumerate(modes) if m != "IN"]
+                for i in outs:  # an OUT or INOUT argument is a session variable
+                    value = args[i] if modes[i] == "INOUT" else None
+                    _execute(cur, f"SET {_MY_ARG_VAR % i} = %s", [value])
+                _execute(cur, sql, [a for a, m in zip(args, modes, strict=True) if m == "IN"])
                 rows: list[list[Any]] = []
                 with warnings.catch_warnings():  # the connector is moving this to a property
                     warnings.simplefilter("ignore", DeprecationWarning)
@@ -1057,9 +1226,24 @@ class _MySQLBackend(_Backend):
                     results = list(stored() if callable(stored) else stored)
                 for result in results:
                     rows.extend([_normalize(c) for c in r] for r in result.fetchall())
+                if outs:
+                    read = ", ".join(_MY_ARG_VAR % i for i in outs)
+                    _execute(cur, f"SELECT {read}")  # nosec B608 - fixed variable names
+                    rows.extend([_normalize(c) for c in r] for r in cur.fetchall())
                 return CallResult(rows=rows)
             _execute(cur, sql, list(args))
             return CallResult(rows=[[_normalize(c) for c in r] for r in cur.fetchall()])
+        except self._mc.Error as exc:
+            return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
+        finally:
+            cur.close()
+
+    def execute(self, sql, params):  # type: ignore[no-untyped-def]
+        cur = self._conn.cursor()
+        try:
+            _execute(cur, sql, list(params))
+            rows = [[_normalize(c) for c in r] for r in cur.fetchall()] if cur.description else []
+            return CallResult(rows=rows)
         except self._mc.Error as exc:
             return CallResult(error=f"{type(exc).__name__}: {str(exc).strip()}")
         finally:
@@ -1364,11 +1548,30 @@ def load(
 
 
 def call(
-    handle: EngineHandle, routine: SourceRoutine | str, args: Sequence[Any] = ()
+    handle: EngineHandle,
+    routine: SourceRoutine | str,
+    args: Sequence[Any] = (),
+    modes: Sequence[ArgMode] | None = None,
+    casts: Sequence[str | None] | None = None,
 ) -> CallResult:
-    """Call a loaded routine. A SQL error becomes ``CallResult.error``, so it can be compared."""
+    """Call a loaded routine. A SQL error becomes ``CallResult.error``, so it can be compared.
+
+    ``modes`` gives each argument's mode (all ``IN`` when omitted): on MySQL an ``OUT``
+    or ``INOUT`` argument of a procedure goes through a session variable, and the
+    variables' values come back as the last row. ``casts`` gives each argument's type on
+    PostgreSQL (``integer``, ``numeric(10,2)``, ``app.mood``; None for none), written as
+    ``%s::type`` so the call reaches that overload; a type name is checked first
+    (``ValueError`` otherwise). MySQL has no overloads and writes none.
+    """
     _check_live(handle)
-    return handle._backend.call(routine, list(args))
+    return handle._backend.call(routine, list(args), modes, casts)
+
+
+def execute(handle: EngineHandle, sql: str, params: Sequence[Any] = ()) -> CallResult:
+    """Run one statement as the non-superuser role, values bound (``%s`` marks): a test
+    row change from ``row_change_sql``. A SQL error becomes ``CallResult.error``."""
+    _check_live(handle)
+    return handle._backend.execute(sql, list(params))
 
 
 def snapshot(handle: EngineHandle, tables: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
