@@ -420,10 +420,14 @@ def test_the_explore_question_asks_for_the_engines_count_the_entry_answers() -> 
     assert "most" not in question.lower()
 
 
-def test_the_explore_step_runs_after_the_browser_tests() -> None:
+def test_the_explore_step_runs_right_after_the_judge() -> None:
+    """#1977: every model call finishes before the browser tests, so a long run's
+    /explore session never starts after its CI job's model credentials expire."""
     script = _script()
-    assert script.index("step ui-tests") < script.index("step explore-expected")
-    assert script.index("step report-tests") < script.index("step explore run_before_deadline")
+    assert script.index("step judge run_judge") < script.index("step explore-expected")
+    explore = script.index("step check-explore")
+    for later in ("step install-browsers", "step report-tests", "step ui-tests"):
+        assert explore < script.index(later), later
     assert script.index("step explore run_before_deadline") < script.index("step results")
 
 
