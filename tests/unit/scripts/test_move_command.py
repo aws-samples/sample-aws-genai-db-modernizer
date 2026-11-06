@@ -276,7 +276,7 @@ def test_resume_maps_every_status_phase_to_a_stage() -> None:
     resume = _flat(_section("Step 0: The job and the step"))
     phases = {"no_stack", "stack_in_progress", "stack_failed", "connections_not_tested",
               "connections_testing", "connections_failed", "ready_to_start", "loading",
-              "validating", "caught_up", "task_stopped"}  # fmt: skip
+              "validating", "validation_stalled", "caught_up", "task_stopped"}  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
     for phase in phases:
         assert f'"{phase}"' in source, phase
@@ -400,4 +400,68 @@ def test_every_question_and_result_line_names_what_dms_reports() -> None:
         "(not running)", ""
     ).replace("ready, not running", "").replace('a generic "not running"', "").replace(
         "counts as not running", ""
+    )
+
+
+# --- --until, stalled validation, progress lines (#1995, #1996, #1997) -------------------------
+
+
+def test_until_is_documented_with_its_stages_its_result_lines_and_unchanged_auto_rules() -> None:
+    arguments = _flat(_section("Arguments"))
+    assert "`--until ready|moving`" in arguments
+    for line in ("`MOVE_RESULT: stopped stage=check reason=until ready`",
+                 "`MOVE_RESULT: stopped stage=move reason=until moving`",
+                 "`MOVE_RESULT: stopped stage=select reason=--until must be ready or moving`"):  # fmt: skip
+        assert line in arguments, line
+    assert "`--until moving` still needs `--inputs` and `--approve-deploy`" in arguments
+    assert "A later `/move step-1` without `--until` resumes" in arguments
+    move = _flat(_section("Stage 3: Move"))
+    assert (
+        "With `--until ready`, nothing in this stage runs, with or without `--approve-deploy`: "
+        "end with `MOVE_RESULT: stopped stage=check reason=until ready` before step 1" in move
+    )
+
+
+def test_until_moving_waits_read_only_for_the_task_to_run_after_the_start() -> None:
+    move = _section("Stage 3: Move")
+    after = move.split("**6. With `--until moving` only", 1)[1]
+    assert move.index("start --job-id") < move.index("**6. With `--until moving` only")
+    command = _bash_commands(after)[0]
+    args = run_dms_step._parser().parse_args(_helper_argv(command))
+    assert args.command == "status" and args.until == "running" and not args.approve
+    assert "running" in run_dms_step.UNTIL
+    flat = _flat(after)
+    assert "end with `MOVE_RESULT: stopped stage=move reason=until moving`" in flat
+    assert "up to 4 times" in flat and "task still starting" in flat
+
+
+def test_prove_stops_on_a_stalled_validation_with_what_to_check() -> None:
+    prove = _flat(_section("Stage 4: Prove"))
+    assert (
+        "`validation_stalled`" in prove
+        and '"validation_stalled"' in (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
+    )
+    assert (
+        "end with `MOVE_RESULT: stopped stage=prove reason=validation not running: "
+        "<validation_check>`" in prove
+    )
+    assert "never keep polling it" in prove
+    assert "(`validation_enabled` false) is never reported this way" in prove
+
+
+def test_prove_relays_each_progress_line_and_reads_the_result_line_last() -> None:
+    prove = _flat(_section("Stage 4: Prove"))
+    assert (
+        'It prints one `"status": "progress"` line per poll, then its result line, always last'
+        in prove
+    )
+    assert "Relay each progress line in one short sentence, from its fields only" in prove
+    for field in run_dms_step.PROGRESS_FIELDS:
+        if field != "phase":
+            assert f"`{field}`" in prove, field
+    tool_use = _flat(_section("Tool Use"))
+    assert TOOL_USE_RULE + SEARCH_AS_IS in _text()  # the shared paragraph stays word for word
+    assert (
+        "Prove's poll prints a progress line per poll first: its result line is the last"
+        in tool_use
     )
