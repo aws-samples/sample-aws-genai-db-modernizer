@@ -644,3 +644,59 @@ def test_check_params_is_public_so_callers_validate_before_opening_a_graph():
     }
     with pytest.raises(ValueError, match="missing"):
         catalog.check_params(entry, {})
+
+
+def _designed_engine_graph(path: Path, queries: int, objects: int) -> None:
+    """A graph sized like a designed discourse job's Aurora PostgreSQL (#1974):
+    ``queries`` queries, each with one effective TARGETS edge to one of ``objects``
+    design objects, plus a cache edge, an access pattern and a source table each."""
+    store = GraphStore(str(path))
+    initialize_schema(store)
+    oids = [f"aurora_postgresql:table:t{i}" for i in range(objects)]
+    qids = [f"q{i}" for i in range(queries)]
+    store.execute(
+        "UNWIND $rows AS r CREATE (:TargetObject {id: r, engine: 'aurora_postgresql', "
+        "kind: 'table', name: r, fallback: false})",
+        {"rows": oids},
+    )
+    store.execute("UNWIND $rows AS r CREATE (:Query {id: r})", {"rows": qids})
+    store.execute("UNWIND $rows AS r CREATE (:AccessPattern {id: 'ap-' + r})", {"rows": qids})
+    store.execute("UNWIND range(0, 99) AS i CREATE (:SourceTable {id: 's' + string(i)})")
+    rows = [
+        {"q": q, "o": oids[i % objects], "s": f"s{i % 100}", "cache": i % 10 == 0}
+        for i, q in enumerate(qids)
+    ]
+    store.execute(
+        "UNWIND $rows AS r MATCH (q:Query {id: r.q}), (o:TargetObject {id: r.o}) "
+        "CREATE (q)-[:TARGETS {version: 1, effective: true, cache: r.cache}]->(o)",
+        {"rows": rows},
+    )
+    store.execute(
+        "UNWIND $rows AS r MATCH (q:Query {id: r.q}), (a:AccessPattern {id: 'ap-' + r.q}), "
+        "(s:SourceTable {id: r.s}) CREATE (q)-[:PART_OF]->(a), (q)-[:READS_FROM]->(s)",
+        {"rows": rows},
+    )
+    store.close()
+
+
+def test_engine_destinations_fits_the_read_pool_on_a_large_design(tmp_path):
+    """#1974: entry B on a design with hundreds of objects stays inside the default
+    read handle's buffer pool, and still counts every query and object once."""
+    path = tmp_path / "designed.lbug"
+    _designed_engine_graph(path, queries=800, objects=530)
+    store = GraphStore(str(path), read_only=True)
+    try:
+        entry = catalog.get_entry("engine_destinations")
+        (row,) = catalog.run_entry(store, entry, {"engine": "aurora_postgresql"}).rows
+    finally:
+        store.close()
+    assert (row["destination"], row["queries"], row["cache_queries"]) == (
+        "aurora_postgresql",
+        800,
+        80,
+    )
+    assert len(row["targets"]) == 530 and row["fallbacks"] is None
+    assert len(row["source_tables"]) == 100 and len(row["access_patterns"]) == 800
+    counts = {c["id"]: (c["queries"], c["cache_queries"]) for c in row["target_counts"]}
+    assert len(counts) == 530 and sum(q for q, _ in counts.values()) == 800
+    assert sum(c for _, c in counts.values()) == 80
