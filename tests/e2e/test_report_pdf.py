@@ -215,7 +215,16 @@ def test_the_pending_engine_choices(run: PipelineResult) -> None:
         n = facts["pending_choice_count"]
         assert f"Pending engine choices ({n} table{'s' if n != 1 else ''}, {tied} quer" in text
         assert "Unresolved engine ties" not in text
-    if not tied and not facts["post_schema_reroute_count"]:
+    decided = facts.get("auto_decided_choice_count") or 0
+    if decided:
+        # #1973: the choices --auto decided are a decision card of their own.
+        q = facts.get("auto_decided_query_count") or 0
+        assert (
+            f"Decided automatically, review if needed ({decided} "
+            f"table{'s' if decided != 1 else ''}, {q} quer"
+        ) in text
+        assert executive_report.L_NO_DECISIONS not in text
+    if not tied and not decided and not facts["post_schema_reroute_count"]:
         assert executive_report.L_NO_DECISIONS in text
 
 
