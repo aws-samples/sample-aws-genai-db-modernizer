@@ -306,7 +306,11 @@ def test_each_role_has_an_env_override(monkeypatch, role, env_var):
         ("anthropic.claude-3-haiku-20240307-v1:0", True, True, "accepted", False),
         ("anthropic.claude-opus-4-8", False, False, "accepted", True),
         ("anthropic.claude-sonnet-5", False, False, "needs_thinking_disabled", True),
-        ("anthropic.claude-opus-5", False, False, "rejected", True),
+        # Opus 5 on Bedrock takes a forced choice with thinking on (measured, #744).
+        ("anthropic.claude-opus-5", False, False, "accepted", True),
+        # Fable 5 / Mythos 5: unmeasured on Bedrock (#744), so never forced.
+        ("anthropic.claude-fable-5", False, False, "rejected", True),
+        ("anthropic.claude-mythos-5", False, False, "rejected", True),
         ("global.anthropic.claude-opus-5-5", False, False, "rejected", True),
         ("global.anthropic.claude-sonnet-5-5", False, False, "rejected", True),
         # Haiku 5.5 accepts a forced tool_choice (the forced turn skips thinking).
@@ -514,10 +518,8 @@ def test_five_five_strands_shape(role, model_id):
     effort = kwargs["additional_request_fields"]["output_config"]["effort"]
     assert effort == models.ROLE_SPECS[role].effort
     assert kwargs["max_tokens"] >= ADAPTIVE_MAX_TOKENS_FLOOR
-    expected_strict = (
-        models.ROLE_SPECS[role].strict_tools
-        and not profile_for(model_id).accepts_forced_tool_choice
-    )
+    expected_strict = models.ROLE_SPECS[role].strict_tools
+    assert profile_for(model_id).accepts_strict_tools
     assert kwargs.get("strict_tools", False) is expected_strict
 
 
@@ -547,6 +549,34 @@ def test_opus_4_8_schema_design_opts_into_adaptive_thinking():
 
 def test_every_role_has_a_spec():
     assert set(models.ROLE_SPECS) == set(Role)
+
+
+# Families strict tool use was measured on through Bedrock Converse (#744), plus the
+# 5.1 tier and Fable 5, where Anthropic documents strict as the replacement for or
+# companion of a forced choice. The 4.x request stays exactly as before #624.
+@pytest.mark.parametrize(
+    "model_id,strict",
+    [
+        ("us.anthropic.claude-opus-4-6-v1", False),
+        ("us.anthropic.claude-sonnet-4-6", False),
+        ("us.anthropic.claude-haiku-4-5-20251001-v1:0", False),
+        ("us.anthropic.claude-opus-4-7", True),
+        ("us.anthropic.claude-opus-4-8", True),
+        ("us.anthropic.claude-sonnet-5", True),
+        ("us.anthropic.claude-opus-5", True),
+        ("us.anthropic.claude-fable-5", True),
+        (MODEL_IDS["haiku-5.5"], True),
+        (MODEL_IDS["sonnet-5.5"], True),
+        (MODEL_IDS["opus-5.5"], True),
+        ("anthropic.claude-fable-5-1", True),
+        ("arn:aws:bedrock:us-east-1:111122223333:application-inference-profile/abc", False),
+    ],
+)
+def test_advisor_strict_tools_follow_the_family_not_the_tool_choice(model_id, strict):
+    """Strict tools go wherever the family compiles them, forced choice or not (#744)."""
+    kwargs = bedrock_model_kwargs(Role.ANALYSIS_ADVISOR, model_id=model_id)
+    assert kwargs.get("strict_tools", False) is strict
+    assert profile_for(model_id).accepts_strict_tools is strict
 
 
 def test_strict_tools_only_on_structured_output_roles():
@@ -656,6 +686,32 @@ def test_haiku_five_five_keeps_the_forced_retry():
     requests = _run_structured_agent(MODEL_IDS["haiku-5.5"])
     assert any("tool" in choice for choice in _tool_choices(requests))
     assert all("temperature" not in r.get("inferenceConfig", {}) for r in requests)
+
+
+def test_opus_five_keeps_the_forced_retry_with_strict_tools():
+    """Opus 5 on Bedrock accepts a forced choice with thinking on (measured, #744): the
+    retry is forced, thinking is left as is, and the output tool stays strict."""
+    requests = _run_structured_agent("us.anthropic.claude-opus-5")
+    forced = [r for r in requests if "tool" in r.get("toolConfig", {}).get("toolChoice", {})]
+    assert forced, "the forced retry was not exercised"
+    for request in requests:
+        assert "thinking" not in request.get("additionalModelRequestFields", {})
+        for tool in request.get("toolConfig", {}).get("tools", []):
+            if "toolSpec" in tool:
+                assert tool["toolSpec"].get("strict") is True
+
+
+@pytest.mark.passes_on_main
+def test_fable_five_never_gets_a_forced_choice():
+    """Fable 5 is not measured on Bedrock (#744): the retry goes out as auto, strict."""
+    requests = _run_structured_agent("us.anthropic.claude-fable-5")
+    assert len(requests) >= 2, "the end_turn-without-tool retry path was not exercised"
+    for choice in _tool_choices(requests):
+        assert "any" not in choice and "tool" not in choice, choice
+    for request in requests:
+        for tool in request.get("toolConfig", {}).get("tools", []):
+            if "toolSpec" in tool:
+                assert tool["toolSpec"].get("strict") is True
 
 
 def test_sonnet_five_forced_retry_disables_thinking():
