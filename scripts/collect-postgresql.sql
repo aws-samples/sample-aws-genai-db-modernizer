@@ -25,6 +25,19 @@
 -- Both are recorded in the collection's metadata.query_capture. The defaults use
 -- \if and :{?var}, which need psql 10 or later (the client; the server is 12+). A
 -- value that is not a number stops the script at its CAST.
+--
+-- Call rates over the load period (#1908), as a psql variable:
+--   -v rate_sample_seconds=300   read the statement counters, wait this many seconds
+--                                (pg_sleep), read them again (default: 300)
+--   -v rate_sample_seconds=0     one read, no wait
+-- Each statement's rate is the change in its count between the two reads, over the
+-- time between them by the server's clock, so run the script while the application
+-- carries its usual load. The value and the measured time are recorded in
+-- metadata.rate_sample. A value that is not a whole number of seconds, 0 or more,
+-- stops the script. Both reads are SELECTs: nothing is changed or reset. A
+-- statement_timeout shorter than the wait cancels pg_sleep: the measured time is then
+-- too short, and the rates come from one read. A first read that fails (no
+-- pg_stat_statements) also gives one read.
 -- ==========================================================================
 
 \set db_name :DBNAME
@@ -53,7 +66,54 @@ SELECT to_regclass('pg_stat_statements_info') IS NOT NULL AS has_pgss_info \gset
   \set pgss_reset_age 'NULL::numeric'
 \endif
 
+-- #1908: the first read of the statement counters, then the wait. Each entry is its
+-- user, query id, top-level flag (PostgreSQL 14+) and stats_since (PostgreSQL 17+, so an
+-- entry reset in between is a new one), with its calls; clock_timestamp() is the
+-- server's clock when it was read (now() would be the transaction's start).
+\if :{?rate_sample_seconds}
+\else
+  \set rate_sample_seconds 300
+\endif
+SELECT :'rate_sample_seconds' ~ '^[0-9]+$' AS rate_sample_valid \gset
+\if :rate_sample_valid
+\else
+  SELECT CAST('rate_sample_seconds must be a whole number of seconds, 0 or more' AS integer);
+  \quit
+\endif
+SELECT CAST(:'rate_sample_seconds' AS integer) > 0 AS rate_sample_on \gset
+\if :rate_sample_on
+  SELECT
+    coalesce(json_agg(json_build_object(
+      'k', s.userid::text || '/' || s.queryid::text || '/'
+           || coalesce(to_jsonb(s) ->> 'toplevel', '') || '/'
+           || coalesce(to_jsonb(s) ->> 'stats_since', ''),
+      'c', s.calls)), '[]'::json)::text AS rate_sample_start,
+    extract(epoch FROM clock_timestamp())::text AS rate_sample_t0
+  FROM pg_stat_statements s
+  WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \gset
+  -- A first read that failed sets no variable: the collection then takes one read.
+  \if :{?rate_sample_t0}
+    SELECT pg_sleep(CAST(:'rate_sample_seconds' AS integer)) AS rate_sample_waited \gset
+    \set rate_sample_elapsed 'round((extract(epoch FROM clock_timestamp()) - CAST(' :'rate_sample_t0' ' AS double precision))::numeric, 3)'
+  \else
+    \set rate_sample_start '[]'
+    \set rate_sample_elapsed 'NULL::numeric'
+  \endif
+\else
+  \set rate_sample_start '[]'
+  \set rate_sample_elapsed 'NULL::numeric'
+\endif
+
 WITH
+
+-- #1908: the first read's count of each entry, and the time since it (the second read
+-- is this query's).
+rate_sample_start AS (
+  SELECT k, c FROM json_to_recordset(CAST(:'rate_sample_start' AS json)) AS x(k text, c bigint)
+),
+rate_sample_clock AS (
+  SELECT :rate_sample_elapsed AS elapsed_seconds
+),
 
 -- ===================== 1. Metadata =====================
 -- settings.standard_conforming_strings: 'off' makes a backslash an escape in a plain
@@ -70,6 +130,12 @@ metadata AS (
     'query_capture', json_build_object(
       'query_limit', :query_limit_value,
       'min_executions', CAST(:'min_executions' AS bigint)
+    ),
+    -- #1908: the wait asked for and the seconds the server's clock measured between
+    -- the two reads of the counters (null with no wait).
+    'rate_sample', json_build_object(
+      'seconds', CAST(:'rate_sample_seconds' AS integer),
+      'elapsed_seconds', (SELECT elapsed_seconds FROM rate_sample_clock)
     )
   ) AS data
 ),
@@ -309,8 +375,14 @@ queries_data AS (
       -- #1893: PostgreSQL 17's per-entry start (stats_since); NULL before 17, where the
       -- row has no such column, and the rates use the stats reset age instead.
       round(extract(epoch FROM now() - (to_jsonb(s) ->> 'stats_since')::timestamptz)::numeric, 3)
-        AS stats_since_age_seconds
+        AS stats_since_age_seconds,
+      -- #1908: the entry's calls at the first read; null when it was not there then.
+      r.c AS sample_first_count
     FROM pg_stat_statements s
+    LEFT JOIN rate_sample_start r
+      ON r.k = s.userid::text || '/' || s.queryid::text || '/'
+               || coalesce(to_jsonb(s) ->> 'toplevel', '') || '/'
+               || coalesce(to_jsonb(s) ->> 'stats_since', '')
     WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
       AND calls >= CAST(:'min_executions' AS bigint)
     ORDER BY total_exec_time DESC

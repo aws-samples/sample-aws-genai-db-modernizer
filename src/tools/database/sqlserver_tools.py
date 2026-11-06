@@ -22,8 +22,11 @@ from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.shared.rate_window import (
     ServerWindow,
     first_row_figure,
+    rate_sample_setting,
+    sample_arguments,
     server_window,
     statement_rate_fields,
+    take_live_sample,
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
@@ -39,6 +42,35 @@ _SYSTEM_SCHEMAS_FILTER = (
     "s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest') "
     "AND s.name NOT LIKE 'db[_]%' ESCAPE '['"
 )
+
+
+# The plan cache entries the statement query and both sampling snapshots read (#1908):
+# this database's statements (or unresolved ones), without RDS's and SQL Server's own.
+_STATEMENT_FILTER = """
+                    WHERE (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
+                      AND st.text NOT LIKE '%rdsadmin%'
+                      AND st.text NOT LIKE '%rds_configuration%'
+                      AND st.text NOT LIKE '%rds_database_tracking%'
+                      AND st.text NOT LIKE '%rds_is_db_writable%'
+                      AND st.text NOT LIKE '%rds_component_version%'
+                      AND st.text NOT LIKE '%dm_os_sys_info%'
+                      AND st.text NOT LIKE '%dm_exec_query_stats%'
+                      AND st.text NOT LIKE '%dm_exec_sql_text%'
+                      AND st.text NOT LIKE '%information_schema%'
+                      AND st.text NOT LIKE '%@@VERSION%'
+                      AND st.text NOT LIKE '%msdb.%'
+                      AND st.text NOT LIKE '%msdb..%'
+                      AND st.text NOT LIKE '%sys.server_role_members%'
+                      AND st.text NOT LIKE '%sys.server_principals%'
+                      AND st.text NOT LIKE '%sys.server_triggers%'
+                      AND st.text NOT LIKE '%sys.configurations%'
+                      AND st.text NOT LIKE '%sys.databases%'
+                      AND st.text NOT LIKE '%sys.dm_%'
+                      -- SQL Server's own Query Store / automatic tuning code (#1876).
+                      -- st.text is the whole batch or module: every statement of one
+                      -- that reads sys.plan_persist_* goes (the reach of '%sys.dm_%').
+                      AND st.text NOT LIKE '%sys.plan[_]persist[_]%'
+"""
 
 
 class SQLServerRemoteCollector:
@@ -335,10 +367,50 @@ class SQLServerRemoteCollector:
     # Query patterns (DMV-based)
     # -------------------------------------------------------------------
 
+    def rate_sample_snapshot_sql(self) -> str:
+        """One snapshot of the plan cache's counters (#1908): first a row with the server's
+        clock (``SYSUTCDATETIME()``) and how many entries the snapshot holds, then each
+        cached statement's ``execution_count`` and age since ``creation_time`` under its
+        ``query_hash``. An entry is its plan, statement
+        offsets and ``creation_time``, so a plan evicted and cached again in between is a
+        new entry, never a lower count."""
+        return f"""
+            WITH e AS (
+                SELECT CONVERT(VARCHAR(40), qs.query_hash, 1) AS group_key,
+                       CONVERT(VARCHAR(130), qs.plan_handle, 1) + '/'
+                           + CAST(qs.statement_start_offset AS VARCHAR(12)) + '/'
+                           + CAST(qs.statement_end_offset AS VARCHAR(12)) + '/'
+                           + CONVERT(VARCHAR(30), qs.creation_time, 126) AS entry_key,
+                       qs.execution_count,
+                       DATEDIFF(SECOND, qs.creation_time, GETDATE()) AS entry_age_seconds
+                FROM sys.dm_exec_query_stats qs
+                CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+{_STATEMENT_FILTER}
+            )
+            SELECT 0 AS row_kind, CAST(NULL AS VARCHAR(40)) AS group_key,
+                   CAST(NULL AS VARCHAR(200)) AS entry_key,
+                   CAST(NULL AS BIGINT) AS execution_count,
+                   CAST(NULL AS INT) AS entry_age_seconds,
+                   CONVERT(VARCHAR(30), SYSUTCDATETIME(), 126) AS sampled_at,
+                   (SELECT COUNT(*) FROM e) AS entry_count
+            UNION ALL
+            SELECT 1, group_key, entry_key, execution_count, entry_age_seconds, NULL, NULL
+            FROM e
+            ORDER BY row_kind
+        """  # nosec B608 -- fixed text
+
     def collect_query_patterns(
-        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+        self,
+        min_executions: int = DEFAULT_MIN_EXECUTIONS,
+        limit: int | None = None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
         """Collect query stats from ``sys.dm_exec_query_stats``.
+
+        With ``rate_sample_seconds`` above 0 (#1908, the collector passes
+        ``CollectionOptions.rate_sample_seconds``), each statement's rate is the change in
+        its count between two snapshots of the plan cache that far apart
+        (:meth:`rate_sample_snapshot_sql`).
 
         Per-execution averages derive from totals divided by ``execution_count``.
         Times are converted from microseconds to milliseconds.
@@ -367,9 +439,10 @@ class SQLServerRemoteCollector:
         # and live_sql.decode_query_text restores them: a line break that ends a -- comment
         # stays one (#1874).
         limit, min_executions = capture_settings(limit, min_executions)
+        rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
         # No cap (the default, #384): every statement that ran often enough.
         top_clause = f"TOP {limit}" if limit is not None else ""
-        raw = self._query(f"""
+        statements_sql = f"""
             SELECT {top_clause}
                 CONVERT(VARCHAR(40), g.query_hash, 1) AS query_id,
                 g.query_text,
@@ -425,40 +498,26 @@ class SQLServerRemoteCollector:
                         ) AS variant_rank
                     FROM sys.dm_exec_query_stats qs
                     CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
-                    WHERE (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
-                      AND st.text NOT LIKE '%rdsadmin%'
-                      AND st.text NOT LIKE '%rds_configuration%'
-                      AND st.text NOT LIKE '%rds_database_tracking%'
-                      AND st.text NOT LIKE '%rds_is_db_writable%'
-                      AND st.text NOT LIKE '%rds_component_version%'
-                      AND st.text NOT LIKE '%dm_os_sys_info%'
-                      AND st.text NOT LIKE '%dm_exec_query_stats%'
-                      AND st.text NOT LIKE '%dm_exec_sql_text%'
-                      AND st.text NOT LIKE '%information_schema%'
-                      AND st.text NOT LIKE '%@@VERSION%'
-                      AND st.text NOT LIKE '%msdb.%'
-                      AND st.text NOT LIKE '%msdb..%'
-                      AND st.text NOT LIKE '%sys.server_role_members%'
-                      AND st.text NOT LIKE '%sys.server_principals%'
-                      AND st.text NOT LIKE '%sys.server_triggers%'
-                      AND st.text NOT LIKE '%sys.configurations%'
-                      AND st.text NOT LIKE '%sys.databases%'
-                      AND st.text NOT LIKE '%sys.dm_%'
-                      -- SQL Server's own Query Store / automatic tuning code (#1876).
-                      -- st.text is the whole batch or module: every statement of one
-                      -- that reads sys.plan_persist_* goes (the reach of '%sys.dm_%').
-                      AND st.text NOT LIKE '%sys.plan[_]persist[_]%'
+{_STATEMENT_FILTER}
                 ) v
                 GROUP BY v.query_hash
             ) g
             WHERE g.execution_count >= {min_executions}
             ORDER BY g.total_elapsed_time DESC
-        """)  # nosec B608 — both settings are checked ints (#384)
+        """  # nosec B608 — both settings are checked ints (#384)
+        snapshot_sql = self.rate_sample_snapshot_sql()
+        raw, live = take_live_sample(
+            lambda: self._query(snapshot_sql),
+            rate_sample_seconds,
+            lambda: self._query(statements_sql),
+        )
 
         patterns = []
         reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())
-        # #1893: read once, and only if a statement has no usable window of its own.
+        # #1893: read once, and only if a statement has no usable window of its own (or
+        # to check a sample's interval against it, #1908).
         counters_window = functools.cache(self.stats_window)
+        sample = live.sample(counters_window) if live is not None else None
         for r in raw:
             query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
@@ -508,6 +567,8 @@ class SQLServerRemoteCollector:
                         r.get("creation_time"),
                         r.get("last_execution_time"),
                         counters_window,
+                        # #1908: over the interval between two snapshots, when sampled.
+                        **sample_arguments(live, sample, r.get("query_id")),
                     ),
                     "execution_time_ms_avg": round(avg_ms, 3),
                     "execution_time_ms_min": round(min_ms, 3),

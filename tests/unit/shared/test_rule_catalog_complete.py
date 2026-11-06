@@ -360,10 +360,14 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "maintainer's interim rule for a DDL-only table, small as before #1636, until #1646",
     ),
     "src/shared/rate_window.py": (
-        frozenset({"MIN_WINDOW_SECONDS"}),
-        "a collection fact, not a routing rule: the shortest first-to-last-seen window a "
+        frozenset(
+            {"MIN_WINDOW_SECONDS", "MIN_SAMPLE_SECONDS", "MIN_SAMPLE_SHARE", "_AGE_SLACK_SECONDS"}
+        ),
+        "collection facts, not routing rules: the shortest first-to-last-seen window a "
         "statement's own timestamps are trusted for as a rate (#1893, whole-second "
-        "timestamps); routing reads only the rate it gives",
+        "timestamps), the shortest measured interval between two snapshots taken as a "
+        "rate and the clock slack an entry's age is compared with (#1908); routing reads "
+        "only the rate they give",
     ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),

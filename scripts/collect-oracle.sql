@@ -33,6 +33,19 @@
 --   A setting that is not a positive whole number stops the script with an error.
 -- Both are recorded in the collection's metadata.query_capture.
 --
+-- Call rates over the load period (#1908), as the third positional argument:
+--   @collect-oracle.sql none 10 300  read V$SQL's counters, wait 300 seconds, read them
+--                                    again (default: 300); 0: one read, no wait
+-- Each statement's rate is the change in its count between the two reads, over the
+-- time between them by the server's clock, so run the script while the application
+-- carries its usual load. The wait is DBMS_SESSION.SLEEP (Oracle 18c+, granted to
+-- every user), else DBMS_LOCK.SLEEP (needs EXECUTE on DBMS_LOCK); when neither can
+-- run, or the first read or the pairing of the reads fails, the script takes one read
+-- and metadata.rate_sample records no measured time. The first read is kept in PL/SQL
+-- tables in the session's memory.
+-- A value that is not a whole number of seconds, 0 or more, stops the script. Both
+-- reads are SELECTs: nothing is changed or reset.
+--
 -- Output: Single JSON object matching offline_parser expectations.
 -- ==========================================================================
 
@@ -51,9 +64,11 @@ SET VERIFY OFF
 -- COLUMN ... NEW_VALUE idiom), so SQL*Plus never prompts for them.
 COLUMN 1 NEW_VALUE 1 NOPRINT
 COLUMN 2 NEW_VALUE 2 NOPRINT
-SELECT '' "1", '' "2" FROM dual WHERE ROWNUM = 0;
+COLUMN 3 NEW_VALUE 3 NOPRINT
+SELECT '' "1", '' "2", '' "3" FROM dual WHERE ROWNUM = 0;
 VARIABLE query_limit NUMBER
 VARIABLE min_executions NUMBER
+VARIABLE rate_sample_seconds NUMBER
 -- A setting that fails to convert (20k) or is not a positive whole number stops the
 -- script here: it must never run with both settings left null and read as a complete
 -- capture of nothing (#384).
@@ -71,6 +86,11 @@ BEGIN
     IF :min_executions < 1 OR :min_executions <> TRUNC(:min_executions) THEN
         RAISE_APPLICATION_ERROR(-20002, 'min_executions must be a positive whole number');
     END IF;
+    -- #1908: the seconds between the two reads of the counters; 0 for one read.
+    :rate_sample_seconds := NVL(TO_NUMBER('&3'), 300);
+    IF :rate_sample_seconds < 0 OR :rate_sample_seconds <> TRUNC(:rate_sample_seconds) THEN
+        RAISE_APPLICATION_ERROR(-20003, 'rate_sample_seconds must be a whole number of seconds, 0 or more');
+    END IF;
 END;
 /
 WHENEVER SQLERROR CONTINUE
@@ -81,8 +101,54 @@ SET SERVEROUTPUT ON SIZE UNLIMITED
 DECLARE
     v_owner       VARCHAR2(128);
     v_total_elapsed NUMBER := 0;
+    -- #1908: the first read of the counters, its time and the seconds to the second.
+    v_sample_seconds NUMBER := :rate_sample_seconds;
+    -- Each cursor's count at the first read, and each shape's sum of those counts over
+    -- the cursors still there at the second: PL/SQL tables in this session's memory,
+    -- filled once each (nothing is written, and no JSON is parsed per cursor).
+    TYPE t_counts IS TABLE OF NUMBER INDEX BY VARCHAR2(400);
+    v_first_counts t_counts;
+    v_shape_first t_counts;
+    v_sample_t0 TIMESTAMP WITH TIME ZONE;
+    v_sample_span INTERVAL DAY(9) TO SECOND(6);
+    v_sample_elapsed NUMBER;
 BEGIN
     v_owner := SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA');
+
+    -- #1908: the first read of V$SQL's counters, then the wait. An entry is its SQL_ID,
+    -- child number and child address (a cursor aged out and loaded again in between is
+    -- a new entry, not a lower count); SYSTIMESTAMP is the server's clock at each read.
+    -- The sleep is called dynamically, so the block compiles where a package is missing
+    -- or not granted. Any error in the first read, or no sleep that runs, drops the
+    -- first read: the rates then come from one read, never a failed collection.
+    IF v_sample_seconds > 0 THEN
+        BEGIN
+            v_sample_t0 := SYSTIMESTAMP;
+            FOR r IN (
+                SELECT SQL_ID || '/' || CHILD_NUMBER || '/' || RAWTOHEX(CHILD_ADDRESS) AS k,
+                       EXECUTIONS AS c
+                  FROM V$SQL
+                 WHERE PARSING_SCHEMA_NAME = v_owner
+            ) LOOP
+                v_first_counts(r.k) := r.c;
+            END LOOP;
+        EXCEPTION WHEN OTHERS THEN
+            v_first_counts.DELETE;
+            v_sample_t0 := NULL;
+        END;
+        IF v_sample_t0 IS NOT NULL THEN
+            BEGIN
+                EXECUTE IMMEDIATE 'BEGIN DBMS_SESSION.SLEEP(:s); END;' USING v_sample_seconds;
+            EXCEPTION WHEN OTHERS THEN
+                BEGIN
+                    EXECUTE IMMEDIATE 'BEGIN DBMS_LOCK.SLEEP(:s); END;' USING v_sample_seconds;
+                EXCEPTION WHEN OTHERS THEN
+                    v_first_counts.DELETE;
+                    v_sample_t0 := NULL;
+                END;
+            END;
+        END IF;
+    END IF;
 
     -- Pre-compute total elapsed for db_load_contribution_percent, over the same
     -- statement shapes the queries section below emits (see there).
@@ -119,6 +185,35 @@ BEGIN
     -- literal-variant rows. V$SQL has no per-execution min/max, so
     -- those stay 0.
     -- ===================================================================
+    -- #1908: the seconds since the first read, by the server's clock, and each shape's
+    -- count at the first read over the cursors there at both (the second read is the
+    -- query below, a moment later). An error here drops the sample, as above.
+    IF v_sample_t0 IS NOT NULL THEN
+        BEGIN
+            v_sample_span := SYSTIMESTAMP - v_sample_t0;
+            v_sample_elapsed := ROUND(EXTRACT(DAY FROM v_sample_span) * 86400
+                + EXTRACT(HOUR FROM v_sample_span) * 3600
+                + EXTRACT(MINUTE FROM v_sample_span) * 60
+                + EXTRACT(SECOND FROM v_sample_span), 3);
+            FOR r IN (
+                SELECT CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END AS g,
+                       SQL_ID || '/' || CHILD_NUMBER || '/' || RAWTOHEX(CHILD_ADDRESS) AS k
+                  FROM V$SQL
+                 WHERE PARSING_SCHEMA_NAME = v_owner
+            ) LOOP
+                IF v_first_counts.EXISTS(r.k) THEN
+                    IF v_shape_first.EXISTS(r.g) THEN
+                        v_shape_first(r.g) := v_shape_first(r.g) + v_first_counts(r.k);
+                    ELSE
+                        v_shape_first(r.g) := v_first_counts(r.k);
+                    END IF;
+                END IF;
+            END LOOP;
+        EXCEPTION WHEN OTHERS THEN
+            v_shape_first.DELETE;
+            v_sample_elapsed := NULL;
+        END;
+    END IF;
     DBMS_OUTPUT.PUT_LINE('"queries": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
@@ -143,7 +238,8 @@ BEGIN
             'first_seen' VALUE REPLACE(g.first_load_time, '/', ' '),
             'last_seen' VALUE TO_CHAR(g.last_active_time, 'YYYY-MM-DD HH24:MI:SS')
             RETURNING CLOB
-        ) AS json_row
+        ) AS json_row,
+        g.query_key AS sample_shape
         FROM (
             SELECT v.query_key,
                    SUM(v.executions) AS executions,
@@ -190,7 +286,13 @@ BEGIN
         WHERE :query_limit IS NULL OR g.time_rank <= :query_limit
         ORDER BY g.time_rank
     ) LOOP
-        DBMS_OUTPUT.PUT_LINE(rec.json_row || ',');
+        -- #1908: the shape's count at the first read, over the cursors there then.
+        IF v_sample_elapsed IS NOT NULL AND v_shape_first.EXISTS(rec.sample_shape) THEN
+            DBMS_OUTPUT.PUT_LINE(SUBSTR(rec.json_row, 1, LENGTH(rec.json_row) - 1)
+                || ',"sample_first_count":' || TO_CHAR(v_shape_first(rec.sample_shape)) || '},');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE(rec.json_row || ',');
+        END IF;
     END LOOP;
     DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
     DBMS_OUTPUT.PUT_LINE('],');
@@ -208,6 +310,13 @@ BEGIN
             'query_capture' VALUE JSON_OBJECT(
                 'query_limit' VALUE :query_limit,
                 'min_executions' VALUE :min_executions
+                NULL ON NULL
+            ),
+            -- #1908: the wait asked for and the seconds the server's clock measured
+            -- between the two reads (null with no wait, or when no sleep could run).
+            'rate_sample' VALUE JSON_OBJECT(
+                'seconds' VALUE v_sample_seconds,
+                'elapsed_seconds' VALUE v_sample_elapsed
                 NULL ON NULL
             )
         ) AS j FROM V$VERSION WHERE ROWNUM = 1

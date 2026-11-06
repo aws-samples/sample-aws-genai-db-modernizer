@@ -19,22 +19,29 @@ from src.storage.artifact_store import ArtifactStore
 
 
 def _capture_options() -> dict[str, int]:
-    """``QUERY_LIMIT`` and ``MIN_EXECUTIONS``, each a positive whole number when set (#384).
+    """``QUERY_LIMIT`` and ``MIN_EXECUTIONS``, each a positive whole number when set (#384),
+    and ``RATE_SAMPLE_SECONDS``, the seconds between the two snapshots of the statement
+    counters, a whole number 0 or more when set (#1908; 300 when unset, 0 for one snapshot).
 
     Raises:
-        ValueError: a set one is not a positive whole number; the message names it.
+        ValueError: a set one is not a valid whole number; the message names it.
     """
     options: dict[str, int] = {}
-    for variable, field in (("QUERY_LIMIT", "query_limit"), ("MIN_EXECUTIONS", "min_executions")):
+    for variable, field, least in (
+        ("QUERY_LIMIT", "query_limit", 1),
+        ("MIN_EXECUTIONS", "min_executions", 1),
+        ("RATE_SAMPLE_SECONDS", "rate_sample_seconds", 0),
+    ):
         text = os.environ.get(variable, "").strip()
         if not text:
             continue
         try:
             value = int(text)
         except ValueError:
-            value = 0
-        if value < 1:
-            raise ValueError(f"{variable} must be a positive whole number, got {text!r}")
+            value = least - 1
+        if value < least:
+            kind = "a positive whole number" if least else "a whole number, 0 or more"
+            raise ValueError(f"{variable} must be {kind}, got {text!r}")
         options[field] = value
     return options
 
@@ -101,7 +108,8 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     if in_use:
         input_data["engines_in_use"] = in_use
 
-    # #384: the statement cap and minimum execution count, 10,000 and 10 when unset.
+    # #384: the statement cap and minimum execution count, none and 10 when unset;
+    # #1908: the sampling interval, 300 seconds when unset.
     try:
         input_data["collection_options"] = _capture_options()
     except ValueError as exc:

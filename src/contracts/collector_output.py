@@ -81,6 +81,11 @@ Version History:
   ``QueryPattern.rate_window_basis`` (observed, uptime, stats_reset or assumed_24h): the
   window each statement's execution count was divided by for its rates, and how it was
   chosen. Backward compatible: both default to None (not recorded).
+- 5.8 (2026-11-06, #1908): Added "sampled" to ``QueryPattern.rate_window_basis`` and
+  optional ``QueryPattern.rate_sample`` (``StatementRateSample``: status, first_count,
+  second_count, elapsed_seconds): a statement's rate over the time between two snapshots
+  of the counters, and why it kept the single-snapshot rate when it did. Backward
+  compatible: rate_sample defaults to None (one snapshot).
 """
 
 import re
@@ -89,14 +94,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PositiveInt,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
 
 
 class DatabaseEngine(str, Enum):
@@ -839,6 +837,48 @@ class WaitEvent(BaseModel):
     )
 
 
+class StatementRateSample(BaseModel):
+    """A statement's two snapshots of the counters (#1908, ``src.shared.rate_window``).
+
+    The rate is the change in the count over ``elapsed_seconds`` (basis ``sampled``)
+    when ``status`` is ``both_snapshots`` or ``second_snapshot_only`` (not in the first
+    snapshot, so every call it counts ran in the interval). Every other status keeps the
+    single-snapshot rate: ``no_calls_in_interval`` (the same count twice),
+    ``count_decreased`` (the count went down: its counter was reset),
+    ``counters_reset`` (the server's counters were reset, or it restarted, inside the
+    interval), ``interval_too_short`` (the measured interval was under 10 seconds or
+    under half the one asked for), ``snapshot_incomplete`` (a live snapshot came back
+    without all its entries, so the change can't be told) and ``unavailable`` (the
+    interval was not measured)."""
+
+    status: Literal[
+        "both_snapshots",
+        "second_snapshot_only",
+        "no_calls_in_interval",
+        "count_decreased",
+        "counters_reset",
+        "interval_too_short",
+        "snapshot_incomplete",
+        "unavailable",
+    ] = Field(..., description="What the two snapshots gave for this statement")
+    first_count: int | None = Field(
+        None,
+        ge=0,
+        description="The execution count in the first snapshot; None when it was not there",
+    )
+    second_count: int | None = Field(
+        None, ge=0, description="The execution count in the second snapshot"
+    )
+    elapsed_seconds: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "The seconds between the two snapshots by the database's clock; None when "
+            "not measured"
+        ),
+    )
+
+
 class QueryPattern(BaseModel):
     query_id: str = Field(
         ...,
@@ -898,15 +938,27 @@ class QueryPattern(BaseModel):
             "it, or a Performance Insights statement, which reports its own rate)"
         ),
     )
-    rate_window_basis: Literal["observed", "uptime", "stats_reset", "assumed_24h"] | None = Field(
+    rate_window_basis: (
+        Literal["sampled", "observed", "uptime", "stats_reset", "assumed_24h"] | None
+    ) = Field(
         None,
         description=(
-            "How rate_window_seconds was chosen (src.shared.rate_window, #1893): observed "
-            "(the statement's own window of at least 60 s: last_seen - first_seen, or "
-            "PostgreSQL 17's time since stats_since), uptime (the server's uptime), "
-            "stats_reset (PostgreSQL's time since pg_stat_statements was reset) or "
-            "assumed_24h (no window known). A shorter observed window blends toward the "
-            "fallback and is counted under its basis. None when not recorded"
+            "How rate_window_seconds was chosen (src.shared.rate_window, #1893): sampled "
+            "(the time between two snapshots of the counters, the rate being the change "
+            "in the count over it, #1908), observed (the statement's own window of at "
+            "least 60 s: last_seen - first_seen, or PostgreSQL 17's time since "
+            "stats_since), uptime (the server's uptime), stats_reset (PostgreSQL's time "
+            "since pg_stat_statements was reset) or assumed_24h (no window known). A "
+            "shorter observed window blends toward the fallback and is counted under its "
+            "basis. None when not recorded"
+        ),
+    )
+    rate_sample: StatementRateSample | None = Field(
+        None,
+        description=(
+            "The statement's two snapshots of the counters, when the collection took "
+            "them (#1908); None for a single snapshot (a sampling interval of 0, or an "
+            "output written before it)"
         ),
     )
     tables_accessed: list[str] = Field(
@@ -1192,7 +1244,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.7",
+        default="5.8",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

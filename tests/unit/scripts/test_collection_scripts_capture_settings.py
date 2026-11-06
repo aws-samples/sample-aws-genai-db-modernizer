@@ -106,7 +106,7 @@ def test_mysql_takes_both_settings_as_session_variables():
     # The statements selected, so the ingest can tell a list the server's
     # max_allowed_packet turned into NULL from an empty one.
     assert "INTO @query_rows" in text
-    assert "JSON_SET(@metadata, '$.query_capture.statements', @query_rows)" in text
+    assert "JSON_SET(@metadata, '$.query_capture.statements', @query_rows," in text
     usage = _between(text, "-- Usage:", "\n--\n")
     assert "mysql -N --max-allowed-packet=1G" in usage
     section = _mysql_queries()
@@ -124,7 +124,8 @@ def test_sqlserver_declares_both_settings_with_their_defaults():
     check = _between(text, "DECLARE @min_executions INT = 10;", "DECLARE @metadata")
     assert "IF @min_executions IS NULL OR @min_executions < 1" in check
     assert "IF @query_limit IS NOT NULL AND @query_limit < 1" in check
-    assert check.count("RAISERROR(") == 2 and check.count("RETURN;") == 2
+    # The third is the sampling interval's (#1908).
+    assert check.count("RAISERROR(") == 3 and check.count("RETURN;") == 3
     section = _sqlserver_queries()
     assert "HAVING SUM(v.execution_count) >= @min_executions" in section
     assert "@query_limit IS NULL OR g.time_rank <= @query_limit" in section
@@ -142,7 +143,8 @@ def test_oracle_takes_both_settings_as_optional_positional_arguments():
     assert "NULLIF(" not in head
     # A setting that fails (20k) or is not a positive whole number stops the script.
     settings = _between(head, "WHENEVER SQLERROR EXIT FAILURE", "WHENEVER SQLERROR CONTINUE")
-    assert settings.count("RAISE_APPLICATION_ERROR(") == 2
+    # The third is the sampling interval's (#1908).
+    assert settings.count("RAISE_APPLICATION_ERROR(") == 3
     assert "@collect-oracle.sql none 5" in text
     section = _oracle_queries()
     assert "HAVING SUM(v.executions) >= :min_executions" in section

@@ -67,11 +67,12 @@ def test_both_settings_are_configurable():
     assert (options.query_limit, options.min_executions) == (20_000, 3)
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("field", ["query_limit", "min_executions"])
 @pytest.mark.parametrize("value", [0, -1, True, False, "10000", 10.0])
 def test_a_setting_that_is_not_a_positive_whole_number_is_refused(field: str, value: object):
     with pytest.raises(ValidationError):
-        CollectionOptions(**{field: value})
+        CollectionOptions.model_validate({field: value})
 
 
 def test_a_minimum_count_of_none_is_refused():
@@ -90,7 +91,7 @@ def test_an_older_request_without_the_settings_reads_the_defaults():
 def _tools(engine: str) -> Any:
     ssm = MagicMock()
     ssm.run_sql_json.return_value = []
-    db = TOOLS[engine](ssm=ssm, host="h", port=1, database="d", secret_arn="s", region="r")
+    db: Any = TOOLS[engine](ssm=ssm, host="h", port=1, database="d", secret_arn="s", region="r")
     db.get_version = lambda: "8.0.45"
     db.get_current_schema = lambda: "APP"
     return db
@@ -236,7 +237,8 @@ def _run_live(
 @pytest.mark.parametrize("engine", list(ENGINES))
 def test_a_live_collection_records_the_default_capture(engine):
     result, collect = _run_live(engine, {})
-    collect.assert_called_once_with(min_executions=10, limit=None)
+    # #1908: two snapshots 300 seconds apart by default.
+    collect.assert_called_once_with(min_executions=10, limit=None, rate_sample_seconds=300)
     assert result.metadata.query_capture == QueryCapture(
         query_limit=None, min_executions=10, captured=0, available=None, truncated=False
     )
@@ -255,8 +257,10 @@ def test_a_live_collection_whose_statement_query_fails_records_the_error(engine)
 
 @pytest.mark.parametrize("engine", list(ENGINES))
 def test_a_live_collection_sends_and_records_the_configured_capture(engine):
-    result, collect = _run_live(engine, {"query_limit": 20_000, "min_executions": 5})
-    collect.assert_called_once_with(min_executions=5, limit=20_000)
+    result, collect = _run_live(
+        engine, {"query_limit": 20_000, "min_executions": 5, "rate_sample_seconds": 0}
+    )
+    collect.assert_called_once_with(min_executions=5, limit=20_000, rate_sample_seconds=0)
     capture = result.metadata.query_capture
     assert capture is not None
     assert (capture.query_limit, capture.min_executions) == (20_000, 5)

@@ -18,8 +18,11 @@ from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.shared.rate_window import (
     ServerWindow,
     first_row_figure,
+    rate_sample_setting,
+    sample_arguments,
     server_window,
     statement_rate_fields,
+    take_live_sample,
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
@@ -29,6 +32,14 @@ from src.tools.database.live_sql import LiveQueryReader
 from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
+
+
+# One pg_stat_statements entry (#1908): its user, query id and, on PostgreSQL 14+, whether
+# it is a top-level statement. The statement query returns it with each row, and both
+# sampling snapshots key each entry's count by it.
+_SAMPLE_KEY = "s.userid::text || '/' || s.queryid::text || '/' || " + (
+    "coalesce(to_jsonb(s) ->> 'toplevel', '')"
+)
 
 
 class PostgreSQLRemoteCollector:
@@ -316,15 +327,53 @@ class PostgreSQLRemoteCollector:
     # Query patterns (pg_stat_statements)
     # -------------------------------------------------------------------
 
+    def rate_sample_snapshot_sql(self) -> str:
+        """One snapshot of ``pg_stat_statements``' counters (#1908): first a row with the
+        server's clock (``clock_timestamp()``, not the transaction's ``now()``) and how many
+        entries the snapshot holds, then each entry's ``calls`` and, on PostgreSQL 17, its
+        age since ``stats_since``. An entry is its user, query id and top-level flag
+        (:data:`_SAMPLE_KEY`); PostgreSQL 17's ``stats_since`` is in the entry's key, so
+        an entry reset and counted again in between is a new one, not a lower count."""
+        return f"""
+            WITH e AS (
+                SELECT {_SAMPLE_KEY} AS group_key,
+                       {_SAMPLE_KEY} || '/' || coalesce(to_jsonb(s) ->> 'stats_since', '')
+                           AS entry_key,
+                       s.calls AS execution_count,
+                       extract(epoch FROM clock_timestamp()
+                           - (to_jsonb(s) ->> 'stats_since')::timestamptz)::float8
+                           AS entry_age_seconds
+                FROM pg_stat_statements s
+                WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+            )
+            SELECT 0 AS row_kind, CAST(NULL AS text) AS group_key, CAST(NULL AS text) AS entry_key,
+                   CAST(NULL AS bigint) AS execution_count,
+                   CAST(NULL AS float8) AS entry_age_seconds,
+                   extract(epoch FROM clock_timestamp())::float8 AS sampled_at,
+                   (SELECT count(*) FROM e) AS entry_count
+            UNION ALL
+            SELECT 1, group_key, entry_key, execution_count, entry_age_seconds, NULL, NULL
+            FROM e
+            ORDER BY row_kind
+        """  # nosec B608 -- fixed text
+
     def collect_query_patterns(
-        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+        self,
+        min_executions: int = DEFAULT_MIN_EXECUTIONS,
+        limit: int | None = None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
+        """The ``pg_stat_statements`` entries, with their rates over
+        ``rate_sample_seconds`` between two snapshots of the counters when it is above 0
+        (#1908, the collector passes ``CollectionOptions.rate_sample_seconds``)."""
         limit, min_executions = capture_settings(limit, min_executions)
+        rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
         # No cap (the default, #384): every statement that ran often enough.
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
-        raw = self._query(f"""
+        statements_sql = f"""
             SELECT
                 queryid, query, calls,
+                {_SAMPLE_KEY} AS rate_sample_key,
                 total_exec_time AS total_time_ms,
                 mean_exec_time AS avg_time_ms,
                 min_exec_time AS min_time_ms,
@@ -343,12 +392,20 @@ class PostgreSQLRemoteCollector:
               AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
             ORDER BY total_exec_time DESC
             {limit_clause}
-        """)  # nosec B608 — both settings are checked ints (#384)
+        """  # nosec B608 — both settings are checked ints (#384)
+        snapshot_sql = self.rate_sample_snapshot_sql()
+        raw, live = take_live_sample(
+            lambda: self._query(snapshot_sql),
+            rate_sample_seconds,
+            lambda: self._query(statements_sql),
+        )
 
         patterns = []
         reader = LiveQueryReader("postgresql", "postgres_tools")
-        # #1893: read once, and only if a statement has no usable window of its own.
+        # #1893: read once, and only if a statement has no usable window of its own (or
+        # to check a sample's interval against it, #1908).
         counters_window = functools.cache(self.stats_window)
+        sample = live.sample(counters_window) if live is not None else None
         for r in raw:
             query_text = str(r.get("query") or "")
             calls = r.get("calls") or 1
@@ -376,6 +433,8 @@ class PostgreSQLRemoteCollector:
                         None,
                         counters_window,
                         observed_seconds=r.get("stats_since_age_seconds"),
+                        # #1908: over the interval between two snapshots, when sampled.
+                        **sample_arguments(live, sample, r.get("rate_sample_key")),
                     ),
                     "execution_time_ms_avg": avg_ms,
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),

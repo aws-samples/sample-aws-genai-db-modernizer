@@ -101,3 +101,31 @@ def test_a_report_without_the_collection_says_nothing() -> None:
     assert report["facts"]["rate_windows"] is None
     assert "Call rates:" not in render_engineering_report_md(report)
     assert ReportFacts.model_validate(report["facts"]).rate_windows is None
+
+
+SAMPLED_STATEMENT = (
+    "execution counts are divided by the time between two snapshots of the counters "
+    "(2 statements), each statement's own observed window (1), the server uptime (0), or "
+    "an assumed 24 hours (0); 1 statement made no calls between the snapshots and is "
+    "rated at most one call over the interval; costs assume that rate runs continuously"
+)
+
+
+def test_every_deliverable_names_the_sampled_basis() -> None:
+    """#1908: a collection that took two snapshots says how many rates came from them,
+    and why the others kept a single-snapshot rate, in both reports."""
+    patterns = _patterns("sampled", "sampled", "observed")
+    patterns[0]["rate_sample"] = {"status": "both_snapshots"}
+    patterns[1]["rate_sample"] = {"status": "second_snapshot_only"}
+    patterns[2]["rate_sample"] = {"status": "no_calls_in_interval"}
+    report = _report(patterns)
+    windows = report["facts"]["rate_windows"]
+    assert windows["statement"] == SAMPLED_STATEMENT
+    facts = ReportFacts.model_validate(report["facts"]).rate_windows
+    assert facts is not None
+    assert (facts.sampled_count, facts.sample_no_calls_count) == (2, 1)
+    assert facts.sample_fallback_count == 0
+    md = md_plain(render_engineering_report_md(report))
+    assert md.count(f"Call rates: {SAMPLED_STATEMENT}.") == 1
+    pdf = " ".join(executive_text(report).split())
+    assert pdf.count(f"Call rates: {SAMPLED_STATEMENT}.") == 1

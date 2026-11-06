@@ -4679,6 +4679,14 @@
                 "minimum": 1,
                 "type": "integer"
               }
+            },
+            "rate_sample_seconds": {
+              "required": false,
+              "schema": {
+                "kind": "scalar",
+                "minimum": 0,
+                "type": "integer"
+              }
             }
           }
         }
@@ -4850,8 +4858,8 @@
         }
       }
     },
-    "schema_hash": "1fa576746408d49607ce66f1ccd01f450112bfa67727034b732db16bf29fdc7a",
-    "version": "4.1"
+    "schema_hash": "a046ae2dc94382813acea6c07aeda12b47aead20867f5afb11eb39ecff2efd9a",
+    "version": "4.2"
   },
   "collector_output.CollectorOutputContract": {
     "fields": {
@@ -8708,6 +8716,90 @@
                         ]
                       }
                     },
+                    "rate_sample": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "object",
+                            "properties": {
+                              "elapsed_seconds": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "exclusiveMinimum": 0,
+                                      "kind": "scalar",
+                                      "type": "number"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "first_count": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "second_count": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "status": {
+                                "required": true,
+                                "schema": {
+                                  "kind": "enum",
+                                  "values": [
+                                    "both_snapshots",
+                                    "count_decreased",
+                                    "counters_reset",
+                                    "interval_too_short",
+                                    "no_calls_in_interval",
+                                    "second_snapshot_only",
+                                    "snapshot_incomplete",
+                                    "unavailable"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "rate_window_basis": {
                       "required": false,
                       "schema": {
@@ -8718,6 +8810,7 @@
                             "values": [
                               "assumed_24h",
                               "observed",
+                              "sampled",
                               "stats_reset",
                               "uptime"
                             ]
@@ -9203,8 +9296,8 @@
         }
       }
     },
-    "schema_hash": "0d70e37f10dccc2f5ba91f2e316fd23f28cade34af0c993d4f86cb596323184d",
-    "version": "5.7"
+    "schema_hash": "0378d10cac207b42a6ca23152396a2042a2070d6215cd017748805271c135f02",
+    "version": "5.8"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -27059,6 +27152,30 @@
                               "type": "integer"
                             }
                           },
+                          "sample_fallback_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "sample_no_calls_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "sampled_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
                           "statement": {
                             "required": false,
                             "schema": {
@@ -33217,8 +33334,8 @@
         }
       }
     },
-    "schema_hash": "f9000a70084acd7d334428efc72db4a4ef1552f52aad7e9502e2f751d84bca8d",
-    "version": "1.77"
+    "schema_hash": "8df9919a3dc075e88d81a5eeb9eb505f5d8bb64f701026201e940e461ba5d529",
+    "version": "1.78"
   },
   "transformation_contract.StepContract": {
     "fields": {

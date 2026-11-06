@@ -12,7 +12,12 @@ but has different version numbering and feature availability.
 import functools
 
 from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
-from src.shared.rate_window import statement_rate_fields
+from src.shared.rate_window import (
+    rate_sample_setting,
+    sample_arguments,
+    statement_rate_fields,
+    take_live_sample,
+)
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.mysql_tools import MySQLRemoteCollector, _version_gte
 from src.tools.sql.query_type import statement_query_type
@@ -36,9 +41,13 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         return False
 
     def collect_query_patterns(
-        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+        self,
+        min_executions: int = DEFAULT_MIN_EXECUTIONS,
+        limit: int | None = None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
         limit, min_executions = capture_settings(limit, min_executions)
+        rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
         version = self.get_version()
 
         # MariaDB never has MySQL 8.0.25+ QUANTILE columns
@@ -56,6 +65,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
             has_first_last_seen=has_first_last_seen,
             min_executions=min_executions,
             limit=limit,
+            rate_sample_seconds=rate_sample_seconds,
         )
 
     def _collect_query_patterns_with_flags(
@@ -66,6 +76,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         has_first_last_seen: bool,
         min_executions: int,
         limit: int | None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
         """Build and execute query patterns SQL with explicit feature flags."""
         from src.tools.database.mysql_tools import (
@@ -86,7 +97,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
 
         # No cap (the default, #384): every statement that ran often enough.
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
-        raw = self._query(f"""
+        statements_sql = f"""
             SELECT
                 DIGEST AS digest, DIGEST_TEXT AS query_text, SCHEMA_NAME AS schema_name,
                 COUNT_STAR AS execution_count,
@@ -109,12 +120,21 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
             {limit_clause}
-        """)  # nosec B608 -- extra_cols fixed; both settings are checked ints (#384)
+        """  # nosec B608 -- extra_cols fixed; both settings are checked ints (#384)
+        # #1908: two snapshots of the digest counters around the statement query.
+        snapshot_sql = self.rate_sample_snapshot_sql(has_first_last_seen)
+        raw, live = take_live_sample(
+            lambda: self._query(snapshot_sql),
+            rate_sample_seconds,
+            lambda: self._query(statements_sql),
+        )
 
         patterns = []
         reader = LiveQueryReader("mariadb", "mariadb_tools")
-        # #1893: read once, and only if a statement has no usable window of its own.
+        # #1893: read once, and only if a statement has no usable window of its own (or
+        # to check a sample's interval against it, #1908).
         counters_window = functools.cache(self.stats_window)
+        sample = live.sample(counters_window) if live is not None else None
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
@@ -131,7 +151,13 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                     "query_type": statement_query_type(query_text, "mariadb"),
                     "execution_count": exec_count,
                     # #1893: over the digest's FIRST_SEEN to LAST_SEEN, else the uptime.
-                    **statement_rate_fields(exec_count, first_seen, last_seen, counters_window),
+                    **statement_rate_fields(
+                        exec_count,
+                        first_seen,
+                        last_seen,
+                        counters_window,
+                        **sample_arguments(live, sample, query_id),
+                    ),
                     "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                     "execution_time_ms_max": float(r.get("max_time_ms") or 0),
