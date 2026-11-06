@@ -19,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, m
 # The minimum execution count every collector uses when none is given (#384). There is
 # no default statement cap: every statement that ran this often is captured.
 DEFAULT_MIN_EXECUTIONS = 10
+# The seconds every collector waits between its two snapshots of the statement counters
+# when none is given (#1908): the rates are the change in each count over that interval.
+# 0 takes a single snapshot.
+DEFAULT_RATE_SAMPLE_SECONDS = 300
 
 
 class DatabaseEngine(str, Enum):
@@ -95,6 +99,15 @@ class CollectionOptions(BaseModel):
         ge=1,
         description="Minimum execution count of a captured statement (#384)",
     )
+    rate_sample_seconds: StrictInt = Field(
+        default=DEFAULT_RATE_SAMPLE_SECONDS,
+        ge=0,
+        description=(
+            "Seconds between the two snapshots of the statement counters a live collector "
+            "takes (#1908): each statement's rate is the change in its count over the "
+            "time between them, by the database's clock. 0 takes one snapshot, as before"
+        ),
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -165,10 +178,14 @@ class CollectorInput(BaseModel):
       collector sends to its statement query and records in ``metadata.query_capture``
       (#384). Backward compatible: a request without them captures every statement run
       at least 10 times.
+    - 4.2 (2026-11-06, #1908): Added optional ``CollectionOptions.rate_sample_seconds``
+      (default 300, a whole number 0 or more): the seconds every live collector waits
+      between its two snapshots of the statement counters; 0 takes one snapshot, as
+      before. Backward compatible: a request without it samples for 300 seconds.
     """
 
     contract_version: str = Field(
-        default="4.1", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="4.2", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(description="Unique job identifier")
 

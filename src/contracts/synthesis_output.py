@@ -591,6 +591,11 @@ Version History:
   many collected statements' call rates used each window basis (observed, uptime,
   stats_reset, assumed_24h) and the one sentence every deliverable prints about them.
   Backward compatible: defaults to None.
+- 1.78 (2026-11-06, #1908): Added ``RateWindowFacts.sampled_count``,
+  ``RateWindowFacts.sample_no_calls_count`` and ``RateWindowFacts.sample_fallback_count``
+  (default 0): the rates over two snapshots of the counters, the sampled statements with
+  no calls between them, and those that kept a single-snapshot rate. Backward
+  compatible: all default to 0.
 """
 
 from datetime import datetime
@@ -2040,6 +2045,14 @@ class RateWindowFacts(BaseModel):
     ``src.shared.rate_window.rate_window_facts``."""
 
     statement_count: int = Field(0, ge=0, description="The collected statements")
+    sampled_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of those, the rates over the time between two snapshots of the counters "
+            "(#1908): the change in the count over the interval"
+        ),
+    )
     observed_count: int = Field(
         0,
         ge=0,
@@ -2066,12 +2079,32 @@ class RateWindowFacts(BaseModel):
             "before #1893, or a Performance Insights statement)"
         ),
     )
+    sample_fallback_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of those, the statements of a sampled collection (#1908) that kept a "
+            "single-snapshot rate: a count that went down, a counter reset, a measured "
+            "interval too short, a snapshot that came back incomplete, or an interval "
+            "that was not measured"
+        ),
+    )
+    sample_no_calls_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of those, the statements of a sampled collection (#1908) with no calls "
+            "between the snapshots, rated at the lower of their single-snapshot rate and "
+            "one call over the interval"
+        ),
+    )
     statement: str | None = Field(
         None,
         description=(
             "The one sentence every deliverable prints after 'Call rates:': how many rates "
-            "used each basis, and that the costs assume each rate runs continuously; None "
-            "for a collection with no statements"
+            "used each basis, why sampled statements kept a single-snapshot rate, and that "
+            "the costs assume each rate runs continuously; None for a collection with no "
+            "statements"
         ),
     )
 
@@ -2856,7 +2889,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.77",
+        default="1.78",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

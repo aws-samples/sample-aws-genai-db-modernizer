@@ -17,8 +17,11 @@ from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.shared.rate_window import (
     ServerWindow,
     first_row_figure,
+    rate_sample_setting,
+    sample_arguments,
     server_window,
     statement_rate_fields,
+    take_live_sample,
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
@@ -292,10 +295,49 @@ class MySQLRemoteCollector:
     # Query patterns (performance_schema)
     # -------------------------------------------------------------------
 
+    def rate_sample_snapshot_sql(self, has_first_seen: bool) -> str:
+        """One snapshot of the digest counters (#1908): first a row with the server's UTC
+        clock (``UTC_TIMESTAMP(6)``, so a daylight-saving change in the session's zone
+        does not move it) and how many digests the snapshot holds, then each digest's
+        ``COUNT_STAR`` and age. ``FIRST_SEEN`` is in the entry's key when the server has
+        it, so a digest emptied and counted again in between (a ``TRUNCATE`` of the
+        summary table) is a new entry, not a lower count."""
+        first_seen = (
+            "IFNULL(DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s.%f'), '')"
+            if has_first_seen
+            else "''"
+        )
+        age = (
+            "TIMESTAMPDIFF(MICROSECOND, FIRST_SEEN, NOW(6)) / 1000000" if has_first_seen else "NULL"
+        )
+        digests = (
+            "FROM performance_schema.events_statements_summary_by_digest "
+            "WHERE SCHEMA_NAME = DATABASE() AND DIGEST IS NOT NULL"
+        )
+        return f"""
+            SELECT 0 AS row_kind, CAST(NULL AS CHAR) AS group_key,
+                   CAST(NULL AS CHAR) AS entry_key, CAST(NULL AS UNSIGNED) AS execution_count,
+                   NULL AS entry_age_seconds,
+                   TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP(6)) / 1000000
+                       AS sampled_at,
+                   (SELECT COUNT(*) {digests}) AS entry_count
+            UNION ALL
+            SELECT 1, DIGEST, CONCAT(DIGEST, '/', {first_seen}), COUNT_STAR, {age}, NULL, NULL
+            {digests}
+            ORDER BY row_kind
+        """  # nosec B608 -- first_seen, age and digests are fixed fragments
+
     def collect_query_patterns(
-        self, min_executions: int = DEFAULT_MIN_EXECUTIONS, limit: int | None = None
+        self,
+        min_executions: int = DEFAULT_MIN_EXECUTIONS,
+        limit: int | None = None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
+        """The digests' statements, with their rates over ``rate_sample_seconds`` between
+        two snapshots of the counters when it is above 0 (#1908, the collector passes
+        ``CollectionOptions.rate_sample_seconds``)."""
         limit, min_executions = capture_settings(limit, min_executions)
+        rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
         # No cap (the default, #384): every statement that ran often enough.
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         # Detect version to know which columns are available
@@ -313,7 +355,7 @@ class MySQLRemoteCollector:
         if has_first_last_seen:
             extra_cols += "FIRST_SEEN, LAST_SEEN, "
 
-        raw = self._query(f"""
+        statements_sql = f"""
             SELECT
                 DIGEST AS digest, DIGEST_TEXT AS query_text, SCHEMA_NAME AS schema_name,
                 COUNT_STAR AS execution_count,
@@ -336,12 +378,20 @@ class MySQLRemoteCollector:
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
             {limit_clause}
-        """)  # nosec B608 — extra_cols fixed; both settings are checked ints (#384)
+        """  # nosec B608 — extra_cols fixed; both settings are checked ints (#384)
+        snapshot_sql = self.rate_sample_snapshot_sql(has_first_last_seen)
+        raw, live = take_live_sample(
+            lambda: self._query(snapshot_sql),
+            rate_sample_seconds,
+            lambda: self._query(statements_sql),
+        )
 
         patterns = []
         reader = LiveQueryReader("mysql", "mysql_tools")
-        # #1893: read once, and only if a statement has no usable window of its own.
+        # #1893: read once, and only if a statement has no usable window of its own (or
+        # to check a sample's interval against it, #1908).
         counters_window = functools.cache(self.stats_window)
+        sample = live.sample(counters_window) if live is not None else None
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
@@ -357,8 +407,15 @@ class MySQLRemoteCollector:
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "mysql"),
                     "execution_count": exec_count,
-                    # #1893: over the digest's FIRST_SEEN to LAST_SEEN, else the uptime.
-                    **statement_rate_fields(exec_count, first_seen, last_seen, counters_window),
+                    # #1893: over the digest's FIRST_SEEN to LAST_SEEN, else the uptime;
+                    # #1908: over the interval between two snapshots, when sampled.
+                    **statement_rate_fields(
+                        exec_count,
+                        first_seen,
+                        last_seen,
+                        counters_window,
+                        **sample_arguments(live, sample, query_id),
+                    ),
                     "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                     "execution_time_ms_min": float(r.get("min_time_ms") or 0),
                     "execution_time_ms_max": float(r.get("max_time_ms") or 0),

@@ -512,6 +512,7 @@ def test_the_live_command_stops_sqlplus_on_an_error() -> None:
     assert preamble[:2] == ["WHENEVER SQLERROR EXIT SQL.SQLCODE", "WHENEVER OSERROR EXIT FAILURE"]
 
 
+@pytest.mark.passes_on_main
 def test_a_failed_capture_is_recorded_as_failed() -> None:
     """The probe's output through the Oracle collector's query stage: recorded as a
     failed statement query (#384), never as rows."""
@@ -523,7 +524,9 @@ def test_a_failed_capture_is_recorded_as_failed() -> None:
     output = _sqlplus([_sqlplus_row(_live_text(ISSUE_EXAMPLE))]) + ORA_TRAILER
     ssm.run_command = MagicMock(return_value=output)  # type: ignore[method-assign]
     db = _collector(ssm)
-    opts = MagicMock(collect_query_patterns=True, min_executions=10, query_limit=None)
+    opts = MagicMock(
+        collect_query_patterns=True, min_executions=10, query_limit=None, rate_sample_seconds=0
+    )
     with patch.object(db, "get_current_schema", return_value="APP"):
         rows = _collect_queries_raw(db, opts)
     assert rows == {"error": "the statement query failed (SqlClientError)"}

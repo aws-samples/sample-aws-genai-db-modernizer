@@ -31,6 +31,18 @@
 -- Both are recorded in the collection's metadata.query_capture. A value that is not a
 -- positive whole number falls back to the default (no cap, or 10): the client cannot
 -- stop a script on a condition, so the metadata records the values the run used.
+--
+-- Call rates over the load period (#1908), as a session variable:
+--   mysql --init-command="SET @rate_sample_seconds=300" ...
+--   @rate_sample_seconds  read the statement counters, wait this many seconds
+--                         (DO SLEEP), read them again (default: 300); 0: one read
+-- Each statement's rate is the change in its count between the two reads, over the
+-- time between them by the server's clock, so run the script while the application
+-- carries its usual load. The value used and the measured time are recorded in
+-- metadata.rate_sample; a value that is not a whole number of seconds takes the default.
+-- Both reads are SELECTs into session variables: nothing is changed or reset. The
+-- first read's counts go into metadata.rate_sample.first_counts, keyed as each
+-- statement row's sample_key, and the ingest pairs them.
 -- ==========================================================================
 
 SET @db = DATABASE();
@@ -39,6 +51,7 @@ SET @db = DATABASE();
 -- CAST) or a wrapped negative.
 SET @min_executions = IF(CAST(@min_executions AS CHAR) REGEXP '^[1-9][0-9]*$', CAST(@min_executions AS UNSIGNED), 10);
 SET @query_limit = IF(CAST(@query_limit AS CHAR) REGEXP '^[1-9][0-9]*$', CAST(@query_limit AS UNSIGNED), NULL);
+SET @rate_sample_seconds = IF(CAST(@rate_sample_seconds AS CHAR) REGEXP '^[0-9]+$', CAST(@rate_sample_seconds AS UNSIGNED), 300);
 SET SESSION group_concat_max_len = 1048576;
 
 -- We build each section as a JSON fragment, then combine at the end.
@@ -190,6 +203,20 @@ SELECT JSON_ARRAYAGG(tr_obj) INTO @triggers FROM (
 ) AS tr;
 
 -- ===================== 10. Query Patterns (performance_schema) =====================
+-- #1908: the first read of the counters, the wait, and the server's clock at each read
+-- (UTC_TIMESTAMP(6), the statement's start in UTC, so a daylight-saving change in the
+-- session's time zone does not move it; a KILL QUERY that ends the wait early leaves a
+-- measured time too short to rate). An entry is its digest and FIRST_SEEN, so a digest
+-- emptied and counted again in between is a new entry, not a lower count.
+SET @rate_sample_t0 = IF(@rate_sample_seconds > 0, UTC_TIMESTAMP(6), NULL);
+SELECT JSON_OBJECTAGG(
+  CONCAT(DIGEST, '/', IFNULL(DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s.%f'), '')),
+  COUNT_STAR) INTO @rate_sample_start
+FROM performance_schema.events_statements_summary_by_digest
+WHERE @rate_sample_seconds > 0 AND SCHEMA_NAME = @db AND DIGEST IS NOT NULL;
+DO SLEEP(@rate_sample_seconds);
+SET @rate_sample_elapsed = IF(@rate_sample_seconds > 0, ROUND(TIMESTAMPDIFF(MICROSECOND, @rate_sample_t0, UTC_TIMESTAMP(6)) / 1000000, 3), NULL);
+
 SELECT JSON_ARRAYAGG(q_obj) INTO @queries FROM (
   SELECT JSON_OBJECT(
     'digest', DIGEST,
@@ -211,7 +238,9 @@ SELECT JSON_ARRAYAGG(q_obj) INTO @queries FROM (
     'sum_errors', SUM_ERRORS,
     'sum_warnings', SUM_WARNINGS,
     'first_seen', DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s'),
-    'last_seen', DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s')
+    'last_seen', DATE_FORMAT(LAST_SEEN, '%Y-%m-%d %H:%i:%s'),
+    -- #1908: the key of the digest's count at the first read (first_counts).
+    'sample_key', CONCAT(DIGEST, '/', IFNULL(DATE_FORMAT(FIRST_SEEN, '%Y-%m-%d %H:%i:%s.%f'), ''))
   ) AS q_obj
   -- LIMIT takes no variable outside a prepared statement, so the cap is a rank:
   -- the costliest statements first, all of them when @query_limit is NULL (#384).
@@ -253,7 +282,10 @@ SELECT JSON_OBJECTAGG(name, val) INTO @global_stats FROM (
 SELECT JSON_OBJECT(
   'collection_version', '1.0',
   'collected_at', DATE_FORMAT(NOW(), '%Y-%m-%dT%H:%i:%sZ'),
-  'metadata', JSON_SET(@metadata, '$.query_capture.statements', @query_rows),
+  'metadata', JSON_SET(@metadata, '$.query_capture.statements', @query_rows,
+    -- #1908: the wait used and the seconds the server's clock measured between the reads.
+    '$.rate_sample', JSON_OBJECT('seconds', @rate_sample_seconds, 'elapsed_seconds', @rate_sample_elapsed,
+      'first_counts', IFNULL(JSON_EXTRACT(@rate_sample_start, '$'), JSON_OBJECT()))),
   'tables', IFNULL(JSON_EXTRACT(@tables, '$'), JSON_ARRAY()),
   'columns', IFNULL(JSON_EXTRACT(@columns, '$'), JSON_ARRAY()),
   'indexes', IFNULL(JSON_EXTRACT(@indexes, '$'), JSON_ARRAY()),

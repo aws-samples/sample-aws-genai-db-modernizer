@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING
 import boto3
 
 from src.agents.collector.routine_rows import merge_trigger_rows
-from src.shared.rate_window import ServerWindow, server_window, statement_rate_fields
+from src.shared.rate_window import (
+    RateSample,
+    ServerWindow,
+    rate_sample,
+    server_window,
+    statement_rate_fields,
+)
 from src.shared.sample_rows import without_sample_rows
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
 from src.tools.database.index_keys import add_index_key, expression_key_fields
@@ -380,6 +386,9 @@ def _parse_offline_collection(
             source_engine=source_engine,
             # #1893: the window a statement with no usable observed window falls back on.
             server_window=_collection_server_window(data, source_engine),
+            # #1908: the script's two snapshots of the counters, when it took them.
+            sample=_collection_rate_sample(data, source_engine),
+            first_counts=_collection_first_counts(data),
         ),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
@@ -579,6 +588,15 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
         ]
         if ages:
             merged["stats_since_age_seconds"] = max(ages)
+        # #1908: the first-snapshot count of the variants that were in the first
+        # snapshot; a variant only in the second added all its calls in the interval.
+        starts = [
+            float(v["sample_first_count"])
+            for v in variants
+            if isinstance(v.get("sample_first_count"), int | float)
+            and not isinstance(v.get("sample_first_count"), bool)
+        ]
+        merged["sample_first_count"] = int(sum(starts)) if starts else None
 
         merged.update(tags)
         merged_rows.append(merged)
@@ -1122,6 +1140,33 @@ def _collection_server_window(data: dict, source_engine: str) -> ServerWindow | 
     )
 
 
+def _collection_rate_sample(data: dict, source_engine: str) -> RateSample | None:
+    """The collection script's two snapshots of the counters (#1908): its
+    ``metadata.rate_sample`` (``seconds``, the interval asked for, and
+    ``elapsed_seconds``, the time between the two reads by the database's clock), checked
+    against the server window the script read with the second snapshot. None for a
+    collection made before #1908, which took one snapshot."""
+    metadata = data.get("metadata")
+    meta = metadata.get("rate_sample") if isinstance(metadata, Mapping) else None
+    if not isinstance(meta, Mapping):
+        return None
+    return rate_sample(
+        meta.get("seconds"),
+        meta.get("elapsed_seconds"),
+        _collection_server_window(data, source_engine),
+    )
+
+
+def _collection_first_counts(data: dict) -> Mapping[str, object]:
+    """The MySQL script's first-read counts (#1908), ``metadata.rate_sample.first_counts``:
+    each digest's count keyed as its statement row's ``sample_key``. Empty when the
+    collection has none (every other script writes ``sample_first_count`` on each row)."""
+    metadata = data.get("metadata")
+    meta = metadata.get("rate_sample") if isinstance(metadata, Mapping) else None
+    counts = meta.get("first_counts") if isinstance(meta, Mapping) else None
+    return counts if isinstance(counts, Mapping) else {}
+
+
 def _transform_queries(
     raw: list[dict],
     db_name: str,
@@ -1130,6 +1175,8 @@ def _transform_queries(
     shadow: TableShadow | None = None,
     source_engine: str = "",
     server_window: ServerWindow | None = None,
+    sample: RateSample | None = None,
+    first_counts: Mapping[str, object] | None = None,
 ) -> list[dict]:
     """Transform raw MySQL performance_schema rows into the format _build_queries expects.
 
@@ -1157,7 +1204,13 @@ def _transform_queries(
     count by the window it covers, recorded as ``rate_window_seconds`` and
     ``rate_window_basis`` (:mod:`src.shared.rate_window`, #1893): the row's own
     ``first_seen`` to ``last_seen`` (PostgreSQL 17: its ``stats_since_age_seconds``),
-    else ``server_window`` (:func:`_collection_server_window`), else 24 hours.
+    else ``server_window`` (:func:`_collection_server_window`), else 24 hours. With
+    ``sample`` (the script's two snapshots, #1908), a statement's rate is the change from
+    its first-snapshot count (``sample_first_count``, summed over the entries the script
+    found in both snapshots; absent when none was) to its ``execution_count``, over the
+    measured interval, with ``rate_sample`` recording why when it kept the single
+    snapshot's rate. A row with a ``sample_key`` (the MySQL script) takes its
+    ``sample_first_count`` from ``first_counts`` (:func:`_collection_first_counts`).
 
     Each ``query_text`` is stored, and parsed, with its literal values redacted in the
     ``source_engine`` dialect (:func:`src.tools.sql.redact.redact_literals`, #1625),
@@ -1166,6 +1219,15 @@ def _transform_queries(
     patterns = []
     fallbacks: Counter[str] = Counter()
     case_folded = _case_folded_names(known_table_names, source_engine)
+    if first_counts:
+        raw = [
+            (
+                {**r, "sample_first_count": first_counts.get(str(r["sample_key"]))}
+                if r.get("sample_first_count") is None and r.get("sample_key") is not None
+                else r
+            )
+            for r in raw
+        ]
     for r in _merge_query_variants(raw, source_engine):
         query_text = redact_literals(str(r.get("query_text") or ""), source_engine)
         exec_count = r.get("execution_count") or 1
@@ -1206,6 +1268,8 @@ def _transform_queries(
                     r.get("last_seen"),
                     server_window,
                     observed_seconds=r.get("stats_since_age_seconds"),
+                    sample=sample,
+                    first_count=r.get("sample_first_count"),
                 ),
                 "execution_time_ms_avg": float(r.get("avg_time_ms") or 0),
                 "execution_time_ms_min": float(r.get("min_time_ms") or 0),

@@ -57,11 +57,7 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
-from src.shared.query_capture import (
-    live_query_capture,
-    query_stage_rows,
-    statement_query_failed,
-)
+from src.shared.query_capture import live_query_capture, query_stage_rows, statement_query_failed
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.s3_storage import init_storage
@@ -383,7 +379,12 @@ def _collect_queries_raw(db: PostgreSQLRemoteCollector, opts) -> list[dict] | di
     if not opts.collect_query_patterns:
         return []
     try:
-        return db.collect_query_patterns(min_executions=opts.min_executions, limit=opts.query_limit)
+        # #1908: the rates over the interval between two snapshots (0: one snapshot).
+        return db.collect_query_patterns(
+            min_executions=opts.min_executions,
+            limit=opts.query_limit,
+            rate_sample_seconds=opts.rate_sample_seconds,
+        )
     except Exception as exc:
         logger.warning("Failed to collect query patterns")
         # #384: a failed query is not a complete capture of nothing.
@@ -539,6 +540,7 @@ def _build_queries(raw: list[dict]) -> Queries:
             calls_per_second=p.get("calls_per_second"),
             rate_window_seconds=p.get("rate_window_seconds"),
             rate_window_basis=p.get("rate_window_basis"),
+            rate_sample=p.get("rate_sample"),
             tables_accessed=p["tables_accessed"] or ["unknown"],
             execution_time_ms_avg=p.get("execution_time_ms_avg"),
             execution_time_ms_min=p.get("execution_time_ms_min"),

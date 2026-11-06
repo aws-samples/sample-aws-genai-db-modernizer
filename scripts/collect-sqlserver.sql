@@ -33,6 +33,16 @@
 --   overrides -v, and an unset $(VAR) stops the script. A setting that is not a
 --   positive whole number stops the script with an error.
 -- Both are recorded in the collection's metadata.query_capture.
+--
+-- Call rates over the load period (#1908): edit the @rate_sample_seconds DECLARE line.
+--   @rate_sample_seconds  read the plan cache's counters, wait this many seconds
+--                         (WAITFOR DELAY), read them again (default: 300); 0: one read
+-- Each statement's rate is the change in its count between the two reads, over the
+-- time between them by the server's clock, so run the script while the application
+-- carries its usual load. The value and the measured time are recorded in
+-- metadata.rate_sample. A value that is not a whole number of seconds from 0 to 86399
+-- (WAITFOR DELAY waits under a day) stops the script with an error. The first read is
+-- kept in a table variable of this session: nothing on the server is changed or reset.
 -- ==========================================================================
 
 SET NOCOUNT ON;
@@ -41,6 +51,8 @@ SET ANSI_WARNINGS OFF;  -- suppress warnings about NULL in aggregates
 -- The capture settings (#384): change NULL to a number to cap the statements.
 DECLARE @query_limit INT = NULL;
 DECLARE @min_executions INT = 10;
+-- The seconds between the two reads of the counters (#1908); 0 for one read.
+DECLARE @rate_sample_seconds INT = 300;
 -- A setting that is not a positive whole number stops the script here: it must never
 -- run with a NULL floor and read as a complete capture of nothing.
 IF @min_executions IS NULL OR @min_executions < 1
@@ -51,6 +63,11 @@ END
 IF @query_limit IS NOT NULL AND @query_limit < 1
 BEGIN
     RAISERROR('query_limit must be a positive whole number or NULL', 16, 1);
+    RETURN;
+END
+IF @rate_sample_seconds IS NULL OR @rate_sample_seconds < 0 OR @rate_sample_seconds > 86399
+BEGIN
+    RAISERROR('rate_sample_seconds must be a whole number of seconds from 0 to 86399', 16, 1);
     RETURN;
 END
 
@@ -73,6 +90,40 @@ DECLARE @global_stats NVARCHAR(MAX);
 DECLARE @ExcludeSystemSchemas NVARCHAR(200) =
   'AND s.name NOT IN (''sys'', ''INFORMATION_SCHEMA'', ''guest'')
    AND s.name NOT LIKE ''db[_]%'' ESCAPE ''[''';
+
+-- ===================== 0. The first read of the counters (#1908) =====================
+-- Each cached statement's execution_count, keyed by its plan, statement offsets and
+-- creation_time (a plan evicted and cached again in between is a new entry, not a
+-- lower count), then the wait. SYSUTCDATETIME() is the server's clock at each read.
+DECLARE @rate_sample_start TABLE (
+    sql_handle VARBINARY(64) NOT NULL,
+    plan_handle VARBINARY(64) NOT NULL,
+    statement_start_offset INT NOT NULL,
+    statement_end_offset INT NOT NULL,
+    creation_time DATETIME NOT NULL,
+    execution_count BIGINT NOT NULL,
+    -- Not unique (nothing here may fail on a duplicate), but a seek for the join below.
+    INDEX ix_rate_sample_start CLUSTERED (plan_handle, statement_start_offset)
+);
+DECLARE @rate_sample_t0 DATETIME2(7) = NULL;
+DECLARE @rate_sample_t1 DATETIME2(7) = NULL;
+DECLARE @rate_sample_delay CHAR(8) =
+    CONVERT(CHAR(8), DATEADD(SECOND, @rate_sample_seconds, CAST('00:00:00' AS TIME)), 108);
+IF @rate_sample_seconds > 0
+BEGIN
+    SET @rate_sample_t0 = SYSUTCDATETIME();
+    -- Only the keys and counts, and only this database's statements (or unresolved
+    -- ones, which the query below may keep): no text, and less of a shared server's
+    -- cache in tempdb.
+    INSERT INTO @rate_sample_start
+    SELECT qs.sql_handle, qs.plan_handle, qs.statement_start_offset,
+           qs.statement_end_offset, qs.creation_time, qs.execution_count
+    FROM sys.dm_exec_query_stats qs
+    CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+    WHERE ISNULL(NULLIF(st.dbid, 0), DB_ID()) = DB_ID();
+    WAITFOR DELAY @rate_sample_delay;
+    SET @rate_sample_t1 = SYSUTCDATETIME();
+END
 
 -- ===================== 1. Query Patterns (run FIRST) =====================
 -- This section runs FIRST to capture user queries from sys.dm_exec_query_stats
@@ -119,7 +170,10 @@ SET @queries = (
         -- detects and repairs this shape defensively. Style 121 kept as-is
         -- for backward compatibility with existing customer JSONs.
         CONVERT(VARCHAR(30), g.creation_time, 121) AS first_seen,
-        CONVERT(VARCHAR(30), g.last_execution_time, 121) AS last_seen
+        CONVERT(VARCHAR(30), g.last_execution_time, 121) AS last_seen,
+        -- #1908: the count at the first read of the variants that were cached then
+        -- (omitted, so null, when none was).
+        g.sample_first_count
     FROM (
         -- One row per query_hash: SUM the counters across literal variants,
         -- MIN/MAX the timestamps, and surface the highest-elapsed variant's
@@ -137,6 +191,7 @@ SET @queries = (
             MAX(v.max_elapsed_time) AS max_elapsed_time,
             MIN(v.creation_time) AS creation_time,
             MAX(v.last_execution_time) AS last_execution_time,
+            SUM(v.sample_first_count) AS sample_first_count,
             MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text,
             ROW_NUMBER() OVER (
                 ORDER BY SUM(v.total_elapsed_time) DESC, v.query_hash, v.statement_dbid
@@ -155,6 +210,7 @@ SET @queries = (
                 qs.total_physical_reads,
                 qs.min_elapsed_time,
                 qs.max_elapsed_time,
+                rs.execution_count AS sample_first_count,
                 qs.creation_time,
                 qs.last_execution_time,
                 -- The statement as written, line breaks and tabs kept: FOR JSON escapes
@@ -184,6 +240,13 @@ SET @queries = (
             CROSS APPLY (
                 SELECT COALESCE(NULLIF(st.dbid, 0), NULLIF(pa.plan_dbid, 0)) AS statement_dbid
             ) d
+            -- #1908: the same cache entry at the first read, when it was there.
+            LEFT JOIN @rate_sample_start rs
+              ON rs.plan_handle = qs.plan_handle
+             AND rs.sql_handle = qs.sql_handle
+             AND rs.statement_start_offset = qs.statement_start_offset
+             AND rs.statement_end_offset = qs.statement_end_offset
+             AND rs.creation_time = qs.creation_time
             -- Keep this database's statements; keep unresolved ones (NULL),
             -- and drop every statement attributed to another database.
             WHERE (d.statement_dbid = DB_ID() OR d.statement_dbid IS NULL)
@@ -241,7 +304,15 @@ SET @metadata = (
         JSON_QUERY((
             SELECT @query_limit AS query_limit, @min_executions AS min_executions
             FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
-        )) AS query_capture
+        )) AS query_capture,
+        -- #1908: the wait asked for and the seconds the server's clock measured between
+        -- the two reads (null with no wait).
+        JSON_QUERY((
+            SELECT @rate_sample_seconds AS seconds,
+                   ROUND(DATEDIFF_BIG(MICROSECOND, @rate_sample_t0, @rate_sample_t1) / 1000000.0, 3)
+                       AS elapsed_seconds
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+        )) AS rate_sample
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 );
 

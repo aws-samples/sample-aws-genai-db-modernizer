@@ -22,8 +22,11 @@ from src.shared.query_capture import DEFAULT_MIN_EXECUTIONS, capture_settings
 from src.shared.rate_window import (
     ServerWindow,
     first_row_figure,
+    rate_sample_setting,
+    sample_arguments,
     server_window,
     statement_rate_fields,
+    take_live_sample,
 )
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
@@ -362,13 +365,51 @@ class OracleRemoteCollector:
     # Query patterns (V$SQLSTATS-based)
     # -------------------------------------------------------------------
 
+    def rate_sample_snapshot_sql(self, owner: str) -> str:
+        """One snapshot of ``V$SQL``'s counters (#1908): first a row with the server's
+        clock (``SYSTIMESTAMP`` in UTC) and how many cursors the snapshot holds, then each
+        child cursor's ``EXECUTIONS`` and age (since its statement's ``FIRST_LOAD_TIME``,
+        so a child loaded later reads older than it is, never newer) under its statement
+        shape (the query key the statement query groups by). An entry is its ``SQL_ID``,
+        child number and child address, so a cursor aged out and loaded again in between
+        is a new entry, never a lower count."""
+        return f"""
+            WITH e AS (
+                SELECT {_ORACLE_QUERY_KEY} AS group_key,
+                       SQL_ID || '/' || CHILD_NUMBER || '/' || RAWTOHEX(CHILD_ADDRESS)
+                           AS entry_key,
+                       EXECUTIONS AS execution_count,
+                       (SYSDATE - TO_DATE(FIRST_LOAD_TIME, 'YYYY-MM-DD/HH24:MI:SS')) * 86400
+                           AS entry_age_seconds
+                FROM V$SQL
+                WHERE PARSING_SCHEMA_NAME = '{owner}'
+            )
+            SELECT 0 AS row_kind, CAST(NULL AS VARCHAR2(80)) AS group_key,
+                   CAST(NULL AS VARCHAR2(200)) AS entry_key, CAST(NULL AS NUMBER) AS execution_count,
+                   CAST(NULL AS NUMBER) AS entry_age_seconds,
+                   TO_CHAR(SYS_EXTRACT_UTC(SYSTIMESTAMP), 'YYYY-MM-DD"T"HH24:MI:SS.FF6')
+                       AS sampled_at,
+                   (SELECT COUNT(*) FROM e) AS entry_count
+            FROM dual
+            UNION ALL
+            SELECT 1, group_key, entry_key, execution_count, entry_age_seconds, NULL, NULL
+            FROM e
+            ORDER BY 1
+        """  # nosec B608 -- owner from the catalog
+
     def collect_query_patterns(
         self,
         min_executions: int = DEFAULT_MIN_EXECUTIONS,
         limit: int | None = None,
         owner: str | None = None,
+        rate_sample_seconds: int = 0,
     ) -> list[dict]:
         """Collect query stats from V$SQL, one row per statement shape.
+
+        With ``rate_sample_seconds`` above 0 (#1908, the collector passes
+        ``CollectionOptions.rate_sample_seconds``), each statement's rate is the change in
+        its count between two snapshots of ``V$SQL`` that far apart
+        (:meth:`rate_sample_snapshot_sql`).
 
         No AWR/Diagnostic Pack dependency. Only totals available — no min/max
         per-execution, so percentile estimation is not possible (left as None).
@@ -404,10 +445,11 @@ class OracleRemoteCollector:
         # (backslash, CR, LF, tab) takes two of them, so a statement with any keeps fewer
         # of its own.
         limit, min_executions = capture_settings(limit, min_executions)
+        rate_sample_seconds = rate_sample_setting(rate_sample_seconds)
         # No cap (the default, #384): every statement that ran often enough.
         rownum_clause = f"WHERE ROWNUM <= {limit}" if limit is not None else ""
         owner = owner or self.get_current_schema()
-        raw = self._query(f"""
+        statements_sql = f"""
             SELECT *
             FROM (
                 SELECT
@@ -466,12 +508,20 @@ class OracleRemoteCollector:
                 ORDER BY g.elapsed_time DESC, g.query_key
             )
             {rownum_clause}
-        """)  # nosec B608 — min_executions/limit are checked positive ints; owner from catalog
+        """  # nosec B608 — min_executions/limit are checked positive ints; owner from catalog
+        snapshot_sql = self.rate_sample_snapshot_sql(owner)
+        raw, live = take_live_sample(
+            lambda: self._query(snapshot_sql),
+            rate_sample_seconds,
+            lambda: self._query(statements_sql),
+        )
 
         patterns = []
         reader = LiveQueryReader("oracle", "oracle_tools", empty=())
-        # #1893: read once, and only if a statement has no usable window of its own.
+        # #1893: read once, and only if a statement has no usable window of its own (or
+        # to check a sample's interval against it, #1908).
         counters_window = functools.cache(self.stats_window)
+        sample = live.sample(counters_window) if live is not None else None
         for r in raw:
             query_text = live_sql.decode_query_text(str(r.get("query_text") or "")).strip()
             calls = int(r.get("execution_count") or 1)
@@ -509,7 +559,12 @@ class OracleRemoteCollector:
                     # #1893: over the cursor's FIRST_LOAD_TIME to LAST_ACTIVE_TIME, else
                     # the instance's uptime.
                     **statement_rate_fields(
-                        calls, r.get("first_seen"), r.get("last_seen"), counters_window
+                        calls,
+                        r.get("first_seen"),
+                        r.get("last_seen"),
+                        counters_window,
+                        # #1908: over the interval between two snapshots, when sampled.
+                        **sample_arguments(live, sample, r.get("query_id")),
                     ),
                     "execution_time_ms_avg": round(avg_ms, 3),
                     "execution_time_ms_min": None,  # V$SQLSTATS has no per-exec min
