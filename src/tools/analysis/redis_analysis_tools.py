@@ -84,16 +84,9 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         if facts.top_n:
             leaderboard_queries.append(q)
 
-        # Time series: timestamp/date keywords + GROUP BY
-        if facts.timestamp_column(column_types) and facts.group_by:
-            timeseries_queries.append(q)
-
-        # Time series: time binning functions (DATE_TRUNC()). The check this
-        # replaced read ``any(kw in text for kw in ("date_trunc"))`` -- a string,
-        # not a tuple, so it tested single letters, and every text with ``group
-        # by`` in it has one of them: it has always been a ``GROUP BY`` check,
-        # and it stays one here (#491 moves detectors, it does not change them).
-        if facts.group_by:
+        # Time series: a GROUP BY over a timestamp column or a time bucket
+        # (``DATE_TRUNC``, the time-function fact), one entry per query (#452)
+        if facts.group_by and (facts.timestamp_column(column_types) or facts.time_function_keyword):
             timeseries_queries.append(q)
 
         # Geospatial: spatial SQL functions or coordinate columns
@@ -170,12 +163,8 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 description="Detected time series aggregation patterns",
                 query_ids=[str(q["query_id"]) for q in timeseries_queries if q.get("query_id")],
                 table_ids=timeseries_table_ids,
-                # The two time-series checks above (#452, left as-is here) can both
-                # append the same query, so this list can briefly outgrow `queries`;
-                # clamp so the percentage stays valid rather than raising in Pattern's
-                # <=100 validation. #452 removes the double count at its source.
                 frequency_percent=(
-                    min(len(timeseries_queries) / len(queries) * 100, 100.0) if queries else None
+                    len(timeseries_queries) / len(queries) * 100 if queries else None
                 ),
             )
         )
