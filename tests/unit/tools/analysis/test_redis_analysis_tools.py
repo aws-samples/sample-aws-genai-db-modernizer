@@ -3,8 +3,11 @@
 
 """Unit tests for Redis analysis tools (src/tools/analysis/redis_analysis_tools.py).
 
-Verifies pattern detection and frequency_percent calculation (issue #453).
+Verifies pattern detection and frequency_percent calculation (issue #453), and
+the time-series detection (#452).
 """
+
+import pytest
 
 from src.tools.analysis.redis_analysis_tools import analyze_redis_use_cases
 
@@ -124,13 +127,9 @@ def test_redis_pattern_frequency_percent_independent_counts():
     assert patterns_by_type["session-store"].frequency_percent == 20.0
     # 1 / 10 * 100 = 10.0%
     assert patterns_by_type["leaderboard"].frequency_percent == 10.0
-    # The single time-series query (t1) is currently double-counted because the
-    # "date_trunc" keyword check iterates over characters instead of a tuple
-    # (tracked separately as #452); frequency_percent is still computed from
-    # the pattern's own (duplicated) list, not from geospatial_queries, so
-    # 2 / 10 * 100 = 20.0% here. #452 will tighten this to 10.0% once fixed.
-    assert patterns_by_type["time-series"].frequency_percent == 20.0
-    assert patterns_by_type["time-series"].query_ids == ["t1", "t1"]
+    # 1 / 10 * 100 = 10.0%: the time-series query is listed once (#452)
+    assert patterns_by_type["time-series"].frequency_percent == 10.0
+    assert patterns_by_type["time-series"].query_ids == ["t1"]
     # 1 / 10 * 100 = 10.0%
     assert patterns_by_type["geospatial"].frequency_percent == 10.0
 
@@ -185,3 +184,59 @@ def test_redis_pattern_frequency_percent_zero_geospatial():
     # Caching and session must be 50.0% each, NOT 0.0%
     assert patterns_by_type["caching"].frequency_percent == 50.0
     assert patterns_by_type["session-store"].frequency_percent == 50.0
+
+
+def _select(query_id: str, text: str) -> dict:
+    return {
+        "query_id": query_id,
+        "query_type": "SELECT",
+        "calls_per_second": 0.1,
+        "query_text": text,
+        "tables_accessed": ["events"],
+    }
+
+
+def _timeseries(queries: list[dict]):
+    patterns = analyze_redis_use_cases(_make_collector(queries)).patterns_detected
+    return next((p for p in patterns if p.pattern_type == "time-series"), None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SELECT status, COUNT(*) FROM events GROUP BY status",
+        "SELECT user_id, SUM(amount) FROM events WHERE kind = ? GROUP BY user_id",
+        # A time function with no GROUP BY buckets nothing.
+        "SELECT DATE_TRUNC('day', posted) FROM events WHERE id = ?",
+    ],
+)
+def test_a_group_by_with_no_time_column_is_not_time_series(text):
+    """A GROUP BY alone is not time-series: the old check read ``("date_trunc")``,
+    a string, letter by letter, so every GROUP BY matched it (#452)."""
+    assert _timeseries([_select("q1", text)]) is None
+
+
+def test_time_series_needs_a_time_column_or_a_time_bucket_with_its_group_by():
+    queries = [
+        _select("grouped", "SELECT status, COUNT(*) FROM events GROUP BY status"),
+        _select("by-time", "SELECT COUNT(*) FROM events WHERE created_at > ? GROUP BY kind"),
+        # ``posted`` is no timestamp name: the DATE_TRUNC bucket makes it time-series.
+        _select("bucketed", "SELECT DATE_TRUNC('day', posted), COUNT(*) FROM events GROUP BY 1"),
+    ]
+    pattern = _timeseries(queries)
+    assert pattern is not None
+    assert pattern.query_ids == ["by-time", "bucketed"]
+    assert pattern.frequency_percent == pytest.approx(2 / 3 * 100)
+
+
+def test_a_query_matching_every_time_series_rule_is_listed_once():
+    """A timestamp column, a DATE_TRUNC bucket and a GROUP BY together: one entry,
+    so the share is that query's own and never goes over 100% (#452, #613)."""
+    text = (
+        "SELECT DATE_TRUNC('hour', created_at), COUNT(*) FROM events "
+        "WHERE updated_at > ? GROUP BY 1"
+    )
+    pattern = _timeseries([_select("q1", text), _select("q1-copy", text)])
+    assert pattern is not None
+    assert pattern.query_ids == ["q1", "q1-copy"]
+    assert pattern.frequency_percent == 100.0
