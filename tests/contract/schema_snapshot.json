@@ -9765,6 +9765,38 @@
             {
               "kind": "object",
               "properties": {
+                "engine_version": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "engine_version_why": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
                 "lob_max_size_kb": {
                   "required": true,
                   "schema": {
@@ -10394,8 +10426,8 @@
         }
       }
     },
-    "schema_hash": "e10e1628d8265fc4932c0f1f2374bfdbfa53f54da736dc1ad72b8647d7371a9d",
-    "version": "1.2"
+    "schema_hash": "66cda0879b14237a03a822d80bbfb10df3934c4bdc438efc4d970262a165a561",
+    "version": "1.3"
   },
   "data_movement_plan.HubPlan": {
     "fields": {

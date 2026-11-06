@@ -24,6 +24,7 @@ from src.shared.catalog.engines import CatalogError
 __all__ = [
     "DMS_SIZING_FILE",
     "DmsSizingTable",
+    "EngineRules",
     "GateRules",
     "LobRules",
     "SizingRow",
@@ -92,6 +93,15 @@ class LobRules(BaseModel):
         return self
 
 
+class EngineRules(BaseModel):
+    """The DMS engine version of step 1's replication instance, with its reason."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
 class GateRules(BaseModel):
     """The lag limit of step 1's DMS gate, with its reason."""
 
@@ -105,6 +115,7 @@ class DmsSizingTable(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     rows: tuple[SizingRow, ...] = Field(min_length=1)
+    engine: EngineRules
     gate: GateRules
     lob: LobRules
 

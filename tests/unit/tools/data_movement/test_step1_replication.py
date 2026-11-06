@@ -40,6 +40,7 @@ def test_the_step1_plan_carries_its_sizing_lob_and_line() -> None:
     rep = steps[0].replication
     assert rep is not None and rep.multi_az_default is True
     assert rep.sizing == size_from_collector(inputs.collector)
+    assert rep.engine_version == "3.6.1" and "3.5.4" in (rep.engine_version_why or "")
     assert rep.target_engine == "aurora_mysql" and rep.lob_max_size_kb >= 1
     # aurora_versions.toml: MySQL 8.0 maps to the 8.0 line.
     assert rep.target_engine_line == "8.0"
