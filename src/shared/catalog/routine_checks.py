@@ -28,12 +28,17 @@ Rule fields:
 - ``fix_hint``: what to change so it passes (one sentence).
 - ``docs``: the public documentation the rule rests on, by name.
 - ``[match]``: exactly one check (see :class:`RoutineCheckMatch`).
+- ``[version_change]`` (optional, #1952): the rule checks a change a newer major version
+  made (:class:`VersionChange`), so it runs only when the source's version line is older
+  than that version and the target line has it (:func:`version_change_scope`); it never
+  runs on a same-major target.
 """
 
 from __future__ import annotations
 
 import re
 import tomllib
+from collections.abc import Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import Literal
@@ -45,8 +50,11 @@ from src.shared.catalog.gaps import (
     AURORA_TARGETS,
     SOURCE_ENGINES,
     AuroraExtensionLines,
+    AuroraVersionLines,
     GapImpact,
     aurora_extension_lines,
+    aurora_version_lines,
+    parse_version_line,
 )
 
 __all__ = [
@@ -57,8 +65,11 @@ __all__ = [
     "RoutineCheckMatch",
     "RoutineCheckRule",
     "RoutineKind",
+    "VersionChange",
+    "VersionChangeScope",
     "load_routine_check_rules",
     "routine_check_rules",
+    "version_change_scope",
 ]
 
 ROUTINE_CHECKS_DIR = Path(__file__).resolve().parents[2] / "catalog" / "routine_checks"
@@ -71,7 +82,8 @@ ROUTINE_KINDS: tuple[RoutineKind, ...] = ("function", "procedure", "trigger", "e
 #   owner and security mode (``ownership``);
 # - MySQL: its DECLARE order (``declare_order``), its handlers (``handler``), its
 #   DEFINER (``definer``), the statements in its body (``statement``), its stored
-#   sql_mode (``sql_mode``) and the dynamic SQL it prepares (``dynamic_sql``);
+#   sql_mode (``sql_mode``), the dynamic SQL it prepares (``dynamic_sql``), the words it
+#   uses as identifiers (``reserved_word``, #1952) and its GROUP BY clauses (``group_by``);
 # - every engine: the tables and routines it names move in the same step
 #   (``dependencies``, #1937). The dependency check needs the set of objects the step
 #   moves, so it runs in :mod:`src.tools.routines.dependencies`, not in the checkers.
@@ -86,6 +98,8 @@ RoutineCheck = Literal[
     "statement",
     "sql_mode",
     "dynamic_sql",
+    "reserved_word",
+    "group_by",
     "dependencies",
 ]
 
@@ -107,6 +121,8 @@ _CHECK_ENGINES: dict[RoutineCheck, frozenset[str]] = {
     "statement": _MYSQL_FAMILY,
     "sql_mode": _MYSQL_FAMILY,
     "dynamic_sql": _MYSQL_FAMILY,
+    "reserved_word": _MYSQL_FAMILY,
+    "group_by": _MYSQL_FAMILY,
 }
 # Only MySQL has events (CREATE EVENT).
 _EVENT_ENGINES = _MYSQL_FAMILY
@@ -117,6 +133,7 @@ _ONE_LINE = r"^[^\n]+$"
 _LANGUAGE = re.compile(r"^[a-z][a-z0-9_]*$")
 _WORDS = re.compile(r"^[A-Z][A-Z0-9_]*( [A-Z][A-Z0-9_]*)*$")
 _VARIABLE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CONTEXT = re.compile(r"^(?:[A-Z][A-Z0-9_]*|\()(?: (?:[A-Z][A-Z0-9_]*|\())*$")
 
 
 class RoutineCheckMatch(BaseModel):
@@ -155,13 +172,15 @@ class RoutineCheckMatch(BaseModel):
     # statement (MySQL): a body statement that starts with one of ``statement_starts`` or
     # contains one of ``statement_contains`` (keywords, upper case, outside quotes) where
     # none of ``statement_exceptions`` starts at the same word, that SETs a variable in one
-    # of ``set_scopes`` (of :data:`SET_SCOPES`) or one of ``set_variables``, or that calls
-    # one of ``function_calls``, fails.
+    # of ``set_scopes`` (of :data:`SET_SCOPES`) or one of ``set_variables``, that SETs or
+    # reads (``@@name``, ``@@session.name``) one of ``system_variables``, or that calls one
+    # of ``function_calls``, fails.
     statement_starts: tuple[str, ...] = ()
     statement_contains: tuple[str, ...] = ()
     statement_exceptions: tuple[str, ...] = ()
     set_scopes: tuple[str, ...] = ()
     set_variables: tuple[str, ...] = ()
+    system_variables: tuple[str, ...] = ()
     function_calls: tuple[str, ...] = ()
     # sql_mode (MySQL): the routine's stored sql_mode holds one of ``sql_modes``, or (with
     # ``unknown_sql_modes``) a mode outside ``known_sql_modes`` and every other sql_mode
@@ -172,6 +191,21 @@ class RoutineCheckMatch(BaseModel):
     # dynamic_sql (MySQL): a PREPARE whose statement text is not a string literal the
     # checker can read fails, since the statement checks cannot see what it runs.
     dynamic_sql: bool = False
+    # reserved_word (MySQL, #1952): one of ``reserved_words`` (upper case) written as an
+    # unquoted identifier anywhere after the routine's name (a parameter, a variable, a
+    # label, a column or table name), including the literal text a PREPARE runs, fails.
+    # A word after a ``.`` (a qualified name's later part) or naming an ``@`` user or ``@@``
+    # system variable is not one, nor is a word inside one of ``reserved_word_contexts``
+    # (keyword sequences where the word is the keyword, such as ``EACH ROW``).
+    reserved_words: tuple[str, ...] = ()
+    reserved_word_contexts: tuple[str, ...] = ()
+    # group_by (MySQL, #1952): ``without_order_by``: a SELECT statement (a cursor's
+    # included) whose own GROUP BY has no ORDER BY after it at the same level, so its rows
+    # came out sorted only because the source sorted GROUP BY results, or a GROUP BY at any
+    # level with a LIMIT and no ORDER BY at its level (the LIMIT kept the first sorted rows);
+    # ``with_direction``: a GROUP BY that sorts its columns (``ASC`` or ``DESC``) at any
+    # level.
+    group_by: Literal["without_order_by", "with_direction"] | None = None
     # dependencies (every engine, #1937): a table or routine the routine names that is not
     # in the set of objects moved in the same step fails.
     dependencies_moved_together: bool = False
@@ -201,6 +235,7 @@ class RoutineCheckMatch(BaseModel):
             self.statement_contains,
             self.set_scopes,
             self.set_variables,
+            self.system_variables,
             self.function_calls,
         )
         if any(statement):
@@ -209,6 +244,10 @@ class RoutineCheckMatch(BaseModel):
             found.append("sql_mode")
         if self.dynamic_sql:
             found.append("dynamic_sql")
+        if self.reserved_words:
+            found.append("reserved_word")
+        if self.group_by is not None:
+            found.append("group_by")
         if self.dependencies_moved_together:
             found.append("dependencies")
         return found
@@ -220,7 +259,7 @@ class RoutineCheckMatch(BaseModel):
                 "[match] needs exactly one of parses, languages, extensions, "
                 "security_definer_owned_by_superuser, declare_order, valid_handlers, "
                 "definer_not_target_user, a statement list, sql_modes, unknown_sql_modes, "
-                "dynamic_sql or dependencies_moved_together"
+                "dynamic_sql, reserved_words, group_by or dependencies_moved_together"
             )
         if self.trusted_extension_languages and not self.languages:
             raise ValueError("trusted_extension_languages goes with languages")
@@ -230,6 +269,8 @@ class RoutineCheckMatch(BaseModel):
             raise ValueError("known_sql_modes goes with unknown_sql_modes")
         if self.statement_exceptions and not self.statement_contains:
             raise ValueError("statement_exceptions goes with statement_contains")
+        if self.reserved_word_contexts and not self.reserved_words:
+            raise ValueError("reserved_word_contexts goes with reserved_words")
         if unknown := sorted(set(self.set_scopes) - SET_SCOPES):
             raise ValueError(f"set_scopes {unknown}: the scopes are {sorted(SET_SCOPES)}")
         names = (*self.languages, *self.trusted_extension_languages)
@@ -244,7 +285,10 @@ class RoutineCheckMatch(BaseModel):
             "function_calls": self.function_calls,
             "set_scopes": self.set_scopes,
             "set_variables": self.set_variables,
+            "system_variables": self.system_variables,
             "sql_modes": (*self.sql_modes, *self.known_sql_modes),
+            "reserved_words": self.reserved_words,
+            "reserved_word_contexts": self.reserved_word_contexts,
         }
         for key, values in lists.items():
             if len(set(values)) != len(values):
@@ -257,14 +301,35 @@ class RoutineCheckMatch(BaseModel):
             *self.set_scopes,
             *self.sql_modes,
             *self.known_sql_modes,
+            *self.reserved_words,
         )
         for word in keywords:
             if not _WORDS.match(word):
                 raise ValueError(f"{word!r}: keywords and modes are upper case, single-spaced")
-        for variable in self.set_variables:
+        for variable in (*self.set_variables, *self.system_variables):
             if not _VARIABLE.match(variable):
                 raise ValueError(f"{variable!r}: a system variable name is lower case")
+        for context in self.reserved_word_contexts:
+            if not _CONTEXT.match(context):
+                raise ValueError(
+                    f"{context!r}: a context is upper-case words and ( , single-spaced"
+                )
+            if not set(context.split()) & set(self.reserved_words):
+                raise ValueError(f"{context!r}: a context holds one of the reserved words")
         return self
+
+
+class VersionChange(BaseModel):
+    """The major version that made the change a rule checks (``[version_change]``, #1952).
+
+    ``line``: that version's line as ``aurora_versions.toml`` writes lines (``"8.0"``,
+    ``"16"``). The rule runs only when the source's line is older than ``line`` and the
+    target line is ``line`` or newer (:func:`version_change_scope`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    line: str = Field(pattern=r"^[0-9]+(\.[0-9]+)?$")
 
 
 class RoutineCheckRule(BaseModel):
@@ -282,6 +347,7 @@ class RoutineCheckRule(BaseModel):
     fix_hint: str = Field(min_length=1, pattern=_ONE_LINE)
     docs: str = Field(min_length=1, pattern=_ONE_LINE)
     match: RoutineCheckMatch
+    version_change: VersionChange | None = None
 
     @model_validator(mode="after")
     def _known_values(self) -> RoutineCheckRule:
@@ -307,20 +373,99 @@ class RoutineCheckRule(BaseModel):
                     )
         if "event" in self.kinds and (stray := sorted(set(self.source_engines) - _EVENT_ENGINES)):
             raise ValueError(f"only MySQL has events; kinds lists event for {stray}")
+        if self.version_change is not None:
+            if self.match.check in {"parse", "dependencies"}:
+                raise ValueError(f"a {self.match.check} rule applies to every version")
+            for engine in self.source_engines:
+                if parse_version_line(engine, self.version_change.line) is None:
+                    raise ValueError(
+                        f"version_change line {self.version_change.line!r} is not a "
+                        f"{engine} version line"
+                    )
         return self
+
+
+VersionChangeScope = Literal["runs", "not_a_version_change", "source_unknown", "target_unknown"]
+
+
+def _line(engine: str, text: str) -> tuple[int, ...]:
+    parsed = parse_version_line(engine, text)
+    if parsed is None:  # the loader checks every line
+        raise ValueError(f"{text!r} is not a {engine} version line")
+    return parsed
+
+
+def version_change_scope(
+    rule: RoutineCheckRule,
+    source_engine: str,
+    source_version: str | None,
+    target_lines: Sequence[str],
+) -> VersionChangeScope | None:
+    """Whether a ``[version_change]`` rule runs for a ``source_engine`` source at
+    ``source_version`` moving to one of ``target_lines`` (the chosen line, or every line
+    the target may be), #1952. None for a rule with no ``[version_change]``: it always runs.
+
+    - ``runs``: the source's line is older than the rule's line, and every target line has
+      it (is that line or newer).
+    - ``not_a_version_change``: the source's line already has the change, or no target
+      line has it: the rule does not apply, so it is left out of the verdict. A same-major
+      target is always this.
+    - ``source_unknown``: the source's version has no line, so whether the move crosses the
+      change is unknown.
+    - ``target_unknown``: the source's line is older, but only some of ``target_lines``
+      have the change (no single line was chosen).
+    """
+    if rule.version_change is None:
+        return None
+    changed = _line(source_engine, rule.version_change.line)
+    targets = [_line(source_engine, t) for t in target_lines]
+    if not targets or all(t < changed for t in targets):
+        return "not_a_version_change"
+    source = parse_version_line(source_engine, source_version)
+    if source is None:
+        return "source_unknown"
+    if source >= changed:
+        return "not_a_version_change"
+    return "runs" if all(t >= changed for t in targets) else "target_unknown"
+
+
+def _check_version_change(
+    path: Path, rule: RoutineCheckRule, versions: Mapping[str, AuroraVersionLines]
+) -> None:
+    """A ``[version_change]`` rule's line must be one some target line has: each target
+    lists lines for each source engine, and its newest is the rule's line or newer."""
+    if rule.version_change is None:
+        return
+    for target in rule.targets:
+        listed = versions.get(target)
+        for engine in rule.source_engines:
+            if listed is None or engine not in listed.source_engines:
+                raise CatalogError(
+                    f"{path.name}: a version_change rule needs version lines; "
+                    f"{target} has none for {engine}"
+                )
+            newest = max(_line(engine, line) for line in listed.lines)
+            if _line(engine, rule.version_change.line) > newest:
+                raise CatalogError(
+                    f"{path.name}: version_change line {rule.version_change.line!r} is newer "
+                    f"than every {target} line ({', '.join(listed.lines)})"
+                )
 
 
 def load_routine_check_rules(
     directory: Path = ROUTINE_CHECKS_DIR,
     extension_lines: dict[str, AuroraExtensionLines] | None = None,
+    versions: dict[str, AuroraVersionLines] | None = None,
 ) -> tuple[RoutineCheckRule, ...]:
     """Every routine check rule file in ``directory``, validated, sorted by id.
 
     A rule that reads the target line's extension list (``extensions``, or
     ``trusted_extension_languages``) must target only engines with a list for each of
-    its source engines (``extension_lines``, the #1078 lists).
+    its source engines (``extension_lines``, the #1078 lists). A ``[version_change]``
+    rule's line must be one a target line has (``versions``, ``aurora_versions.toml``).
     """
     extension_lines = aurora_extension_lines() if extension_lines is None else extension_lines
+    versions = aurora_version_lines() if versions is None else versions
     rules: list[RoutineCheckRule] = []
     for path in sorted(directory.glob("*.toml")):
         try:
@@ -341,6 +486,7 @@ def load_routine_check_rules(
                         f"{path.name}: a rule that reads the extension list needs one; "
                         f"{target} has none for {stray}"
                     )
+        _check_version_change(path, rule, versions)
         rules.append(rule)
     if not rules:
         raise CatalogError(f"no routine check rule files under {directory}")
@@ -350,4 +496,6 @@ def load_routine_check_rules(
 @cache
 def routine_check_rules() -> tuple[RoutineCheckRule, ...]:
     """The loaded routine check rules (read once per process), sorted by id."""
-    return load_routine_check_rules(extension_lines=aurora_extension_lines())
+    return load_routine_check_rules(
+        extension_lines=aurora_extension_lines(), versions=aurora_version_lines()
+    )

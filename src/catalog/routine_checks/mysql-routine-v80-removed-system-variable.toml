@@ -1,0 +1,32 @@
+# Routine check mysql-routine-v80-removed-system-variable (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0); MySQL Shell upgrade checker, removed system variables (res/upgrade_checker/sysvars.json: added before 8.0, removed in an 8.0 release).
+id = "mysql-routine-v80-removed-system-variable"
+feature = "A system variable MySQL 8.0 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine sets or reads a system variable MySQL 8.0 removed, so on Aurora MySQL 3 and later the statement fails with an unknown system variable when the routine runs."
+fix_hint = "Use the 8.0 name (transaction_isolation for tx_isolation, transaction_read_only for tx_read_only, log_error_verbosity for log_warnings), or drop the statement for a variable with no replacement (the query cache, old_passwords, secure_auth, the InnoDB file format variables)."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0); MySQL Shell, Upgrade Checker Utility"
+
+[version_change]
+line = "8.0"
+
+# Every variable the upgrade checker lists as added before 8.0 and removed in 8.0
+# (log-warnings, its command-line spelling, is log_warnings here).
+[match]
+system_variables = [
+  "date_format", "datetime_format", "group_replication_allow_local_disjoint_gtids_join",
+  "have_crypt", "ignore_builtin_innodb", "ignore_db_dirs", "innodb_checksums",
+  "innodb_disable_resize_buffer_pool_debug", "innodb_file_format", "innodb_file_format_check",
+  "innodb_file_format_max", "innodb_large_prefix", "innodb_locks_unsafe_for_binlog",
+  "innodb_stats_sample_pages", "innodb_support_xa", "innodb_undo_logs",
+  "internal_tmp_disk_storage_engine", "log_builtin_as_identified_by_password", "log_syslog",
+  "log_syslog_facility", "log_syslog_include_pid", "log_syslog_tag", "log_warnings",
+  "max_tmp_tables", "metadata_locks_cache_size", "metadata_locks_hash_instances",
+  "multi_range_count", "ndb_cache_check_time", "old_passwords", "query_cache_limit",
+  "query_cache_min_res_unit", "query_cache_size", "query_cache_type",
+  "query_cache_wlock_invalidate", "secure_auth", "show_compatibility_56", "sync_frm",
+  "time_format", "tx_isolation", "tx_read_only",
+]

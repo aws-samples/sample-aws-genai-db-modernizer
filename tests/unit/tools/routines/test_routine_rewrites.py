@@ -51,7 +51,9 @@ def _mysql(text: str, **fields: Any) -> MySqlRoutine:
 def _rewrite_mysql(
     routine: MySqlRoutine, target_user: str = "admin", **kw: Any
 ) -> RewrittenRoutine:
-    verdict = check_mysql_routine(routine, target_engine="aurora_mysql", target_user=target_user)
+    verdict = check_mysql_routine(
+        routine, target_engine="aurora_mysql", target_user=target_user, source_version="8.0.36"
+    )
     return rewrite_mysql_routine(routine, verdict, target_user=target_user, **kw)
 
 
@@ -119,7 +121,9 @@ def test_a_named_definer_becomes_the_target_user() -> None:
     assert result.target_create == text.replace("`legacy_ops`@`10.0.%`", "`admin`@`%`")
     # The rewritten text passes the definer check it failed.
     after = routine.model_copy(update={"create_sql": result.target_create})
-    verdict = check_mysql_routine(after, target_engine="aurora_mysql", target_user="admin")
+    verdict = check_mysql_routine(
+        after, target_engine="aurora_mysql", target_user="admin", source_version="8.0.36"
+    )
     assert verdict.status == "as_is"
 
 
@@ -183,7 +187,9 @@ def test_an_invoker_routines_definer_is_rewritten_too() -> None:
     another account's DEFINER still needs privileges the target user lacks."""
     text = (CORPUS / "definer-invoker.sql").read_text(encoding="utf-8")
     routine = _mysql(text)
-    verdict = check_mysql_routine(routine, target_engine="aurora_mysql", target_user="admin")
+    verdict = check_mysql_routine(
+        routine, target_engine="aurora_mysql", target_user="admin", source_version="8.0.36"
+    )
     assert verdict.status == "as_is"
     result = rewrite_mysql_routine(routine, verdict, target_user="admin")
     assert result.record.status == "rewritten" and _rules(result) == [DEFINER_RULE]
@@ -507,7 +513,9 @@ def test_a_c_function_is_not_pinned() -> None:
 
 def test_bad_arguments_are_value_errors() -> None:
     routine = _mysql("CREATE PROCEDURE p() BEGIN END")
-    verdict = check_mysql_routine(routine, target_engine="aurora_mysql", target_user="admin")
+    verdict = check_mysql_routine(
+        routine, target_engine="aurora_mysql", target_user="admin", source_version="8.0.36"
+    )
     for user in ("", "CURRENT_USER", "a b"):
         with pytest.raises(ValueError):
             rewrite_mysql_routine(routine, verdict, target_user=user)

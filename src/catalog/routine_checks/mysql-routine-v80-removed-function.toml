@@ -1,0 +1,17 @@
+# Routine check mysql-routine-v80-removed-function (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed: PASSWORD(), ENCRYPT(), ENCODE(), DECODE(), DES_ENCRYPT(), DES_DECRYPT()); MySQL Shell's upgrade checker, removed functions.
+id = "mysql-routine-v80-removed-function"
+feature = "A function MySQL 8.0 removed"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine calls a function MySQL 8.0 removed, so on Aurora MySQL 3 and later the call fails when the routine runs."
+fix_hint = "Replace PASSWORD() with the server's own account management, ENCRYPT(), ENCODE(), DECODE() and DES_ENCRYPT()/DES_DECRYPT() with AES_ENCRYPT()/AES_DECRYPT() or SHA2(); re-encrypt stored values the old functions wrote."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0)"
+
+[version_change]
+line = "8.0"
+
+[match]
+function_calls = ["PASSWORD", "ENCRYPT", "ENCODE", "DECODE", "DES_ENCRYPT", "DES_DECRYPT"]

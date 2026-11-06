@@ -1,0 +1,17 @@
+# Routine check mysql-routine-v80-group-by-direction (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed: ASC or DESC qualifiers for GROUP BY clauses, removed in 8.0.13).
+id = "mysql-routine-v80-group-by-direction"
+feature = "GROUP BY with ASC or DESC, removed in MySQL 8.0"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "MySQL 8.0.13 removed the ASC and DESC qualifiers of GROUP BY columns, so on Aurora MySQL 3 and later the statement no longer parses and the routine cannot be created."
+fix_hint = "Drop ASC or DESC from the GROUP BY and add ORDER BY with the same columns and directions."
+docs = "MySQL 8.0 Reference Manual, What Is New in MySQL 8.0 (Features Removed in MySQL 8.0)"
+
+[version_change]
+line = "8.0"
+
+[match]
+group_by = "with_direction"
