@@ -344,6 +344,8 @@ const AssignmentGatePage = memo(() => {
   // rendering exactly as before.
   const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
   const cacheReads = assignmentData?.cache_reads || null;
+  // #1990: the assumptions block the chat gate prints too (src/shared/assumptions.py).
+  const gateAssumptions = assignmentData?.assumptions || [];
   // #381 review round 2: never offer the losing Aurora engine as a per-query
   // override target -- the server rejects it (LosingAuroraEngineOverride) with no
   // warning here otherwise.
@@ -868,6 +870,21 @@ const AssignmentGatePage = memo(() => {
               </div>
             </Box>
           )}
+        </Container>
+      )}
+
+      {/* #1990: the assumptions the plan rests on, each with its origin; approving the
+          assignment approves them, and the deliverables show the costs at 1x, 5x and 10x. */}
+      {gateAssumptions.length > 0 && (
+        <Container header={<Header variant="h2">{t('assignment-gate.assumptions.header')}</Header>}>
+          <Box color="text-body-secondary" fontSize="body-s">
+            {t('assignment-gate.assumptions.note')}
+          </Box>
+          <ul data-figure="gate-assumptions">
+            {gateAssumptions.map(line => (
+              <li key={line}>{line}.</li>
+            ))}
+          </ul>
         </Container>
       )}
 

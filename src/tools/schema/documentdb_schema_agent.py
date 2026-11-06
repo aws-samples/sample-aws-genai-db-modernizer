@@ -35,6 +35,7 @@ from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
 from src.contracts.dynamodb_pe_review import ROUTING_FLAGS_DESCRIPTION
 from src.contracts.model_flag import RoutingFlagEntry
 from src.contracts.schema_design_input import project_schema_design_input
+from src.shared.assumptions import peak_assumption
 from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.progress import say
@@ -248,7 +249,11 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
     }
     # design_rps, row and document sizes, coverage: computed here, read by the skill (#626).
     projected["design_metrics"] = design_metrics_from_projection(
-        "documentdb", projected, unfiltered_pattern_count(raw_collector)
+        "documentdb",
+        projected,
+        unfiltered_pattern_count(raw_collector),
+        # #1990: the peak factor from the whole collection's metrics.
+        peak_assumption(raw_collector, projected["context"]),
     )
     return projected
 

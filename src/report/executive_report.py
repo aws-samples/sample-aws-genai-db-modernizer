@@ -83,7 +83,7 @@ from .engine_choices import (
     reroute_summary,
 )
 from .engineering_report import RISK_RULE_NOTE, _engine_role_notes_md
-from .facts import report_facts
+from .facts import assumption_block_lines, report_facts
 from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
@@ -1097,6 +1097,9 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     rate_windows = (facts.get("rate_windows") or {}).get("statement")
     if rate_windows:
         flow += [_gap(6), _para(f"{L_RATE_WINDOWS}: {rate_windows}.", st["small"])]
+    # #1990: the assumptions block and the growth scenario, as the facts state them.
+    for line in assumption_block_lines(facts):
+        flow += [_gap(4), _para(f"{line}.", st["small"])]
     # #1474: the one caveat where the costs are stated.
     flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     return flow

@@ -94,6 +94,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.shared.assumptions import peak_assumption
 from src.tools.schema.design_metrics import METRIC_ENGINES, build_design_metrics
 from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
@@ -516,6 +517,8 @@ def build_group_input(
             group_tables,
             group_queries if pattern_units is None else group_queries_section["query_patterns"],
             members=None if pattern_units is None else listed_members(group_collector),
+            # #1990: the peak factor from the whole collection's metrics.
+            peak=peak_assumption(collector_output),
         ).model_dump(mode="json")
     if decision_trace is not None:
         group_input["decision_trace"] = scope_decision_trace(decision_trace, group_collector)

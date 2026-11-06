@@ -280,3 +280,11 @@ def _moved_by_later_waves_backfill(report: dict[str, Any], rows: list[Any]) -> l
 def wave_facts_by_number(report: dict[str, Any]) -> dict[int, dict[str, Any]]:
     """wave number -> that wave's facts."""
     return {int(w.get("wave") or 0): w for w in report_facts(report).get("waves") or []}
+
+
+def assumption_block_lines(facts: dict[str, Any]) -> list[str]:
+    """The assumptions block's lines, then the growth scenario's (#1990), as the facts
+    state them; empty for a report written before them."""
+    block = facts.get("assumptions") or {}
+    scenarios = facts.get("growth_scenarios") or {}
+    return [*(block.get("lines") or []), *(scenarios.get("lines") or [])]

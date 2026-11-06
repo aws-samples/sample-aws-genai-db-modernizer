@@ -442,6 +442,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _DETECTION + "; one value for OpenSearch's os-07 and Aurora's anti-04 (#493)",
     ),
     "src/agents/referee/routed_confidence.py": (frozenset({"LEAD_MIN_SHARE"}), _WORDING),
+    "src/shared/assumptions.py": (
+        frozenset({"DEFAULT_GROWTH", "PEAK_MAX_DAYS", "PEAK_MIN_DAYS", "WINDOW_COVERED_SHARE"}),
+        "the assessment's stated assumptions (#1990): the default growth of the scenario "
+        "line and the CloudWatch coverage a peak ratio is taken from; never read by routing",
+    ),
     "src/shared/collection_database_name.py": (
         frozenset({"_MAX_LENGTH"}),
         "the artifact-path name length limit (#420, #1096), not a routing rule",

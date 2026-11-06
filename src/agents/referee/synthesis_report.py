@@ -1219,7 +1219,8 @@ def build_tco_analysis(
         "unqueried_tables": unqueried_summary,
         "assumptions": [
             "On-demand capacity mode for all target databases",
-            "Region: us-east-1",
+            # #2025 review: the region and price date are stated once, in the assumptions
+            # block (facts.assumptions), not again here.
             # #1247: only a known baseline was estimated; with none, the note is
             # left out like the current-cost and savings lines (#949).
             *(

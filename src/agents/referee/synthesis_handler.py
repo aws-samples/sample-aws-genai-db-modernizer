@@ -18,6 +18,7 @@ LLM seam functions (for Skill Sync / external LLM integration):
 - apply_synthesis_llm_output  — merges LLM output into deterministic result
 """
 
+import dataclasses
 from datetime import UTC, datetime
 
 from src.agents.prompt_framing import with_untrusted_notice
@@ -95,6 +96,12 @@ from src.contracts.executive_summary_response import (
 )
 from src.contracts.skipped_placeholders import SkippedSynthesisReport
 from src.contracts.synthesis_output import SynthesisOutputContract
+from src.shared.assumptions import (
+    ASSUMPTIONS_FILE,
+    assumption_items,
+    growth_assumption,
+    growth_scenario_facts,
+)
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.contract_versioning import stamp_artifact_version
@@ -430,6 +437,43 @@ def run_synthesis_deterministic(
     for entry in ranking:
         if entry.get("target") in sized:
             entry["monthly_cost_usd"] = sized[str(entry["target"])]
+    # #1990: growth is a scenario, never in the headline: the same TCO arithmetic at each
+    # scenario growth's scaled rates, and the busiest estimated partition key value.
+    designs_by_engine = {e: a.schema_design for e, a in data.engines.items()}
+
+    def _priced(collector: dict) -> float:
+        scaled = dataclasses.replace(data, collector=collector)
+        return float(
+            build_tco_analysis(
+                scaled,
+                retired_costs=retired_costs,
+                wave_one_engine=wave_retained_engine(migration_waves),
+                retired_bases=retired_bases,
+                derived_copy_syncs=syncs_by_engine(
+                    designs_by_engine,
+                    risk_assessment.get("risks") or [],
+                    collector,
+                    sized_query_ids,
+                ),
+                gsi_costs=gsi_costs_by_engine(designs_by_engine, collector, sized_query_ids),
+            )["projected_monthly_cost"]
+        )
+
+    # #2001 review S1: the busiest estimated key value over every entry, computed once:
+    # the risk states it, and facts.busiest_partition_key (and the growth scenario) too.
+    busiest_partition_key = busiest_key(
+        {e: a.schema_design or {} for e, a in data.engines.items()},
+        ((data.collector or {}).get("database_schema") or {}).get("tables") or [],
+    )
+    growth, growth_origin = growth_assumption(_assumptions_decision(store, database_name, job_id))
+    growth_scenarios = growth_scenario_facts(
+        data.collector,
+        growth=growth,
+        origin=growth_origin,
+        headline_cost=float(tco.get("projected_monthly_cost") or 0.0),
+        price=_priced,
+        busiest_key=busiest_partition_key,
+    )
     # #339: the per-query decision traces from the move ledger (the close calls
     # and the queries no engine fits), read before the risks that cite them.
     query_traces = (
@@ -475,12 +519,6 @@ def run_synthesis_deterministic(
     # before the risks, which set the hot-partition severity from it, and stated in
     # facts.hot_partitions.
     hot_partitions = _hot_partitions(data)
-    # #2001 review S1: the busiest estimated key value over every entry, computed once:
-    # the risk states it, and facts.busiest_partition_key (and the growth scenario) too.
-    busiest_partition_key = busiest_key(
-        {e: a.schema_design or {} for e, a in data.engines.items()},
-        ((data.collector or {}).get("database_schema") or {}).get("tables") or [],
-    )
     # #471: the relational move's gaps, read before the risks, which raise them (#1149).
     relational_gaps = _relational_gaps(data)
     # #1362: the write-group members their engine serves poorly, read before the risks,
@@ -710,6 +748,8 @@ def run_synthesis_deterministic(
         "relational_gaps": relational_gaps,
         "hot_partitions": hot_partitions,
         "busiest_partition_key": busiest_partition_key,
+        "growth_scenarios": growth_scenarios,
+        "growth": [growth, growth_origin],
         "derived_copy_syncs": derived_copy_syncs,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
@@ -762,8 +802,8 @@ def _compact_query_groups_for_llm(query_groups: list[dict]) -> list[dict]:
     No single combined "calls per second": a group two
     engines share (say a cache layer and the relational engine reading the
     same source table) mixes each engine's own metric under one number --
-    DynamoDB's ``design_rps`` already includes peak and growth factors from
-    its own analysis, while a relational engine's is the collector's raw
+    DynamoDB's ``design_rps`` includes the measured peak factor (#1990),
+    while a relational engine's is the collector's raw
     measured rate, so summing them invited the model to rank throughput
     across engines that are not on the same scale. ``calls_per_second_by_
     engine`` keeps each engine's own figure separate instead.
@@ -1294,6 +1334,17 @@ def _carried_writes(
     )
 
 
+def _assumptions_decision(store: ArtifactStore, database_name: str, job_id: str) -> dict | None:
+    """The customer's recorded assumptions (``decisions/assumptions.json``, #1990)."""
+    key = f"{database_name}/{job_id}/{ASSUMPTIONS_FILE}"
+    try:
+        found = store.read_json(key) if store.exists(key) else None
+    except Exception:  # noqa: BLE001 -- an unreadable file keeps the defaults, logged
+        say(f"[synthesis] Unreadable assumptions decision {key}; using the defaults")
+        return None
+    return found if isinstance(found, dict) else None
+
+
 def _hot_partitions(data: SynthesisData) -> list[dict]:
     """The design entries above the at-risk share of one key value's limit, each with
     its per-key estimate over the collector's tables (#1989)."""
@@ -1531,6 +1582,25 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
             _sized_query_ids(data),
         )
     )
+    price_list = estimates_price_basis(
+        {
+            str(row.get("database")): row.get("price_list")
+            for row in (output_data.get("tco_analysis") or {}).get("cost_breakdown") or []
+            if isinstance(row, dict)
+        }
+    )
+    # #1893: the window each statement's call rate used, and the one statement of the
+    # 24-hour assumption when any rate rests on it.
+    rate_windows = (
+        rate_window_facts(((data.collector or {}).get("queries") or {}).get("query_patterns") or [])
+        if data.collector
+        else None
+    )
+    # #1990: the growth synthesis priced its scenarios at (an older caller's result
+    # without it reads the decision here).
+    growth, growth_origin = result.get("growth") or growth_assumption(
+        _assumptions_decision(store, result["database_name"], result["job_id"])
+    )
     output_data["facts"] = compute_report_facts(
         output_data,
         view_ids=view_ids,
@@ -1543,27 +1613,28 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # #1527: the stream sync of the DynamoDB design's derived copies, by the design
         # conflict risk it sits under.
         derived_copy_sync=next(iter(derived_copy_syncs.values()), None),
-        price_list=estimates_price_basis(
-            {
-                str(row.get("database")): row.get("price_list")
-                for row in (output_data.get("tco_analysis") or {}).get("cost_breakdown") or []
-                if isinstance(row, dict)
-            }
-        ),
+        price_list=price_list,
         # #1636: the collection's row counts by basis, and the one sizing assumption the
         # deliverables state for the tables the source has no count for.
         row_counts=row_count_facts(schema.get("tables") or []) if data.collector else None,
-        # #1893: the window each statement's call rate used, and the one statement of the
-        # 24-hour assumption when any rate rests on it.
+        # #1989: the hot-partition entries and their load per key value.
         hot_partitions=hot_partitions,
         busiest_partition_key=busiest_partition_key,
-        rate_windows=(
-            rate_window_facts(
-                ((data.collector or {}).get("queries") or {}).get("query_patterns") or []
+        rate_windows=rate_windows,
+        # #1990: the one assumptions block (growth, peak, rate window, region and prices,
+        # each with its origin) and the growth scenario lines.
+        assumptions=(
+            assumption_items(
+                data.collector,
+                growth=float(growth),
+                growth_origin=growth_origin,
+                price_basis=price_list,
+                rate_window_statement=(rate_windows or {}).get("statement"),
             )
             if data.collector
             else None
         ),
+        growth_scenarios=result.get("growth_scenarios"),
     )
 
     return output_data

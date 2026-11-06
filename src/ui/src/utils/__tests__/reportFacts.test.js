@@ -21,6 +21,7 @@ import {
   tradeOffCountOf,
   realityCheckDecisions,
   rateWindowStatementOf,
+  assumptionLinesOf,
   rowCountStatementOf,
   tradeOffsByTab,
   tradeOffTabLabel,
@@ -363,6 +364,28 @@ describe('derivedCopySyncOf (#1527)', () => {
     expect(derivedCopySyncOf({ facts: { derived_copy_sync: null } }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({ facts: {} }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({}, 'RISK-002')).toBeNull();
+  });
+});
+
+describe('assumptionLinesOf (#1990)', () => {
+  test('is the assumptions lines, then the growth scenario lines, as the facts state them', () => {
+    const synthesis = {
+      facts: {
+        assumptions: { assumptions: [], lines: ['Growth: 5× (default)', 'Peak: not measured (default)'] },
+        growth_scenarios: { rows: [], lines: ['Growth scenario: 1× $10.00/mo (the headline)'] },
+      },
+    };
+    expect(assumptionLinesOf(synthesis)).toEqual([
+      'Growth: 5× (default)',
+      'Peak: not measured (default)',
+      'Growth scenario: 1× $10.00/mo (the headline)',
+    ]);
+  });
+
+  test('is empty for a report written before the facts', () => {
+    expect(assumptionLinesOf({ facts: {} })).toEqual([]);
+    expect(assumptionLinesOf({})).toEqual([]);
+    expect(assumptionLinesOf(null)).toEqual([]);
   });
 });
 

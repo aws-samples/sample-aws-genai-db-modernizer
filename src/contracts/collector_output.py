@@ -107,6 +107,11 @@ Version History:
   literal may not be exact); QueryPattern.nested. A PostgreSQL trigger's definition is
   now its whole CREATE TRIGGER (#1651's was the EXECUTE FUNCTION clause). Backward
   compatible: every new field defaults to None or empty
+- 5.13 (2026-11-08, #1990): Added optional RDSCloudWatchMetrics.period_seconds and
+  window_days, and MetricStats.datapoints and max_period_avg: the CloudWatch period, the
+  window asked for, how many periods each metric's figures cover and the busiest
+  period's Average, so a peak-to-average ratio and the days it is observed over are
+  known. Backward compatible: all default to None.
 """
 
 import re
@@ -1491,9 +1496,42 @@ class MetricStats(BaseModel):
     max: float | None = Field(None, ge=0, description="Maximum value")
     min: float | None = Field(None, ge=0, description="Minimum value")
     p95: float | None = Field(None, ge=0, description="95th percentile value")
+    max_period_avg: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The busiest CloudWatch period's Average (#2025): with avg, the peak-to-average "
+            "ratio of the workload; max is one minute's Maximum and is not used for it"
+        ),
+    )
+    datapoints: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "How many CloudWatch periods the figures cover (#1990): with the metrics' "
+            "period_seconds, the days the peak-to-average ratio is observed over; None in "
+            "a collection written before"
+        ),
+    )
 
 
 class RDSCloudWatchMetrics(BaseModel):
+    window_days: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "The days of metrics the collection asked for (#2025): a window whose periods "
+            "are nearly all present covers that many days"
+        ),
+    )
+    period_seconds: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The CloudWatch period each datapoint covers (#1990): avg is the mean of the "
+            "periods' averages, max the highest maximum; None in a collection written before"
+        ),
+    )
     cpu_utilization: MetricStats | None = Field(None, description="CPU utilization percentage")
     freeable_memory_gb: MetricStats | None = Field(None, description="Freeable memory in GB")
     database_connections: MetricStats | None = Field(None, description="Database connections")
@@ -1565,7 +1603,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.12",
+        default="5.13",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

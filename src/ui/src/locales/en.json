@@ -826,6 +826,8 @@
   "cache-layer.stay-on-owner_other": "{{count}} stay on their owner engine",
   "cache-layer.all-stay-on-owner": "all {{count}} stay on their owner engine",
   "cache-layer.hottest-reads": "Hottest cache candidates",
+  "assignment-gate.assumptions.header": "Assumptions",
+  "assignment-gate.assumptions.note": "Approving the assignment approves these assumptions. The deliverables show the costs at 1×, 5× and 10× growth, and at your own growth when you set one.",
   "cache-layer.read-no-table": "a query with no table",
   "cache-layer.read-more-tables_one": "and {{count}} more table",
   "cache-layer.read-more-tables_other": "and {{count}} more tables",

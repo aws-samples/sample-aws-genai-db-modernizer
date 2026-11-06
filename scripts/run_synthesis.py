@@ -197,6 +197,17 @@ def main() -> None:
         default="./artifacts",
         help="Root directory for local artifacts (default: ./artifacts)",
     )
+    parser.add_argument(
+        "--growth",
+        type=float,
+        default=None,
+        metavar="N",
+        help=(
+            "The growth multiple the deliverables' scenario line uses (#1990; default 5). "
+            "Recorded as the job's decisions/assumptions.json; never applied to the design "
+            "rates, the risks or the headline cost"
+        ),
+    )
     args = parser.parse_args()
     if args.llm_mode == "bedrock":
         from src.shared.bedrock_guardrail import exit_on_invalid_guardrail_config
@@ -230,6 +241,14 @@ def main() -> None:
     # that fact even for a job approved in chat, or run with --llm-mode none,
     # that never touched .meta/<job_id>.json through the API (#517).
     mark_assignment_reviewed(store, args.db, args.job_id, _PHASE)
+    # #1990: a growth change re-runs synthesis only: growth reaches nothing upstream.
+    if args.growth is not None:
+        from src.shared.assumptions import record_growth
+
+        try:
+            record_growth(store, args.db, args.job_id, args.growth, via="cli")
+        except ValueError as exc:
+            _error(str(exc))
 
     if args.finalize:
         run_finalize(store, args.job_id, args.db, version)

@@ -208,6 +208,13 @@ class AgentQueryPattern(BaseModel):
     query_type: QueryType | None = None
     frequency_per_hour: float = Field(..., ge=0)
     calls_per_second: float | None = Field(None)
+    rate_window_basis: str | None = Field(
+        None,
+        description=(
+            "How the collector chose the rate's window (#1893): a sampled rate takes no "
+            "peak factor in design_metrics (#1990)"
+        ),
+    )
     tables_accessed: list[str]
 
     rows_returned_avg: float | None = None
@@ -455,10 +462,14 @@ class AgentAnalysisInput(BaseModel):
 
 
 class AgentContextInput(BaseModel):
-    """Optional human overrides for growth/SLO parameters."""
+    """Optional human overrides for growth/SLO parameters.
 
-    growth_multiplier: float = Field(default=10.0, gt=0)
-    peak_to_avg_ratio: float = Field(default=3.0, gt=0)
+    #1990: growth (5× by default) is a scenario the deliverables state, never applied to a
+    design rate; the peak factor is the source metrics' measured ratio, so
+    ``peak_to_avg_ratio`` is None unless the customer sets one."""
+
+    growth_multiplier: float = Field(default=5.0, gt=0)
+    peak_to_avg_ratio: float | None = Field(default=None, gt=0)
     default_read_slo_ms: float = Field(default=10.0, gt=0)
     default_write_slo_ms: float = Field(default=20.0, gt=0)
     slo_overrides: dict[str, float] = Field(default_factory=dict)
@@ -548,10 +559,14 @@ class SchemaDesignGroupsManifest(BaseModel):
       the collector's index prefix lengths.
     - 1.6 (2026-11-02, #292): Added optional ``AgentColumn.datetime_precision``, carried
       from the collector column (#292). Backward compatible: defaults to None.
+    - 1.7 (2026-11-07, #1990): AgentContextInput.growth_multiplier defaults to 5 (was
+      10) and peak_to_avg_ratio to None (was 3): growth is a stated scenario and the
+      peak comes from the source's metrics; added optional
+      AgentQueryPattern.rate_window_basis, so a sampled rate takes no peak factor.
     """
 
     contract_version: str = Field(
-        default="1.6", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.7", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str
@@ -707,6 +722,7 @@ def project_schema_design_input(
                 query_type=QueryType(q.query_type.value) if q.query_type else None,
                 frequency_per_hour=q.frequency_per_hour,
                 calls_per_second=q.calls_per_second,
+                rate_window_basis=getattr(q, "rate_window_basis", None),
                 tables_accessed=q.tables_accessed,
                 rows_returned_avg=q.rows_returned_avg,
                 rows_returned_p95=q.rows_returned_p95,
