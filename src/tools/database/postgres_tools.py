@@ -42,6 +42,105 @@ _SAMPLE_KEY = "s.userid::text || '/' || s.queryid::text || '/' || " + (
 )
 
 
+# #1652: the offline script's sections 8 and 9 (``scripts/collect-postgresql.sql``),
+# for schema public as every live read here; ``{flag}`` is 1 or 0
+# (``include_routine_bodies``). ``tests/unit/scripts/test_collect_postgresql_routines_sql.py``
+# keeps the two the same.
+_PROCEDURES_SQL = """
+    SELECT
+      pr.proname AS routine_name,
+      n.nspname AS schema_name,
+      pr.proname || '_' || pr.oid AS specific_name,
+      pg_get_function_identity_arguments(pr.oid) AS identity_arguments,
+      CASE pr.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS routine_type,
+      pg_get_function_result(pr.oid) AS return_type,
+      upper(l.lanname) AS language,
+      pg_get_userbyid(pr.proowner) AS owner,
+      pr.prosecdef AS security_definer,
+      coalesce((
+        SELECT json_agg(json_build_object('kind', dep.kind, 'name', dep.name) ORDER BY dep.kind, dep.name)
+        FROM (
+          SELECT DISTINCT
+            CASE
+              WHEN d.refclassid = 'pg_proc'::regclass THEN 'function'
+              WHEN d.refclassid = 'pg_type'::regclass THEN 'type'
+              WHEN c.relkind IN ('r', 'p', 'f') THEN 'table'
+              WHEN c.relkind IN ('v', 'm') THEN 'view'
+              WHEN c.relkind = 'S' THEN 'sequence'
+            END AS kind,
+            CASE
+              WHEN d.refclassid = 'pg_proc'::regclass THEN d.refobjid::regprocedure::text
+              WHEN d.refclassid = 'pg_type'::regclass THEN d.refobjid::regtype::text
+              ELSE d.refobjid::regclass::text
+            END AS name
+          FROM pg_depend d
+          LEFT JOIN pg_class c ON d.refclassid = 'pg_class'::regclass AND c.oid = d.refobjid
+          WHERE d.classid = 'pg_proc'::regclass AND d.objid = pr.oid AND d.deptype = 'n'
+            AND d.refclassid IN ('pg_proc'::regclass, 'pg_type'::regclass, 'pg_class'::regclass)
+        ) dep
+        WHERE dep.kind IS NOT NULL
+      ), '[]'::json) AS depends_on,
+      length(pg_get_functiondef(pr.oid)) AS body_chars,
+      CASE WHEN {flag} = 1 THEN pg_get_functiondef(pr.oid) END AS definition,
+      CASE WHEN {flag} = 1 THEN 'collected' ELSE 'opted_out' END AS body_status
+    FROM pg_proc pr
+    JOIN pg_namespace n ON n.oid = pr.pronamespace
+    JOIN pg_language l ON l.oid = pr.prolang
+    WHERE pr.prokind IN ('f', 'p')
+      AND n.nspname = 'public'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_depend x
+        WHERE x.classid = 'pg_proc'::regclass AND x.objid = pr.oid
+          AND x.refclassid = 'pg_extension'::regclass AND x.deptype = 'e')
+    ORDER BY routine_type, routine_name, specific_name
+"""
+
+_TRIGGERS_SQL = """
+    -- pg_trigger, not information_schema.triggers: that view lists only the triggers
+    -- on tables the user owns or holds more than SELECT on, so a read-only user saw
+    -- none (#1651). One row per trigger, with every event it fires on. #1652: its
+    -- orientation, state and function, and its whole CREATE (pg_get_triggerdef).
+    -- tgtype bits: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE,
+    -- 64 INSTEAD OF.
+    SELECT
+      t.tgname AS trigger_name,
+      n.nspname AS schema_name,
+      c.relname AS table_name,
+      concat_ws(' OR ',
+        CASE WHEN t.tgtype & 4 <> 0 THEN 'INSERT' END,
+        CASE WHEN t.tgtype & 16 <> 0 THEN 'UPDATE' END,
+        CASE WHEN t.tgtype & 8 <> 0 THEN 'DELETE' END,
+        CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END) AS event_type,
+      CASE t.tgtype & 66 WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER' END
+        AS timing,
+      CASE WHEN t.tgtype & 1 <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS for_each,
+      t.tgenabled::text AS is_enabled,
+      t.tgfoid::regprocedure::text AS function_signature,
+      length(pg_get_triggerdef(t.oid)) AS body_chars,
+      CASE WHEN {flag} = 1 THEN pg_get_triggerdef(t.oid) END AS definition,
+      CASE WHEN {flag} = 1 THEN 'collected' ELSE 'opted_out' END AS body_status
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE NOT t.tgisinternal
+      -- a partition's clone of its parent's trigger is the parent's trigger: one row
+      -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
+      AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
+      AND n.nspname = 'public'
+    ORDER BY c.relname, t.tgname
+"""
+
+
+def _nested(toplevel: object) -> bool | None:
+    """``pg_stat_statements.toplevel`` read backwards (#1652): True for a statement that
+    ran inside a function or procedure; None when the server does not report it."""
+    if toplevel is None or toplevel == "":
+        return None
+    if isinstance(toplevel, bool):
+        return not toplevel
+    return str(toplevel).strip().lower() in ("false", "f")
+
+
 class PostgreSQLRemoteCollector:
     """Collects PostgreSQL metadata via SSM Run Command."""
 
@@ -275,19 +374,12 @@ class PostgreSQLRemoteCollector:
             FROM pg_views WHERE schemaname = 'public' ORDER BY viewname
         """)
 
-    def collect_procedures(self) -> list[dict]:
-        return self._query("""
-            SELECT
-                p.proname AS routine_name,
-                CASE p.prokind WHEN 'f' THEN 'FUNCTION' WHEN 'p' THEN 'PROCEDURE' END AS routine_type,
-                pg_get_function_result(p.oid) AS return_type,
-                l.lanname AS language
-            FROM pg_proc p
-            JOIN pg_namespace n ON p.pronamespace = n.oid
-            JOIN pg_language l ON p.prolang = l.oid
-            WHERE n.nspname = 'public'
-            ORDER BY routine_type, routine_name
-        """)
+    def collect_procedures(self, include_bodies: bool = True) -> list[dict]:
+        """Every function and procedure in schema public with its whole CREATE (#1652),
+        from pg_proc so a routine whose EXECUTE the user lacks is still listed;
+        ``include_bodies=False`` reads names and sizes only."""
+        flag = 1 if include_bodies else 0
+        return self._query(_PROCEDURES_SQL.format(flag=flag))  # nosec B608 -- flag is 0 or 1
 
     def collect_extensions(self) -> list[dict]:
         """Every extension installed in the database and its version (#1078)."""
@@ -297,31 +389,28 @@ class PostgreSQLRemoteCollector:
             ORDER BY extname
         """)
 
-    def collect_triggers(self) -> list[dict]:
-        return self._query("""
-            SELECT
-                t.tgname AS trigger_name,
-                c.relname AS table_name,
-                n.nspname AS schema_name,
-                CASE t.tgtype & 66
-                    WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER'
-                END AS timing,
-                -- every event, as the offline script writes them (#1651)
-                concat_ws(' OR ',
-                    CASE WHEN t.tgtype & 4 <> 0 THEN 'INSERT' END,
-                    CASE WHEN t.tgtype & 16 <> 0 THEN 'UPDATE' END,
-                    CASE WHEN t.tgtype & 8 <> 0 THEN 'DELETE' END,
-                    CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END) AS event_type,
-                CASE t.tgtype & 1 WHEN 1 THEN 'ROW' ELSE 'STATEMENT' END AS for_each
-            FROM pg_trigger t
-            JOIN pg_class c ON t.tgrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = 'public' AND NOT t.tgisinternal
-              -- one row for a partitioned table's trigger, not one per partition
-              -- (tgparentid is PostgreSQL 13+; on 12 the clones are internal)
-              AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
-            ORDER BY c.relname, t.tgname
+    def collect_triggers(self, include_bodies: bool = True) -> list[dict]:
+        """Every trigger in schema public, one row each with every event (#1651), its
+        orientation, state and function, and its whole CREATE (#1652), from pg_trigger:
+        information_schema.triggers hides them from a read-only user."""
+        flag = 1 if include_bodies else 0
+        return self._query(_TRIGGERS_SQL.format(flag=flag))  # nosec B608 -- flag is 0 or 1
+
+    def collect_routine_stats(self) -> tuple[list[dict], dict]:
+        """The call counts PostgreSQL keeps per function (#1652, ``pg_stat_user_functions``,
+        filled only when ``track_functions`` is pl or all) and how they were read; the
+        setting is never changed."""
+        stats = self._query("""
+            SELECT funcname AS routine_name, schemaname AS schema_name,
+                   'FUNCTION' AS object_type, calls AS execution_count,
+                   round(total_time::numeric, 3) AS total_time_ms
+            FROM pg_stat_user_functions
+            WHERE schemaname = 'public'
         """)
+        setting = self._query("SELECT current_setting('track_functions') AS track_functions")
+        if setting and str(setting[0].get("track_functions") or "") == "none":
+            return [], {"status": "not_tracked", "reason": "track_functions is none"}
+        return stats, {"status": "tracked"}
 
     # -------------------------------------------------------------------
     # Query patterns (pg_stat_statements)
@@ -386,7 +475,9 @@ class PostgreSQLRemoteCollector:
                 temp_blks_read, temp_blks_written,
                 -- #1893: PostgreSQL 17's per-entry start (NULL before 17, no such column).
                 round(extract(epoch FROM now() - (to_jsonb(s) ->> 'stats_since')::timestamptz)
-                    ::numeric, 3) AS stats_since_age_seconds
+                    ::numeric, 3) AS stats_since_age_seconds,
+                -- #1652: false inside a function or procedure (14+, track = all)
+                (to_jsonb(s) ->> 'toplevel')::boolean AS toplevel
             FROM pg_stat_statements s
             WHERE calls >= {min_executions}
               AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
@@ -424,6 +515,8 @@ class PostgreSQLRemoteCollector:
                     "query_id": query_id,
                     "query_text": query_text,
                     "query_type": statement_query_type(query_text, "postgresql"),
+                    # #1652: PostgreSQL's toplevel read backwards; None when not reported.
+                    "nested": _nested(r.get("toplevel")),
                     "execution_count": calls,
                     # #1893: PostgreSQL 17's time since the entry started counting,
                     # else the time since pg_stat_statements was reset, else 24 hours.

@@ -24,10 +24,15 @@ What each collection script emits. The scripts (`scripts/collect-*.sql`) are the
 | `views` | yes | yes | yes | yes |
 | `procedures` | yes | yes | yes | yes |
 | `triggers` | yes | yes | yes | yes |
+| `routine_stats`, `routine_stats_status` | yes | yes | yes | `routine_stats_status` only |
+| `routine_sources`, `query_routines` | no | no | `query_routines` only | yes |
+| `routine_parameters`, `events` | yes | no | no | no |
 | `queries` | yes | yes | yes | yes |
 | `global_stats` | yes | yes | yes | yes |
 | `io_stats`, `wait_events`, `os_stats` | no | no | yes | yes |
 | `extensions` | no | yes | no | no <!-- claim: tests/unit/tools/database/test_postgres_extensions_end_to_end.py::test_the_script_reads_every_installed_extension_and_its_version --> |
+
+Since #1652 the PostgreSQL `procedures` and `triggers` and MySQL's `procedures`, `triggers` and `events` carry `body_status` (`collected`, `not_readable`, `opted_out`) and `body_chars`, and `metadata.routine_capture` records `include_bodies` and, for MySQL, `routines_counted`, `parameters_counted` and `privileges_not_seen`; a MySQL `routine_parameters` of `null` is a list the server cut, and no routine is rebuilt from it. <!-- claim: tests/unit/agents/test_routine_sources_exactness.py::test_a_cut_parameter_list_rebuilds_no_routine, tests/unit/scripts/test_collect_routines_sql.py::test_mysql_routine_rows_carry_what_their_create_is_rebuilt_from, tests/unit/scripts/test_collect_routines_sql.py::test_postgresql_bodies_are_opt_out_and_the_capture_says_so -->
 
 ### Input check
 

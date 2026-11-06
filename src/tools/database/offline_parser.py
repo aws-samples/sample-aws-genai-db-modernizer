@@ -17,7 +17,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import boto3
 
@@ -366,6 +366,7 @@ def _parse_offline_collection(
         )
         sample_rows_note = {"sample_rows_dropped": sample_rows_dropped}
 
+    routines = _routine_rows(data, metadata, source_engine)
     return {
         **other_db_note,
         **sample_rows_note,
@@ -376,11 +377,13 @@ def _parse_offline_collection(
         "tables": tables,
         # #1625: string literals in stored definitions are redacted too.
         "views": _redacted_definitions(data.get("views", []), source_engine),
-        "procedures": _redacted_definitions(data.get("procedures", []), source_engine),
+        "procedures": routines["procedures"],
         # #1651: one row per trigger, with every event (PostgreSQL writes one per event).
-        "triggers": _redacted_definitions(
-            _merged_triggers(data.get("triggers", [])), source_engine
-        ),
+        "triggers": routines["triggers"],
+        # #1652: MySQL scheduled events, how routine bodies and execution counts were read.
+        "events": routines["events"],
+        "routine_capture": routines["routine_capture"],
+        "routine_stats_status": routines["routine_stats_status"],
         "queries": _transform_queries(
             raw_queries,
             db_name,
@@ -421,6 +424,98 @@ def _index_key_position(row: dict) -> tuple[bool, int]:
     except (TypeError, ValueError):
         return (True, 0)
     return (included and number <= 0, number)
+
+
+def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[str, Any]:
+    """The collection's procedure, trigger and event rows as the builders read them
+    (#1652), every definition and comment redacted (#1625):
+
+    - one row per trigger with every event (#1651);
+    - Oracle bodies joined from their ``routine_sources`` lines (``ALL_SOURCE``);
+    - the execution counts the engine keeps (``routine_stats``) on their routines;
+    - each row's ``body_status`` as the collection gives it, ``not_supported`` when its
+      CREATE cannot be made (PostgreSQL and MySQL), with its reason, and whether a MySQL
+      rebuild is exact (``body_exact``).
+
+    The CREATE statements themselves are never read through here: an ingest
+    writes them to the job's routine sources from the raw file
+    (:func:`src.agents.collector.routine_sources.iter_collection_sources`).
+    """
+    from src.agents.collector.routine_rows import (
+        attach_routine_sources,
+        attach_routine_stats,
+        routine_stats_status,
+    )
+    from src.agents.collector.routine_sources import (
+        apply_body_statuses,
+        iter_routine_sources,
+        routine_capture,
+    )
+
+    raw_procedures = data.get("procedures", [])
+    raw_triggers = _merged_triggers(data.get("triggers", []))
+    if not isinstance(raw_procedures, list) or not isinstance(raw_triggers, list):
+        # Not a list: left for the collection check to report, as before.
+        return {
+            "procedures": _redacted_definitions(raw_procedures, source_engine),
+            "triggers": _redacted_definitions(raw_triggers, source_engine),
+            "events": [],
+            "routine_capture": None,
+            "routine_stats_status": None,
+        }
+    procedures = [dict(p) if isinstance(p, dict) else p for p in raw_procedures]
+    triggers = [dict(t) if isinstance(t, dict) else t for t in raw_triggers]
+    events = [dict(e) for e in data.get("events") or [] if isinstance(e, dict)]
+    attach_routine_sources(procedures, triggers, data.get("routine_sources"))
+    attach_routine_stats(procedures, triggers, data.get("routine_stats"))
+    from src.agents.collector.routine_sources import RoutineSourcesBuild
+
+    notes = RoutineSourcesBuild()
+    for _ in iter_routine_sources(
+        source_engine,
+        procedures=procedures,
+        triggers=triggers,
+        events=events,
+        parameters=data.get("routine_parameters"),
+        notes=notes,
+    ):
+        pass  # only each routine's status and exactness are kept here, never its CREATE
+    apply_body_statuses(
+        notes, source_engine, procedures=procedures, triggers=triggers, events=events
+    )
+    capture = routine_capture(
+        metadata.get("routine_capture") if isinstance(metadata, dict) else None,
+        listed=len(procedures) + len(triggers) + len(events),
+        parameters=data.get("routine_parameters"),
+    )
+    return {
+        "procedures": _redacted_comments(
+            _redacted_definitions(procedures, source_engine), "routine_comment", source_engine
+        ),
+        "triggers": _redacted_definitions(triggers, source_engine),
+        "events": _redacted_comments(
+            _redacted_definitions(events, source_engine), "event_comment", source_engine
+        ),
+        "routine_capture": capture,
+        "routine_stats_status": routine_stats_status(data.get("routine_stats_status")),
+    }
+
+
+def _redacted_comments(items: object, key: str, source_engine: str) -> object:
+    """Rows with their ``key`` comment redacted as any comment is (#1625): a value can
+    hide in a routine's or an event's comment."""
+    from src.tools.sql.redact import redact_comment
+
+    if not isinstance(items, list):
+        return items
+    return [
+        (
+            {**item, key: redact_comment(item[key], source_engine)}
+            if isinstance(item, dict) and isinstance(item.get(key), str)
+            else item
+        )
+        for item in items
+    ]
 
 
 def _merged_triggers(rows: object) -> object:
@@ -575,9 +670,11 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
             (redact_literals(str(v.get("query_text") or ""), source_engine) for v in variants),
             source_engine,
         ).fields()
+        nested = _nested(variants)
         if len(variants) == 1:
             row = dict(variants[0])
             row["digest"] = key
+            row["nested"] = nested
             row.update(tags)
             merged_rows.append(row)
             continue
@@ -633,10 +730,22 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
             merged["parent_routine_ids"] = sorted(
                 {str(rid) for v in variants for rid in v.get("parent_routine_ids") or []}
             )
+        merged["nested"] = nested
         merged.update(tags)
         merged_rows.append(merged)
 
     return merged_rows
+
+
+def _nested(variants: list[dict]) -> bool | None:
+    """PostgreSQL's ``toplevel`` read backwards (#1652): True when any variant ran inside
+    a function or procedure (``pg_stat_statements.track = all`` counts those apart),
+    False when every reported one ran at top level, None when the collection does not
+    report it (an older script, another engine, PostgreSQL before 14)."""
+    seen = [v.get("toplevel") for v in variants if v.get("toplevel") is not None]
+    if not seen:
+        return None
+    return any(t is False or str(t).strip().lower() in ("false", "f") for t in seen)
 
 
 # The collection script cuts Oracle statement text at this many characters
@@ -1365,6 +1474,8 @@ def _transform_queries(
                 # Every merged row's leading comment tags (#1180).
                 "query_tags": r["query_tags"],
                 "query_tags_dropped": r["query_tags_dropped"],
+                # #1652: PostgreSQL's toplevel read backwards; None when not reported.
+                "nested": r.get("nested"),
                 "execution_count": exec_count,
                 **statement_rate_fields(
                     exec_count,

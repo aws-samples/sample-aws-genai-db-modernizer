@@ -107,6 +107,8 @@ def _script_rows(server, role, pg_trigger: str = "pg_trigger") -> list[dict]:
     script = (_ROOT / "scripts/collect-postgresql.sql").read_text()
     cte = script.split("triggers_data AS (", 1)[1].split("\n),\n", 1)[0]
     cte = cte.replace("FROM pg_trigger t", f"FROM {pg_trigger} t")
+    # #1652: the psql variable the script sets (include_routine_bodies, default 1).
+    cte = cte.replace(":'routine_bodies_on'", "'t'")
     sql = (
         f"WITH triggers_data AS ({cte}\n) "
         "SELECT json_array_elements(data) AS tr FROM triggers_data"
@@ -152,12 +154,15 @@ def test_the_offline_script_gives_every_trigger_once_to_any_role(server, role):
                   for t in triggers) == sorted(
         (table, name, timing, events) for (_, table, name), (timing, events) in _EXPECTED.items()
     )  # fmt: skip
-    assert all(t.definition and t.definition.startswith("EXECUTE FUNCTION") for t in triggers)
+    # #1652: the definition is the whole CREATE TRIGGER (pg_get_triggerdef).
+    assert all(t.definition and t.definition.startswith("CREATE TRIGGER") for t in triggers)
+    assert all(t.function_id == "trg_fn" for t in triggers)
 
 
 def test_the_offline_script_matches_information_schema_for_the_owner(server):
     """Timing, events and definition as information_schema.triggers gives them (which also
-    lists each partition's clone, left out here)."""
+    lists each partition's clone, left out here). Since #1652 the script's definition is
+    the whole CREATE TRIGGER, which ends with information_schema's action_statement."""
 
     def by_trigger(rows):
         out: dict[tuple, tuple] = {}
@@ -170,9 +175,15 @@ def test_the_offline_script_matches_information_schema_for_the_owner(server):
             out[key] = (r["timing"], have | events, r["definition"])
         return out
 
-    assert by_trigger(_script_rows(server, None)) == by_trigger(
-        _information_schema_rows(server, None)
-    )
+    script = by_trigger(_script_rows(server, None))
+    information_schema = by_trigger(_information_schema_rows(server, None))
+    assert {k: v[:2] for k, v in script.items()} == {
+        k: v[:2] for k, v in information_schema.items()
+    }
+    assert script.keys() == information_schema.keys()
+    for key, (_, _, definition) in script.items():
+        assert definition.startswith("CREATE TRIGGER")
+        assert definition.endswith(information_schema[key][2]), key
 
 
 @_ROLES
@@ -192,11 +203,12 @@ def test_the_live_collector_gives_every_public_trigger_to_any_role(server, role)
     )  # fmt: skip
 
 
+@pytest.mark.passes_on_main
 def test_the_partition_guard_runs_where_pg_trigger_has_no_tgparentid(server):
     """PostgreSQL 12 has no tgparentid (its partition clones are internal): the script's
     guard must still run there. Here pg_trigger is cut to 12's columns, so on this server,
     whose clones are not internal, each partition's clone is listed."""
-    old = "(SELECT oid, tgrelid, tgname, tgtype, tgisinternal FROM pg_trigger)"
+    old = "(SELECT oid, tgrelid, tgname, tgtype, tgisinternal, tgenabled, tgfoid FROM pg_trigger)"
     rows = [r for r in _script_rows(server, None, old) if r["trigger_name"] == "tg_part"]
     assert sorted((r["table_name"], r["event_type"]) for r in rows) == [
         (table, "INSERT OR DELETE") for table in sorted({"events", *_PARTITIONS})

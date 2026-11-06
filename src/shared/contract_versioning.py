@@ -144,12 +144,7 @@ def _collector_output_from_4(payload: dict[str, Any]) -> dict[str, Any]:
     size (no segment found) becomes None the same way (``legacy_size_is_unknown``). A
     table that already carries a basis (written since #1636) is kept as it is, so the
     function can run on any read; every other field reads as it was."""
-    from src.shared.row_counts import (
-        BASIS_KEY,
-        DDL_KEY,
-        legacy_size_is_unknown,
-        read_row_count,
-    )
+    from src.shared.row_counts import BASIS_KEY, DDL_KEY, legacy_size_is_unknown, read_row_count
 
     source = (payload.get("metadata") or {}).get("source_database") or {}
     engine = str(source.get("engine") or "") if isinstance(source, Mapping) else ""
@@ -459,6 +454,9 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     # Usually a raw collection (no contract_version, read as legacy); checked for the
     # case where the upload is a stored collector output.
     (r"uploads/collector-output\.json", _COLLECTOR),
+    # #1652: the index of the CREATE statements, the one job file kept unredacted
+    # (#1625's exception); its chunks (collector/routine_sources/*.json.gz) are gzip.
+    (r"collector/routine_sources\.json", "src.contracts.routine_sources:RoutineSourcesContract"),
     (r"referee-triage/triage\.json", "src.contracts.triage_output:TriageOutputContract"),
     (r"analysis-[^/]+/analysis\.json", "src.contracts.analysis_output:AnalysisOutputContract"),
     # Each engine's typed trace (#973, #1187): ``write_decision_trace`` refuses the trace

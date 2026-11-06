@@ -13,6 +13,11 @@
 --   User needs SELECT on sys.* DMVs/catalog views and VIEW SERVER STATE
 --   for the query patterns section. Without VIEW SERVER STATE the
 --   queries section will be empty but everything else still works.
+--   Procedure, function and trigger bodies (#1652) come from OBJECT_DEFINITION,
+--   which returns NULL for an encrypted module or one the user may not see
+--   (grant VIEW DEFINITION to see every one); the routine is still listed. Their
+--   execution counts come from sys.dm_exec_procedure_stats, _function_stats and
+--   _trigger_stats (VIEW SERVER STATE); the script changes no setting.
 --
 -- Usage:
 --   sqlcmd -S <host>,<port> -U <user> -P <pass> -d <database> \
@@ -85,6 +90,8 @@ DECLARE @procedures NVARCHAR(MAX);
 DECLARE @triggers NVARCHAR(MAX);
 DECLARE @queries NVARCHAR(MAX);
 DECLARE @query_routines NVARCHAR(MAX);
+DECLARE @routine_stats NVARCHAR(MAX);
+DECLARE @routine_stats_status NVARCHAR(MAX);
 DECLARE @global_stats NVARCHAR(MAX);
 
 -- Schema filter shared across sections
@@ -519,7 +526,10 @@ SET @procedures = (
             WHEN 'TF' THEN 'TABLE_FUNCTION'
             ELSE 'OTHER'
         END AS routine_type,
-        'TSQL' AS language
+        'TSQL' AS language,
+        -- #1652: the body, read from the catalog (no table data); NULL for an encrypted
+        -- module or one this user may not see the definition of (VIEW DEFINITION).
+        OBJECT_DEFINITION(o.object_id) AS definition
     FROM sys.objects o
     INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
     WHERE o.type IN ('P', 'FN', 'IF', 'TF')
@@ -548,7 +558,11 @@ SET @triggers = (
         -- #1651: every event the trigger fires on, e.g. 'INSERT,UPDATE'
         STUFF((SELECT ',' + te.type_desc FROM sys.trigger_events te
                WHERE te.object_id = tr.object_id ORDER BY te.type
-               FOR XML PATH('')), 1, 1, '') AS events
+               FOR XML PATH('')), 1, 1, '') AS events,
+        -- #1652: a DML trigger fires once per statement; its state and its body.
+        'STATEMENT' AS for_each,
+        CASE WHEN tr.is_disabled = 1 THEN 0 ELSE 1 END AS is_enabled,
+        OBJECT_DEFINITION(tr.object_id) AS definition
     FROM sys.triggers tr
     -- sys.objects, not sys.tables: an INSTEAD OF trigger can sit on a view (#1651)
     INNER JOIN sys.objects t ON tr.parent_id = t.object_id AND t.type IN ('U', 'V')
@@ -559,6 +573,44 @@ SET @triggers = (
     ORDER BY s.name, t.name, tr.name
     FOR JSON PATH
 );
+
+-- ===================== 10b. Routine stats (#1652) =====================
+-- The execution counts the engine already keeps for each cached procedure, function and
+-- trigger (sys.dm_exec_function_stats is SQL Server 2016+, as FOR JSON is),
+-- read from in-memory DMVs: no setting is changed. They need VIEW SERVER STATE, like
+-- the query patterns section; without it the collection records not_tracked, and
+-- everything else still works. total_time_ms is elapsed time (the DMVs count in
+-- microseconds).
+IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
+BEGIN
+    SET @routine_stats = (
+        SELECT OBJECT_NAME(x.object_id, x.database_id) AS routine_name,
+               OBJECT_SCHEMA_NAME(x.object_id, x.database_id) AS schema_name,
+               x.object_type,
+               SUM(x.execution_count) AS execution_count,
+               CAST(SUM(x.total_elapsed_time) / 1000.0 AS DECIMAL(18, 3)) AS total_time_ms
+        FROM (
+            SELECT object_id, database_id, 'PROCEDURE' AS object_type,
+                   execution_count, total_elapsed_time
+            FROM sys.dm_exec_procedure_stats WHERE database_id = DB_ID()
+            UNION ALL
+            SELECT object_id, database_id, 'FUNCTION',
+                   execution_count, total_elapsed_time
+            FROM sys.dm_exec_function_stats WHERE database_id = DB_ID()
+            UNION ALL
+            SELECT object_id, database_id, 'TRIGGER',
+                   execution_count, total_elapsed_time
+            FROM sys.dm_exec_trigger_stats WHERE database_id = DB_ID()
+        ) x
+        WHERE OBJECT_NAME(x.object_id, x.database_id) IS NOT NULL
+        GROUP BY x.object_id, x.database_id, x.object_type
+        FOR JSON PATH
+    );
+    SET @routine_stats_status = N'{"status":"tracked"}';
+END
+ELSE
+    SET @routine_stats_status =
+        N'{"status":"not_tracked","reason":"VIEW SERVER STATE is not granted"}';
 
 -- ===================== 11. Global Stats =====================
 -- Map SQL Server's perfmon counters to the MySQL-flavored keys the
@@ -661,6 +713,8 @@ SELECT
     '"triggers":' + ISNULL(@triggers, '[]') + ',' +
     '"queries":' + ISNULL(@queries, '[]') + ',' +
     '"query_routines":' + ISNULL(@query_routines, '[]') + ',' +
+    '"routine_stats":' + ISNULL(@routine_stats, '[]') + ',' +
+    '"routine_stats_status":' + ISNULL(@routine_stats_status, 'null') + ',' +
     '"global_stats":' + ISNULL(@global_stats, '{}') + ',' +
     '"io_stats":' + ISNULL(@io_stats, '{}') + ',' +
     '"wait_events":' + ISNULL(@wait_events, '[]') + ',' +

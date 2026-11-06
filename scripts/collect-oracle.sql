@@ -20,6 +20,10 @@
 --   User needs SELECT on V$SQL, V$SESSION, V$SYSSTAT, V$SYSTEM_EVENT,
 --   V$OSSTAT, ALL_* catalog views, DBA_SEGMENTS.
 --   Grant SELECT_CATALOG_ROLE for full visibility.
+--   Procedure, function, package and trigger bodies (#1652) come from ALL_SOURCE,
+--   which shows the units the user owns or may run; a trigger is listed only when
+--   the user owns it or its table (ALL_TRIGGERS). Which unit a statement ran in comes
+--   from V$SQL.PROGRAM_ID. Oracle keeps no per-routine execution count.
 --
 -- Usage:
 --   sqlplus -S <user>/<pass>@<host>:<port>/<service> @collect-oracle.sql > collection.json
@@ -554,7 +558,10 @@ BEGIN
                 WHEN UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%' THEN 'UPDATE'
                 WHEN UPPER(TRIGGERING_EVENT) LIKE '%DELETE%' THEN 'DELETE'
             END,
-            'events' VALUE TRIGGERING_EVENT
+            'events' VALUE TRIGGERING_EVENT,
+            -- #1652: the raw orientation ('BEFORE EACH ROW') and state ('ENABLED')
+            'for_each' VALUE TRIGGER_TYPE,
+            'is_enabled' VALUE STATUS
         ) AS j
         FROM ALL_TRIGGERS
         WHERE OWNER = v_owner
@@ -569,6 +576,51 @@ BEGIN
     END LOOP;
     DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
     DBMS_OUTPUT.PUT_LINE('],');
+
+    -- ===================================================================
+    -- 10b. Routine and trigger bodies (#1652), one ALL_SOURCE line per row so no
+    -- DBMS_OUTPUT line exceeds its 32,767-byte limit; the ingest joins them in line
+    -- order (a package is its spec, then its body). Catalog reads, no table data. A
+    -- wrapped (obfuscated) unit's lines are its wrapped text.
+    -- ===================================================================
+    DBMS_OUTPUT.PUT_LINE('"routine_sources": [');
+    FOR rec IN (
+        SELECT JSON_OBJECT(
+            'owner' VALUE LOWER(OWNER), 'name' VALUE LOWER(NAME), 'type' VALUE TYPE,
+            'line' VALUE LINE, 'text' VALUE TEXT
+        ) AS j
+        FROM ALL_SOURCE
+        WHERE OWNER = v_owner
+          AND TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER')
+        ORDER BY TYPE, NAME, LINE
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
+    DBMS_OUTPUT.PUT_LINE('],');
+
+    -- ===================================================================
+    -- 10c. Statement routines (#1652): V$SQL.PROGRAM_ID is the PL/SQL unit a cursor
+    -- ran in; keyed by the query section's own digest, with the same keys as the SQL
+    -- Server script's query_routines section (#1891), so the ingest reads both alike.
+    -- ===================================================================
+    DBMS_OUTPUT.PUT_LINE('"query_routines": [');
+    FOR rec IN (
+        SELECT DISTINCT JSON_OBJECT(
+            'digest' VALUE CASE WHEN NVL(s.FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(s.FORCE_MATCHING_SIGNATURE) ELSE s.SQL_ID END,
+            'routine_schema' VALUE LOWER(o.OWNER),
+            'routine_name' VALUE LOWER(o.OBJECT_NAME)
+        ) AS j
+        FROM V$SQL s
+        JOIN ALL_OBJECTS o ON o.OBJECT_ID = s.PROGRAM_ID
+        WHERE s.PARSING_SCHEMA_NAME = v_owner AND s.PROGRAM_ID <> 0
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
+    DBMS_OUTPUT.PUT_LINE('],');
+    -- Oracle keeps no per-routine execution count (#1652).
+    DBMS_OUTPUT.PUT_LINE('"routine_stats_status": {"status": "not_tracked", "reason": "Oracle keeps no per-routine execution count"},');
 
     -- ===================================================================
     -- 11. Global Stats (MySQL-compatible field names)
