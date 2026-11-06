@@ -11,7 +11,7 @@
     "values": [
       "DDB"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "access_pattern_id_prefixes.elasticache": {
     "module": "elasticache_model_output",
@@ -429,7 +429,7 @@
       "item_collection",
       "separate"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.DYNAMODB_ATTRIBUTE_TYPES": {
     "module": "dynamodb_model_output",
@@ -445,7 +445,7 @@
       "S",
       "SS"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.DYNAMODB_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -460,7 +460,7 @@
       "TransactWriteItems",
       "UpdateItem"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.PARTITION_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -468,7 +468,7 @@
       "read",
       "write"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.PROJECTION_TYPES": {
     "module": "dynamodb_model_output",
@@ -477,7 +477,7 @@
       "INCLUDE",
       "KEYS_ONLY"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.STORED_OBJECT_TYPES": {
     "module": "dynamodb_model_output",
@@ -486,7 +486,7 @@
       "trigger",
       "view"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_model_output.UNSUPPORTED_PATTERN_TYPES": {
     "module": "dynamodb_model_output",
@@ -494,7 +494,7 @@
       "aggregation",
       "text_search"
     ],
-    "version": "1.6"
+    "version": "1.7"
   },
   "dynamodb_pe_review.ChangeCategory": {
     "module": "dynamodb_pe_review",
@@ -824,7 +824,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.81"
+    "version": "1.82"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -832,7 +832,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.81"
+    "version": "1.82"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -1033,7 +1033,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.81"
+    "version": "1.82"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",

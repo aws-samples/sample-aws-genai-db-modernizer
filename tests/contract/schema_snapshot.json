@@ -12207,6 +12207,46 @@
                   "type": "number"
                 }
               },
+              "key_distinct_values": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "object",
+                    "properties": {
+                      "basis": {
+                        "required": true,
+                        "schema": {
+                          "kind": "enum",
+                          "values": [
+                            "column_statistics",
+                            "unique_key"
+                          ]
+                        }
+                      },
+                      "columns": {
+                        "required": true,
+                        "schema": {
+                          "items": {
+                            "kind": "scalar",
+                            "type": "string"
+                          },
+                          "kind": "array",
+                          "minItems": 1
+                        }
+                      },
+                      "distinct_values": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "kind": "array"
+                }
+              },
               "row_count": {
                 "required": true,
                 "schema": {
@@ -12250,8 +12290,8 @@
         }
       }
     },
-    "schema_hash": "28316eef2e5b98389ccb82e6e746f4cf6ffeb21886830ea07b007980a64b55d4",
-    "version": "1.3"
+    "schema_hash": "c7138ea9b2e739be1f1da60948ccca73bb7391e8ea8edacbed628ff291402cc9",
+    "version": "1.4"
   },
   "dms_gate.DmsGate": {
     "fields": {
@@ -15436,7 +15476,6 @@
                 "required": true,
                 "schema": {
                   "kind": "scalar",
-                  "maximum": 100,
                   "minimum": 0,
                   "type": "number"
                 }
@@ -17745,8 +17784,8 @@
         }
       }
     },
-    "schema_hash": "35d22e182bc9e7cdbe1a36ca97b4cf4c489700885d5481b0951e491e7fbdbf24",
-    "version": "1.6"
+    "schema_hash": "ab5c5900708167c7ed576bcf11903badbe9102925dc4607dff7bd18ea55fd13d",
+    "version": "1.7"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {
@@ -26150,6 +26189,204 @@
                     "type": "integer"
                   }
                 },
+                "busiest_partition_key": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "distinct_key_bound": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "at_most",
+                                    "collected"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "distinct_key_values": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "engine": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "gsi_name": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "operation": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "read",
+                                "write"
+                              ]
+                            }
+                          },
+                          "partition_limit": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "number"
+                            }
+                          },
+                          "per_key_basis": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "distinct_values",
+                                "not_measured",
+                                "single_key"
+                              ]
+                            }
+                          },
+                          "per_key_pct_of_limit": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "per_key_source": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "access_pattern",
+                                    "key_values",
+                                    "static_entity"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "per_key_units_per_second": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "query_ids": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "table_name": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "total_is_upper_bound": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "boolean"
+                            }
+                          },
+                          "total_pct_of_key_limit": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "total_units_per_second": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "cache_layer": {
                   "required": false,
                   "schema": {
@@ -27568,6 +27805,207 @@
                             }
                           }
                         }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "hot_partitions": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "items": {
+                          "kind": "object",
+                          "properties": {
+                            "distinct_key_bound": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "enum",
+                                    "values": [
+                                      "at_most",
+                                      "collected"
+                                    ]
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "distinct_key_values": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "engine": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            },
+                            "gsi_name": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "operation": {
+                              "required": true,
+                              "schema": {
+                                "kind": "enum",
+                                "values": [
+                                  "read",
+                                  "write"
+                                ]
+                              }
+                            },
+                            "partition_limit": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "number"
+                              }
+                            },
+                            "per_key_basis": {
+                              "required": true,
+                              "schema": {
+                                "kind": "enum",
+                                "values": [
+                                  "distinct_values",
+                                  "not_measured",
+                                  "single_key"
+                                ]
+                              }
+                            },
+                            "per_key_pct_of_limit": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "per_key_source": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "enum",
+                                    "values": [
+                                      "access_pattern",
+                                      "key_values",
+                                      "static_entity"
+                                    ]
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "per_key_units_per_second": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "query_ids": {
+                              "required": false,
+                              "schema": {
+                                "items": {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                },
+                                "kind": "array"
+                              }
+                            },
+                            "table_name": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            },
+                            "total_is_upper_bound": {
+                              "required": false,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "boolean"
+                              }
+                            },
+                            "total_pct_of_key_limit": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "number"
+                              }
+                            },
+                            "total_units_per_second": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "number"
+                              }
+                            }
+                          }
+                        },
+                        "kind": "array"
                       },
                       {
                         "kind": "scalar",
@@ -34680,8 +35118,8 @@
         }
       }
     },
-    "schema_hash": "08840523d84983ab414495d61e85646ec903f160c1c06454b3180c8066125926",
-    "version": "1.81"
+    "schema_hash": "a2407d2968e1a73904dd6f3f2c797933416858f7669ac7db24f18caca4525f71",
+    "version": "1.82"
   },
   "transformation_contract.StepContract": {
     "fields": {

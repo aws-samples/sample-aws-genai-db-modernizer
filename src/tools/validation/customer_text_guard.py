@@ -189,6 +189,8 @@ ID_FIELD_PATHS = frozenset(
         ("access_patterns", "engine"),  # QueryGroup.access_patterns[].engine (extra field)
         ("cache_overlay", "engine"),  # CacheOverlaySummary.engine (assignment_models.py:203)
         ("cache_layer", "engine"),  # CacheLayerFacts.engine (#1252): the cache engine id
+        ("hot_partitions", "engine"),  # HotPartitionFacts.engine (#1989): the design's engine
+        ("busiest_partition_key", "engine"),  # the same row shape (#1989)
         ("aurora_engine_choice", "engine"),  # AuroraEngineChoice.engine (assignment_models.py:276)
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)

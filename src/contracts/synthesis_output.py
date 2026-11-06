@@ -610,6 +610,12 @@ Version History:
 - 1.81 (2026-11-08, #399): Added optional ``facts.cache_layer.role_sentence``: the cache
   layer stated as the assessment's recommendation, with its reason, that every
   deliverable prints (#399).
+- 1.82 (2026-11-08, #1989): Added optional facts.hot_partitions (HotPartitionFacts):
+  each DynamoDB design entry above the at-risk share of one partition key value's limit,
+  with its total as an upper bound (never capped) and its load per key value estimated
+  from the collection's distinct values, or not measured; and
+  facts.busiest_partition_key, the busiest estimated key value over every entry.
+  Backward compatible: defaults to None.
 """
 
 from datetime import datetime
@@ -2063,6 +2069,85 @@ class RowCountFacts(BaseModel):
     )
 
 
+class HotPartitionFacts(BaseModel):
+    """One DynamoDB design entry above the at-risk share of one partition key value's
+    limit, with its load per key value estimated (#1989), from
+    ``src.shared.partition_load.hot_partition_rows``."""
+
+    engine: str = Field(..., description="Canonical engine id of the design")
+    table_name: str = Field(..., description="The design table")
+    gsi_name: str | None = Field(None, description="The GSI, or None for the base table")
+    operation: Literal["read", "write"]
+    partition_limit: float = Field(
+        ..., description="One partition key value's limit: 3,000 read or 1,000 write units/s"
+    )
+    total_units_per_second: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "The design's load on the whole table or index at the design rate: an upper "
+            "bound for one key value, never the severity"
+        ),
+    )
+    total_pct_of_key_limit: float = Field(
+        ..., ge=0, description="total_units_per_second / partition_limit × 100, never capped"
+    )
+    total_is_upper_bound: bool = Field(
+        True,
+        description=(
+            "Always true: the total is an upper bound for one key value, reached only if "
+            "every request used the same value; it never sets the severity"
+        ),
+    )
+    distinct_key_bound: Literal["collected", "at_most"] | None = Field(
+        None,
+        description=(
+            "collected: distinct_key_values is the collection's count (or a lower bound "
+            "on a wider key); at_most: a ``% n`` key transform or an access pattern's literal "
+            "key or IN list bounds it; None when not measured"
+        ),
+    )
+    per_key_source: Literal["key_values", "access_pattern", "static_entity"] | None = Field(
+        None,
+        description=(
+            "What set the per-key estimate: the key's distinct values, an access pattern "
+            "whose calls reach at most distinct_key_values values (its share of the load over "
+            "them), or a static-key entity's share of the load on its one key value; None "
+            "when not measured"
+        ),
+    )
+    distinct_key_values: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The partition key's distinct values from the collection (1 for a key every "
+            "item shares), or None when not collected"
+        ),
+    )
+    per_key_units_per_second: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The estimated load on the busiest key value: the total over "
+            "distinct_key_values; None when not measured"
+        ),
+    )
+    per_key_pct_of_limit: float | None = Field(
+        None, ge=0, description="per_key_units_per_second / partition_limit × 100, never capped"
+    )
+    per_key_basis: Literal["single_key", "distinct_values", "not_measured"] = Field(
+        ...,
+        description=(
+            "single_key: every request uses one key value; distinct_values: the total "
+            "spread evenly over the key's distinct values; not_measured: per-key load not "
+            "measured"
+        ),
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The entry's contributing queries"
+    )
+
+
 class RateWindowFacts(BaseModel):
     """How many collected statements' call rates used each window basis (#1893), from
     ``src.shared.rate_window.rate_window_facts``."""
@@ -2797,6 +2882,22 @@ class ReportFacts(BaseModel):
             "when the report has no cache_overlay"
         ),
     )
+    busiest_partition_key: HotPartitionFacts | None = Field(
+        None,
+        description=(
+            "The design entry whose estimated partition key value is the busiest share of "
+            "its limit, over every entry (#1989): the one figure the hot-partition risk and "
+            "the growth scenario state; None when none is measured"
+        ),
+    )
+    hot_partitions: list[HotPartitionFacts] | None = Field(
+        None,
+        description=(
+            "The DynamoDB design entries above the at-risk share of one partition key "
+            "value's limit, each with its total as an upper bound and its estimated load "
+            "per key value (#1989); None in a report rebuilt later, or written before"
+        ),
+    )
     rate_windows: RateWindowFacts | None = Field(
         None,
         description=(
@@ -2968,7 +3069,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.81",
+        default="1.82",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

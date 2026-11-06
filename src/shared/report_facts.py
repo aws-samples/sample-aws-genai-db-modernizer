@@ -3536,6 +3536,8 @@ def compute_report_facts(
     derived_copy_sync: Mapping[str, Any] | None = None,
     row_counts: Mapping[str, Any] | None = None,
     rate_windows: Mapping[str, Any] | None = None,
+    hot_partitions: Iterable[Mapping[str, Any]] | None = None,
+    busiest_partition_key: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3564,6 +3566,10 @@ def compute_report_facts(
     ``rate_windows`` is how many statements' call rates used each window basis
     (``src.shared.rate_window.rate_window_facts``, #1893), which needs the collection:
     synthesis passes it, and a report rebuilt without the collection has None.
+    ``hot_partitions`` is each DynamoDB design entry above the at-risk share of one
+    partition key value's limit, with its load per key value estimated
+    (``src.shared.partition_load.hot_partition_rows``, #1989), which needs the design and
+    the collection: synthesis passes it, and a report rebuilt later has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3718,6 +3724,15 @@ def compute_report_facts(
         "row_counts": dict(row_counts) if row_counts is not None else None,
         # #1893: the window basis of each statement's call rate, and the 24-hour assumption.
         "rate_windows": dict(rate_windows) if rate_windows is not None else None,
+        # #1989: the hot-partition entries, the total as an upper bound and the per-key load.
+        "hot_partitions": (
+            [dict(r) for r in hot_partitions] if hot_partitions is not None else None
+        ),
+        # #2001 review S1: the busiest estimated key value over every design entry, the
+        # one figure the risk and the growth scenario state.
+        "busiest_partition_key": (
+            dict(busiest_partition_key) if busiest_partition_key is not None else None
+        ),
     }
 
 
