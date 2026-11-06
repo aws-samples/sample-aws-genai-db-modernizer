@@ -45,6 +45,7 @@ from src.contracts.design_metrics import (
     QueryDesignMetrics,
     TableDesignMetrics,
 )
+from src.shared.assumptions import peak_assumption, query_peak_factor
 from src.shared.partition_load import key_distinct_values
 from src.shared.row_counts import (
     DDL_TABLE_THRESHOLD_ROWS,
@@ -98,12 +99,12 @@ def base_rps(calls_per_second: float | None, frequency_per_hour: float | None) -
 def design_rps(
     calls_per_second: float | None,
     frequency_per_hour: float | None,
-    peak_to_avg_ratio: float = DEFAULT_PEAK_TO_AVG_RATIO,
-    growth_multiplier: float = DEFAULT_GROWTH_MULTIPLIER,
+    peak_factor: float = DEFAULT_PEAK_TO_AVG_RATIO,
 ) -> float:
-    """``base_rps × peak_to_avg_ratio × growth_multiplier``, rounded to 4 decimals."""
+    """``base_rps × peak_factor``, rounded to 4 decimals (#1990: no growth, and no peak
+    unless the source's metrics measured one)."""
     rate = base_rps(calls_per_second, frequency_per_hour)
-    return round(rate * peak_to_avg_ratio * growth_multiplier, 4)
+    return round(rate * peak_factor, 4)
 
 
 def avg_row_size_bytes(size_mb: float | None, row_count: int | None) -> tuple[int, bool]:
@@ -287,8 +288,13 @@ def build_design_metrics(
     unfiltered_in_scope_patterns: int | None = None,
     context: Mapping[str, Any] | None = None,
     members: Mapping[str, Sequence[str]] | None = None,
+    peak: Mapping[str, Any] | None = None,
 ) -> DesignMetricsContract:
     """The metrics for ``engine``'s designer from its (already scoped) tables and queries.
+
+    ``peak`` (#1990) is ``src.shared.assumptions.peak_assumption`` over the whole
+    collection: each long-window rate takes its ratio, a sampled rate none; without it
+    the factor is 1 (or the customer's ``context`` peak). Growth is never applied.
 
     Coverage counts ``unfiltered_in_scope_patterns`` when given (the whole query
     log before the assignment scoped it to ``engine``), else ``queries``.
@@ -298,13 +304,15 @@ def build_design_metrics(
     """
     context = context or {}
     growth = float(context.get("growth_multiplier") or DEFAULT_GROWTH_MULTIPLIER)
-    peak = float(context.get("peak_to_avg_ratio") or DEFAULT_PEAK_TO_AVG_RATIO)
+    if peak is None:
+        peak = peak_assumption(None, context)
     table_metrics = [_table_metrics(t) for t in tables]
     sizes = {m.table_id: m for m in table_metrics}
     metrics = DesignMetricsContract(
         engine=engine,
         growth_multiplier=growth,
-        peak_to_avg_ratio=peak,
+        peak_to_avg_ratio=float(peak.get("ratio") or DEFAULT_PEAK_TO_AVG_RATIO),
+        peak_basis=peak.get("basis") or "not_measured",
         queries=sorted(
             (
                 QueryDesignMetrics(
@@ -313,7 +321,9 @@ def build_design_metrics(
                         base_rps(q.get("calls_per_second"), q.get("frequency_per_hour")), 6
                     ),
                     design_rps=design_rps(
-                        q.get("calls_per_second"), q.get("frequency_per_hour"), peak, growth
+                        q.get("calls_per_second"),
+                        q.get("frequency_per_hour"),
+                        query_peak_factor(q, peak),
                     ),
                     member_query_ids=_members_of(q, members),
                 )
@@ -387,11 +397,15 @@ def design_metrics_from_collector(
         total_queries_analyzed=queries_block.get("total_queries_analyzed"),
         unfiltered_in_scope_patterns=queries_block.get(UNFILTERED_PATTERNS_KEY),
         context=context,
+        peak=peak_assumption(collector_output, context),
     ).model_dump(mode="json")
 
 
 def design_metrics_from_projection(
-    engine: str, agent_input: Mapping[str, Any], unfiltered_in_scope_patterns: int | None = None
+    engine: str,
+    agent_input: Mapping[str, Any],
+    unfiltered_in_scope_patterns: int | None = None,
+    peak: Mapping[str, Any] | None = None,
 ) -> dict:
     """:func:`build_design_metrics` over a ``load_agent_input`` result (``Agent*`` shape).
 
@@ -408,6 +422,7 @@ def design_metrics_from_projection(
         unfiltered_in_scope_patterns=unfiltered_in_scope_patterns,
         context=agent_input.get("context"),
         members=projected_members(queries_block),
+        peak=peak,
     ).model_dump(mode="json")
 
 

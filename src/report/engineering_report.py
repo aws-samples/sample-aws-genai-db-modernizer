@@ -52,7 +52,7 @@ from .close_calls import close_calls_md
 from .derived_copy_sync import derived_copy_sync_md
 from .engine_choices import _reroutes_md, _tied_queries_md, auto_decided_md
 from .engine_roles import _RELATIONAL_ENGINES, SEARCH_READ_MODEL
-from .facts import report_facts
+from .facts import assumption_block_lines, report_facts
 from .formatting import (
     _completed_designs,
     _cost_baseline_text,
@@ -1339,6 +1339,12 @@ def render_engineering_report_md(
         assumptions = facts.get("cost_assumptions") or []
         if assumptions:
             out += [f"Assumptions: {escaping.md_text('; '.join(assumptions))}.", ""]
+        # #1990: the one assumptions block (each with its origin) and the growth scenario.
+        block = assumption_block_lines(facts)
+        if block:
+            out += ["### Assumptions", ""]
+            out += [f"- {escaping.md_text(line)}." for line in block]
+            out.append("")
         # #1474: the one caveat where the costs are stated.
         out += [escaping.md_text(cost_caveat_text(facts)), ""]
 

@@ -275,7 +275,12 @@ class AccessPattern(BaseModel):
         ..., description="Operation type: search, aggregate, get_by_id, bulk_index"
     )
     design_rps: float = Field(
-        ..., ge=0, description="calls_per_second * peak_to_avg_ratio * growth_multiplier"
+        ...,
+        ge=0,
+        description=(
+            "Copied from design_metrics.queries: the measured rate times the peak factor "
+            "the source's metrics measured (1 when not measured); no growth"
+        ),
     )
     in_scope: bool = Field(default=True, description="False for patterns OpenSearch cannot serve")
     out_of_scope_reason: str | None = Field(

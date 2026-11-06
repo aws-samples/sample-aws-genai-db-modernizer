@@ -15,7 +15,7 @@ One entry per overlap (``dynamodb_merge.merge_overlaps``) that has an open risk:
   home of the overlap's source rows change a second, on average load (#1753,
   ``design_write_load``: each pattern's collected queries, in scope for the engine, at
   ``calls_per_second`` times the rows each call changes as collected, each query once; never
-  ``design_rps``, which carries the design's peak and growth factors). The GSI cost reads
+  ``design_rps``, which carries the design's measured peak factor, #1990). The GSI cost reads
   the same rate. A write on a copy is pointed at the home, so every one of them lands on
   the home's stream and is replayed to every copy.
 - **Stream reads**: the home's stream is read once, however many copies there are. A
@@ -52,11 +52,7 @@ from src.agents.referee.design_write_load import (
     items_per_second,
     pattern_queries,
 )
-from src.agents.schema_design.dynamodb_merge import (
-    WRITE_OPERATIONS,
-    merge_overlaps,
-    overlap_home,
-)
+from src.agents.schema_design.dynamodb_merge import WRITE_OPERATIONS, merge_overlaps, overlap_home
 from src.agents.schema_design.scope import normalize_table_name
 from src.shared import catalog
 from src.shared.catalog.prices import SECONDS_PER_MONTH

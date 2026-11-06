@@ -29,6 +29,7 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     ValidationResult,
 )
+from src.shared.assumptions import ASSUMPTIONS_FILE, gate_assumption_lines
 from src.shared.contract_versioning import load_contract
 from src.shared.gate_facts import cache_candidate_reads
 from src.storage.artifact_store import ArtifactStore
@@ -135,6 +136,14 @@ class AssignmentResponse(BaseModel):
             "call_share_percent}], more}; None when nothing is cached"
         ),
     )
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The assumptions block the gate states (#1990, src.shared.assumptions): growth, "
+            "peak source, rate window, region and prices, each with its origin; approving "
+            "the assignment approves them"
+        ),
+    )
     pending_choices: list[PendingEngineChoice] = Field(
         default_factory=list,
         description=(
@@ -173,6 +182,14 @@ def _cache_reads(store: ArtifactStore, db: str, job_id: str, assignment: Assignm
     )
 
 
+def _gate_assumptions(store: ArtifactStore, db: str, job_id: str) -> list[str]:
+    """The assumptions block the gate states, the lines the chat gate prints (#1990)."""
+    collector = read_collector_for_models(store, db, job_id, missing_ok=True)
+    key = f"{db}/{job_id}/{ASSUMPTIONS_FILE}"
+    decision = store.read_json(key) if store.exists(key) else None
+    return gate_assumption_lines(collector, decision if isinstance(decision, dict) else None)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -201,6 +218,7 @@ async def get_assignments(
         assignment=assignment,
         pending_choices=choices,
         cache_reads=_cache_reads(store, database_name, job_id, assignment),
+        assumptions=_gate_assumptions(store, database_name, job_id),
     )
 
 

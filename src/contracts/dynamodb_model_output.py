@@ -597,7 +597,12 @@ class AccessPattern(BaseModel):
         "For writes, describe the item being written.",
     )
     design_rps: float = Field(
-        ..., ge=0, description="calls_per_second × peak_to_avg_ratio × growth_multiplier"
+        ...,
+        ge=0,
+        description=(
+            "Copied from design_metrics.queries: the measured rate times the peak factor "
+            "the source's metrics measured (1 when not measured); no growth"
+        ),
     )
     avg_items_returned: float | None = Field(
         None, ge=0, description="Average items per request. None for writes."

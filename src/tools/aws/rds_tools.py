@@ -107,7 +107,7 @@ def get_cloudwatch_metrics(
         start = end - timedelta(days=days)
         period = 3600
 
-        results: dict[str, Any] = {"available": True}
+        results: dict[str, Any] = {"available": True, "period_seconds": period}
         for metric_name, unit, key in _CW_METRICS:
             stats = _get_metric_stats(cw, instance_id, metric_name, unit, start, end, period)
             if stats:
@@ -136,16 +136,21 @@ def _get_metric_stats(cw, instance_id, metric_name, unit, start, end, period):
         "avg": sum(d["Average"] for d in dp) / len(dp),
         "max": max(d["Maximum"] for d in dp),
         "min": min(d["Minimum"] for d in dp),
+        # #1990: how many periods the figures cover, so a reader knows the days observed.
+        "datapoints": len(dp),
     }
 
 
 def _convert_metric(key: str, stats: dict) -> dict:
+    # The datapoint count is a count, never converted with the values (#1990).
+    values = {k: v for k, v in stats.items() if k != "datapoints"}
+    counted = {k: v for k, v in stats.items() if k == "datapoints"}
     if "memory_gb" in key or "storage_space_gb" in key:
-        return {k: v / (1024**3) for k, v in stats.items()}
+        return {**{k: v / (1024**3) for k, v in values.items()}, **counted}
     if "latency_ms" in key:
-        return {k: v * 1000 for k, v in stats.items()}
+        return {**{k: v * 1000 for k, v in values.items()}, **counted}
     if "throughput_mbps" in key:
-        return {k: v / (1024 * 1024) for k, v in stats.items()}
+        return {**{k: v / (1024 * 1024) for k, v in values.items()}, **counted}
     return stats
 
 

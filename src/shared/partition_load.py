@@ -539,6 +539,7 @@ def hot_partition_rows(
 
 __all__ = [
     "COLUMN_STATISTICS",
+    "busiest_key",
     "DISTINCT_VALUES",
     "NOT_MEASURED",
     "SINGLE_KEY",
@@ -553,3 +554,25 @@ __all__ = [
     "partition_load",
     "pct_of_limit",
 ]
+
+
+def busiest_key(
+    schema_designs: Mapping[str, Mapping[str, Any]] | None,
+    source_tables: Iterable[Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """The design entry whose estimated key value is the busiest share of its limit, over
+    every entry (not only those above the at-risk share); None when none is measured."""
+    values = DistinctValues.from_collector_tables(source_tables)
+    best: dict[str, Any] | None = None
+    for engine in sorted(schema_designs or {}):
+        design = (schema_designs or {})[engine] or {}
+        if not isinstance(design, Mapping):
+            continue
+        for entry in design.get("hot_partition_analysis") or []:
+            if not isinstance(entry, Mapping) or entry.get("operation") not in ("read", "write"):
+                continue
+            row = partition_load(entry, design, values, engine)
+            pct = row["per_key_pct_of_limit"]
+            if pct is not None and (best is None or pct > best["per_key_pct_of_limit"]):
+                best = row
+    return best

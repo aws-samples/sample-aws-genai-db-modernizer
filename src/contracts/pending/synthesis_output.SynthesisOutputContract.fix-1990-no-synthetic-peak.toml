@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional facts.assumptions (AssumptionsFacts: growth, peak source, rate window, region and prices, each with its origin, and the lines every deliverable prints) and facts.growth_scenarios (GrowthScenarioFacts: the cost and the busiest partition key value at 1x, 5x and 10x growth). Backward compatible: both default to None."
+issue = 1990

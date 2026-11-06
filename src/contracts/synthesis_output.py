@@ -2124,6 +2124,56 @@ class HotPartitionFacts(BaseModel):
     )
 
 
+class AssumptionItem(BaseModel):
+    """One assumption the assessment rests on (#1990, ``src.shared.assumptions``)."""
+
+    key: str = Field(..., description="growth, peak, rate_window or pricing")
+    value: float | str | None = Field(None, description="Its value, when it has one")
+    origin: Literal["default", "collected", "customer"] = Field(
+        ..., description="Where the value comes from"
+    )
+    basis: str | None = Field(
+        None, description="For the peak: cloudwatch, sampled, not_measured or customer"
+    )
+    line: str = Field(..., description="The sentence every deliverable and the gate print")
+
+
+class AssumptionsFacts(BaseModel):
+    """The one assumptions block (#1990): its items and the lines the deliverables print."""
+
+    assumptions: list[AssumptionItem] = Field(default_factory=list)
+    lines: list[str] = Field(default_factory=list)
+
+
+class GrowthScenarioRow(BaseModel):
+    """The growth-dependent figures at one growth multiple (#1990)."""
+
+    growth: float = Field(..., gt=0)
+    monthly_cost_usd: float = Field(
+        ..., ge=0, description="The headline's arithmetic at the scaled rates (1×: the headline)"
+    )
+    busiest_key_pct_of_limit: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The busiest estimated partition key value's share of its limit at this growth; "
+            "None when no key value is measured"
+        ),
+    )
+
+
+class GrowthScenarioFacts(BaseModel):
+    """Growth as a separate scenario (#1990): never in the headline cost or the risks."""
+
+    growth: float = Field(..., gt=0, description="The job's growth: 5× unless the customer set it")
+    origin: Literal["default", "customer"]
+    scenarios: list[GrowthScenarioRow] = Field(default_factory=list)
+    busiest_key: dict[str, Any] | None = Field(
+        None, description="engine, table_name, gsi_name and operation of the busiest key value"
+    )
+    lines: list[str] = Field(default_factory=list)
+
+
 class RateWindowFacts(BaseModel):
     """How many collected statements' call rates used each window basis (#1893), from
     ``src.shared.rate_window.rate_window_facts``."""
@@ -2825,6 +2875,20 @@ class ReportFacts(BaseModel):
         description=(
             "The cache layer's cache candidates and designed cached reads (#1252); None "
             "when the report has no cache_overlay"
+        ),
+    )
+    assumptions: AssumptionsFacts | None = Field(
+        None,
+        description=(
+            "The one assumptions block (#1990): growth, peak source, rate window, region and "
+            "prices, each with its origin; None in a report rebuilt later, or written before"
+        ),
+    )
+    growth_scenarios: GrowthScenarioFacts | None = Field(
+        None,
+        description=(
+            "The cost and the busiest partition key value at 1×, 5× and 10× growth (#1990); "
+            "None in a report rebuilt later, or written before"
         ),
     )
     hot_partitions: list[HotPartitionFacts] | None = Field(
