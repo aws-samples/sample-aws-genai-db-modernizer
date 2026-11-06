@@ -520,6 +520,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"ADAPTIVE_MAX_TOKENS_FLOOR", "LEGACY_MAX_TOKENS_FLOOR"}),
         _BUDGET,
     ),
+    "src/shared/strict_schema.py": (
+        frozenset({"MAX_OPTIONAL_PROPERTIES", "MAX_UNION_PROPERTIES"}),
+        "Bedrock strict-mode schema limits for model tool calls (#744), not a routing rule",
+    ),
     "src/shared/query_trace.py": (frozenset({"_PLACES", "EXCERPT_CHARS"}), _BUDGET),
     "src/shared/executive_brief.py": (
         frozenset({"SUMMARY_WORD_BUDGET"}),

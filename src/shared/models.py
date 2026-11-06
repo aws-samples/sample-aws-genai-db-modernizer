@@ -9,17 +9,18 @@ call needs (output length, sampling, thinking, effort, structured output). The
 model *family* then decides which of those settings the request may carry,
 because the families reject different fields:
 
-==========================  ============  ===============  =======================  ========
-Family                      sampling      ``budget_tokens``  forced ``tool_choice``   effort
-==========================  ============  ===============  =======================  ========
-Claude 3.x, 4.0-4.6         accepted      accepted         accepted                 not sent
-Opus 4.7/4.8                rejected      rejected         accepted                 sent
-Sonnet 5                    rejected      rejected         with thinking disabled   sent
-Opus 5, Fable 5             rejected      rejected         sent as ``auto``         sent
-Haiku 5.5                   rejected      rejected         accepted                 sent
-Opus/Sonnet 5.5, 5.1 tier   rejected      rejected         rejected (``auto``)      sent
-Unrecognised ID             not sent      not sent         sent as ``auto``         not sent
-==========================  ============  ===============  =======================  ========
+==========================  ============  ===============  =======================  ========  ================
+Family                      sampling      ``budget_tokens``  forced ``tool_choice``   effort    ``strict_tools``
+==========================  ============  ===============  =======================  ========  ================
+Claude 3.x, 4.0-4.6         accepted      accepted         accepted                 not sent  not sent
+Opus 4.7/4.8                rejected      rejected         accepted                 sent      sent
+Sonnet 5                    rejected      rejected         with thinking disabled   sent      sent
+Opus 5                      rejected      rejected         accepted                 sent      sent
+Fable 5, Mythos 5           rejected      rejected         sent as ``auto``         sent      sent
+Haiku 5.5                   rejected      rejected         accepted                 sent      sent
+Opus/Sonnet 5.5, 5.1 tier   rejected      rejected         rejected (``auto``)      sent      sent
+Unrecognised ID             not sent      not sent         sent as ``auto``         not sent  not sent
+==========================  ============  ===============  =======================  ========  ================
 
 Today's 4.x request is reproduced exactly (the role's ``legacy_*`` settings), so
 switching a default to a newer family is a model-ID change only. On families
@@ -27,9 +28,11 @@ where adaptive thinking is on by default, ``max_tokens`` covers thinking plus
 the answer, so it is raised to :data:`ADAPTIVE_MAX_TOKENS_FLOOR`. Where forced
 ``tool_choice`` is rejected, the Strands model never sends a forced choice: the
 structured-output retry goes out as ``auto`` with Strands' own "use the tool"
-instruction instead of a 400 (``src/shared/role_bedrock_model.py``), and roles whose tool schemas compile under Bedrock
-strict mode also turn on ``strict_tools`` (schema-valid tool input on the first
-try).
+instruction instead of a 400 (``src/shared/role_bedrock_model.py``). Roles whose
+tool schemas compile under Bedrock strict mode (``src/shared/strict_schema.py``)
+turn on ``strict_tools`` (schema-valid tool input on the first try), sent on every
+family past 4.6 whether the choice is forced or ``auto`` (#744); the 4.x request
+stays as it was.
 
 Roles with ``prompt_cache`` (schema design, #626) send Bedrock cache points
 after the tool definitions and after the system prompt, the prefix every
@@ -134,8 +137,10 @@ class RoleSpec:
     effort: Effort | None = None
     #: The call uses Strands structured output (a tool the model must call).
     structured_output: bool = False
-    #: Send ``strict_tools`` where forced ``tool_choice`` is rejected. Needs
-    #: every tool schema in the call to compile under Bedrock strict mode.
+    #: Send ``strict_tools`` on every family that takes it
+    #: (:attr:`ModelProfile.accepts_strict_tools`), forced choice or ``auto``. Needs
+    #: every tool schema in the call to compile under Bedrock strict mode
+    #: (``tests/unit/shared/test_strict_schema.py`` checks the advisor's).
     strict_tools: bool = False
     #: Bedrock prompt caching (#626): cache points after the tool definitions
     #: and after the system prompt, so the stable prefix every turn resends
@@ -166,10 +171,12 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
         # 31-41% lower cost per design pass than high.
         effort="medium",
         structured_output=True,
-        # Not yet. Bedrock strict mode rejects parts of the designer schemas:
-        # the DynamoDB output contract uses ``oneOf`` (join/calculation),
-        # ``minimum`` (x6) and ``maxItems``, and has ~35 optional properties;
-        # the designers also carry many other tools whose schemas are compiled.
+        # Not yet. Bedrock strict mode rejects the DynamoDB output contract as
+        # Strands sends it (``strict_schema_violations``): ``oneOf`` (join and
+        # calculation, x4), ``minimum`` (x9) and ``maximum`` (x1), ``maxItems`` (x2),
+        # three nullable objects without ``additionalProperties: false``, 50 optional
+        # properties (limit 24) and 49 union-typed ones (limit 16); the designers
+        # also carry other tools whose schemas would be compiled too.
         strict_tools=False,
         # Every designer and PE turn resends the same skill text and contract
         # tool schema (#626). Parallel groups start together, so each group's
@@ -204,7 +211,8 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
         max_tokens=LEGACY_MAX_TOKENS_FLOOR,
         effort="low",
     ),
-    # Analysis-phase LLM advisor (Strands structured output per query group).
+    # Analysis-phase LLM advisor (Strands structured output per query group). Its
+    # output schemas compile under strict mode (test_strict_schema.py guards them).
     Role.ANALYSIS_ADVISOR: RoleSpec(
         env_vars=("ANALYSIS_MODEL_ID",),
         default_model=MODEL_IDS["sonnet-5.5"],
@@ -254,6 +262,9 @@ class ModelProfile:
     accepts_effort: bool
     #: Adaptive thinking runs when ``thinking`` is omitted.
     adaptive_by_default: bool
+    #: ``strict: true`` may go on the tools. Off for the 4.x request (kept exactly as
+    #: before #624) and for an unrecognised ID (the smallest request every model takes).
+    accepts_strict_tools: bool = False
 
     @property
     def accepts_forced_tool_choice(self) -> bool:
@@ -282,24 +293,37 @@ def profile_for(model_id: str) -> ModelProfile:
     family = f"claude-{version[0]}.{version[1]}"
     if version <= (4, 6) or (tier == "haiku" and version < (5, 0)):
         return _budget_profile(family, tier)
+    # Every family past 4.6 takes strict tools, forced or ``auto`` (measured on
+    # Bedrock Converse for Opus 4.7/4.8, Sonnet 5, Opus 5, Haiku 5.5 and Opus/Sonnet
+    # 5.5, 2026-11-06, #744; Anthropic documents strict for the Fable tiers too).
     if tier == "haiku" and version == (5, 5):
         # Haiku 5.5 accepts a forced tool_choice (the forced turn skips thinking).
-        return ModelProfile(family, tier, False, False, "accepted", True, True)
+        return ModelProfile(family, tier, False, False, "accepted", True, True, True)
     if version >= (5, 5) or (tier in ("fable", "mythos") and version >= (5, 1)):
-        # Opus/Sonnet 5.5, Fable/Mythos 5.1 (and anything newer): forced is a 400.
-        return ModelProfile(family, tier, False, False, "rejected", True, True)
+        # Opus/Sonnet 5.5, Fable/Mythos 5.1 (and anything newer): forced is a 400
+        # ("tool_choice: type "tool" and "any" are not supported for this model").
+        return ModelProfile(family, tier, False, False, "rejected", True, True, True)
     if version < (5, 0):
         # Opus 4.7/4.8: no thinking unless asked; Strands drops ``thinking`` on a
         # forced turn, which leaves a valid thinking-off request.
-        return ModelProfile(family, tier, False, False, "accepted", True, False)
+        return ModelProfile(family, tier, False, False, "accepted", True, False, True)
     if tier == "sonnet":
         # Sonnet 5 on Bedrock: a forced choice needs ``thinking: disabled``;
         # dropping the key would leave adaptive thinking on.
-        return ModelProfile(family, tier, False, False, "needs_thinking_disabled", True, True)
-    # Opus 5, Fable 5: thinking is on by default, and the Bedrock rule for a
-    # forced choice with thinking on is not documented, so the retry goes out
-    # as ``auto``, which every model accepts.
-    return ModelProfile(family, tier, False, False, "rejected", True, True)
+        return ModelProfile(family, tier, False, False, "needs_thinking_disabled", True, True, True)
+    if tier == "opus":
+        # Opus 5: a forced ``any`` or named ``tool`` choice with thinking left on
+        # (omitted, so adaptive) answers with the tool call and no thinking block on
+        # Bedrock Converse, strict or not (measured 2026-11-06, #744), as the
+        # Anthropic thinking guide documents for adaptive thinking.
+        return ModelProfile(family, tier, False, False, "accepted", True, True, True)
+    # Fable 5, Mythos 5: Anthropic documents a forced choice as accepted, but on
+    # Bedrock both are models with a data-retention requirement, and an account on
+    # the default retention mode gets a ValidationException for any request
+    # ("data retention mode 'default' is not available for this model"), so what
+    # Bedrock does with a forced choice was not measured (#744). The retry goes out
+    # as ``auto``, with the output tool strict, which every model accepts.
+    return ModelProfile(family, tier, False, False, "rejected", True, True, True)
 
 
 @functools.lru_cache(maxsize=32)
@@ -448,7 +472,7 @@ def bedrock_model_kwargs(
     # Schema design always passed additional_request_fields (possibly empty).
     if fields or spec.thinking:
         kwargs["additional_request_fields"] = fields
-    if spec.strict_tools and not profile.accepts_forced_tool_choice:
+    if sends_strict_tools(role, profile):
         kwargs["strict_tools"] = True
     cache_config = _cache_config(spec, profile)
     if cache_config is not None:
@@ -456,6 +480,16 @@ def bedrock_model_kwargs(
     # Optional guardrail (#144): adds nothing unless BEDROCK_GUARDRAIL_* is set.
     kwargs.update(strands_guardrail_kwargs())
     return kwargs
+
+
+def sends_strict_tools(role: Role, profile: ModelProfile) -> bool:
+    """Whether ``role``'s tools go out with ``strict: true`` to a ``profile`` model.
+
+    The role asks for it (its tool schemas compile under strict mode) and the family
+    takes it; the choice being forced or ``auto`` does not matter. The boto3
+    validator call and the Strands model both follow this rule.
+    """
+    return ROLE_SPECS[role].strict_tools and profile.accepts_strict_tools
 
 
 def converse_request_fields(
