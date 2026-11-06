@@ -18,7 +18,22 @@ them, one routine at a time, with no I/O beyond reading the catalog:
   language the target line offers as an extension;
 - ``extensions``: every extension the routine uses is offered on the target line
   (``src/catalog/aurora_postgresql_extensions.toml``, #1078);
-- ``ownership``: a ``SECURITY DEFINER`` routine is not owned by a superuser.
+- ``ownership``: a ``SECURITY DEFINER`` routine is not owned by a superuser;
+- the body checks (#1951), on the statements of a function's or procedure's body as
+  PostgreSQL's parser reads them (each SQL statement and expression of a PL/pgSQL body, a
+  quoted SQL body, an SQL-standard body; the text an ``EXECUTE`` runs is not read):
+  ``function_call`` (a listed function is called), ``catalog_column`` (a listed catalog
+  column is read), ``public_schema_create`` (an object is created in the public schema),
+  ``setting`` (a listed setting is set, reset, shown or read), ``type_use`` (a listed type
+  is named) and ``maintenance_search_path`` (a function with no ``SET search_path`` names a
+  table without its schema). A body that does not parse is ``unknown``, never a pass, and
+  so is a check that finds nothing in a body that runs dynamic SQL (``EXECUTE``).
+
+A rule with a ``[version_change]`` (#1951) runs only when the move crosses that version:
+the source's line (``source_version``) is older than the rule's line and the target line
+has it (:func:`~src.shared.catalog.routine_checks.version_change_scope`). On a same-major
+target it is left out of the verdict; when the source's version is unknown its outcome is
+``unknown``.
 
 The checks on metadata run whether or not the statement parses, so an unparseable
 routine still gets every verdict the collection allows. Text holding a NUL, or one the
@@ -30,7 +45,8 @@ kept, and the reasons and fix hints are the catalog's own sentences (the exact r
 text stays apart from reports, logs and model inputs, epic #1925).
 
 The target line is the one the gap check's move lands on for the source's installed
-extensions (:func:`routine_target_line`).
+extensions (:func:`routine_target_line`), or, when the customer picks it, the newest
+listed Aurora PostgreSQL line (``target_choice="newest"``, #1951).
 """
 
 from __future__ import annotations
@@ -56,8 +72,9 @@ from src.shared.catalog.routine_checks import (
     RoutineCheck,
     RoutineCheckRule,
     routine_check_rules,
+    version_change_scope,
 )
-from src.tools.analysis.relational_gaps import extension_landing_line
+from src.tools.analysis.relational_gaps import TargetLineChoice, extension_landing_line
 from src.tools.routines.verdict import (
     ParseFailure,
     RoutineCheckResult,
@@ -85,7 +102,20 @@ SOURCE_ENGINE = "postgresql"
 # The routine kinds PostgreSQL has (no events: RoutineKind's "event" is MySQL's).
 PostgresKind = Literal["function", "procedure", "trigger"]
 
-_CHECK_ORDER: tuple[RoutineCheck, ...] = ("parse", "language", "extensions", "ownership")
+_CHECK_ORDER: tuple[RoutineCheck, ...] = (
+    "parse",
+    "language",
+    "extensions",
+    "ownership",
+    "function_call",
+    "catalog_column",
+    "public_schema_create",
+    "setting",
+    "type_use",
+    "maintenance_search_path",
+)
+# The checks that read the body's statements (#1951).
+_BODY_CHECKS: frozenset[RoutineCheck] = frozenset(_CHECK_ORDER[4:])
 # A language name the verdict may repeat (pg_language.lanname is a lower-case identifier
 # of at most 63 bytes); a declared language that is not one is named by a placeholder.
 _LANGUAGE_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
@@ -279,16 +309,324 @@ def routine_target_line(
     target_engine: str,
     *,
     extension_lines: Mapping[str, AuroraExtensionLines] | None = None,
+    target_choice: TargetLineChoice = "same_major",
 ) -> str | None:
     """The version line the source's routines are checked against: the one the gap
     check's move lands on for the source's installed extensions (#1078,
-    :func:`~src.tools.analysis.relational_gaps.extension_landing_line`)."""
+    :func:`~src.tools.analysis.relational_gaps.extension_landing_line`), or the newest
+    listed line when the customer picks ``target_choice="newest"`` (#1951)."""
     return extension_landing_line(
         installed_extensions,
         SOURCE_ENGINE,
         source_version,
         target_engine,
         extension_lines=extension_lines,
+        target_choice=target_choice,
+    )
+
+
+# --------------------------------------------------------------------------- the body (#1951)
+
+# libpg_query's raw parse modes of a PL/pgSQL expression (``PLpgSQL_expr.parseMode``):
+# 0 a whole SQL statement, 2 an expression, 3-5 an assignment ``target := expression``.
+_STATEMENT_MODE = 0
+_EXPRESSION_MODE = 2
+_ASSIGN_MODES = frozenset({3, 4, 5})
+_ASSIGN = re.compile(r":=|=")
+# The PL/pgSQL statements that run SQL built at run time: EXECUTE, FOR ... IN EXECUTE,
+# RETURN QUERY EXECUTE, OPEN ... FOR EXECUTE (the last two carry a ``dynquery``).
+_DYNAMIC_STATEMENTS = frozenset({"PLpgSQL_stmt_dynexecute", "PLpgSQL_stmt_dynfors"})
+# The settings functions whose first argument names a setting.
+_SETTING_FUNCTIONS = frozenset({"current_setting", "set_config"})
+
+
+@dataclass(frozen=True)
+class _BodyRead:
+    """What the body checks read from a function's or procedure's ``CREATE``:
+
+    - ``trees``: the parse tree of each body statement and expression;
+    - ``header``: the whole statement's parse tree (its parameters, return type and
+      ``SET`` clauses);
+    - ``declared_types``: the types a PL/pgSQL body declares its variables with, lower
+      case, without schema;
+    - ``dynamic``: the body runs SQL built at run time (``EXECUTE``), which no check reads;
+    - ``sets_search_path``: the statement has its own ``SET search_path`` clause.
+    """
+
+    trees: tuple[Any, ...]
+    header: Any
+    declared_types: frozenset[str]
+    dynamic: bool
+    sets_search_path: bool
+
+
+def _nodes(tree: Any) -> Iterable[tuple[str, Any]]:
+    """Every ``(node type, node)`` pair in a parse tree, iteratively (no recursion)."""
+    stack = [tree]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Mapping):
+            for key, value in item.items():
+                if isinstance(value, (Mapping, list)):
+                    yield key, value
+                    stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
+def _type_name(text: str) -> str:
+    """A declared type's own name: lower case, without schema, quotes or modifiers."""
+    name = text.split("(")[0].split("[")[0].strip().rsplit(".", 1)[-1]
+    return name.strip('"').strip().lower()
+
+
+def _plpgsql(create_sql: str) -> tuple[list[str], set[str], bool] | None:
+    """The SQL texts of a PL/pgSQL body (each statement as written, each expression as
+    ``SELECT <expression>``), the types it declares, and whether it runs dynamic SQL;
+    None when the body does not parse."""
+    try:
+        tree = pgparse.parse_pgsql(create_sql)
+    except Exception:  # noqa: BLE001 -- parse_routine already judged the text
+        return None
+    out: list[str] = []
+    types: set[str] = set()
+    dynamic = False
+    for key, node in _nodes(tree):
+        if not isinstance(node, Mapping):
+            continue
+        if key in _DYNAMIC_STATEMENTS or node.get("dynquery") is not None:
+            dynamic = True
+        if key == "PLpgSQL_type" and isinstance(node.get("typname"), str):
+            types.add(_type_name(node["typname"]))
+        if key != "PLpgSQL_expr":
+            continue
+        query, mode = node.get("query"), node.get("parseMode")
+        if not isinstance(query, str):
+            continue
+        if mode == _STATEMENT_MODE:
+            out.append(query)
+        elif mode == _EXPRESSION_MODE:
+            out.append("SELECT " + query)
+        elif mode in _ASSIGN_MODES and (match := _ASSIGN.search(query)) is not None:
+            out.append("SELECT " + query[match.end() :])
+    return out, types, dynamic
+
+
+def _read_body(create_sql: str, kind: PostgresKind) -> _BodyRead | None:
+    """The :class:`_BodyRead` of a function's or procedure's body, or None when the body
+    was not read (the statement does not parse, or its language is neither SQL nor
+    PL/pgSQL). A piece that does not parse on its own is left out."""
+    if kind == "trigger" or parse_routine(create_sql, kind) is not None:
+        return None
+    try:
+        header = pgparse.parse(create_sql)
+        stmt = header[0]["stmt"]["CreateFunctionStmt"]
+    except Exception:  # noqa: BLE001 -- parse_routine read it; anything else is unread
+        return None
+    language, body = _function_options(stmt)
+    head = postgresql_header(create_sql, kind)
+    sets_path = head is not None and head.sets_search_path
+    if stmt.get("sql_body") is not None:
+        return _BodyRead((stmt["sql_body"],), header, frozenset(), False, sets_path)
+    types: set[str] = set()
+    dynamic = False
+    if language == "plpgsql":
+        read = _plpgsql(create_sql)
+        if read is None:
+            return None
+        texts, types, dynamic = read
+    elif language == "sql":
+        texts = [body] if body is not None else []
+    else:
+        return None
+    trees = tuple(tree for text in texts if (tree := _parse_piece(text)) is not None)
+    return _BodyRead(trees, header, frozenset(types), dynamic, sets_path)
+
+
+def _parse_piece(text: str) -> Any:
+    """One body statement's parse tree; None for a piece the parser does not read alone."""
+    try:
+        return pgparse.parse(text)
+    except Exception:  # noqa: BLE001 -- any parser failure leaves the piece out
+        return None
+
+
+def _names(node: Mapping[str, Any], key: str) -> list[str]:
+    return [n.lower() for n in (_string(item) for item in node.get(key) or ()) if n]
+
+
+def _calls(trees: Iterable[Any]) -> Iterable[tuple[list[str], Mapping[str, Any]]]:
+    """Each function call's name parts (lower case) and node."""
+    for tree in trees:
+        for key, node in _nodes(tree):
+            if key == "FuncCall" and isinstance(node, Mapping):
+                yield _names(node, "funcname"), node
+
+
+def _builtin(names: list[str]) -> str | None:
+    """A call's function name when it is unqualified or in pg_catalog, else None."""
+    return names[-1] if names and names[:-1] in ([], ["pg_catalog"]) else None
+
+
+def _function_call_findings(rule: RoutineCheckRule, read: _BodyRead) -> list[str]:
+    listed = set(rule.match.called_functions)
+    return sorted(
+        {f"{name}()" for names, _ in _calls(read.trees) if (name := _builtin(names)) in listed}
+    )
+
+
+# The schemas a catalog relation is read from: unqualified (pg_catalog is on every
+# search_path), pg_catalog, or information_schema.
+_CATALOG_SCHEMAS = frozenset({"", "pg_catalog", "information_schema"})
+
+
+def _catalog_relation(node: Mapping[str, Any]) -> str | None:
+    schema = str(node.get("schemaname") or "").lower()
+    name = str(node.get("relname") or "").lower()
+    return name if name and schema in _CATALOG_SCHEMAS else None
+
+
+def _catalog_column_findings(rule: RoutineCheckRule, read: _BodyRead) -> list[str]:
+    """A listed ``relation.column`` that one statement reads: the statement names the
+    relation and a column of that name. The pairing is per statement, so a column read
+    later through a record variable is not seen, and a user table's column of the same
+    name in a statement that also reads the catalog relation is counted."""
+    wanted = [tuple(c.split(".")) for c in rule.match.catalog_columns]
+    out: set[str] = set()
+    for tree in read.trees:
+        for statement in tree if isinstance(tree, list) else [tree]:
+            relations: set[str] = set()
+            columns: set[str] = set()
+            for key, node in _nodes(statement):
+                if key == "RangeVar" and isinstance(node, Mapping):
+                    if (relation := _catalog_relation(node)) is not None:
+                        relations.add(relation)
+                elif key == "ColumnRef" and isinstance(node, Mapping):
+                    fields = _names(node, "fields")
+                    if fields:
+                        columns.add(fields[-1])
+            out.update(f"{r}.{c}" for r, c in wanted if r in relations and c in columns)
+    return sorted(out)
+
+
+# The statements that create an object in a schema: the node key of its name, and the
+# object kind the finding names. A relation's name is a RangeVar; a function's, type's
+# or domain's is a list of name parts.
+_CREATES_RELATION = {"CreateStmt": ("relation", "TABLE"), "ViewStmt": ("view", "VIEW")}
+_CREATES_RELATION |= {"CreateSeqStmt": ("sequence", "SEQUENCE")}
+_CREATES_NAMED = {
+    "CreateFunctionStmt": ("funcname", "FUNCTION"),
+    "CreateEnumStmt": ("typeName", "TYPE"),
+    "CreateDomainStmt": ("domainname", "DOMAIN"),
+}
+
+
+def _public_create_findings(read: _BodyRead) -> list[str]:
+    """Objects the body creates in the public schema: named ``public``, or unqualified
+    when the routine has no ``SET search_path`` of its own (the default path's first
+    existing schema is public). A temporary table is never one."""
+    out: set[str] = set()
+
+    def public(schema: str | None) -> bool:
+        return (schema or "").lower() == "public" or (not schema and not read.sets_search_path)
+
+    for tree in read.trees:
+        for key, node in _nodes(tree):
+            if not isinstance(node, Mapping):
+                continue
+            relation: Any = None
+            kind = "TABLE"
+            if key in _CREATES_RELATION:
+                field, kind = _CREATES_RELATION[key]
+                relation = node.get(field)
+            elif key == "CreateTableAsStmt":
+                relation = (node.get("into") or {}).get("rel")
+            elif key == "CompositeTypeStmt":
+                relation, kind = node.get("typevar"), "TYPE"
+            elif key in _CREATES_NAMED:
+                field, kind = _CREATES_NAMED[key]
+                names = _names(node, field)
+                if names and public(names[-2] if len(names) > 1 else None):
+                    out.add(f"{kind} created in public")
+                continue
+            if not isinstance(relation, Mapping) or relation.get("relpersistence") == "t":
+                continue
+            if public(relation.get("schemaname")):
+                out.add(f"{kind} created in public")
+    return sorted(out)
+
+
+def _unqualified_findings(read: _BodyRead) -> list[str]:
+    """A function with no ``SET search_path`` whose body names a table without its schema
+    (a CTE's name, and a ``pg_``-prefixed catalog relation, which still resolves through
+    pg_catalog, are not tables here)."""
+    if read.sets_search_path:
+        return []
+    for tree in read.trees:
+        ctes = {
+            str(node.get("ctename") or "").lower()
+            for key, node in _nodes(tree)
+            if key == "CommonTableExpr" and isinstance(node, Mapping)
+        }
+        for key, node in _nodes(tree):
+            if key == "RangeVar" and isinstance(node, Mapping) and not node.get("schemaname"):
+                name = str(node.get("relname") or "").lower()
+                if name not in ctes and not name.startswith("pg_"):
+                    return ["unqualified table, no SET search_path"]
+    return []
+
+
+def _setting_findings(rule: RoutineCheckRule, read: _BodyRead) -> list[str]:
+    """Listed settings the routine sets, resets or shows (a body ``SET``/``RESET``/``SHOW``,
+    or the function's own ``SET`` clause) or reads or sets through ``current_setting()`` /
+    ``set_config()`` with the name as a string literal."""
+    listed = set(rule.match.removed_settings)
+    found: set[str] = set()
+    for tree in (*read.trees, read.header):
+        for key, node in _nodes(tree):
+            if not isinstance(node, Mapping):
+                continue
+            if key in ("VariableSetStmt", "VariableShowStmt"):
+                name = str(node.get("name") or "").lower()
+                if name in listed:
+                    found.add(f"{'SHOW' if key == 'VariableShowStmt' else 'SET'} {name}")
+    for names, node in _calls(read.trees):
+        if _builtin(names) not in _SETTING_FUNCTIONS:
+            continue
+        args = node.get("args") or []
+        first = args[0].get("A_Const") if args and isinstance(args[0], Mapping) else None
+        value = ((first or {}).get("sval") or {}).get("sval")
+        if isinstance(value, str) and value.lower() in listed:
+            found.add(f"{names[-1]}({value.lower()})")
+    return sorted(found)
+
+
+_TYPE_KEYS = frozenset({"typeName", "argType", "returnType", "TypeName"})
+
+
+def _type_findings(rule: RoutineCheckRule, read: _BodyRead) -> list[str]:
+    """Listed types the routine names: its parameters and return type, a cast or column
+    type in its body, or a PL/pgSQL variable's declared type."""
+    listed = set(rule.match.removed_types)
+    found = {t for t in read.declared_types if t in listed}
+    for tree in (*read.trees, read.header):
+        for key, node in _nodes(tree):
+            if key in _TYPE_KEYS and isinstance(node, Mapping):
+                names = _names(node, "names")
+                if names and names[-1] in listed:
+                    found.add(names[-1])
+    return sorted(found)
+
+
+def _unknown(rule: RoutineCheckRule, why: str) -> RoutineCheckResult:
+    return RoutineCheckResult(
+        rule_id=rule.id,
+        check=rule.match.check,
+        outcome="unknown",
+        impact=rule.impact,
+        reason=rule.reason,
+        fix_hint=rule.fix_hint,
+        findings=(why,),
     )
 
 
@@ -311,10 +649,14 @@ def check_postgresql_routine(
     *,
     target_engine: str,
     target_line: str,
+    source_version: str | None = None,
     rules: Iterable[RoutineCheckRule] | None = None,
     extension_lines: Mapping[str, AuroraExtensionLines] | None = None,
 ) -> RoutineVerdict:
-    """The verdict for ``routine`` on ``target_engine``'s ``target_line`` (``"16"``).
+    """The verdict for ``routine`` on ``target_engine``'s ``target_line`` (``"16"``), from
+    a source at ``source_version`` (the collection's server version, ``"16.4"``; None
+    when unknown). A ``[version_change]`` rule runs only when the move crosses its version
+    (see the module docstring).
 
     Every rule for a PostgreSQL source, ``target_engine`` and the routine's kind runs,
     in check order (parse, language, extensions, ownership); the dependency check is
@@ -343,6 +685,17 @@ def check_postgresql_routine(
         ),
         key=lambda r: (_CHECK_ORDER.index(r.match.check), r.id),
     )
+    # #1951: a version-change rule runs only when the move crosses its version.
+    scopes = {
+        r.id: version_change_scope(r, SOURCE_ENGINE, source_version, (target_line,))
+        for r in applicable
+    }
+    applicable = [r for r in applicable if scopes[r.id] != "not_a_version_change"]
+    body = (
+        _read_body(routine.create_sql, routine.kind)
+        if any(r.match.check in _BODY_CHECKS for r in applicable)
+        else None
+    )
     # Parsed once: the parse rule reads the failure, the language rule the statement's
     # declared language (None when it did not parse that far).
     failure, declared = _parse(routine.create_sql, routine.kind)
@@ -350,7 +703,11 @@ def check_postgresql_routine(
     results: list[RoutineCheckResult] = []
     for rule in applicable:
         match = rule.match
-        if match.check == "parse":
+        if scopes[rule.id] == "source_unknown":
+            results.append(_unknown(rule, "source version unknown"))
+        elif match.check in _BODY_CHECKS:
+            results.append(_body_result(rule, body))
+        elif match.check == "parse":
             parse_failure = failure
             results.append(_result(rule, failure is not None))
         elif match.check == "language":
@@ -371,6 +728,29 @@ def check_postgresql_routine(
         parse_failure=parse_failure,
         checks=tuple(results),
     )
+
+
+def _body_result(rule: RoutineCheckRule, read: _BodyRead | None) -> RoutineCheckResult:
+    """A body check's result: ``unknown`` when the body was not read, or when it found
+    nothing but the body runs dynamic SQL no check reads (#2016 review)."""
+    if read is None:
+        return _unknown(rule, "body not read")
+    check = rule.match.check
+    if check == "function_call":
+        found = _function_call_findings(rule, read)
+    elif check == "catalog_column":
+        found = _catalog_column_findings(rule, read)
+    elif check == "public_schema_create":
+        found = _public_create_findings(read)
+    elif check == "setting":
+        found = _setting_findings(rule, read)
+    elif check == "type_use":
+        found = _type_findings(rule, read)
+    else:
+        found = _unqualified_findings(read)
+    if not found and read.dynamic:
+        return _unknown(rule, "dynamic SQL not read")
+    return _result(rule, bool(found), found)
 
 
 # --------------------------------------------------------------------------- the header, for rewrites
