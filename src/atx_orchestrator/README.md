@@ -137,7 +137,9 @@ Non-obvious constraints Bedrock AgentCore imposes. `Dockerfile.atx` and
 - **Define the subagent class inside `agent_factory()`.** A module-level subclass
   hangs in production containers; `subagents/base.py` handles this.
 - Serve on **port 8080 with a `/ping` healthcheck**, and use a cross-region model
-  id (an inference profile, as the `ATX_AGENT` role default is).
+  id (a `global.` inference profile, as the `ATX_AGENT` role default is). The
+  `AgentCoreExecutionRole` in `pipeline/iam-roles.yaml` grants only the profiles
+  in `MODEL_IDS` (`src/shared/models.py`) and their foundation models. <!-- claim: tests/unit/tools/aws/test_iam_templates.py::test_the_execution_role_can_call_every_model_id, tests/unit/tools/aws/test_iam_templates.py::test_the_execution_role_cannot_call_other_models -->
 
 ## Local tests (no AWS, no Docker required)
 

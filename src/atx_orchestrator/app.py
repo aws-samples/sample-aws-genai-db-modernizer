@@ -29,7 +29,8 @@ def build_agent_factory():
 
     require_valid_guardrail_config()
 
-    # Model ID (role ATX_AGENT) — must use a cross-region inference profile.
+    # Model ID (role ATX_AGENT) — must use a cross-region inference profile
+    # (the default is a global. one; pipeline/iam-roles.yaml grants MODEL_IDS only).
     # Override via the MODEL_ID env var if needed.
     model_id = resolve_model_id(Role.ATX_AGENT)
 

@@ -55,11 +55,13 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _render(value: Any, params: dict[str, str]) -> str:
-    """Resolve a ``Fn::Sub`` string (or a literal) to a concrete ARN."""
+    """Resolve a ``Fn::Sub`` string, a pseudo-parameter ``Ref`` or a literal to a concrete value."""
+    subs = {"AWS::Region": REGION, "AWS::AccountId": ACCOUNT, **params}
+    if isinstance(value, dict) and "Ref" in value:
+        return subs[value["Ref"]]
     if isinstance(value, dict) and "Fn::Sub" in value:
         value = value["Fn::Sub"]
     assert isinstance(value, str), value
-    subs = {"AWS::Region": REGION, "AWS::AccountId": ACCOUNT, **params}
     return re.sub(r"\$\{([^}]+)\}", lambda m: subs[m.group(1)], value)
 
 
@@ -500,3 +502,185 @@ def test_the_installed_aws_transform_packages_match_the_image_pins():
             pins[name] = pinned
     assert "agent-builder-agentic-mcp-aws-transform" in pins
     assert {name: version(name) for name in pins} == pins
+
+
+# ---------------------------------------------------------------------------
+# pipeline/iam-roles.yaml: Bedrock invoke on global inference profiles (#2004)
+# ---------------------------------------------------------------------------
+#
+# A call on a ``global.`` profile is authorized three times (AWS, "IAM policy
+# requirements for global cross-Region inference",
+# https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html):
+# the profile in the source Region (``aws:RequestedRegion`` is the source
+# Region, no ``bedrock:InferenceProfileArn``), the foundation model in the
+# source Region, and the Region-less foundation model (``aws:RequestedRegion``
+# is ``unspecified``); both foundation-model checks carry the profile's ARN in
+# ``bedrock:InferenceProfileArn``. The evaluator below replays those three
+# checks against the template's Allow statements. It does not model Deny
+# statements, permission boundaries, session policies or SCPs: an account
+# that denies Regions (``aws:RequestedRegion``) can still refuse a call this
+# role's policy allows.
+
+_BEDROCK_ACTIONS = ("bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream")
+
+
+def _bedrock_statements() -> list[dict[str, Any]]:
+    resource = _template(IAM_ROLES)["Resources"]["AgentCoreExecutionRole"]["Properties"]
+    out: list[dict[str, Any]] = []
+    for policy in resource.get("Policies", []):
+        for statement in _statements(policy["PolicyDocument"]):
+            if any(a.lower().startswith("bedrock:") for a in _as_list(statement["Action"])):
+                out.append(statement)
+    return out
+
+
+def _condition_holds(condition: dict[str, Any], context: dict[str, str]) -> bool:
+    for operator, tests in condition.items():
+        for key, wanted in tests.items():
+            values = [_render(v, {}) for v in _as_list(wanted)]
+            actual = context.get(key)
+            if actual is None:
+                return False  # a missing key fails every non-IfExists operator
+            if operator == "StringEquals":
+                ok = actual in values
+            elif operator in ("StringLike", "ArnLike", "ArnEquals"):
+                ok = any(fnmatch.fnmatchcase(actual, v) for v in values)
+            else:
+                raise AssertionError(f"evaluator does not model condition operator {operator}")
+            if not ok:
+                return False
+    return True
+
+
+def _bedrock_allows(action: str, arn: str, context: dict[str, str]) -> bool:
+    for statement in _bedrock_statements():
+        assert statement["Effect"] == "Allow", statement
+        actions = [a.lower() for a in _as_list(statement["Action"])]
+        if not any(fnmatch.fnmatchcase(action.lower(), a) for a in actions):
+            continue
+        if not any(fnmatch.fnmatchcase(arn, r) for r in _resources(statement, {})):
+            continue
+        if _condition_holds(statement.get("Condition", {}), context):
+            return True
+    return False
+
+
+def _profile_arn(profile_id: str) -> str:
+    return f"arn:aws:bedrock:{REGION}:{ACCOUNT}:inference-profile/{profile_id}"
+
+
+def _global_call_allowed(profile_id: str, action: str = "bedrock:InvokeModel") -> bool:
+    """The three checks a call on ``profile_id`` from ``REGION`` must pass."""
+    model = profile_id.partition(".")[2]
+    profile = _profile_arn(profile_id)
+    return (
+        _bedrock_allows(action, profile, {"aws:RequestedRegion": REGION})
+        and _bedrock_allows(
+            action,
+            f"arn:aws:bedrock:{REGION}::foundation-model/{model}",
+            {"aws:RequestedRegion": REGION, "bedrock:InferenceProfileArn": profile},
+        )
+        and _bedrock_allows(
+            action,
+            f"arn:aws:bedrock:::foundation-model/{model}",
+            {"aws:RequestedRegion": "unspecified", "bedrock:InferenceProfileArn": profile},
+        )
+    )
+
+
+def _model_ids() -> dict[str, str]:
+    from src.shared.models import MODEL_IDS
+
+    return dict(MODEL_IDS)
+
+
+@pytest.mark.parametrize("action", _BEDROCK_ACTIONS)
+@pytest.mark.parametrize("name", sorted(_model_ids()))
+def test_the_execution_role_can_call_every_model_id(name, action):
+    """Each profile in ``MODEL_IDS`` and the foundation models it routes to."""
+    assert _global_call_allowed(_model_ids()[name], action), _model_ids()[name]
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    [
+        "global.anthropic.claude-mythos-5-1",  # an Anthropic model the pipeline does not use
+        "global.amazon.nova-2-lite-v1:0",  # another provider
+        "global.anthropic.claude-sonnet-5-5-extra",  # a longer ID sharing a prefix
+    ],
+)
+@pytest.mark.passes_on_main  # a guard: main's IDs and policy already hold
+def test_the_execution_role_cannot_call_other_models(profile_id):
+    assert not _global_call_allowed(profile_id)
+
+
+def test_the_global_model_grant_needs_its_own_profile():
+    """A Region-less foundation-model grant only through a ``global.`` profile
+    of the same table: not as a direct call, and not via another profile."""
+    sonnet = _model_ids()["sonnet-5.5"]
+    model = sonnet.partition(".")[2]
+    regionless = f"arn:aws:bedrock:::foundation-model/{model}"
+    direct = {"aws:RequestedRegion": "unspecified"}
+    assert not _bedrock_allows("bedrock:InvokeModel", regionless, direct)
+    other = {
+        "aws:RequestedRegion": "unspecified",
+        "bedrock:InferenceProfileArn": _profile_arn("global.anthropic.claude-mythos-5-1"),
+    }
+    assert not _bedrock_allows("bedrock:InvokeModel", regionless, other)
+    in_region = f"arn:aws:bedrock:{REGION}::foundation-model/{model}"
+    assert not _bedrock_allows("bedrock:InvokeModel", in_region, {"aws:RequestedRegion": REGION})
+
+
+def test_a_mismatched_profile_and_model_pair_is_pooled_on_purpose():
+    """The ``bedrock:InferenceProfileArn`` lists are pooled: a Sonnet profile ARN
+    with the Opus model passes the policy. Bedrock never pairs them (a profile
+    is authorized only for the model it routes to) and both are granted anyway,
+    so the policy grants nothing more than one statement per model would; this
+    pins the choice the template comment explains, and that a profile outside
+    the table still unlocks nothing."""
+    opus = _model_ids()["opus-5.5"].partition(".")[2]
+    sonnet_profile = _profile_arn(_model_ids()["sonnet-5.5"])
+    for arn, region in (
+        (f"arn:aws:bedrock:{REGION}::foundation-model/{opus}", REGION),
+        (f"arn:aws:bedrock:::foundation-model/{opus}", "unspecified"),
+    ):
+        pooled = {"aws:RequestedRegion": region, "bedrock:InferenceProfileArn": sonnet_profile}
+        assert _bedrock_allows("bedrock:InvokeModel", arn, pooled), arn
+        outside = {
+            "aws:RequestedRegion": region,
+            "bedrock:InferenceProfileArn": _profile_arn("global.anthropic.claude-mythos-5-1"),
+        }
+        assert not _bedrock_allows("bedrock:InvokeModel", arn, outside), arn
+
+
+@pytest.mark.passes_on_main  # a guard: main's IDs and policy already hold
+def test_the_profile_grant_is_pinned_to_the_source_region():
+    """The documented ``aws:RequestedRegion`` condition on the profile statement."""
+    sonnet = _model_ids()["sonnet-5.5"]
+    elsewhere = f"arn:aws:bedrock:eu-west-1:{ACCOUNT}:inference-profile/{sonnet}"
+    assert not _bedrock_allows(
+        "bedrock:InvokeModel", elsewhere, {"aws:RequestedRegion": "eu-west-1"}
+    )
+
+
+def test_bedrock_grants_have_no_wildcard_action_or_resource():
+    for statement in _bedrock_statements():
+        for action in _as_list(statement["Action"]):
+            assert "*" not in action, action
+        for arn in _resources(statement, {}):
+            assert arn != "*", statement
+            assert "*" not in arn.rpartition("/")[2], arn
+            assert "/anthropic.claude-" in arn or "/global.anthropic.claude-" in arn, arn
+
+
+def test_every_bedrock_grant_is_a_model_id_in_use():
+    """No leftover grant for a model the table no longer names."""
+    in_use = set(_model_ids().values())
+    models = {m.partition(".")[2] for m in in_use}
+    for statement in _bedrock_statements():
+        for arn in _resources(statement, {}):
+            tail = arn.rpartition("/")[2]
+            if ":inference-profile/" in arn:
+                assert tail in in_use, arn
+            else:
+                assert tail in models, arn

@@ -29,7 +29,7 @@ Resources:
   # -----------------------------------------------------------------------
   AgentCoreExecutionRole:
     Type: AWS::IAM::Role
-    # checkov:skip=CKV_AWS_111: Bedrock model invocation is scoped to model/inference-profile ARNs above, and ECR/CloudWatch Logs are scoped to this repo/log-group prefix below. The remaining wildcards are actions with no resource-level IAM support at all: xray:Put* (trace ingestion), ecr:GetAuthorizationToken, and the transform-agents actions.
+    # checkov:skip=CKV_AWS_111: Bedrock model invocation is scoped to the named global inference profiles and their foundation models below, and ECR/CloudWatch Logs are scoped to this repo/log-group prefix below. The remaining wildcards are actions with no resource-level IAM support at all: xray:Put* (trace ingestion), ecr:GetAuthorizationToken, and the transform-agents actions.
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -68,26 +68,91 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: BedrockInvoke
+              # Bedrock model invocation on global cross-Region inference profiles
+              # (#2004): the model IDs in src/shared/models.py (MODEL_IDS) are
+              # global.anthropic.* profiles, and only those six models are granted, so
+              # keep these lists in step with MODEL_IDS (pinned by
+              # tests/unit/tools/aws/test_iam_templates.py). A global profile can route
+              # a request to any commercial AWS Region, and Bedrock authorizes the call
+              # three times; the three statements below are AWS's documented pattern,
+              # "IAM policy requirements for global cross-Region inference",
+              # https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html
+              #   1. the global profile in this (source) Region, aws:RequestedRegion pinned;
+              #   2. the foundation model in this Region, only through those profiles;
+              #   3. the Region-less foundation model ARN (arn:aws:bedrock:::...), which
+              #      stands for every destination Region: aws:RequestedRegion is
+              #      "unspecified" there, and bedrock:InferenceProfileArn limits it to
+              #      calls made through the profiles in statement 1.
+              # The bedrock:InferenceProfileArn lists are pooled (any of the six
+              # profiles with any of the six models) rather than one statement per
+              # model, as AWS's single-model example has: Bedrock only authorizes a
+              # model for the profile that routes to it, and every model is granted
+              # anyway, so pooling grants nothing more and keeps the lists short.
+              # bedrock:InvokeModel also authorizes Converse, and
+              # bedrock:InvokeModelWithResponseStream ConverseStream (no separate action;
+              # bedrock-runtime:* is not a real IAM prefix, cfn-lint W3037).
+              # A role override onto a us./eu. profile (SCHEMA_AGENT_MODEL_ID, MODEL_ID,
+              # ...) is not granted here: add that profile and its us-*/eu-* foundation
+              # models if you use one.
+              - Sid: BedrockGlobalProfileInvoke
                 Effect: Allow
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
-                # bedrock-runtime:Converse and bedrock-runtime:InvokeModel were
-                # removed: neither is a real IAM action (Bedrock runtime calls
-                # are authorized under the bedrock: prefix, confirmed by
-                # cfn-lint's W3037 on both). bedrock:InvokeModel also covers
-                # Converse/ConverseStream — AWS authorizes those two APIs under
-                # InvokeModel/InvokeModelWithResponseStream, not a separate
-                # action — so no action was added back for them.
-                # Scoped to foundation models and cross-region inference profiles
-                # (the agents invoke inference-profile IDs such as
-                # us.anthropic.claude-sonnet-4-6). Mirrors the proven pattern in
-                # infrastructure/cloudformation/orchestration.yaml.
                 Resource:
-                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/*"
-                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*"
-                  - "arn:aws:bedrock:us-*::foundation-model/*"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-4-6-v1"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-4-6"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+              - Sid: BedrockGlobalProfileRegionalModel
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-opus-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-haiku-5-5"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-opus-4-6-v1"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-4-6"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+                    bedrock:InferenceProfileArn:
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-4-6-v1"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-4-6"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+              - Sid: BedrockGlobalProfileGlobalModel
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-opus-5-5"
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-5-5"
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-haiku-5-5"
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-opus-4-6-v1"
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-4-6"
+                  - "arn:aws:bedrock:::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: unspecified
+                    bedrock:InferenceProfileArn:
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-opus-4-6-v1"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-4-6"
+                      - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0"
               - Sid: TransformAgentsApiPolicy
                 Effect: Allow
                 # Only the operations the agents call (#1736), pinned to the

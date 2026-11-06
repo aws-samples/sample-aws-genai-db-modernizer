@@ -67,17 +67,26 @@ logger = logging.getLogger(__name__)
 # Model IDs (the only place in src/ that spells one)
 # ---------------------------------------------------------------------------
 
-#: Bedrock model / cross-region inference profile IDs. The ``us.`` profiles
-#: are what ``pipeline/iam-roles.yaml`` allows today (in-region inference
-#: profiles plus ``us-*`` foundation models); a ``global.`` profile also routes
-#: to foundation models outside ``us-*``, which that policy does not cover.
+#: Bedrock global cross-region inference profile IDs (#2004). A ``global.``
+#: profile can be called from any commercial source Region and routes each
+#: request to any commercial Region with capacity, so it avoids the
+#: model-access errors a ``us.`` profile gives outside its US source Regions.
+#: Every model here has a ``global.`` profile (Bedrock model cards, checked
+#: 2026-11-06); a model added without one keeps its ``us.`` ID, with a comment
+#: saying so. IAM coverage: ``pipeline/iam-roles.yaml`` grants exactly these
+#: profiles and the foundation models they route to (the profile in the
+#: source Region, the model in the source Region, and the Region-less model
+#: ARN), following AWS's documented pattern for global cross-Region inference;
+#: ``tests/unit/tools/aws/test_iam_templates.py`` keeps the two in step. An
+#: env override onto a geographic profile (``us.``, ``eu.``, ...) for data
+#: residency needs its own grant.
 MODEL_IDS: dict[str, str] = {
-    "opus-4.6": "us.anthropic.claude-opus-4-6-v1",
-    "sonnet-4.6": "us.anthropic.claude-sonnet-4-6",
-    "haiku-4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "opus-5.5": "us.anthropic.claude-opus-5-5",
-    "sonnet-5.5": "us.anthropic.claude-sonnet-5-5",
-    "haiku-5.5": "us.anthropic.claude-haiku-5-5",
+    "opus-4.6": "global.anthropic.claude-opus-4-6-v1",
+    "sonnet-4.6": "global.anthropic.claude-sonnet-4-6",
+    "haiku-4.5": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "opus-5.5": "global.anthropic.claude-opus-5-5",
+    "sonnet-5.5": "global.anthropic.claude-sonnet-5-5",
+    "haiku-5.5": "global.anthropic.claude-haiku-5-5",
 }
 
 #: ``max_tokens`` floor on families with adaptive thinking on by default:

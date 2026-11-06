@@ -36,7 +36,8 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     1. Configure AWS credentials (`aws configure`, environment variables, or `aws sso login`).
     2. Make sure the account can invoke the Anthropic models this pipeline uses: Claude Sonnet (Reality Check validation and Synthesis), Claude Opus (Schema Design) and Claude Haiku (answer validation). Most Bedrock model access is enabled by default; Anthropic models need a use-case form, submitted once per account (select the model in the Bedrock console's model catalog, or call `PutUseCaseForModelAccess`). See [Request access to models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html).
-    3. Re-run the command above.
+    3. Make sure your IAM policy allows the global inference profiles the defaults use (see **IAM for the global profiles** below).
+    4. Re-run the command above.
 
     With `--all` the run ends by rendering every deliverable (see [Where the deliverables land](#where-the-deliverables-land)).
 
@@ -51,7 +52,15 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     | Light check | Free-text answer validation (agent interaction API) | Claude Haiku 5.5 | `LIGHT_CHECK_MODEL_ID` |
     | AWS Transform agent | AWS Transform orchestrator and subagents | Claude Sonnet 5.5 | `MODEL_ID` |
 
-    The defaults use the `us.` cross-region inference profiles.
+    The defaults are global cross-Region inference profiles (`global.anthropic.claude-opus-5-5`, `global.anthropic.claude-sonnet-5-5`, `global.anthropic.claude-haiku-5-5`), which you can call from their [supported source Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) (each model's card lists them; `us-east-1` is one); Amazon Bedrock may serve each request in any commercial Region the profile routes to. <!-- claim: tests/unit/shared/test_models.py::test_defaults_are_the_five_five_family, tests/unit/shared/test_models.py::test_every_model_id_is_a_global_profile --> If your data must stay in one geography, set each role's environment variable to a geographic profile instead (for example `us.anthropic.claude-sonnet-5-5` or `eu.anthropic.claude-sonnet-5-5`) and grant that profile in your IAM policy.
+
+    **IAM for the global profiles.** The identity that makes the calls needs `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` (they also authorize Converse and ConverseStream) on three resources per model, as AWS documents in [IAM policy requirements for global cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html#global-cris-iam-setup):
+
+    - the profile in your Region: `arn:aws:bedrock:<region>:<account>:inference-profile/global.anthropic.claude-<model>`;
+    - the foundation model in your Region: `arn:aws:bedrock:<region>::foundation-model/anthropic.claude-<model>`;
+    - the Region-less foundation model, which stands for every Region the profile can route to: `arn:aws:bedrock:::foundation-model/anthropic.claude-<model>`, where Bedrock sets `aws:RequestedRegion` to `unspecified`.
+
+    A policy that allows only `us-*` foundation models, or an SCP that denies Regions outside a list, rejects these calls: allow `aws:RequestedRegion` `unspecified` for Bedrock, or exempt calls whose `bedrock:InferenceProfileArn` is a `global.` profile, as the AWS page describes. [`pipeline/iam-roles.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/pipeline/iam-roles.yaml) is a worked example: its execution role grants exactly the profiles in `MODEL_IDS` and their foundation models, each foundation-model grant conditioned on `bedrock:InferenceProfileArn`. Its tests check those Allow statements only; a Deny statement, permission boundary or SCP in your account can still refuse a call. <!-- claim: tests/unit/tools/aws/test_iam_templates.py::test_the_execution_role_can_call_every_model_id, tests/unit/tools/aws/test_iam_templates.py::test_the_global_model_grant_needs_its_own_profile, tests/unit/tools/aws/test_iam_templates.py::test_every_bedrock_grant_is_a_model_id_in_use -->
 
     Schema design runs at effort medium rather than high. In a benchmark of this role on the WordPress sample and a scoped Discourse run, medium showed no measured quality loss (design validation results and agreement with the high-effort designs were within the run-to-run spread of high itself) and cost 31-41% less per design pass. The effort is set in `ROLE_SPECS` in `src/shared/models.py`; it is not an environment variable.
 
@@ -111,7 +120,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     It applies to the AWS Transform conversation agent (the guardrail ID and version are passed to the SDK, which has no setting for the trace or the stream mode, so `BEDROCK_GUARDRAIL_TRACE` and `BEDROCK_GUARDRAIL_STREAM_MODE` do not apply to that agent), the schema designers and PE reviewers, the Reality Check validator and summary, the Synthesis executive summary, the analysis advisor and the free-text answer check. When the guardrail blocks a call, that phase stops with an error that names it (for example "blocked the model call in the schema_design phase"), and the call is not retried, because the same input would be blocked again. Where a phase has a deterministic fallback (the executive summary, the validator, the analysis advisor, the answer check) the run goes on without the model's contribution and logs the block. A guardrail that only masks content, such as PII set to anonymize, is not an error (masking does not apply to the Strands phases with `BEDROCK_GUARDRAIL_STREAM_MODE=async`). With `BEDROCK_GUARDRAIL_TRACE=disabled`, Bedrock cannot tell a mask from a block, so every intervention counts as a block.
 
-    The role that makes the calls needs `bedrock:ApplyGuardrail` on the guardrail. The default `us.` model IDs worked in a live test with a guardrail that has no cross-region guardrail profile (in `us-east-1`), so `CrossRegionGuardrailProfileArn` is optional. Set it (for example `.../guardrail-profile/us.guardrail.v1:0`) only if Bedrock asks for one in your region or setup.
+    The role that makes the calls needs `bedrock:ApplyGuardrail` on the guardrail. A live test in `us-east-1` (2026-11-02, on the `us.` model IDs that were the defaults then) needed no cross-region guardrail profile, so `CrossRegionGuardrailProfileArn` is optional; that test has not been repeated on the `global.` defaults. Set it (for example `.../guardrail-profile/us.guardrail.v1:0`) only if Bedrock asks for one in your region or setup.
 
     The prompt-attack filter looks at the customer-derived text only (table, column and query text inside the `untrusted_customer_data` blocks, sent as guard content), not at this project's own prompt text, which the filter flags as an injection attempt. The AWS Transform conversation agent is created by the AWS Transform SDK from a model ID alone, so this setting does not reach it; the pipeline phases it runs go through the calls above.
 
