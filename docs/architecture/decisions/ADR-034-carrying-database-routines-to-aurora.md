@@ -1,0 +1,96 @@
+# ADR-034: Carrying Database Routines to Aurora
+
+**Status:** Accepted (2026-11-06). The checks, the safe rewrites and the disposable source engines are built; every other decision below is decided but not built yet, and names the issue that builds it. Epic #1925 implements it.
+**Date:** 2026-11-06
+**Deciders:** Database Modernizer Assessment Architecture Team
+**Related ADRs:** ADR-031 (Query-First Routing and the Engine Rule Catalog), ADR-032 (One Facts Layer), ADR-033 (Data Movement Driven by a Transformation Contract)
+
+---
+
+## Context
+
+Customers hesitate to modernize when their stored procedures, functions, triggers and events (here, *routines*) don't come along, because they expect to rewrite them by hand. The pipeline assesses where logic lives (epic #1657), but nothing carries it to the target. This ADR records how routines are carried to the target Aurora engine: in what order, how a routine is checked, repaired and proven, where its exact text is kept, and how a routine that can't be carried shows up.
+
+The collection is redacted: literals in collected SQL are replaced before anything reads them (#1625). A routine can't be deployed from redacted text, so carrying routines needs the exact `CREATE` statement, literals included, without weakening that rule.
+
+### What is built today
+
+- **Routine checks.** `src/tools/routines/postgresql_checks.py` parses each PostgreSQL `CREATE` with libpg_query (through `pgparse`) and `src/tools/routines/mysql_checks.py` reads each MySQL `CREATE`; both run the rules of `src/catalog/routine_checks/` (language, extensions on the target line, a superuser's `SECURITY DEFINER`, a `DEFINER` that won't exist, `SUPER`-only statements, removed `sql_mode`s) and return a verdict per routine. <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_a_routine_that_fails_several_rules_lists_each_one, tests/unit/tools/routines/test_mysql_routine_checks.py::test_each_corpus_routine_gets_its_expected_verdict, tests/unit/tools/routines/test_mysql_routine_checks.py::test_rules_come_from_the_catalog_not_the_code --> A verdict never holds the routine's text or a literal from it. <!-- claim: tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_verdict_never_holds_the_routine_text, tests/unit/tools/routines/test_mysql_routine_checks.py::test_a_verdict_never_carries_a_literal_from_the_routine -->
+- **Safe rewrites.** `src/tools/routines/rewrites.py` changes only a routine's header: a MySQL `DEFINER` or a PostgreSQL owner to the target user, and an explicit `search_path` on a `SECURITY DEFINER` function; `src/tools/routines/dependencies.py` orders routines after what they call. <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_a_named_definer_becomes_the_target_user, tests/unit/tools/routines/test_routine_rewrites.py::test_the_owner_becomes_the_target_user, tests/unit/tools/routines/test_routine_rewrites.py::test_a_security_definer_routine_pins_the_search_path, tests/unit/tools/routines/test_routine_rewrites.py::test_a_definer_rewrite_never_changes_the_body, tests/unit/tools/routines/test_routine_dependencies.py::test_routines_follow_what_they_call_ties_in_id_order --> Each rewrite is recorded with its rule and a diff that holds no literal. <!-- claim: tests/unit/tools/routines/test_routine_rewrites.py::test_the_record_never_holds_a_literal, tests/unit/tools/routines/test_routine_dependencies.py::test_the_order_records_its_rule_and_a_diff_from_the_input_order -->
+- **Disposable source engines.** `src/tools/database/disposable_engine.py` starts a throwaway PostgreSQL or MySQL of the source's own major, never another one unless asked, with no network listener, and runs the loaded routines as a role that is not a superuser. <!-- claim: tests/unit/tools/database/test_disposable_engine.py::test_a_version_is_required, tests/unit/tools/database/test_disposable_engine.py::test_matching_major_starts_and_other_major_is_unavailable, tests/unit/tools/database/test_disposable_engine.py::test_postgres_is_started_with_no_tcp_listener, tests/unit/tools/database/test_disposable_engine.py::test_mysqld_is_started_without_networking_and_without_file_access, tests/unit/tools/database/test_disposable_engine.py::test_postgresql_routines_do_not_run_as_a_superuser -->
+
+Nothing yet collects a routine's exact `CREATE`, writes a routine-migration artifact, repairs, proves or deploys a routine: those are the issues named below.
+
+## Decision
+
+### 1. Order of work: same family first, then SQL Server, then Oracle
+
+Routines are carried first between engines of the same family: PostgreSQL to Aurora PostgreSQL and MySQL to Aurora MySQL (epic #1925). SQL Server to Aurora PostgreSQL comes next, then Oracle to Aurora PostgreSQL; each adds a translation step between checking and carrying and reuses the rest. Routines moving into purpose-built engines (DynamoDB, ElastiCache, OpenSearch) come later. Neither the dialect translations nor the purpose-built targets have an issue yet; the epic files them when the same-family phase is done.
+
+### 2. Carry over, deterministic first; model repair is an untrusted seam
+
+A routine is carried over, not redesigned. Parsing, checks, safe rewrites, ordering and proof are deterministic code, with the rules as catalog data (ADR-031 Decision 8). Every routine ends with a verdict and a reason; none is dropped or guessed.
+
+A model is used only to repair a routine the deterministic path could not carry (#1940, #1941, not built yet). Its answer is untrusted data, framed with `frame_untrusted`, and it follows the LLM seam pattern, so it runs in all three LLM modes and not at all with `--llm-mode none`. Each candidate goes back through every check and through the proof (Decision 5); only a candidate that passes both is carried. A routine gets at most 3 attempts, each fed the previous failure; after that it stays *needs attention*, with every attempt recorded. The model works on the redacted text and returns structural edits, which are applied to the exact text only when the routine is proven and deployed (Decision 4).
+
+### 3. Default target: the Aurora line the assessment chooses; a newer line is an option
+
+Routines are checked and proven against the Aurora version line the assessment already chooses for the move: the source's own major, unless an extension the source uses is offered only on a later Aurora PostgreSQL line (#1078). Moving to the latest Aurora line instead is an option the customer picks (#1951, #1952, not built yet); it adds version-change checks between the two majors (removed or renamed PostgreSQL functions; MySQL 5.7 to 8.0 reserved words, `SQL_CALC_FOUND_ROWS`, `GROUP BY` no longer implying a sort), and the proof then runs on the newer line.
+
+### 4. Two files: the collection stays redacted, a separate routines file holds the exact text
+
+The collection stays as it is, with literals redacted (#1625). When the customer leaves routine bodies on (`include_routine_bodies`, on by default, #1933), the same collection run also writes a separate, optional routines file, `collector/routine_sources.json`, in compressed chunks, holding the exact `CREATE` of each routine, literals included (#1931, #1932, #1933, not built yet). No report, API response or model input reads that file. Without it, routines are still assessed and get verdicts, but are not carried. The decision is recorded on #1652.
+
+### 5. Proof: a routine loads, runs, then behaves the same side by side
+
+A carried routine is proven in three steps (#1942, #1944, #1945, #1946, not built yet):
+
+1. **Loads:** its carried `CREATE` compiles on the test target.
+2. **Runs:** it is called with inputs derived from its parameter types, edge values included, on synthetic rows shaped from the collection. Collectors never read table rows.
+3. **Behaves the same:** the original, exactly as collected, runs on a disposable engine of the source's engine and version; the carried routine runs on a scratch schema of the customer's migration Aurora, or on a test Aurora Serverless v2 the pipeline deploys (private subnets, no public access). Both get the same rows and calls, and their results and table changes are compared row by row. A mismatch is shown with the difference. When the original can't load on its own engine, the result is *could not compare*, never *proven*.
+
+Every write to a customer target (the scratch schema, the test stack, the deploy) is behind `--approve`, is refused under `MODERNIZER_CI_SANDBOX=1` and never runs in `--auto` mode. Without a move, a routine's verdict is static: checked, not load-tested. No Aurora is created only to test.
+
+### 6. Triggers are off during CDC; the customer enables them at cutover
+
+Within ADR-033's step 1, routines are created after the full load, in dependency order. Triggers are created disabled while DMS replicates changes, because DMS already applies the effects of the source's triggers, and they stay disabled until cutover, which is the documented DMS approach. After the deploy, a read-only check confirms that every carried routine exists and matches its source signature (#1947, not built yet). The deliverables ship the script that enables the triggers, and the customer runs it as part of their own cutover (#1948, not built yet): the pipeline does not run cutover (ADR-033 Decision 11). Running the enable step from the pipeline would need ADR-033 Decision 11 amended; that question is tracked in #1948 and is not decided here.
+
+### 7. A routine that can't be carried is a risk that blocks cutover
+
+A routine that can't be carried becomes a migration risk with severity *blocks cutover*, naming the routine, what it touches, why it failed and the next step; it is listed as open in its wave's cutover gate, as information for the customer, who decides when to cut over (ADR-033 Decision 11). A routine that runs but differs from the original is a risk that *behaves differently*, with the difference. The counts are computed once in the facts layer (ADR-032), and every deliverable reads them (#1938, #1939, not built yet).
+
+### 8. Routines never change routing
+
+Whether a routine can be carried never changes which engine a query lands on. The routine checks and rewrites read their own catalogs, and no routing or synthesis module reaches them (ADR-031 Decision 8, the routine-checks bullet). <!-- claim: tests/unit/tools/routines/test_routine_check_readers.py::test_no_routing_or_synthesis_module_reaches_the_routine_checks, tests/unit/tools/routines/test_routine_check_readers.py::test_only_the_routine_checkers_and_the_page_renderer_read_the_routine_catalog --> How procedures and triggers take part in routing is epic #1657's subject, under ADR-031, not this ADR's.
+
+## Enforcement
+
+| Decision | Enforced by |
+|---|---|
+| 1. Order of work | by design -- an order of work, not a rule code can check |
+| 2. Carry over, deterministic first; model repair is an untrusted seam | `tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_check_is_pure`<br>`tests/unit/tools/routines/test_mysql_routine_checks.py::test_rules_come_from_the_catalog_not_the_code`<br>`tests/unit/tools/routines/test_routine_rewrites.py::test_rules_come_from_the_catalog`<br>`tests/unit/tools/routines/test_routine_rewrites.py::test_the_same_input_gives_byte_identical_output`<br>none yet -- #1940<br>none yet -- #1941 |
+| 3. Default target: the Aurora line the assessment chooses | `tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_target_line_follows_the_gap_checks_choice`<br>`tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_routines_line_is_the_one_the_gap_checks_move_lands_on`<br>`tests/unit/tools/routines/test_mysql_routine_checks.py::test_the_target_must_be_a_listed_aurora_mysql_line`<br>none yet -- #1951<br>none yet -- #1952 |
+| 4. Two files | `tests/unit/tools/routines/test_postgresql_routine_checks.py::test_the_verdict_never_holds_the_routine_text`<br>`tests/unit/tools/routines/test_mysql_routine_checks.py::test_a_verdict_never_carries_a_literal_from_the_routine`<br>`tests/unit/tools/routines/test_routine_rewrites.py::test_the_record_never_holds_a_literal`<br>none yet -- #1931<br>none yet -- #1932<br>none yet -- #1933 |
+| 5. Proof: loads, runs, behaves the same | `tests/unit/tools/database/test_disposable_engine.py::test_a_version_is_required`<br>`tests/unit/tools/database/test_disposable_engine.py::test_matching_major_starts_and_other_major_is_unavailable`<br>`tests/unit/tools/database/test_disposable_engine.py::test_postgres_is_started_with_no_tcp_listener`<br>`tests/unit/tools/database/test_disposable_engine.py::test_postgresql_routines_do_not_run_as_a_superuser`<br>none yet -- #1942<br>none yet -- #1944<br>none yet -- #1945<br>none yet -- #1946 |
+| 6. Triggers off during CDC; the customer enables them at cutover | none yet -- #1947<br>none yet -- #1948 |
+| 7. A routine that can't be carried blocks cutover | none yet -- #1938 |
+| 8. Routines never change routing | `tests/unit/tools/routines/test_routine_check_readers.py::test_no_routing_or_synthesis_module_reaches_the_routine_checks`<br>`tests/unit/tools/routines/test_routine_check_readers.py::test_only_the_routine_checkers_and_the_page_renderer_read_the_routine_catalog` |
+
+The tests listed for Decisions 2 to 5 guard the parts that are built (the checks, the rewrites and the disposable engines); each `none yet` issue adds the guard for the rest.
+
+## Consequences
+
+- Customers get their routines carried with a verdict they can check, in exchange for a proof stage that needs a disposable source engine and a test target.
+- The exact routine text lives in a second file, kept apart from the redacted collection; without it, routines are assessed but not carried.
+- A routine the pipeline can't carry or prove is listed in its wave's cutover gate before the customer cuts over, rather than being left to surface after the move.
+- Model repair can never carry a routine on its own: a candidate that fails a check or the proof is not carried.
+- Moving to a newer Aurora line costs more checks and a proof on that line, so it is opt-in.
+
+## Alternatives considered
+
+- **Report incompatibilities and rewrite nothing.** Rejected: it leaves every fixable routine to the customer.
+- **Accept a model's first candidate.** Rejected: nothing a model writes reaches the customer's schema unchecked (ADR-033 Decision 6).
+- **Keep the exact routine text in the main collection.** Rejected: the collection and every deliverable stay redacted (#1625).
+- **Check only that routines load.** Rejected: loading proves nothing about behaviour.
+- **Enable triggers at deploy.** Rejected: DMS already applies the source triggers' effects during replication, so they would apply twice.
+- **Ask customers for a schema dump with routines.** Rejected: it works, but it isn't hands-free.
