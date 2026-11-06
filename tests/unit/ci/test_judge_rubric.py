@@ -348,6 +348,7 @@ def test_prompt_asks_for_every_criterion_and_the_defects_list(tmp_path: Path) ->
     deliverables = judge.locate_deliverables(tmp_path, DB, JOB)
     prompt = judge.build_prompt(RUBRIC.split("---", 2)[2], DB, JOB, deliverables, nonce="n0nce")
     assert judge.RESPONSE_SHAPE in prompt
+    assert judge.SCORES_WRAPPER_INSTRUCTION in prompt  # #2003
     assert judge.DEFECTS_INSTRUCTION in prompt
     for kind in judge.DEFECT_KINDS:
         assert kind in prompt
