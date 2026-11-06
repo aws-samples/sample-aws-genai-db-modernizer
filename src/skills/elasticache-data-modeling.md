@@ -51,7 +51,7 @@ For each classified pattern:
    - The first segment of the key is the source table name (without schema prefix), so every key
      traces back to its source table.
 2. Select the **optimal data type** based on access patterns
-3. Define a **TTL policy** for every key (the cache is never the system of record)
+3. Define a **TTL policy** for every key (the cache is never the system of record; the eviction reason is in Target Rules, rule 3)
 4. Estimate **key count** and **average value size** for capacity planning; keep values under 1 MB, ideally under 100 KB
 5. Provide a **concrete example** key and value
 
@@ -67,9 +67,19 @@ Translate each source SQL query to Redis commands:
 - Geospatial → `GEOSEARCH`, `GEODIST`
 
 Use **pipelining** (or `MGET`) for multi-key reads. Use **Lua scripts** for
-atomic multi-step operations that must be consistent.
+atomic multi-step operations that must be consistent. Both follow the hash slot
+rule in Target Rules below.
 
 Every `access_pattern` includes `source_query_ids`: the exact `query_id` values from the collector input it serves (all of them when one pattern serves several, and every member of a query pattern group), never invented ones. Its `pattern_id` is `EC-AP-1`, `EC-AP-2`, ..., in order of importance/frequency.
+
+### Target Rules (ElastiCache)
+
+A serverless cache always runs in cluster mode, and a node-based cluster does when cluster mode is enabled ([How ElastiCache works](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.corecomponents.html)). Design for cluster mode unless the input says the target has it disabled. Each rule below names the documentation it rests on.
+
+1. **One hash slot per multi-key command.** The keyspace has 16,384 hash slots, and a command that names several keys (`MGET`, `MSET`, `SINTER`, `ZUNIONSTORE`, `RENAME`, a `MULTI`/`EXEC` block) or a Lua script runs only when all of its keys are in the same hash slot; otherwise the cache rejects it with a `CROSSSLOT` error ([Valkey cluster specification](https://valkey.io/topics/cluster-spec/)). Keys that one command reads or writes together share a hash tag: only the text between the first `{` and the next `}` of a key is hashed, so `orders:{42}:items` and `orders:{42}:total` land in one slot. In `key_pattern`, `{order_id}` is a placeholder, not a hash tag: show the tag in `example_key` (`orders:{42}:items`) and say which value is the tag in `rationale`. Tag by the entity the command works on (one order, one user), never by a constant or a coarse value: every key with the same tag lands in one slot, and a serverless cache allows 32 GiB of data and 30,000 ECPUs a second per slot (90,000 with reads from replicas), so a shared tag makes a hot slot ([Valkey and Redis OSS configuration and limits](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/RedisConfiguration.html)). Read keys in different slots with pipelined single-key commands instead of one multi-key command. A Lua script lists every key it touches in `KEYS`, and on a serverless cache a Lua script needs at least one key: a script called with none is refused ([Lua scripts](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/BestPractices.Clients.Redis.LuaScripts.html)).
+2. **No `KEYS`; `SELECT` only on Valkey 9.0 or later.** `KEYS` walks the whole keyspace in one call and blocks the cache while it runs ([KEYS](https://valkey.io/commands/keys/)), and serverless caches do not offer it ([Supported and restricted commands](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/SupportedCommands.html)). Never put `KEYS` in an access pattern: keep an index key the pattern reads directly (a `set` of the member keys), or, for an offline sweep, iterate with `SCAN` and a `MATCH` pattern. Separate data by key prefix, not by logical database: a cluster-mode cache has only database 0 before Valkey 9.0, the version that added numbered databases in cluster mode ([Engine versions](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/engine-versions.html)), so a design that uses `SELECT` states Valkey 9.0 or later as its target.
+3. **A TTL on every key, with its reason.** A serverless cache evicts with `volatile-lru`: when memory runs out it evicts only keys that have a TTL, so a key without one is never evicted and stays until something deletes it, and a slot that has no evictable key left answers new writes with an out-of-memory error ([Valkey and Redis OSS configuration and limits](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/RedisConfiguration.html)). Set `ttl_seconds` on every key design and put the reason in `eviction_notes`: the staleness window the TTL bounds, and that the TTL keeps the key evictable.
+4. **Version gates.** A design that uses one of these features names the engine version it needs, from the ElastiCache [engine version notes](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/engine-versions.html): JSON (the `json` type and `JSON.*` commands) needs Redis OSS 6.2.6 or later, or any Valkey version; Bloom filters (`BF.*`) need Valkey 8.1 or later; hash-field TTL (`HEXPIRE`, `HSETEX`) needs Valkey 9.0 or later. With no version stated, use the form every engine version supports: a `string` or `hash` holding the serialized document, a `set` for membership, and a key per field when fields expire separately.
 
 ### Phase 4: Cache Invalidation
 
