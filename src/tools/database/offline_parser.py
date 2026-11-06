@@ -381,6 +381,8 @@ def _parse_offline_collection(
         # #1078: the PostgreSQL script's installed extensions; None when the collection
         # has no such section (written before #1078, or another engine's).
         "extensions": data.get("extensions"),
+        # #1834: the PostgreSQL script's enum types and labels; None when not collected.
+        "enum_types": data.get("enum_types"),
     }
 
 

@@ -41,12 +41,20 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.contracts.aurora_design_delta import is_pg_qualified_type
 from src.contracts.data_movement_plan import DataMovementPlan, DmsReplication, UnboundedVarchar
 from src.contracts.lineage_ops import CopyOp, UnsupportedOp
 from src.contracts.transformation_contract import Rule, StepContract
 from src.shared.contract_versioning import load_contract
 from src.shared.engine_names import display_engine
 from src.tools.transformation_contract.hashing import contract_sha256
+from src.tools.transformation_contract.pg_enums import (
+    NOT_COLLECTED,
+    REFUSED,
+    EnumType,
+    create_type_sql,
+    enum_columns,
+)
 
 STEP_DIR = "data-movement/step-1"
 AURORA_TEMPLATE = "aurora-target.yaml"
@@ -117,6 +125,8 @@ class Step1Inputs:
     unsupported: tuple[UnsupportedField, ...] = ()
     # Moved columns whose collector default is a zero date (``table_id.column``, sorted).
     zero_date_defaults: tuple[str, ...] = ()
+    # The PostgreSQL enum types the moved columns keep (#1834), by schema and name.
+    enum_types: tuple[EnumType, ...] = ()
 
     @property
     def unbounded_varchar(self) -> UnboundedVarchar:
@@ -209,6 +219,27 @@ def _check_ddl(ddl: str, contract: StepContract) -> None:
         raise DmsStepError(f"the DDL creates no table for {', '.join(missing)}")
 
 
+def _check_enum_types(inputs: Step1Inputs) -> None:
+    """Every ``"<schema>"."<type>"`` a moved column declares is an enum the DDL creates (#1834)."""
+    created = {e.sql_type for e in inputs.enum_types}
+    for rule in _selected(inputs.contract):
+        for f in rule.fields:
+            if is_pg_qualified_type(f.target_type) and f.target_type not in created:
+                raise DmsStepError(f"{rule.source_table}.{f.target_column}: no enum labels for "
+                                   f"{f.target_type}: write the contract again from the collection")  # fmt: skip
+
+
+def _step1_enum_types(job: Any, contract: StepContract) -> tuple[EnumType, ...]:
+    """The PostgreSQL enum types the moved columns declare (#1834), sorted by schema and name."""
+    from src.tools.transformation_contract.step1 import _load_collector
+
+    enums = enum_columns(_load_collector(job), contract.target.engine).types.values()
+    declared = {f.target_type for r in _selected(contract) for f in r.fields}
+    return tuple(
+        sorted({e for e in enums if e.sql_type in declared}, key=lambda e: (e.schema, e.name))
+    )
+
+
 def _checked(inputs: Step1Inputs) -> Step1Inputs:
     contract, plan = inputs.contract, inputs.plan
     if contract.status in _NO_RULES:
@@ -246,6 +277,7 @@ def _checked(inputs: Step1Inputs) -> Step1Inputs:
                                "mirrors table names (DMS cannot rename without a transformation rule)")  # fmt: skip
     if inputs.ddl:
         _check_ddl(inputs.ddl, contract)
+        _check_enum_types(inputs)
     return dataclasses.replace(
         inputs, skipped=skipped_rules(contract), unsupported=unsupported_fields(contract)
     )
@@ -324,7 +356,9 @@ def _step1_ddl(job: Any, plan: DataMovementPlan, contract: StepContract) -> str:
     engine = contract.target.engine
     rules = {r.target_table: r for r in _selected(contract)}
     overrides = {
-        (name, f.target_column): TypeOverride(f.target_type, "The step 1 contract's target type.")
+        (name, f.target_column): TypeOverride(
+            f.target_type, "The step 1 contract's target type.", engine
+        )
         for name, rule in rules.items()
         for f in rule.fields
         if not isinstance(f.op, UnsupportedOp)
@@ -386,7 +420,10 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
     job = _load_job(store, db, job_id, plan)
     ddl = _step1_ddl(job, plan, contract)
     defaults = _zero_date_defaults(job, contract)
-    return _checked(dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults))
+    enums = _step1_enum_types(job, contract)
+    return _checked(
+        dataclasses.replace(inputs, ddl=ddl, zero_date_defaults=defaults, enum_types=enums)
+    )
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
@@ -1170,6 +1207,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head += [f"- {u.table_id}.{u.column}: {u.description}" for u in inputs.unsupported]
     else:
         head.append("Unsupported fields: none.")
+    head += _enum_header_lines(inputs)
     out = with_header("", head, "--")
     if pg:
         out += (
@@ -1178,6 +1216,7 @@ def render_ddl(inputs: Step1Inputs) -> str:
     else:
         db = database.replace("`", "``")
         out += f"\nCREATE DATABASE IF NOT EXISTS `{db}`;\nUSE `{db}`;\n"
+    out += _enum_type_block(inputs)
     out += "\n" + inputs.ddl.strip() + "\n"
     replication = _replication(inputs)
     user = ["", "The DMS user, after the tables and the schema its grants name (YOUR RESPONSIBILITY, as "
@@ -1203,6 +1242,39 @@ def render_ddl(inputs: Step1Inputs) -> str:
             + "\n"
         )
     return out
+
+
+def _enum_header_lines(inputs: Step1Inputs) -> list[str]:
+    """What ``step-1.ddl.sql`` says about PostgreSQL enum types (#1834): the ones it creates
+    and how DMS loads them, and the moved columns that stay TEXT and why."""
+    lines: list[str] = []
+    if inputs.enum_types:
+        names = ", ".join(e.sql_type for e in inputs.enum_types)
+        lines += ["", f"Enum types: the file creates {names} before the tables, each with the source's labels "
+                  "in the source's order, and the columns of those types keep them. AWS DMS reads a "
+                  "PostgreSQL enum as a string (up to 64 bytes; its documentation lists ENUM among the types "
+                  "it does not migrate when it creates the target tables itself). Here the tables exist, so "
+                  "it writes each value as text into the enum column, which accepts only its labels. Test "
+                  "the ongoing replication on a copy before the cutover: if an apply fails with \"is of type "
+                  "... but expression is of type character varying\", the commented CREATE CAST after the "
+                  "type lets PostgreSQL convert it (YOUR DECISION, as above)."]  # fmt: skip
+    fallbacks = [(r.source_table, f) for r in _selected(inputs.contract) for f in r.findings
+                 if f.code in (NOT_COLLECTED, REFUSED)]  # fmt: skip
+    if fallbacks:
+        lines += ["", "Columns that stay TEXT although their PostgreSQL type may be an enum:"]
+        lines += [f"- {t}.{f.column}: {f.message}" for t, f in fallbacks]
+    return lines
+
+
+def _enum_type_block(inputs: Step1Inputs) -> str:
+    """The CREATE TYPE statements, before the tables (#1834); empty when there is none."""
+    if not inputs.enum_types:
+        return ""
+    lines = ["", "SET standard_conforming_strings = on;"]
+    for e in inputs.enum_types:
+        lines += [create_type_sql(e),
+                  f"-- CREATE CAST (character varying AS {e.sql_type}) WITH INOUT AS ASSIGNMENT;"]  # fmt: skip
+    return "\n".join(lines) + "\n"
 
 
 def render_files(inputs: Step1Inputs) -> dict[str, str]:

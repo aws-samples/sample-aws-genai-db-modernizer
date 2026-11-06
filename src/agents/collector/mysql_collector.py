@@ -53,6 +53,7 @@ from src.contracts.collector_output import (
     RDSInstanceMetadata,
     Schema,
     SourceDatabase,
+    SourceEnumType,
     SourceExtension,
     SourceHost,
     SourceSettings,
@@ -1517,6 +1518,35 @@ def source_extensions(raw: object) -> list[SourceExtension] | None:
     return out
 
 
+def source_enum_types(raw: object) -> list[SourceEnumType] | None:
+    """The PostgreSQL enum types a collection reported (#1834), labels in the order given;
+    ``None`` when the collection has no enum list (not read), ``[]`` when it read none. An
+    entry with no name, a labels value that is not a list of strings, or one the contract
+    refuses is dropped with a warning naming its position, never its text."""
+    if not isinstance(raw, list):
+        return None
+    out: list[SourceEnumType] = []
+    for position, entry in enumerate(raw):
+        if not isinstance(entry, Mapping):
+            continue
+        labels = entry.get("labels")
+        if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+            logger.warning(
+                "enum type entry %d dropped: its labels are not a list of strings", position
+            )
+            continue
+        try:
+            out.append(SourceEnumType(schema_name=str(entry.get("schema_name") or ""),
+                                      type_name=str(entry.get("type_name") or ""), labels=labels))  # fmt: skip
+        except ValidationError as exc:
+            logger.warning(
+                "enum type entry %d dropped: the contract refuses its %s",
+                position,
+                " and ".join(sorted({str(e["loc"][0]) for e in exc.errors()})),
+            )
+    return out
+
+
 def _build_output(
     inp: CollectorInput,
     start: float,
@@ -1535,6 +1565,7 @@ def _build_output(
     settings: object = None,
     query_capture: QueryCapture | None = None,
     extensions: object = None,
+    enum_types: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
@@ -1544,7 +1575,8 @@ def _build_output(
     :func:`source_settings` reads them. ``query_capture``: the statement cap, minimum
     execution count and count a live collection captured (#384). ``extensions``: the
     installed extensions an offline PostgreSQL collection lists (#1078), kept as
-    :func:`source_extensions` reads them."""
+    :func:`source_extensions` reads them. ``enum_types``: an offline PostgreSQL
+    collection's enum types and labels (#1834), kept as :func:`source_enum_types` reads them."""
     elapsed = time.monotonic() - start
     output = CollectorOutputContract(
         job_id=inp.job_id,
@@ -1571,7 +1603,11 @@ def _build_output(
             extensions=source_extensions(extensions),
         ),
         database_schema=Schema(
-            tables=tables, views=views, procedures=procedures, triggers=triggers
+            tables=tables,
+            views=views,
+            procedures=procedures,
+            triggers=triggers,
+            enum_types=source_enum_types(enum_types),
         ),
         queries=queries,
         metrics=metrics,

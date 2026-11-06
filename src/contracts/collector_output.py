@@ -808,6 +808,19 @@ class Trigger(BaseModel):
     )
 
 
+class SourceEnumType(BaseModel):
+    """One PostgreSQL enum type (#1834): ``pg_enum``'s labels, in ``enumsortorder`` order.
+    A same-engine step 1 creates it on Aurora PostgreSQL before the tables that use it."""
+
+    schema_name: str = Field(..., min_length=1, max_length=128, description="The type's schema")
+    type_name: str = Field(
+        ..., min_length=1, max_length=128, description="The type's name (a column's data_type)"
+    )
+    labels: list[str] = Field(
+        default_factory=list, description="The enum's labels, in the order PostgreSQL sorts them"
+    )
+
+
 class Schema(BaseModel):
     tables: list[Table] = Field(..., min_length=1, description="List of database tables")
     views: list[View] | None = Field(None, description="View definitions (all databases support)")
@@ -816,6 +829,13 @@ class Schema(BaseModel):
     )
     triggers: list[Trigger] | None = Field(
         None, description="Trigger definitions (all databases support)"
+    )
+    enum_types: list[SourceEnumType] | None = Field(
+        None,
+        description=(
+            "PostgreSQL's enum types with their labels (pg_enum, #1834); None when the "
+            "collection did not read them"
+        ),
     )
 
 
