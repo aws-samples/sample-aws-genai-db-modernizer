@@ -20,7 +20,8 @@ Two kinds of run exercise different code:
 Each run has two tiers of paths:
 
 * **prompt** (``*_PROMPT``): files that write, word, frame or tag text sent to a
-  model: the skills, commands and session files, the prompt and request builders
+  model: the skills, commands and session files, the e2e-llm fixtures' sample
+  collections, the prompt and request builders
   (every ``prepare_*_llm_input`` home, the schema-design input builders, the run
   scripts that build the external-mode request), the prompt framing, catalog and
   module prose that reaches a model word for word, the model-output contracts, and
@@ -72,6 +73,9 @@ E2E_LLM_PROMPT: tuple[str, ...] = (
     "ci/llm/judge.py",
     "ci/llm/judge_facts.py",
     "ci/llm/rubric.md",
+    # The sample collections ci/e2e-llm.sh unzips per fixture: the model's input data (#1986).
+    "docs/examples/wordpress/wordpress.zip",
+    "docs/examples/discourse/discourse.zip",
     "src/agents/prompt_framing.py",
     # Builders of llm_input / request files (prepare_*_llm_input, build_*_request) and the
     # prompts the validators are given.

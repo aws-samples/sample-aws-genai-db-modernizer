@@ -165,6 +165,44 @@ def test_run_scripts_that_build_the_external_request_require_e2e_llm(p: str) -> 
     assert _runs(p) == {"e2e-llm": REQ, "bedrock-smoke": NIGHT}
 
 
+def _e2e_llm_fixtures() -> list[str]:
+    """The fixtures ci/e2e-llm.sh accepts, read from its ``case "$FIXTURE"`` block."""
+    script = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text(encoding="utf-8")
+    block = re.search(r'case "\$FIXTURE" in\s*\n\s*([^)\n]+)\)', script)
+    assert block, 'ci/e2e-llm.sh has no case "$FIXTURE" block'
+    return [f.strip() for f in block.group(1).split("|") if f.strip()]
+
+
+@pytest.mark.passes_on_main  # guards the fixture list and the samples left out
+def test_e2e_llm_fixture_list_is_read_from_the_script() -> None:
+    assert _e2e_llm_fixtures() == ["wordpress", "discourse"]
+
+
+@pytest.mark.parametrize("fixture", _e2e_llm_fixtures())
+def test_every_e2e_llm_sample_collection_is_prompt_tier(fixture: str) -> None:
+    """The collection ci/e2e-llm.sh unzips is the model's input for that fixture (#1986)."""
+    path = f"docs/examples/{fixture}/{fixture}.zip"
+    script = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text(encoding="utf-8")
+    assert '"$REPO_ROOT/docs/examples/$FIXTURE/$FIXTURE.zip"' in script
+    assert (REPO_ROOT / path).is_file(), path
+    assert _runs(path) == {"e2e-llm": REQ, "bedrock-smoke": NO}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Samples no e2e-llm fixture unzips, and the recorded docs sample run.
+        "docs/examples/dnn/dnn.zip",
+        "docs/examples/trailgear/trailgear.zip",
+        "docs/examples/wordpress/sample-run/report.json",
+        "docs/examples/library/demo_assess.py",
+    ],
+)
+@pytest.mark.passes_on_main  # guards the fixture list and the samples left out
+def test_samples_no_e2e_llm_fixture_uses_need_neither(path: str) -> None:
+    assert _runs(path) == {"e2e-llm": NO, "bedrock-smoke": NO}
+
+
 @pytest.mark.parametrize(
     "path",
     [
