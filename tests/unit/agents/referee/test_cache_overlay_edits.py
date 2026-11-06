@@ -206,7 +206,8 @@ class TestCustomerPin:
         assert cold.cache_customer_override is True
         assert any("hot-read rule" in w for w in cold.warnings)
         assert any(
-            "cache layer, not a system of record" in n for n in result.assignment.cache_notes
+            "the cache layer, which this plan does not use as a system of record" in n
+            for n in result.assignment.cache_notes
         )
         assert result.assignment.cache_overlay.query_count == 1
 

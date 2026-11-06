@@ -1304,8 +1304,8 @@ class TestOwnershipGateBlocksCustomerPicks:
             ("q1", "opensearch", "write_gate")
         ]
         assert str(exc.value) == (
-            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
-            "system of record."
+            "OpenSearch can't own query q1: it is a write, and this plan does not use "
+            "OpenSearch as a system of record."
         )
 
     def test_a_locking_read_picked_onto_opensearch_is_rejected(self) -> None:
@@ -1316,8 +1316,8 @@ class TestOwnershipGateBlocksCustomerPicks:
             )
         self._assert_nothing_written(store)
         assert str(exc.value) == (
-            "OpenSearch can't own query q1: it is a locking read, and OpenSearch is not a "
-            "system of record."
+            "OpenSearch can't own query q1: it is a locking read, and this plan does not use "
+            "OpenSearch as a system of record."
         )
 
     @pytest.mark.parametrize(
@@ -1371,7 +1371,7 @@ class TestOwnershipGateBlocksCustomerPicks:
         ]
         assert str(exc.value) == (
             "Can't move q1's group to OpenSearch: query q2 in that group is a write, and "
-            "OpenSearch is not a system of record."
+            "this plan does not use OpenSearch as a system of record."
         )
 
     def test_every_gated_query_in_the_batch_is_reported(self) -> None:
@@ -1395,8 +1395,8 @@ class TestOwnershipGateBlocksCustomerPicks:
             )
         self._assert_nothing_written(store)
         assert str(exc.value) == (
-            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
-            "system of record.\n"
+            "OpenSearch can't own query q1: it is a write, and this plan does not use "
+            "OpenSearch as a system of record.\n"
             "DynamoDB can't run query q2: it uses a leading-wildcard search (LIKE '%...')."
         )
 
@@ -1421,7 +1421,7 @@ class TestOwnershipGateWithoutAScoringContext:
         query = {"query_type": "UPDATE", "query_text": "UPDATE t SET a = ? WHERE id = ?"}
         assert _gate_failure("q1", query, "opensearch", None) == (
             "write_gate",
-            "is a write, and OpenSearch is not a system of record",
+            "is a write, and this plan does not use OpenSearch as a system of record",
         )
 
     def test_the_hard_exclusion_comes_first(self) -> None:

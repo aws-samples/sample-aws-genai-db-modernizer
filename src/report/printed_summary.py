@@ -31,7 +31,7 @@ from src.shared.risk_severity import severity_of, severity_rank
 from src.shared.target_databases import engine_scope_statement, no_engine_in_scope_statement
 
 from . import escaping
-from .cache_layer import cache_change_notes, cache_layer_text
+from .cache_layer import cache_change_notes, cache_layer_text, cache_role_notes
 from .deliverables import FOLDER_ENTRIES, FolderEntry
 from .engineering_report import summary_paragraphs
 from .executive_report import _names_pattern, table_names, without_table_names
@@ -198,7 +198,8 @@ def render_gate_block(
         count = candidates["read_count"]
         lines += [
             f"Cache layer: {name} has {count} cache {plural_noun(count, 'candidate')} "
-            f"({_percent(candidates['call_share_percent'])} of calls) and owns no queries. "
+            f"({_percent(candidates['call_share_percent'])} of calls) in front of their owner "
+            "engines. "
             "Schema design then confirms which ones it covers.",
         ]
         if candidates.get("change"):
@@ -377,6 +378,7 @@ def render_final_summary(
             lines.append(f"- Retired by this plan: {retired_in_use_statement(row)}")
     waves = facts.get("migration_wave_count", 0)
     lines.append(f"- Migration: {waves} {plural_noun(waves, 'wave')}")
+    lines += [f"- Cache layer: {prose(n)}" for n in cache_role_notes(dict(report))]
     lines += [f"- Cache layer note: {prose(n)}" for n in cache_change_notes(dict(report))]
 
     lines += ["", "### Engines", ""] + _engine_lines(report, facts, names)

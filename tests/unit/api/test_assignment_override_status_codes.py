@@ -283,7 +283,7 @@ class TestOwnershipGateOverrideStatusCode:
             assignments.artifact_store = None
         assert response.status_code == 400
         assert response.json()["detail"] == (
-            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
-            "system of record."
+            "OpenSearch can't own query q1: it is a write, and this plan does not use "
+            "OpenSearch as a system of record."
         )
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")

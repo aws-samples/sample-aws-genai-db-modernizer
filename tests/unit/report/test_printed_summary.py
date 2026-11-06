@@ -121,8 +121,8 @@ def test_the_gate_block_follows_the_assignment_page() -> None:
     assert "- DocumentDB to DynamoDB: 1 query" in text
     assert "- OpenSearch: Full-text search stays" in text
     assert (
-        "Cache layer: ElastiCache has 20 cache candidates (83.4% of calls) and owns no queries."
-        in text
+        "Cache layer: ElastiCache has 20 cache candidates (83.4% of calls) in front of their "
+        "owner engines." in text
     )
     assert "- Event-Driven Sync\n  - When: Several engines need the same data" in text
     assert "Schema design runs next for: Aurora MySQL, DynamoDB, ElastiCache." in text

@@ -29,6 +29,7 @@ from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
 from src.shared.report_facts import trade_off_topic_facts
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
+from tests.unit.report.cache_role import with_cache_role_sentence
 
 OLD_REPORT = (
     Path(__file__).resolve().parents[1]
@@ -91,4 +92,6 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, stored["reality_check_trade_offs"]
     )
-    assert {k: v for k, v in facts.items() if k != "trade_off_topics"} == stored
+    assert {k: v for k, v in facts.items() if k != "trade_off_topics"} == (
+        with_cache_role_sentence(stored)
+    )

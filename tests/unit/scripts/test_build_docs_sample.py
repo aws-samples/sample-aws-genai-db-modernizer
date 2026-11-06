@@ -308,10 +308,16 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
 # Facts added after the recorded run's release, which the reader fills in for it until
 # the next release re-records the sample (CONTRIBUTING's Releases, step 1).
 _NEWER_THAN_THE_RECORDING = ("trade_off_topics",)  # #1221
+# Fields added inside a recorded fact, filled in the same way (#399).
+_NEWER_FIELDS_THAN_THE_RECORDING = {"cache_layer": ("role_sentence",)}
 
 
 def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in facts.items() if k not in _NEWER_THAN_THE_RECORDING}
+    out = {k: v for k, v in facts.items() if k not in _NEWER_THAN_THE_RECORDING}
+    for key, fields in _NEWER_FIELDS_THAN_THE_RECORDING.items():
+        if isinstance(out.get(key), dict):
+            out[key] = {k: v for k, v in out[key].items() if k not in fields}
+    return out
 
 
 def test_committed_run_is_only_what_the_renderers_read() -> None:

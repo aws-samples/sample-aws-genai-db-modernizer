@@ -1858,6 +1858,13 @@ class CacheLayerFacts(BaseModel):
     owner_only_read_count: int = Field(
         0, ge=0, description="Candidates the design does not cover: they stay on their owner"
     )
+    role_sentence: str | None = Field(
+        None,
+        description=(
+            "The cache layer stated as the assessment's recommendation, with its reason "
+            "(#399); None for a report written before it"
+        ),
+    )
 
 
 class DerivedCopyFacts(BaseModel):
