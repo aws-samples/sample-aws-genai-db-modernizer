@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v15-removed-functions (#1951). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 15 release notes, Migration to Version 15 (exclusive backup mode removed; pg_backup_start_time() and pg_is_in_backup() removed).
+id = "postgresql-routine-v15-removed-functions"
+feature = "A backup status function PostgreSQL 15 removed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 15 removed the exclusive backup mode with its pg_is_in_backup() and pg_backup_start_time() functions, so on Aurora PostgreSQL 15 and later the call fails with an unknown function."
+fix_hint = "Drop the call: Aurora takes backups itself, so no exclusive backup is ever running in the database."
+docs = "PostgreSQL 15 release notes, Migration to Version 15; Amazon Aurora User Guide, Backing up and restoring an Aurora DB cluster"
+
+[version_change]
+line = "15"
+
+[match]
+called_functions = ["pg_is_in_backup", "pg_backup_start_time"]

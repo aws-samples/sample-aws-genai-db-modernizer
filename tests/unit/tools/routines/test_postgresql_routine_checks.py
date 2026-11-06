@@ -28,9 +28,14 @@ LANGUAGE = "postgresql-routine-language"
 EXTENSIONS = "postgresql-routine-extension-not-offered"
 OWNERSHIP = "postgresql-routine-superuser-security-definer"
 FUNCTION_RULES = (PARSE, LANGUAGE, EXTENSIONS, OWNERSHIP)
+# The Aurora capability body check every function and procedure gets (#2016 review).
+BACKUP = "postgresql-routine-backup-control"
+CHECKED_RULES = (*FUNCTION_RULES, BACKUP)
 
 
 def _verdict(r, line: str = "16", **kwargs) -> RoutineVerdict:
+    # A same-major source by default, so no version-change rule (#1951) is in the verdict.
+    kwargs.setdefault("source_version", f"{line}.1")
     return check_postgresql_routine(r, target_engine=TARGET, target_line=line, **kwargs)
 
 
@@ -45,7 +50,7 @@ def _outcome(verdict: RoutineVerdict, rule_id: str) -> str:
 def test_a_clean_function_passes_every_rule_with_its_reason_and_fix_hint() -> None:
     verdict = _verdict(routine(fx.PLPGSQL_FUNCTION))
     assert verdict.parsed and not verdict.needs_attention and verdict.failed_rules == ()
-    assert [c.rule_id for c in verdict.checks] == list(FUNCTION_RULES)
+    assert [c.rule_id for c in verdict.checks] == list(CHECKED_RULES)
     by_id = {r.id: r for r in routine_check_rules()}
     for result in verdict.checks:
         rule = by_id[result.rule_id]
@@ -76,7 +81,7 @@ def test_a_routine_that_fails_several_rules_lists_each_one() -> None:
     findings = {c.rule_id: c.findings for c in verdict.checks}
     assert findings[LANGUAGE] == ("plpython3u",)
     assert findings[EXTENSIONS] == ("acme_ext",)
-    assert len({c.reason for c in verdict.checks}) == 4
+    assert len({c.reason for c in verdict.checks if c.outcome == "fail"}) == 4
 
 
 def test_the_verdict_never_holds_the_routine_text() -> None:
@@ -152,7 +157,7 @@ def test_a_statement_that_is_not_one_routine_of_its_kind_is_unparseable(
 def test_the_metadata_checks_still_run_when_the_statement_does_not_parse() -> None:
     verdict = _verdict(routine(fx.UNTERMINATED, language="sql"))
     assert verdict.failed_rules == (PARSE,)
-    assert [c.rule_id for c in verdict.checks] == list(FUNCTION_RULES)
+    assert [c.rule_id for c in verdict.checks] == list(CHECKED_RULES)
 
 
 # -------------------------------------------------------------------------- language
@@ -339,7 +344,7 @@ def test_a_superusers_definer_procedure_is_flagged() -> None:
 def test_a_procedure_passes_every_rule() -> None:
     verdict = _verdict(routine(fx.PROCEDURE, kind="procedure"))
     assert verdict.kind == "procedure" and not verdict.needs_attention
-    assert [c.rule_id for c in verdict.checks] == list(FUNCTION_RULES)
+    assert [c.rule_id for c in verdict.checks] == list(CHECKED_RULES)
 
 
 def test_a_trigger_function_passes_every_rule() -> None:
