@@ -4,7 +4,8 @@
 
 """Run step 1's AWS DMS stack for ``/move`` from one inputs file (#1886).
 
-Every subcommand prints one JSON line (exit 1 only on ``"status": "error"``):
+Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "error"``); only
+``status --until caught_up`` prints progress lines before it, so the result line is always last:
 
 - ``steps``, ``summary``, ``plan``: no AWS call. The job's steps; step 1's contract, sizing,
   cost, what it does not move and the customer-responsibility disclaimer; the stack name, the
@@ -14,9 +15,14 @@ Every subcommand prints one JSON line (exit 1 only on ``"status": "error"``):
   inputs file's values and print those scripts' own line. The file's optional
   ``confirmed_checks`` (ids the customer checked themselves) become one ``--confirm`` each,
   next to any ``--confirm`` flag; an id that is not a preflight check id is refused.
-- ``status [--until stack|connections|caught_up --wait-seconds N]``: read-only; the stack,
-  the endpoint connections, the task and its table statistics, polled until the condition
-  holds or the time is up.
+- ``status [--until stack|connections|running|caught_up --wait-seconds N]``: read-only; the
+  stack, the endpoint connections, the task, its table statistics and its capture lag, polled
+  until the condition holds or the time is up. ``running`` waits for the task to read running
+  (``/move --until moving``, #1996). ``caught_up`` also stops on ``validation_stalled``: the full
+  load is done but DMS validation is not running (#1995); while it waits it prints one
+  ``"status": "progress"`` line per poll before its result line (#1997). The lag comes from
+  CloudWatch's ``ListMetrics`` and ``GetMetricData``, the gate's own read calls; a profile that
+  may not make them leaves the lag null.
 - ``deploy --approve`` (create and show a change set), ``execute --change-set <name> --approve``,
   ``test --approve`` (test both endpoints), ``start --approve`` (start the task): AWS writes,
   refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``.
@@ -44,6 +50,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import shlex
@@ -76,6 +83,20 @@ PENDING_VALIDATION = {"Pending records", "Pending validation", "Pending revalida
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
 TASK_IDLE = TASK_STOPPED | {"ready"}  # not running: nothing to stop, and the stack may be deleted
 TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
+# Validation judged stalled (#1995): tables still Not enabled this long after the full load
+# finished although the task turns validation on, or this many polls over this long in a row
+# with no table changing its validation state and no pending record count falling.
+VALIDATION_GRACE_SECONDS = 900
+STALL_POLLS = 3
+STALL_SECONDS = 300
+NOT_ENABLED = "Not enabled"
+VALIDATION_FIX = ("check the endpoints' secrets and that the validator can connect to both "
+                  "databases (the task's CloudWatch log names the validator's errors)")  # fmt: skip
+# One "status": "progress" line per poll of status --until caught_up (#1997), these fields.
+PROGRESS_FIELDS = ("time", "phase", "full_load_percent", "tables_loaded", "inserts_applied",
+                   "updates_applied", "capture_lag_seconds", "apply_lag_seconds",
+                   "validated_tables", "pending_tables", "not_enabled_tables")  # fmt: skip
+LAG_WINDOW_MINUTES = 5
 # What DMS's own task status means, in the words the customer sees (``dms_reports``).
 _DMS_WORDS = {"stopped": "stopped (not running)", "failed": "failed (not running)",
               "failed-move": "failed-move (not running)",
@@ -180,6 +201,15 @@ class MoveClients:
     dms: Any
 
 
+@dataclass
+class LagReader:
+    """status's capture lag (#1997): CloudWatch, read-only, with the gate's own calls; the lag
+    metrics listed once per wait. The writes never get a CloudWatch client."""
+
+    cloudwatch: Any
+    metrics: dict[str, list[dict[str, str]]] | None = None
+
+
 class MoveError(Exception):
     """A refusal: printed as ``{"status": "error", "message": ...}``."""
 
@@ -195,7 +225,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--change-set", help="execute: the change set deploy created")
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
                    help="preflight: a 'confirm' row the customer checked (repeatable)")  # fmt: skip
-    p.add_argument("--until", choices=["stack", "connections", "caught_up", "task_stopped"])
+    p.add_argument(
+        "--until", choices=["stack", "connections", "running", "caught_up", "task_stopped"]
+    )
     p.add_argument("--wait-seconds", type=int, default=None,
                    help=f"status: default 0; stop, teardown: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
@@ -394,8 +426,9 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
         kwargs["Marker"] = page["Marker"]
 
 
-def status(clients: MoveClients, name: str) -> dict[str, Any]:
-    """Where step 1 stands: the stack, both endpoint connections, the task, its tables."""
+def status(clients: MoveClients, name: str, lag: LagReader | None = None) -> dict[str, Any]:
+    """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
+    with a ``lag`` reader, its capture lag."""
     stack = _stack(clients, name)
     if stack is None:
         return {"status": "complete", "phase": "no_stack", "stack_name": name}
@@ -456,12 +489,134 @@ def status(clients: MoveClients, name: str) -> dict[str, Any]:
         "validated": sum(1 for t in tables if t.get("ValidationState") == "Validated"),
         "pending_tables": len(pending_tables),
         "pending_records": pending_records,
+        "not_enabled_tables": sum(1 for t in tables if t.get("ValidationState") == NOT_ENABLED),
         "states": _count(t.get("ValidationState") or "unknown" for t in tables),
     }
+    out["changes_applied"] = {kind: sum(int(t.get(f"Applied{kind.title()}") or 0) for t in tables)
+                              for kind in ("inserts", "updates", "deletes")}  # fmt: skip
+    out.update(_capture_lag(clients, task, lag))
     loaded = task_stats.get("FullLoadProgressPercent") == 100
     phase = "caught_up" if loaded and not pending_tables and not pending_records else (
         "validating" if loaded else "loading")  # fmt: skip
-    return {**out, "phase": phase}
+    return _judge_validation({**out, "phase": phase}, task, loaded)
+
+
+def validation_enabled(task: dict[str, Any]) -> bool | None:
+    """The task settings' ``ValidationSettings.EnableValidation``; None when DMS gives none."""
+    try:
+        settings = json.loads(task.get("ReplicationTaskSettings") or "null")
+    except ValueError:
+        return None
+    flag = ((settings or {}).get("ValidationSettings") or {}).get("EnableValidation")
+    return flag if isinstance(flag, bool) else None
+
+
+def _seconds_since(when: Any) -> int | None:
+    if not isinstance(when, datetime):
+        return None
+    when = when if when.tzinfo else when.replace(tzinfo=UTC)
+    return int((datetime.now(UTC) - when).total_seconds())
+
+
+def _judge_validation(out: dict[str, Any], task: dict[str, Any], loaded: bool) -> dict[str, Any]:
+    """``validation_running`` (#1995): None while loading or when the task turns validation off;
+    False when, long after the full load, tables are still Not enabled with validation on."""
+    enabled = validation_enabled(task)
+    since = _seconds_since((task.get("ReplicationTaskStats") or {}).get("FullLoadFinishDate"))
+    out.update(validation_enabled=enabled, full_load_done_seconds=since if loaded else None,
+               validation_running=None if not loaded or enabled is False else True)  # fmt: skip
+    not_enabled = out["validation"]["not_enabled_tables"]
+    if (
+        out["validation_running"]
+        and enabled
+        and not_enabled
+        and (since or 0) >= VALIDATION_GRACE_SECONDS
+    ):
+        pending = out["validation"]["pending_tables"]
+        found = f"{not_enabled} tables {NOT_ENABLED}" + (
+            f" and {pending} pending" if pending else ""
+        )
+        return {**out, "phase": "validation_stalled", "validation_running": False,
+                "validation_check": f"{found} {since} s after the full load although the task "
+                                    f"turns validation on: {VALIDATION_FIX}"}  # fmt: skip
+    return out
+
+
+def _capture_lag(
+    clients: MoveClients, task: dict[str, Any], reader: LagReader | None
+) -> dict[str, Any]:
+    """The latest CDCLatencySource / CDCLatencyTarget maxima of the last minutes, in seconds.
+
+    The same read-only CloudWatch calls the gate makes; lag is progress, not proof, so a
+    profile that may not read CloudWatch, or no datapoint yet, leaves both None."""
+    lag: dict[str, Any] = {"capture_lag_seconds": None, "apply_lag_seconds": None}
+    if reader is None:
+        return lag
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from src.tools.data_movement.dms_gate import LAG_METRICS, GateClients, _latency, _task_metrics
+
+    gate = GateClients(dms=clients.dms, cloudwatch=reader.cloudwatch,
+                       cloudformation=clients.cloudformation)  # fmt: skip
+    try:
+        if reader.metrics is None:
+            reader.metrics = _task_metrics(gate, str(task.get("ReplicationTaskArn")),
+                                           str(task.get("ReplicationTaskIdentifier")))  # fmt: skip
+        points = _latency(gate, reader.metrics, datetime.now(UTC), LAG_WINDOW_MINUTES)
+    except (BotoCoreError, ClientError):
+        return lag
+    for key, metric in zip(lag, LAG_METRICS, strict=True):
+        if points.get(metric):
+            lag[key] = max(points[metric])[1]
+    return lag
+
+
+def progress_line(current: dict[str, Any]) -> dict[str, Any]:
+    """One compact line per poll of status --until caught_up (#1997)."""
+    validation = current.get("validation") or {}
+    applied = current.get("changes_applied") or {}
+    return {"status": "progress", "time": datetime.now(UTC).isoformat(timespec="seconds"),
+            "phase": current.get("phase"), "full_load_percent": current.get("full_load_percent"),
+            "tables_loaded": current.get("tables_loaded"),
+            "inserts_applied": applied.get("inserts"), "updates_applied": applied.get("updates"),
+            "capture_lag_seconds": current.get("capture_lag_seconds"),
+            "apply_lag_seconds": current.get("apply_lag_seconds"),
+            "validated_tables": validation.get("validated"),
+            "pending_tables": validation.get("pending_tables"),
+            "not_enabled_tables": validation.get("not_enabled_tables")}  # fmt: skip
+
+
+class _StallWatch:
+    """No validation progress over STALL_POLLS polls and STALL_SECONDS in a row (#1995)."""
+
+    def __init__(self) -> None:
+        self.last: tuple[Any, int] | None = None
+        self.since = 0.0
+        self.polls = 0
+
+    def judge(self, current: dict[str, Any], now: float) -> dict[str, Any]:
+        if current.get("phase") != "validating" or not current.get("validation_running"):
+            self.last = None
+            return current
+        v = current["validation"]
+        seen = (v["states"], v["pending_records"])
+        moved = self.last is None or seen[0] != self.last[0] or seen[1] < self.last[1]
+        self.last = seen
+        if moved:
+            self.since, self.polls = now, 1
+            return current
+        self.polls += 1
+        quiet = int(now - self.since)
+        done = current.get("full_load_done_seconds")
+        if (
+            self.polls < STALL_POLLS
+            or quiet < STALL_SECONDS
+            or (done is not None and done < VALIDATION_GRACE_SECONDS)
+        ):
+            return current
+        return {**current, "phase": "validation_stalled", "validation_running": False,
+                "validation_check": f"{v['pending_tables']} tables pending with no validation "
+                                    f"progress for {quiet} s: {VALIDATION_FIX}"}  # fmt: skip
 
 
 def _count(values: Any) -> dict[str, int]:
@@ -474,7 +629,10 @@ def _count(values: Any) -> dict[str, int]:
 UNTIL: dict[str, Callable[[dict[str, Any]], bool]] = {
     "stack": lambda s: s["phase"] != "stack_in_progress",
     "connections": lambda s: s["phase"] not in ("stack_in_progress", "connections_testing"),
-    "caught_up": lambda s: s["phase"] in ("caught_up", "task_stopped", "stack_failed", "no_stack"),
+    "running": lambda s: s.get("task_status") == "running"
+    or s["phase"] in ("task_stopped", "stack_failed", "no_stack"),
+    "caught_up": lambda s: s["phase"]
+    in ("caught_up", "validation_stalled", "task_stopped", "stack_failed", "no_stack"),
 }
 
 
@@ -487,18 +645,31 @@ def wait_status(
     *,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    on_poll: Callable[[dict[str, Any]], None] | None = None,
+    lag: LagReader | None = None,
 ) -> dict[str, Any]:
-    read: Callable[[MoveClients, str], dict[str, Any]] = status
+    """Poll until ``until`` holds or the time is up. Under ``caught_up``, ``on_poll`` gets each
+    poll's progress line but the last one (the result line carries it), and a validation with
+    no progress over the window ends the wait as ``validation_stalled``."""
+    read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(status, lag=lag)
     done = UNTIL.get(until or "")
     if until == "task_stopped":
         read, done = task_state, lambda s: s["task_stopped"]
+    watch = _StallWatch()
     current = read(clients, name)
     if until is None or done is None:
         return current
-    deadline = clock() + wait_seconds
-    while not done(current) and clock() + interval <= deadline:
+    now = clock()
+    deadline = now + wait_seconds
+    if until == "caught_up":
+        current = watch.judge(current, now)
+    while not done(current) and (now := clock()) + interval <= deadline:
+        if on_poll is not None and until == "caught_up":
+            on_poll(progress_line(current))
         sleep(interval)
         current = read(clients, name)
+        if until == "caught_up":
+            current = watch.judge(current, now + interval)  # read one interval after the check
     return {**current, "until": until, "reached": done(current)}
 
 
@@ -865,6 +1036,10 @@ def teardown(
 # --- Entry point -------------------------------------------------------------------------
 
 
+def _print_progress(line: dict[str, Any]) -> None:
+    print(json.dumps(line), flush=True)
+
+
 def _use_profile(profile: str | None) -> None:
     if profile:
         os.environ["AWS_PROFILE"] = profile
@@ -899,7 +1074,7 @@ def _delegate(command: str, args: argparse.Namespace, inputs: MoveInputs) -> int
 
 
 def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
-         sleep: Callable[[float], None] = time.sleep) -> int:  # fmt: skip
+         sleep: Callable[[float], None] = time.sleep, cloudwatch: Any = None) -> int:  # fmt: skip
     args = _parser().parse_args(argv)
     from scripts._sandbox import PATH_ARGS, SANDBOX_ENV, sandbox_violation
     from src.shared.database_name import validate_database_name
@@ -926,6 +1101,10 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         )
     if not 10 <= args.interval_seconds <= 300:
         return emit({"status": "error", "message": "--interval-seconds must be 10 to 300"})
+    if args.until and args.command != "status":
+        return emit(
+            {"status": "error", "message": f"--until is a status option, not one of {args.command}"}
+        )
     if args.command == "execute" and not args.change_set:
         return emit({"status": "error", "message": "execute needs --change-set <name> from deploy"})
     try:
@@ -953,10 +1132,13 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             clients = MoveClients(
                 cloudformation=cred.client("cloudformation"), dms=cred.client("dms")
             )
+            if args.command == "status":
+                cloudwatch = cred.client("cloudwatch")
         name = stack_name(inputs, job_id)
         if args.command == "status":
             return emit(wait_status(clients, name, args.until, args.wait_seconds,
-                                    args.interval_seconds, sleep=sleep))  # fmt: skip
+                                    args.interval_seconds, sleep=sleep, on_poll=_print_progress,
+                                    lag=None if cloudwatch is None else LagReader(cloudwatch)))  # fmt: skip
         if args.command == "deploy":
             return emit(deploy(clients, args.artifact_root, db, job_id, inputs, sleep=sleep))
         if args.command == "execute":
