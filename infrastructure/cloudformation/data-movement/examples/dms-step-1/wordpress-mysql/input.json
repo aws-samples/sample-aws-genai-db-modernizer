@@ -6460,5 +6460,13 @@
     "wordpress.wp_wc_webhooks.date_modified",
     "wordpress.wp_wc_webhooks.date_modified_gmt",
     "wordpress.wp_woocommerce_downloadable_product_permissions.access_granted"
-  ]
+  ],
+  "identity_columns": [],
+  "source_objects": {
+    "procedures": 0,
+    "functions": 0,
+    "triggers": 0,
+    "views": 0
+  },
+  "extensions": null
 }

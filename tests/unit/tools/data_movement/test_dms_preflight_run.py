@@ -591,6 +591,52 @@ def test_an_rds_postgresql_source_returns_a_checklist_for_what_the_api_cannot_re
     assert "session_replication_role" in text
 
 
+HEARTBEAT_GRANT = "GRANT CREATE ON SCHEMA public TO <source user>"
+HEARTBEAT_MESSAGE = (
+    "On PostgreSQL 15 and later, that includes CREATE on the heartbeat schema public for the "
+    "source user."
+)
+
+
+def _pg_source_row(source_kind: str):
+    cred = StubbedCredMgr()
+    s.queue_aurora(cred, engine="aurora-postgresql", version="16.4", reads_instance_params=False)
+    s.queue_secrets(cred)
+    s.queue_instance_class(cred)
+    s.queue_roles(cred)
+    if source_kind == "rds_instance":
+        rds = cred.stub("rds")
+        rds.add_response("describe_db_instances", {"DBInstances": [{
+            "DBInstanceIdentifier": "pg", "Engine": "postgres", "BackupRetentionPeriod": 0,
+            "DBParameterGroups": [{"DBParameterGroupName": "pg-params", "ParameterApplyStatus": "in-sync"}]}]})  # fmt: skip
+        rds.add_response("describe_db_parameters", s.parameters(**{"rds.logical_replication": "1"}))
+        result = _run(cred, "aurora_postgresql", source_kind="rds_instance", source_id="pg")
+    else:
+        s.queue_certs(cred)
+        s.queue_network(cred)
+        result = _run(cred, "aurora_postgresql")
+    return _row(result, "source_cdc")
+
+
+@pytest.mark.parametrize("source_kind", ["self_managed", "rds_instance"])
+def test_a_postgresql_source_names_the_heartbeat_schemas_create_grant(source_kind):
+    """The task's DMS heartbeat creates its table in public, which grants CREATE to its owner
+    only from PostgreSQL 15 (#1904): the checklist and the confirm message both say so."""
+    row = _pg_source_row(source_kind)
+    assert row.status == "confirm"
+    assert any(HEARTBEAT_GRANT in item and "PostgreSQL 15" in item for item in row.checklist)
+    assert HEARTBEAT_MESSAGE in (row.message or "")
+
+
+@pytest.mark.passes_on_main
+def test_a_mysql_source_has_no_heartbeat_grant():
+    cred = StubbedCredMgr()
+    s.queue_ready(cred)
+    row = _row(_run(cred), "source_cdc")
+    assert row.status == "confirm" and "heartbeat" not in (row.message or "")
+    assert not any("heartbeat" in item for item in row.checklist)
+
+
 def test_an_aurora_cluster_source_with_wrong_values_fails():
     cred = StubbedCredMgr()
     _up_to_source(cred)

@@ -17,12 +17,16 @@ from botocore.stub import ANY
 
 from scripts import check_dms_step_gate, check_dms_step_preflight
 from scripts import run_dms_step as script
-from src.storage.local_store import LocalArtifactStore
-from src.tools.data_movement.dms_step import CUSTOMER_RESPONSIBILITY, bundle_inputs, render_files
+from src.tools.data_movement.dms_step import (
+    CUSTOMER_RESPONSIBILITY,
+    bundle_inputs,
+    render_files,
+    write_step1_delivery,
+)
 from src.tools.transformation_contract.hashing import canonical_json
 from tests.unit.tools.aws.aws_stubs import REGION, StubbedCredMgr
 from tests.unit.tools.data_movement import preflight_stubs as s
-from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle
+from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, write_job, write_pg_job
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GONE = "DMS has no such task (the task is gone, not running)"
@@ -59,7 +63,8 @@ def _restore_aws_profile(monkeypatch):
 
 def _job(tmp_path: Path, **inputs) -> Path:
     b = make_bundle()
-    store = LocalArtifactStore(str(tmp_path))
+    # The finished job (report, assignment, collector) the summary reads the collection from.
+    store = write_job(tmp_path, contract=False, plan=False)
     store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))
     store.write_bytes(
         "shop/job1/transformation-contract/v2/step-1.json", canonical_json(b.contract)
@@ -217,6 +222,44 @@ def test_summary_quotes_the_disclaimer_and_the_plans_figures(tmp_path, capsys):
     assert out["monthly_cost_usd"] == b.plan.monthly_cost_usd
     assert set(out["files"]) == {"aurora-target.yaml", "step-1.ddl.sql", "dms-step-1.yaml"}
     assert out["files_missing"] == []
+
+
+def test_summary_lists_what_a_mysql_step_1_does_not_move(tmp_path, capsys):
+    _job(tmp_path)
+    out = _run(tmp_path, "summary", capsys=capsys)[1]
+    kinds = {n["kind"]: n for n in out["not_moved"]}
+    assert list(kinds) == [
+        "procedures",
+        "functions",
+        "triggers",
+        "views",
+        "events",
+        "sequence values",
+    ]
+    assert kinds["views"]["count"] == 1 and kinds["procedures"]["count"] == 0
+    assert kinds["events"]["count"] is None and "SHOW EVENTS" in kinds["events"]["note"]
+    assert kinds["sequence values"]["count"] is None
+    assert kinds["sequence values"]["note"].startswith("none to set: an AUTO_INCREMENT counter")
+
+
+def test_summary_lists_the_sequences_file_and_the_not_moved_counts_on_postgresql(tmp_path, capsys):
+    routines = [{"procedure_id": "public.f", "procedure_name": "f", "procedure_type": "FUNCTION"}]
+    store = write_pg_job(tmp_path, procedures=routines)
+    write_step1_delivery(store, "shop", "job1")
+    out = _run(tmp_path, "summary", capsys=capsys)[1]
+    assert out["status"] == "complete", out
+    assert (
+        out["files"]["step-1.sequences.sql"]
+        == "shop/job1/data-movement/step-1/step-1.sequences.sql"
+    )
+    assert out["files_missing"] == []
+    assert out["not_moved"] == [
+        {"kind": "procedures", "count": 0, "note": "none in the collection"},
+        {"kind": "functions", "count": 1, "note": "recreate them on Aurora yourself"},
+        {"kind": "triggers", "count": 0, "note": "none in the collection"},
+        {"kind": "views", "count": 1, "note": "recreate them on Aurora yourself"},
+        {"kind": "sequence values", "count": 2, "note": "run step-1.sequences.sql at cutover"},
+    ]
 
 
 def test_steps_lists_the_plans_and_supports_step_1_only(tmp_path, capsys):

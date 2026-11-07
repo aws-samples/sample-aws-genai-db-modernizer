@@ -173,6 +173,51 @@ def write_job(
     return store
 
 
+def write_pg_job(
+    root: Path,
+    *,
+    extensions: list[dict[str, Any]] | None = None,
+    procedures: list[dict[str, Any]] | None = None,
+    triggers: list[dict[str, Any]] | None = None,
+) -> LocalArtifactStore:
+    """A finished PostgreSQL job ``shop/job1`` (assignment v2) with its step 1 contract and
+    plan: ``public.orders`` has an identity column ``id`` (a ``nextval`` default) and a
+    ``halfvec`` column, ``public.tags`` a quoted-name identity column, ``public.audit_log``
+    no key and no identity, and one view. ``extensions`` are the collection's installed
+    extensions; ``procedures`` and ``triggers`` its routines and triggers."""
+    seq = "nextval('orders_id_seq'::regclass)"
+    tables = [
+        table("public", "audit_log", [col("msg", "varchar(200)", 1, max_length=200)]),
+        table("public", "orders", [col("id", "int8", 1, default_value=seq, is_auto_increment=True),
+                                   col("embedding", "halfvec", 2, nullable=True),
+                                   col("note", "text", 3, nullable=True)], pk=["id"]),  # fmt: skip
+        table("public", "tags", [col('we"ird\'id', "int4", 1, is_auto_increment=True),
+                                 col("label", "citext", 2, nullable=True)], pk=['we"ird\'id']),  # fmt: skip
+    ]
+    views = [{"view_id": "public.v_orders", "view_name": "v_orders", "schema_name": "public",
+              "definition": "select id from orders"}]  # fmt: skip
+    coll = collector("postgresql", tables, views)
+    coll["metadata"]["source_database"].update(database_name="shop", version="16.4")
+    if extensions is not None:
+        coll["metadata"]["extensions"] = extensions
+    coll["database_schema"]["procedures"] = procedures or []
+    coll["database_schema"]["triggers"] = triggers or []
+    wave = {"wave": 1, "title": "Move to Aurora PostgreSQL", "engines": ["aurora_postgresql"],
+            "moves_from": ["postgresql"], "homogeneity": "homogeneous",
+            "tables": [t["table_id"] for t in tables] + ["public.v_orders"],
+            "gate": "Aurora PostgreSQL serves every query."}  # fmt: skip
+    store = LocalArtifactStore(str(root))
+    store.write_json("shop/job1/synthesis/v2/report.json",
+                     {"assignment_summary": {"version": 2}, "migration_waves": [wave]})  # fmt: skip
+    store.write_json(
+        "shop/job1/assignment/v2/assignment.json", {"version": 2, "query_assignments": []}
+    )
+    store.write_json("shop/job1/collector/output.json", coll)
+    write_step1(store, "shop", "job1")
+    write_plans(store, "shop", "job1")
+    return store
+
+
 def rewrite_contract(store: LocalArtifactStore, contract: StepContract) -> None:
     """Replace ``shop/job1``'s step 1 contract as its writer would (canonical bytes and
     their hash), then write the plans again so the plan pins it."""
