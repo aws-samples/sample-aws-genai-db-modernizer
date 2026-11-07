@@ -19,7 +19,7 @@ RunRefereeTriage          ← reads collector output, selects target engines
 RunEnginePipelines        ← one call per engine, run concurrently:
   ├─ RunAnalysis           (AGENT_TYPE = engine name, e.g. "dynamodb")
   └─ RunSchemaDesign       (AGENT_TYPE = "schema-design", TARGET_TYPE = engine name)
-       └─ internal PE review loop (designer + PE reviewer, up to 3 iterations)
+       └─ internal PE review loop (designer + PE reviewer, at most 2 reviews)
     ↓
 RunLoadTestPipelines      ← per-engine load test, run sequentially (`_run_load_test`
     │                        is a plain loop, unlike the analysis/schema ThreadPoolExecutor):
