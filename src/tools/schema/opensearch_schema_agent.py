@@ -7,7 +7,7 @@ Mirrors the DocumentDB schema agent pattern:
   1. Load projected input (collector + analysis + decision trace)
   2. LLM Designer produces OpenSearchModelOutputContract
   3. PE Reviewer evaluates the design
-  4. If PE requests changes, Designer revises (max 3 iterations)
+  4. If PE requests changes, Designer revises (at most MAX_PE_ITERATIONS reviews)
   5. Returns final output + trace log
 """
 
