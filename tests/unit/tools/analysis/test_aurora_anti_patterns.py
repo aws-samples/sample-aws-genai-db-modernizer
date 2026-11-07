@@ -4,7 +4,8 @@
 """Unit tests for Aurora anti-pattern detection logic.
 
 Covers:
-- Lowered thresholds for anti-01 (30 CPS) and anti-02 (20 CPS)
+- Calibrated thresholds for anti-01 and anti-02 (#1994): the Aurora engine files'
+  memory_read_capacity_calls_per_second, a documented capacity, not a fixed figure
 - aurora-anti-05: no-relational-need
 - aurora-anti-06: single-access-pattern-table
 - aurora-anti-07: high-volume-text-search
@@ -22,6 +23,10 @@ import pytest
 from src.agents.referee.query_shape import CRUD, ORDERED_ONE_TO_MANY, single_table_access_shape
 from src.contracts.analysis_output import WorkloadAnalysis
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
+from src.tools.analysis.aurora_common_pattern_catalog import (
+    CACHE_READ_CPS_THRESHOLD,
+    HIGH_FREQUENCY_PK_LOOKUP_CPS,
+)
 from src.tools.analysis.aurora_mysql_analysis_tools import build_aurora_mysql_decision_trace
 from src.tools.analysis.aurora_pg_analysis_tools import build_aurora_pg_decision_trace
 from tests.unit.agents.referee.test_query_shape import (
@@ -47,9 +52,17 @@ def _make_collector(tables, queries):
 # ==========================================================================
 
 
-class TestLoweredThresholds:
-    def test_pk_lookup_fires_at_35_cps(self):
-        """anti-01 fires: single-row PK SELECT at 35 CPS, 0 FKs, 0 joins."""
+# Just above and below the calibrated rate, and a busy shop's busiest read (#1994: 529
+# calls/s on a 28-minute window of a 40-user stress test), which Aurora's buffer pool serves.
+ABOVE = HIGH_FREQUENCY_PK_LOOKUP_CPS + 1.0
+BELOW = HIGH_FREQUENCY_PK_LOOKUP_CPS - 1.0
+SHOP_RATE = 529.0
+
+
+class TestCalibratedThresholds:
+    @pytest.mark.passes_on_main  # the rule still fires above the threshold
+    def test_pk_lookup_fires_above_the_calibrated_rate(self):
+        """anti-01 fires: single-row PK SELECT above the documented capacity, 0 FKs, 0 joins."""
         tables = [{"table_id": "t1", "foreign_keys": [], "columns": [], "primary_key": ["id"]}]
         queries = [
             {
@@ -59,7 +72,7 @@ class TestLoweredThresholds:
                 "has_joins": False,
                 "join_count": 0,
                 "rows_returned_avg": 1.0,
-                "calls_per_second": 35.0,
+                "calls_per_second": ABOVE,
                 "query_text": "SELECT * FROM t1 WHERE id = ?",
             }
         ]
@@ -67,9 +80,10 @@ class TestLoweredThresholds:
         anti_ids = [ap.anti_pattern_id for ap in anti_patterns]
         assert "aurora-anti-01" in anti_ids
 
-    def test_pk_lookup_does_not_fire_at_25_cps(self):
-        """anti-01 does NOT fire: same pattern at 25 CPS (below 30 CPS threshold)."""
-        tables = [{"table_id": "t1", "foreign_keys": [], "columns": []}]
+    @pytest.mark.parametrize("cps", [BELOW, SHOP_RATE, 35.0])
+    def test_pk_lookup_does_not_fire_at_or_below_the_calibrated_rate(self, cps):
+        """anti-01 does NOT fire below the documented capacity: 35 calls/s fired it on main."""
+        tables = [{"table_id": "t1", "foreign_keys": [], "columns": [], "primary_key": ["id"]}]
         queries = [
             {
                 "query_id": "q1",
@@ -78,7 +92,7 @@ class TestLoweredThresholds:
                 "has_joins": False,
                 "join_count": 0,
                 "rows_returned_avg": 1.0,
-                "calls_per_second": 25.0,
+                "calls_per_second": cps,
                 "query_text": "SELECT * FROM t1 WHERE id = ?",
             }
         ]
@@ -86,8 +100,13 @@ class TestLoweredThresholds:
         anti_ids = [ap.anti_pattern_id for ap in anti_patterns]
         assert "aurora-anti-01" not in anti_ids
 
-    def test_cache_read_fires_at_25_cps(self):
-        """anti-02 fires: SELECT on single table, no joins, rows_returned_avg <= 10, at 25 CPS."""
+    def test_both_rules_read_one_threshold(self):
+        """anti-01 and anti-02 judge the same buffer-pool read: one documented capacity."""
+        assert HIGH_FREQUENCY_PK_LOOKUP_CPS == CACHE_READ_CPS_THRESHOLD
+
+    @pytest.mark.parametrize("cps", [BELOW, SHOP_RATE, 25.0])
+    def test_cache_read_does_not_fire_at_or_below_the_calibrated_rate(self, cps):
+        """anti-02 does NOT fire below the documented capacity: 25 calls/s fired it on main."""
         tables = [{"table_id": "t1", "foreign_keys": [], "columns": []}]
         queries = [
             {
@@ -97,7 +116,26 @@ class TestLoweredThresholds:
                 "has_joins": False,
                 "join_count": 0,
                 "rows_returned_avg": 5.0,
-                "calls_per_second": 25.0,
+                "calls_per_second": cps,
+                "query_text": "SELECT value FROM config WHERE key = ?",
+            }
+        ]
+        _, anti_patterns = analyze_aurora_common_use_cases(_make_collector(tables, queries))
+        assert "aurora-anti-02" not in [ap.anti_pattern_id for ap in anti_patterns]
+
+    @pytest.mark.passes_on_main  # the rule still fires above the threshold
+    def test_cache_read_fires_above_the_calibrated_rate(self):
+        """anti-02 fires: SELECT on single table, no joins, rows_returned_avg <= 10."""
+        tables = [{"table_id": "t1", "foreign_keys": [], "columns": []}]
+        queries = [
+            {
+                "query_id": "q1",
+                "query_type": "SELECT",
+                "tables_accessed": ["t1"],
+                "has_joins": False,
+                "join_count": 0,
+                "rows_returned_avg": 5.0,
+                "calls_per_second": ABOVE,
                 "query_text": "SELECT value FROM config WHERE key = ?",
             }
         ]
@@ -282,14 +320,29 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         assert ap.query_ids == ["point", "first"]
 
     def test_an_ordered_one_to_many_read_neither_clears_nor_qualifies_the_table(self):
-        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692)."""
+        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692):
+        it neither clears nor qualifies the table. #1994 narrows the #692 and #776
+        decisions (2026-10-14, which covered it): read across the whole table it is not
+        covered, since DynamoDB serves it only as a Scan and its own ordered-scan (#920,
+        two days later) points it back at the relational engine."""
         queries = [
             _q("point", "SELECT * FROM t1 WHERE id = $1"),
             _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
         ]
         ap = _anti05(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
-        assert ap.query_ids == ["point", "first"]
+        assert ap.query_ids == ["point"]
+
+    @pytest.mark.passes_on_main  # a keyed page stays covered, as on main
+    def test_a_keyed_ordered_one_to_many_read_is_still_covered(self):
+        """#1994 leaves out only the whole-table order: by a key value it is a Query."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("page", "SELECT * FROM t1 WHERE id = $1 ORDER BY id LIMIT $2"),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
 
     def test_one_row_at_an_offset_is_a_key_lookup(self):
         """Maintainer decision of 2026-10-15 (#857, supersedes the #782 pin):
@@ -312,17 +365,19 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
         ap = _anti05(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
-        assert ap.query_ids == ["point", "page"]
+        # #1994: a page of the whole table is not covered (ordered-scan on DynamoDB).
+        assert ap.query_ids == ["point"]
 
-    def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
-        """Neutral means neutral: no relational query, so the table rule still fires (#692)."""
+    def test_a_table_of_only_whole_table_ordered_reads_is_not_flagged(self):
+        """Neutral still means neutral for the table (#692), but #1994 (narrowing the #692
+        and #776 decisions of 2026-10-14, which flagged this table) covers no query here:
+        each is an ordered read of the whole table, which the key-value engine the rule
+        names serves only as a Scan (its own ordered-scan points it back here)."""
         queries = [
             _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
             _q("top20", "SELECT * FROM t1 ORDER BY id LIMIT 20"),
         ]
-        ap = _anti05(queries, primary_keys={"t1": ["id"]})
-        assert ap is not None
-        assert ap.query_ids == ["first", "top20"]
+        assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
 
     def test_an_ordered_one_to_many_read_does_not_save_a_relational_table(self):
         queries = [
@@ -556,14 +611,29 @@ class TestSingleAccessPatternRequiresSingleTableCrud:
         assert _anti06(queries, primary_keys={"t1": ["key"]}) is None
 
     def test_an_ordered_one_to_many_read_neither_clears_nor_qualifies_the_table(self):
-        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692)."""
+        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692):
+        it neither clears nor qualifies the table. #1994 narrows the #692 and #776
+        decisions (2026-10-14, which covered it): read across the whole table it is not
+        covered, since DynamoDB serves it only as a Scan and its own ordered-scan (#920,
+        two days later) points it back at the relational engine."""
         queries = [
             _q("point", "SELECT * FROM t1 WHERE id = $1"),
             _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
         ]
         ap = _anti06(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
-        assert ap.query_ids == ["point", "first"]
+        assert ap.query_ids == ["point"]
+
+    @pytest.mark.passes_on_main  # a keyed page stays covered, as on main
+    def test_a_keyed_ordered_one_to_many_read_is_still_covered(self):
+        """#1994 leaves out only the whole-table order: by a key value it is a Query."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("page", "SELECT * FROM t1 WHERE id = $1 ORDER BY id LIMIT $2"),
+        ]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
 
     def test_one_row_at_an_offset_is_a_key_lookup(self):
         """Maintainer decision of 2026-10-15 (#857, supersedes the #782 pin):
@@ -586,14 +656,15 @@ class TestSingleAccessPatternRequiresSingleTableCrud:
         queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
         ap = _anti06(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
-        assert ap.query_ids == ["point", "page"]
+        # #1994: a page of the whole table is not covered (ordered-scan on DynamoDB).
+        assert ap.query_ids == ["point"]
 
-    def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
-        """Neutral means neutral: no relational query, so the table rule still applies."""
+    def test_a_table_of_only_whole_table_ordered_reads_is_not_flagged(self):
+        """As for anti-05 (#1994, narrowing the #776 decision of 2026-10-14 that kept the
+        anti-06 penalty here): a whole-table ordered read is not covered, so a table of
+        only that read is not flagged."""
         queries = [_q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1')]
-        ap = _anti06(queries, primary_keys={"t1": ["id"]})
-        assert ap is not None
-        assert ap.query_ids == ["first"]
+        assert _anti06(queries, primary_keys={"t1": ["id"]}) is None
 
     def test_an_ordered_one_to_many_read_does_not_save_a_relational_table(self):
         queries = [
@@ -893,8 +964,9 @@ class TestHighVolumeTextSearch:
 class TestAntiPatternExclusionLogic:
     """anti-01 and anti-02 should not overlap — clean separation at thresholds."""
 
+    @pytest.mark.passes_on_main  # the rule still fires above the threshold
     def test_high_cps_pk_lookup_only_triggers_anti_01(self):
-        """At 35 CPS with PK lookup: anti-01 fires, anti-02 should NOT."""
+        """Above the calibrated rate with a PK lookup: anti-01 fires, anti-02 should NOT."""
         collector = _make_collector(
             tables=[
                 {
@@ -912,7 +984,7 @@ class TestAntiPatternExclusionLogic:
                     "query_type": "SELECT",
                     "query_text": "SELECT * FROM users WHERE id = $1",
                     "tables_accessed": ["users"],
-                    "calls_per_second": 35.0,
+                    "calls_per_second": ABOVE,
                     "has_joins": False,
                     "join_count": 0,
                     "rows_returned_avg": 1.0,
@@ -924,8 +996,9 @@ class TestAntiPatternExclusionLogic:
         assert "aurora-anti-01" in anti_ids
         assert "aurora-anti-02" not in anti_ids
 
+    @pytest.mark.passes_on_main  # the rule still fires above the threshold
     def test_moderate_cps_non_pk_triggers_anti_02(self):
-        """At 25 CPS without being a single-row PK lookup: anti-02 fires."""
+        """Above the calibrated rate without a single-row PK lookup: anti-02 fires."""
         collector = _make_collector(
             tables=[
                 {
@@ -946,7 +1019,7 @@ class TestAntiPatternExclusionLogic:
                     "query_type": "SELECT",
                     "query_text": "SELECT * FROM config WHERE key = $1",
                     "tables_accessed": ["config"],
-                    "calls_per_second": 25.0,
+                    "calls_per_second": ABOVE,
                     "has_joins": False,
                     "join_count": 0,
                     "rows_returned_avg": 3.0,  # not single-row, so not PK lookup
@@ -1023,18 +1096,20 @@ class TestAKeyAnchoredReadIsNotARelationalNeed:
         assert set(ap.query_ids) == {"point", "join"}
 
     @pytest.mark.parametrize(
-        "sql",
+        ("sql", "covered"),
         [
-            "SELECT count(*) FROM orders WHERE customer_id = $1",  # keyed aggregate
-            "SELECT * FROM orders WHERE id > $1 ORDER BY id LIMIT $2",  # range over a key
-            "SELECT * FROM orders ORDER BY customer_id LIMIT 20",  # order over a key
-            "SELECT customer_id FROM orders WHERE customer_id = $1 GROUP BY customer_id",
-            "SELECT * FROM orders",  # no predicate: the whole key range
+            ("SELECT count(*) FROM orders WHERE customer_id = $1", True),  # keyed aggregate
+            # A range or an order over a key across the whole table: it does not block the
+            # rule, and #1994 leaves it out of the coverage (ordered-scan on DynamoDB).
+            ("SELECT * FROM orders WHERE id > $1 ORDER BY id LIMIT $2", False),
+            ("SELECT * FROM orders ORDER BY customer_id LIMIT 20", False),
+            ("SELECT customer_id FROM orders WHERE customer_id = $1 GROUP BY customer_id", True),
+            ("SELECT * FROM orders", True),  # no predicate: the whole key range
         ],
     )
-    def test_a_keyed_or_ranged_read_by_key_does_not_block_the_rule(self, sql):
+    def test_a_keyed_or_ranged_read_by_key_does_not_block_the_rule(self, sql, covered):
         ap = _keyed_anti("aurora-anti-05", POINT, _keyed_q("read", sql))
-        assert ap is not None and "read" in ap.query_ids
+        assert ap is not None and ("read" in ap.query_ids) is covered
 
     @pytest.mark.parametrize(
         ("sql", "tables"),
@@ -1059,13 +1134,55 @@ class TestAKeyAnchoredReadIsNotARelationalNeed:
         assert ap is not None and set(ap.query_ids) == {"point", "join"}
 
 
-def test_the_anti01_text_states_the_threshold_the_rule_uses():
-    """#904: the description said ">100 calls/second" while the rule fires above 30."""
-    from src.tools.analysis.aurora_common_pattern_catalog import (
-        ANTI_PATTERN_BY_ID,
-        HIGH_FREQUENCY_PK_LOOKUP_CPS,
+@pytest.mark.parametrize("catalog_id", ["aurora-anti-01", "aurora-anti-02"])
+def test_the_text_states_the_threshold_the_rule_uses(catalog_id):
+    """#904, #1994: the description states the rate the rule fires above."""
+    from src.tools.analysis.aurora_common_pattern_catalog import ANTI_PATTERN_BY_ID
+
+    description = ANTI_PATTERN_BY_ID[catalog_id].description
+    assert f"above {HIGH_FREQUENCY_PK_LOOKUP_CPS:,.0f} calls/second" in description
+    assert ">100" not in description and "more than 30" not in description
+
+
+# ==========================================================================
+# #1994 (#2040 review): the table-level checks read the same calibrated rate
+# ==========================================================================
+
+
+def _hot_profile(cps: float):
+    from src.tools.analysis.scoring import TableProfile
+
+    return TableProfile(
+        table_id="t1",
+        row_count=1000,
+        size_mb=1.0,
+        column_count=2,
+        has_primary_key=True,
+        foreign_key_count=0,
+        total_query_count=1,
+        read_query_count=1,
+        read_ratio=1.0,
+        total_calls_per_second=cps,
+        max_rows_returned_avg=1.0,
     )
 
-    description = ANTI_PATTERN_BY_ID["aurora-anti-01"].description
-    assert f"more than {HIGH_FREQUENCY_PK_LOOKUP_CPS:g} calls/second" in description
-    assert ">100" not in description
+
+@pytest.mark.parametrize(("cps", "penalized"), [(SHOP_RATE, False), (ABOVE, True)])
+def test_the_table_level_lookup_penalty_and_concern_follow_the_calibrated_rate(cps, penalized):
+    """A single-row, join-free table loses 20 pattern and 15 performance points, and gets
+    the "very high frequency simple lookups" concern, only above Aurora's documented read
+    capacity: a shop's busiest read (529 calls/s) took both on main (30 calls/s)."""
+    from src.contracts.analysis_output import ScoreBreakdown
+    from src.tools.analysis.aurora_common_analysis_tools import (
+        _apply_aurora_common_adjustments,
+        build_concerns,
+    )
+
+    base = ScoreBreakdown(
+        pattern_match_score=50, complexity_score=50, performance_score=50, cost_score=50
+    )
+    calm = _apply_aurora_common_adjustments(base, _hot_profile(1.0))
+    scored = _apply_aurora_common_adjustments(base, _hot_profile(cps))
+    assert (calm.pattern_match_score - scored.pattern_match_score == 20) is penalized
+    concerns = build_concerns(_hot_profile(cps), [])
+    assert any("Very high frequency simple lookups" in c for c in concerns) is penalized

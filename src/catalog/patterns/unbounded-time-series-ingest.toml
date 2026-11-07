@@ -53,6 +53,7 @@ why = "Append-only table: 10 or more INSERTs per second, no other writes (no UPD
 engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
 guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
 guidance_names_engine = true
+better_served_by = ["dynamodb", "opensearch"]
 
 # Detection signals: summed INSERT rate >= HIGH_INGEST_CPS_THRESHOLD (pattern_catalog_base)
 # on an append-only table (the workload writes it only with INSERTs: no UPDATE, DELETE,
@@ -72,6 +73,7 @@ why = "Append-only table: 10 or more INSERTs per second, no other writes (no UPD
 engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
 guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
 guidance_names_engine = true
+better_served_by = ["dynamodb", "opensearch"]
 
 [engines.neptune]
 kind = "future"

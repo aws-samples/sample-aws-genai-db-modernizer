@@ -162,11 +162,16 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     #1893 (each statement's rate over its own first-to-last-seen window, 19 to 30 hours
     here, not 24): 7258 to 7216 and 7288 to 7246. The rate-tiered table scores and cost
     move both Aurora engines by the same 42 points; the 30-point lead is unchanged and the
-    features still decide."""
+    features still decide.
+
+    #1994 (simple-cache-read fires only above Aurora's documented read capacity, 21,875
+    calls/s): 7216 to 7276 and 7246 to 7306. Three reads at 21 to 41 calls/s lose that
+    rule's 20-point penalty on both Aurora engines alike (60 points each); the 30-point
+    lead is unchanged and the features still decide."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7216.0, 7246.0)
+    assert (mysql, pg) == (7276.0, 7306.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"

@@ -19,7 +19,11 @@ from collections import defaultdict
 from collections.abc import Mapping
 
 from src.agents.referee.access_pattern import KEY_SCOPED
-from src.agents.referee.query_shape import RELATIONAL, single_table_access_shape
+from src.agents.referee.query_shape import (
+    ORDERED_ONE_TO_MANY,
+    RELATIONAL,
+    single_table_access_shape,
+)
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.analysis_output import (
@@ -526,7 +530,15 @@ def analyze_aurora_common_use_cases(
     #    the table has 0 FKs, and no query joins it to another table except
     #    by key (a key-anchored join is a key-scoped read, Amendment 5). It then
     #    covers the CRUD and the ordered 1:M queries -- neither has a
-    #    relational need -- and never overrides a per-query result.
+    #    relational need -- and never overrides a per-query result. It leaves
+    #    out an ordered 1:M read of the whole table (#1994,
+    #    ``KeyAccessReader.ordered_table_scan``): the key-value engine the entry
+    #    names serves it only as a Scan, and that engine's own analysis points
+    #    it back here (ordered-scan). This narrows the #692 and #776 decisions
+    #    (2026-10-14), which predate ordered-scan (#920). A first-row read by
+    #    primary key stays covered: it is a key lookup that retrieves all the
+    #    columns (#692, #857; maintainer decision of 2026-11-08 on #1994), and it
+    #    remains a listed contradiction the guard settles on the routed engine.
     # Admin statements are not application access: they neither block the
     # table nor take the penalty. That is ``_is_admin_statement``, the same
     # skip the scan above uses: SHOW/DESCRIBE/EXPLAIN/SET, or
@@ -573,7 +585,14 @@ def analyze_aurora_common_use_cases(
             continue
         if table.get("foreign_keys") or tid in tables_with_joins:
             continue
-        anti05_query_ids.extend(q.get("query_id", "") for q in table_qs)
+        covered = [
+            q.get("query_id", "")
+            for q, shape in zip(table_qs, shapes, strict=True)
+            if not (shape == ORDERED_ONE_TO_MANY and reader.ordered_table_scan(q))
+        ]
+        if not covered:
+            continue
+        anti05_query_ids.extend(covered)
         anti05_table_ids.append(tid)
 
     if anti05_query_ids:
@@ -596,7 +615,8 @@ def analyze_aurora_common_use_cases(
     #    unkeyed write, a table-wide order, ...) never takes the penalty.
     # 2. The table-level complement: at most 2 application queries, none of
     #    them relational, and 0 FKs. It then covers the table's CRUD and
-    #    ordered 1:M queries, and never overrides a per-query result.
+    #    ordered 1:M queries, less an ordered 1:M read of the whole table (as
+    #    anti-05, #1994), and never overrides a per-query result.
     # Only schema tables are checked, as for anti-05: the rule is a claim
     # about a table's keys and foreign keys, so a name the schema does not
     # list (a pseudo-table such as ``unknown`` or ``DUAL``, a CTE alias, a
@@ -631,7 +651,14 @@ def analyze_aurora_common_use_cases(
         # Step 2: the table-level complement, only on top of step 1.
         if RELATIONAL in shapes:
             continue
-        anti06_query_ids.extend(q.get("query_id", "") for q in table_qs)
+        covered = [
+            q.get("query_id", "")
+            for q, shape in zip(table_qs, shapes, strict=True)
+            if not (shape == ORDERED_ONE_TO_MANY and reader.ordered_table_scan(q))
+        ]
+        if not covered:
+            continue
+        anti06_query_ids.extend(covered)
         anti06_table_ids.append(tid)
 
     if anti06_query_ids:

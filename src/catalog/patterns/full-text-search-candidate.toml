@@ -38,6 +38,7 @@ why = "Full-text search patterns using LIKE '%term%' or similar constructs. Guid
 engine_hint = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
 guidance = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
 guidance_names_engine = true
+better_served_by = ["opensearch"]
 
 # Detection signals: LIKE '%term%', text search patterns
 [engines.aurora_mysql]
@@ -50,6 +51,7 @@ why = "Full-text search patterns using LIKE '%term%' or similar constructs. Guid
 engine_hint = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
 guidance = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
 guidance_names_engine = true
+better_served_by = ["opensearch"]
 
 [engines.neptune]
 kind = "future"

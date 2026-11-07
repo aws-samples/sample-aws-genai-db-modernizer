@@ -38,6 +38,7 @@ why = "Table with no foreign keys and no join participation: all queries are sin
 engine_hint = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
 guidance = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
 guidance_names_engine = true
+better_served_by = ["dynamodb", "elasticache"]
 
 [engines.aurora_mysql]
 kind = "anti_pattern"
@@ -49,6 +50,7 @@ why = "Table with no foreign keys and no join participation: all queries are sin
 engine_hint = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
 guidance = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
 guidance_names_engine = true
+better_served_by = ["dynamodb", "elasticache"]
 
 [engines.neptune]
 kind = "future"

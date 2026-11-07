@@ -19,6 +19,7 @@ catalog_id = "dynamodb-ap-05"
 severity = 0.5
 why = "The first rows of a whole table in some order (ORDER BY with a row limit and no key value). A DynamoDB Scan returns items in no particular order, so the first rows by any order need every item read and sorted by the application (Amazon DynamoDB Developer Guide, Scanning tables)."
 guidance = "Give the read a partition key value and keep the order as the sort key (a Query returns items in sort-key order), or keep this read on the relational engine."
+better_served_by = ["aurora_postgresql", "aurora_mysql"]
 
 [engines.documentdb]
 kind = "unscored"

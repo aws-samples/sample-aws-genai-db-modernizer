@@ -82,7 +82,8 @@ def test_the_scope_is_recorded_and_routes_wordpress_within_it(tmp_path) -> None:
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
     lines = {x["phase"]: x for x in map(json.loads, proc.stdout.splitlines()) if "phase" in x}
     assert lines["triage"]["engine_scope"] == ["aurora_postgresql", "dynamodb"]
-    assert lines["assignment"]["distribution"] == {"dynamodb": 40, "aurora_postgresql": 67}
+    # #1994: one read simple-cache-read used to penalize on Aurora moved there.
+    assert lines["assignment"]["distribution"] == {"dynamodb": 39, "aurora_postgresql": 68}
     job = lines["collect"]["job_id"]
     decision = json.loads(
         (tmp_path / "a" / "wordpress" / job / "decisions" / "engine_scope.json").read_text()

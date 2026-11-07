@@ -22,7 +22,7 @@ list_prices = "elasticache.valkey"
 # The cache overlay's floors (#296, #304, #921): which reads a cache layer fronts.
 [thresholds.hot_read_min_calls_per_second]
 value = 1.0
-why = "Hot-read floor, inclusive: below one call/s a cached entry is read a few times before the next miss pays the same cost as no cache (#296); on the reference samples every candidate is at least 1.26 calls/s or at most 0.95."
+why = "Hot-read floor, inclusive: below one call/s a cached entry is read a few times before the next miss pays the same cost as no cache (#296). A stated fixed floor, kept at 1 call/s by maintainer decision on #1994 (2026-11-07); it is not derived from a capacity, and observed-window rates (#1901) put reads on both sides of it."
 
 [thresholds.max_rows_avg]
 value = 100.0

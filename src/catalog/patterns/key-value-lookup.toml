@@ -46,7 +46,7 @@ catalog_id = "aurora-common-12"
 score = 80
 why = "A read of one row, or an IN-list batch, by its full primary or unique key: a B-tree index point read, served from memory once cached, with read replicas to scale the reads (PostgreSQL documentation, Index Types; MySQL Reference Manual, Comparison of B-Tree and Hash Indexes)."
 concerns = [
-    "Above 100 calls per second a key-value engine is the native path (high-frequency-pk-lookup)",
+    "Above 21,875 calls per second for one query, the documented read capacity of the smallest instance, a key-value engine is the native path (high-frequency-pk-lookup)",
 ]
 
 [engines.aurora_mysql]
@@ -57,7 +57,7 @@ catalog_id = "aurora-common-12"
 score = 80
 why = "A read of one row, or an IN-list batch, by its full primary or unique key: a B-tree index point read, served from memory once cached, with read replicas to scale the reads (PostgreSQL documentation, Index Types; MySQL Reference Manual, Comparison of B-Tree and Hash Indexes)."
 concerns = [
-    "Above 100 calls per second a key-value engine is the native path (high-frequency-pk-lookup)",
+    "Above 21,875 calls per second for one query, the documented read capacity of the smallest instance, a key-value engine is the native path (high-frequency-pk-lookup)",
 ]
 
 [engines.neptune]

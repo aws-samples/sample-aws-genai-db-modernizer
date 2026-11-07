@@ -71,6 +71,9 @@ class SynthesisData:
     # Plain-prose style (#1034): schema-design fields sent back to deterministic
     # text by ``synthesis_prose.clean_schema_design_prose``, for the audit trail.
     prose_style_rejections: list[str] = field(default_factory=list)
+    # Cross-engine consistency guard (#1994): the queries two analyses each pointed at
+    # the other's engine, each settled by the single scorer (``analysis_consistency``).
+    analysis_contradictions: list = field(default_factory=list)
 
     @property
     def selected_engines(self) -> list[str]:
@@ -211,6 +214,29 @@ def load_synthesis_data(
             source_database_engine(data.collector),
             triage=data.triage,
             collector=data.collector,
+        )
+
+    # Cross-engine consistency guard (#1994): a query two analyses each point at the
+    # other's engine is settled by the single scorer, and the winner's contradicting
+    # note leaves its analysis (in memory only), so the deliverables carry one statement.
+    from src.agents.referee.analysis_consistency import check_analysis_consistency
+
+    checked = [e for e in data.selected_engines if e not in PLACEHOLDER_ENGINES]
+    reconciled, data.analysis_contradictions = check_analysis_consistency(
+        {e: analysis_of(e) for e in checked},
+        data.collector,
+        data.triage,
+        data.assignment,
+    )
+    for engine, analysis in reconciled.items():
+        analyses[engine] = analysis  # type: ignore[assignment]
+    for c in data.analysis_contradictions:
+        logger.warning(
+            "Analysis contradiction on %s: %s; settled on %s (%s)",
+            c.query_id,
+            " vs ".join(f"{cl.engine} {cl.pattern_type} -> {cl.better_engine}" for cl in c.claims),
+            c.winner,
+            c.rule,
         )
 
     # Engines consolidation (or a customer re-route) eliminated — those with no

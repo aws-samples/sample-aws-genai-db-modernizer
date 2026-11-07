@@ -322,11 +322,16 @@ def test_aurora_does_not_score_a_non_key_read_as_a_key_lookup():
     assert not any(p.pattern_type == "key-value-lookup" for p in patterns)
 
 
+@pytest.mark.passes_on_main  # only a read by key is a PK lookup, as on main
 def test_high_frequency_pk_lookup_needs_a_key():
+    from src.tools.analysis.aurora_common_pattern_catalog import HIGH_FREQUENCY_PK_LOOKUP_CPS
+
+    # Both above the calibrated rate (#1994): only the read by key is a PK lookup.
+    cps = HIGH_FREQUENCY_PK_LOOKUP_CPS + 1.0
     count = _q(
-        "count", "SELECT COUNT(*) FROM orders WHERE status = $1", ["orders"], cps=500, rows=1
+        "count", "SELECT COUNT(*) FROM orders WHERE status = $1", ["orders"], cps=cps, rows=1
     )
-    point = _q("point", "SELECT * FROM orders WHERE id = $1", ["orders"], cps=500, rows=1)
+    point = _q("point", "SELECT * FROM orders WHERE id = $1", ["orders"], cps=cps, rows=1)
     _patterns, anti = analyze_aurora_common_use_cases(_collector(count, point))
     hits = {
         qid
@@ -335,3 +340,80 @@ def test_high_frequency_pk_lookup_needs_a_key():
         for qid in ap.query_ids or []
     }
     assert hits == {"point"}
+
+
+# ---------------------------------------------------------------------------
+# #1994 (#2040 review): one fact for a whole-table ordered read
+# ---------------------------------------------------------------------------
+
+FIRST_ROWS = {
+    "first-param": "SELECT * FROM promotions ORDER BY id ASC LIMIT $1",
+    "first-literal": "SELECT * FROM promotions ORDER BY id ASC LIMIT 1",
+    "page-offset": "SELECT * FROM promotions ORDER BY id LIMIT 5 OFFSET $1",
+    "keyed-page": "SELECT * FROM promotions WHERE id = $1 ORDER BY id LIMIT $2",
+    "point": "SELECT * FROM promotions WHERE id = $1",
+}
+
+
+def _first_rows_queries() -> list[dict]:
+    return [_q(qid, sql, ["promotions"]) for qid, sql in FIRST_ROWS.items()]
+
+
+def test_ordered_scan_reads_the_shared_whole_table_ordered_read_fact():
+    """DynamoDB's ordered-scan and Aurora's anti-05/anti-06 coverage read one fact,
+    ``KeyAccessReader.ordered_table_scan``, so they cannot drift apart."""
+    from src.tools.analysis.key_access import KeyAccessReader
+
+    queries = _first_rows_queries()
+    collector = _collector(*queries)
+    reader = KeyAccessReader.from_collector(collector, "postgresql")
+    fact = {q["query_id"] for q in queries if reader.ordered_table_scan(q)}
+    assert fact == {"first-param", "first-literal", "page-offset"}
+    anti = analyze_dynamodb_use_cases(collector).anti_patterns_detected or []
+    ordered = {q for ap in anti if ap.anti_pattern_type == "ordered-scan" for q in ap.query_ids}
+    assert ordered == fact
+
+
+def _analyses(collector: dict) -> dict[str, dict]:
+    _patterns, aurora = analyze_aurora_common_use_cases(collector)
+    dynamodb = analyze_dynamodb_use_cases(collector).anti_patterns_detected or []
+    return {
+        engine: {"workload_analysis": {"anti_patterns_detected": [a.model_dump() for a in aps]}}
+        for engine, aps in (("aurora_postgresql", aurora), ("dynamodb", dynamodb))
+    }
+
+
+def test_a_literal_first_row_read_is_the_one_contradiction_left():
+    """Maintainer decision of 2026-11-08 on #1994 (option (a)): a whole-table
+    ``ORDER BY <pk> LIMIT 1`` with a literal 1 is a key-value lookup that retrieves all the
+    columns (#692, #857). no-relational-need keeps covering it and points it at DynamoDB,
+    DynamoDB's ordered-scan points the same read back, and it remains a listed
+    contradiction the guard settles on the routed engine. A placeholder limit, a page at
+    an offset and a keyed page make no contradiction."""
+    from src.agents.referee.analysis_consistency import (
+        RULE_ASSIGNED,
+        check_analysis_consistency,
+        find_contradictions,
+    )
+
+    collector = _collector(*_first_rows_queries())
+    analyses = _analyses(collector)
+    found = find_contradictions(analyses)
+    assert [(c.query_id, c.engines) for c in found] == [
+        ("first-literal", ("aurora_postgresql", "dynamodb"))
+    ]
+    # The Aurora penalty stays on it.
+    covered = {
+        q
+        for ap in analyses["aurora_postgresql"]["workload_analysis"]["anti_patterns_detected"]
+        if ap["anti_pattern_type"] == "no-relational-need"
+        for q in ap["query_ids"]
+    }
+    assert "first-literal" in covered
+    # The guard settles it on the routed engine, whichever that is.
+    for routed in ("aurora_postgresql", "dynamodb"):
+        assignment = {
+            "query_assignments": [{"query_id": "first-literal", "assigned_engine": routed}]
+        }
+        _out, (settled,) = check_analysis_consistency(analyses, collector, {}, assignment)
+        assert (settled.winner, settled.rule) == (routed, RULE_ASSIGNED)

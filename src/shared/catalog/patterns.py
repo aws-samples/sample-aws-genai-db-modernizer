@@ -96,6 +96,10 @@ Engine entry fields (``[engines.<engine_id>]``, one per engine):
   ``engine_hint``: the sentence of the description that names another engine (kept apart
   so report text can drop it); ``guidance_names_engine``: the guidance is an
   alternative-engine suggestion as a whole.
+- ``better_served_by`` (``anti_pattern`` only, #1994): the engines the entry's text says
+  serve the flagged queries better; required when ``guidance_names_engine`` is set. The
+  cross-engine consistency guard (``src/agents/referee/analysis_consistency.py``) flags a
+  query two analyses each point at the other's engine, and the single scorer settles it.
 - ``concerns``: the fit's known caveats; ``profile``: OpenSearch's weight profile
   (``search`` or ``timeseries``).
 - ``table_bonus`` / ``complexity_bonus`` (``fit`` only, #921): the points the engine's
@@ -224,6 +228,7 @@ _KIND_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "engine_hint",
                 "guidance",
                 "guidance_names_engine",
+                "better_served_by",
             }
         ),
     ),
@@ -257,6 +262,10 @@ class EngineSupport(BaseModel):
     concerns: tuple[str, ...] = ()
     guidance: str = ""
     guidance_names_engine: bool = False
+    # The engines an anti-pattern's own text says serve the flagged queries better
+    # (#1994): the cross-engine consistency guard (``analysis_consistency``) reads it to
+    # find two analyses that each point a query at the other.
+    better_served_by: tuple[str, ...] = ()
     table_bonus: int = 0
     complexity_bonus: int = 0
     bonus_group: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]*$")
@@ -283,6 +292,8 @@ class EngineSupport(BaseModel):
             raise ValueError("profile is required on an OpenSearch fit and allowed nowhere else")
         if self.guidance_names_engine and not self.guidance:
             raise ValueError("guidance_names_engine needs a guidance")
+        if len(set(self.better_served_by)) != len(self.better_served_by):
+            raise ValueError("better_served_by names each engine once")
         if self.bonus_group and not (self.table_bonus or self.complexity_bonus):
             raise ValueError("a bonus_group entry carries a table_bonus or complexity_bonus")
         if self.parity_anchor is not None:
@@ -307,6 +318,7 @@ _ALL_OPTIONAL = (
     "concerns",
     "guidance",
     "guidance_names_engine",
+    "better_served_by",
     "table_bonus",
     "complexity_bonus",
     "bonus_group",

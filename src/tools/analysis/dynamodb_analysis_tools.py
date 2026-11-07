@@ -1066,7 +1066,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
 
         # Ordered scan: the first rows of a whole table in some order, at any call rate.
         # A Scan returns no order, so the application reads and sorts every item (#920).
-        if qt == "SELECT" and pins_nothing and facts.top_n:
+        if reader.ordered_table_scan(q):
             ordered_scan_queries.append(q)
 
         # Complex aggregation: a GROUP BY, or an aggregate over rows no key anchors or
