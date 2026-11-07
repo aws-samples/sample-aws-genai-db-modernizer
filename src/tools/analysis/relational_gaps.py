@@ -43,7 +43,7 @@ import fnmatch
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.gaps import (
@@ -66,7 +66,13 @@ from src.shared.sql_spans import span_dialect, span_settings, with_span_settings
 from src.tools.sql.facade import SqlTokens, sql_tokens
 from src.tools.sql.normalize import quoted_mask
 
-__all__ = ["detect_relational_gaps", "extension_landing_line", "normalized_data_type"]
+__all__ = [
+    "TARGET_LINE_CHOICES",
+    "TargetLineChoice",
+    "detect_relational_gaps",
+    "extension_landing_line",
+    "normalized_data_type",
+]
 
 
 def normalized_data_type(data_type: Any) -> str:
@@ -523,6 +529,12 @@ def _installed_extensions(collector: Mapping[str, Any]) -> dict[str, str | None]
 
 _Line = tuple[tuple[int, ...], str, AuroraExtensionLine]
 
+# The Aurora version line a move targets (#1951, ADR-034 Decision 3): the line the
+# assessment chooses (``same_major``, the default: the source's own major unless an
+# extension needs a later line), or the newest listed line, the customer's option.
+TargetLineChoice = Literal["same_major", "newest"]
+TARGET_LINE_CHOICES: tuple[TargetLineChoice, ...] = ("same_major", "newest")
+
 
 @dataclass(frozen=True)
 class _Landing:
@@ -596,6 +608,7 @@ def extension_landing_line(
     *,
     rules: Iterable[GapRule] | None = None,
     extension_lines: Mapping[str, AuroraExtensionLines] | None = None,
+    target_choice: TargetLineChoice = "same_major",
 ) -> str | None:
     """The Aurora version line a ``source_engine`` source (the collector's engine, as
     :func:`detect_relational_gaps` reads it) with these installed extensions
@@ -605,7 +618,13 @@ def extension_landing_line(
     Citus) aside. When no line offers them all: the source's own line when it is listed,
     else the newest line it can move to. None when ``target_engine`` has no extension
     list for ``source_engine``. ``rules`` and ``extension_lines`` default to the catalog's.
+
+    ``target_choice`` (#1951): ``same_major``, the default, is the choice above;
+    ``newest`` is the customer's option to move to the newest listed line instead, whatever
+    the source's line and extensions (the extension checks then run against that line).
     """
+    if target_choice not in TARGET_LINE_CHOICES:
+        raise ValueError(f"target_choice {target_choice!r} is not one of {TARGET_LINE_CHOICES}")
     offered = (extension_lines if extension_lines is not None else aurora_extension_lines()).get(
         target_engine
     )
@@ -619,6 +638,8 @@ def extension_landing_line(
     landing = _landing(considered, offered, parse_version_line(source_engine, source_version))
     if landing is None:
         return None
+    if target_choice == "newest":
+        return landing.candidates[-1][1]
     line = landing.chosen or landing.own or landing.candidates[-1]
     return line[1]
 

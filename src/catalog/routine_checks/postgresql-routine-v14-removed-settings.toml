@@ -1,0 +1,17 @@
+# Routine check postgresql-routine-v14-removed-settings (#2016 review). Fields: src/shared/catalog/routine_checks.py.
+# Source: PostgreSQL 14 release notes, Migration to Version 14 (PostgreSQL 14 removed operator_precedence_warning and vacuum_cleanup_index_scale_factor).
+id = "postgresql-routine-v14-removed-settings"
+feature = "A setting PostgreSQL 14 removed or renamed"
+source_engines = ["postgresql"]
+targets = ["aurora_postgresql"]
+kinds = ["function", "procedure"]
+impact = "needs_rewrite"
+reason = "PostgreSQL 14 removed operator_precedence_warning and vacuum_cleanup_index_scale_factor, so on Aurora PostgreSQL 14 and later a routine that sets, shows or reads it fails with an unrecognized configuration parameter."
+fix_hint = "Drop the setting: neither has a replacement."
+docs = "PostgreSQL 14 release notes, Migration to Version 14"
+
+[version_change]
+line = "14"
+
+[match]
+removed_settings = ["operator_precedence_warning", "vacuum_cleanup_index_scale_factor"]

@@ -51,10 +51,16 @@ def _write(
 
 def test_the_shipped_rules_cover_each_check_once_for_postgresql() -> None:
     # The catalog is shared with MySQL's routine checks (#1936): only PostgreSQL's here.
-    rules = [r for r in routine_check_rules() if r.source_engines == ("postgresql",)]
+    # The version-change rules (#1951) are the version-change tests'.
+    rules = [
+        r
+        for r in routine_check_rules()
+        if r.source_engines == ("postgresql",) and r.version_change is None
+    ]
     assert sorted(r.match.check for r in rules) == [
         "dependencies",
         "extensions",
+        "function_call",
         "language",
         "ownership",
         "parse",
