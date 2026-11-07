@@ -411,6 +411,25 @@ def _function_statement(create_sql: str, kind: PostgresKind) -> Mapping[str, Any
     return stmt if isinstance(stmt, Mapping) else None
 
 
+def created_schemas(create_sql: str, kind: PostgresKind) -> tuple[str | None, ...] | None:
+    """The schema of each name the statement creates or binds, as PostgreSQL's parser
+    reads it (a ``U&"..."`` name decoded, unquoted names folded): a function's or
+    procedure's own name; a trigger's table and its function. None for an unqualified
+    name; the result is None when the statement does not parse as ``kind`` (#1944)."""
+    stmt = _function_statement(create_sql, kind)
+    if stmt is None:
+        return None
+
+    def schema(parts: Any) -> str | None:
+        names = [_string(p) for p in parts or []]
+        return names[-2] if len(names) >= 2 else None
+
+    if kind == "trigger":
+        relation = stmt.get("relation") or {}
+        return (relation.get("schemaname"), schema(stmt.get("funcname")))
+    return (schema(stmt.get("funcname")),)
+
+
 def postgresql_header(create_sql: str, kind: PostgresKind) -> PostgresHeader | None:
     """The :class:`PostgresHeader` of a function's or procedure's ``CREATE``; None for a
     trigger, or a statement that does not parse as ``kind``. Never raises."""

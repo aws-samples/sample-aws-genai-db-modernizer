@@ -1,9 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Test calls and synthetic rows for proving routines (#1942), no model.
+"""Test calls and synthetic rows for testing routines (#1942), no model.
 
-To prove a routine runs (and later, that the carried one behaves like the original),
+To run a routine (and later, to compare the carried one with the original side by side),
 it needs inputs and data, and no collection reads table rows (#1555). This module builds
 both from shapes only:
 
