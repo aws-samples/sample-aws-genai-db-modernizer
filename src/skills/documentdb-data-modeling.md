@@ -16,10 +16,10 @@ The projected input is provided inline in the user prompt as JSON containing:
   - `documentdb_compatibility`: the target version and cluster type (`target_version`, `cluster_type`), query features that need DocumentDB 8.0 or 8.0.2+ (`version_dependent_features_detected`), and features with no operator on any version (`unsupported_features_detected`, e.g. LAG/LEAD/NTILE)
   - `relationships`: full FK relationship graph
   - `table_groups`: FK-connected table clusters
-- **analysis.redesign_requirements**: routing scored these queries as the target design would serve them, not as the source runs them (ADR-031 Decision 2 Amendment 13): each entry names the `assumed_keys` the source does not have (`column` as `table.column`; `via` `equality`, `not_null_test` for a sparse index on a column the query tests `IS NOT NULL`, or `or_branch` for one index per branch of an `OR`; and `cardinality`, `"unknown"` with no statistics), its class `class_as_written` and `class_after_redesign`, and any `lifted_anti_patterns` with their `evidence`. Where `routing_depends` is true the plan only holds if the design serves the query through those keys: they are requirements. Where it is false the engine scores the query as well as written, and the keys are an index the design may add. Index each assumed key (a partial index for a `not_null_test`, one index per branch for an `or_branch`), or embed the joined data under the document it addresses, so each query reads by it, and say how in its access pattern; if you cannot, say why in `trade_offs`.
+- **analysis.redesign_requirements**: routing scored these queries as the target design would serve them, not as the source runs them: each entry names the `assumed_keys` the source does not have (`column` as `table.column`; `via` `equality`, `not_null_test` for a sparse index on a column the query tests `IS NOT NULL`, or `or_branch` for one index per branch of an `OR`; and `cardinality`, `"unknown"` with no statistics), its class `class_as_written` and `class_after_redesign`, and any `lifted_anti_patterns` with their `evidence`. Where `routing_depends` is true the plan only holds if the design serves the query through those keys: they are requirements. Where it is false the engine scores the query as well as written, and the keys are an index the design may add. Index each assumed key (a partial index for a `not_null_test`, one index per branch for an `or_branch`), or embed the joined data under the document it addresses, so each query reads by it, and say how in its access pattern; if you cannot, say why in `trade_offs`.
 - **analysis.carried_writes**: write-group members this engine serves poorly (#1362). Each names the statement (`query_id`), what it is for (`intent`: a retention delete, an orphan clean-up, a consistency repair sweep, a duplicate clean-up, a delete by any of several references, a bulk status flip, or another set-based write) and `approach`, the target-native way this engine serves that intent. Routing keeps these statements here because a table has one writer (ADR-031 Decision 1 Amendment 9), not because they fit. Model the statement's intent, not its source shape: the source's set-based SQL is where the investigation starts, not the design. Serve each one as its `approach` says; if the design cannot, say why in `trade_offs`. Name the mechanism in the statement's access pattern. On DocumentDB, never design one as a collection scan.
 - **design_metrics**: numbers the pipeline computed for you. Read them; never recompute them. Validation rejects a design whose numbers disagree with these:
-  - `queries[]`: per `query_id`, `design_rps` = (`calls_per_second` ?? `frequency_per_hour` / 3600) × `peak_to_avg_ratio` × `growth_multiplier`
+  - `queries[]`: per `query_id`, `design_rps` = (`calls_per_second` ?? `frequency_per_hour` / 3600) × `peak_to_avg_ratio` × `growth_multiplier`. A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
   - `tables[]`: per `table_id`, `row_count` and `avg_row_size_kb` (measured from `size_mb` and `row_count`; approximate when `size_estimated` is true). A table's own `row_count` is `null` when the source has no count for it (not an empty table); then `row_count_assumed` is true and these figures are the stated assumption (its size over its declared row width): say so in `trade_offs` wherever a decision rests on them
   - `documentdb_embeddings[]`: per FK parent/child pair, `avg_children_per_parent` (an assumption when `counts_assumed` is true), `parent_row_size_kb`, `child_row_size_kb`, `embedded_avg_kb` (child row size × average children) and `doc_avg_kb_if_embedded`
   - `coverage`: the share of analysed queries in the input (absent when the input has no whole-database count)
@@ -28,9 +28,7 @@ The pipeline has already scoped the input to this engine; design everything you 
 
 `collector.queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `source_query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `source_query_ids`, so coverage holds.
 
-## Phase 1: Silent Analysis
-
-Read all inputs. Do not output anything yet.
+## Phase 1: Analysis
 
 ### Validate Pre-Computed Embedding Decisions
 
@@ -157,7 +155,7 @@ Set `validation_passed = true` only if all checks pass. List failures in `valida
 
 ## Phase 5b: Output Construction
 
-Translate the design into `DocumentDBModelOutputContract` (defined in `documentdb_model_output.py`, contract v1.0). Every structural decision (collections, embeddings, indexes) should already be settled — this section specifies how to populate each contract field.
+Translate the design into `DocumentDBModelOutputContract` (defined in `src/contracts/documentdb_model_output.py`). Every structural decision (collections, embeddings, indexes) should already be settled — this section specifies how to populate each contract field.
 
 **Repeatability rules — apply these before writing any field:**
 
@@ -167,23 +165,23 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 
 **Field construction rules:**
 
-`job_id` — copy from `collector.json` `job_id`.
+`job_id` — copy from the `collector` input's `job_id`.
 
-`source_database` — copy from `collector.json` `source_database_name`.
+`source_database` — copy from the `collector` input's `source_database_name`.
 
 `access_patterns` — one entry per query pattern from collector: the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query appears in exactly one entry's `source_query_ids`. This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `DOC-`, e.g. `"DOC-AP-1"`, `"DOC-AP-2"`. Assign in order of `design_rps` descending.
 - `description`: plain-English description of what this access pattern does, e.g. `"Get user by email for authentication"`, `"List recent posts with embedded tags"`.
-- `operation`: map the SQL query_type and shape to the correct `DOCDB_OPERATION` (findOne, find, aggregate, insertOne, updateOne, deleteOne, etc.).
+- `operation`: map the SQL query_type and shape to one of the contract's operations: `findOne`, `find`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`, `deleteMany`, `aggregate` or `countDocuments`. A `DISTINCT` read is an `aggregate` (a `$group` stage); an upsert is `updateOne` or `updateMany` with `upsert: true`, stated in `description`.
 - `collection_name`: target DocumentDB collection this pattern executes against.
-- `query_filter`: translate the SQL WHERE clause to a MongoDB filter document, e.g. `{"user_id": 1, "status": "active"}`.
+- `query_filter`: translate the SQL WHERE clause to a MongoDB filter document, e.g. `{"user_id": 1, "status": "active"}`; `{}` for a statement with no filter (an insert).
 - `projection`: include when the query selects specific columns (not SELECT *).
 - `sort`: include when the query has ORDER BY, e.g. `{"created_at": -1}`.
 - `index_used`: reference the index name from Phase 3 that serves this pattern. Must match an entry in the collection's `indexes` list.
 - `source_query_ids`: copy the source `query_id` values from collector: every member of the query pattern group, or the one query.
 - `source_tables`: copy `tables_accessed` from the source query.
-- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `source_query_ids`, the sum of theirs.
+- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `source_query_ids`, the sum of their rows (a row with `member_query_ids` counts once).
 - `pipeline`: populate for aggregate operations with the full aggregation pipeline stages.
 - `in_scope`: `true` for patterns DocumentDB can serve. Set `false` for patterns included for completeness but not serviceable.
 - `out_of_scope_reason`: required when `in_scope=false`. Explain why (e.g. "Window functions not supported", "Recursive CTE requires application-layer traversal").
@@ -194,7 +192,7 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 - `source_tables`: all source `table_id`s consolidated into this collection (parent + embedded children).
 - `embedded_entities`: one per embed decision. Each must have `source_table`, `embed_path`, `strategy`, `avg_array_length`, `max_array_length_estimate`, and `rationale`.
 - `referenced_collections`: other collections this one references via foreign keys.
-- `indexes`: one per access pattern (no collection scans allowed). Each index has `index_name`, `keys`, `index_type`, `purpose`, and `source_query_ids`.
+- `indexes`: one per access pattern (no collection scans allowed). Each index has `index_name`, `keys`, `index_type`, `purpose`, and `source_query_ids`. `keys` maps each field to `1` or `-1`, never a string such as `"text"`. `index_type` is one of `compound`, `single`, `text`, `partial` or `unique`: a text index is `index_type: "text"` with its fields at `1`, and a partial index is `index_type: "partial"` with its `partialFilterExpression` in `partial_filter`. The contract has no sparse type: on a target that supports partial indexes, write the "only documents that have the field" index as `partial` with `partial_filter: {"<field>": {"$exists": true}}`; on one that does not, write it as `single` or `compound` and say in `purpose` that it is created with `sparse: true`.
 - `document_examples`: 2-3 realistic example documents with actual field names and plausible values.
 - `estimated_avg_doc_size_kb` and `estimated_max_doc_size_kb`: computed from Phase 1 document sizing.
 
@@ -204,9 +202,9 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 - `reason`: specific explanation (not generic).
 - `workaround`: concrete alternative (e.g. "Pre-compute at write time via Change Streams", "Use application-layer pagination").
 
-`migration_notes` — one entry per stored procedure, view, function, or trigger that requires application-layer replacement.
+`migration_notes` — one entry per stored procedure, view, function, or trigger that requires application-layer replacement: `object_name`, `object_type` (`view`, `procedure`, `function` or `trigger`), `source_table` when one applies, and `application_logic_required`.
 
-`trade_offs` — list of structured `TradeOff` objects. Each entry MUST be a JSON object:
+`trade_offs` — list of structured `TradeOff` objects, each one an object of this shape:
 
 ```json
 {
@@ -232,7 +230,7 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 
 Name only engines that remain in the target architecture. The analysis input's `effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list. `engines`, `eliminated_engines` and `absorbed_by` hold engine ids: in prose, name each engine by its AWS service name (`aurora_postgresql` is Aurora PostgreSQL, `aurora_mysql` Aurora MySQL, `dynamodb` DynamoDB, `documentdb` DocumentDB, `opensearch` OpenSearch, `elasticache` ElastiCache). Never write an engine id in prose (a trade-off, workaround, reason, note or recommendation); an IAM action or condition key such as `dynamodb:LeadingKeys` is AWS's own name and stays as written.
 
-Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+Trade-offs (`description`, `impact`), access patterns (`description`), unsupported patterns (`reason`, `workaround`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
 - None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.

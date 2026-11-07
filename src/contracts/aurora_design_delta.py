@@ -25,12 +25,12 @@ engine's own contract afterwards.
 from __future__ import annotations
 
 import re
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .aurora_postgresql_model_output import AppLayerNote, Optimization
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 DELTA_VERSION = "1.0"
 
@@ -283,6 +283,11 @@ class IndexSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
     @field_validator("index_name")
     @classmethod
     def _name(cls, v: str) -> str:
@@ -319,6 +324,11 @@ class TableDelta(BaseModel):
     )
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 class TypeRule(BaseModel):
@@ -365,6 +375,11 @@ class AuroraDesignDeltaContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 def is_design_delta(response: object) -> bool:

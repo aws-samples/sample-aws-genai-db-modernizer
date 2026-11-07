@@ -21,10 +21,11 @@ Version History:
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 # ---------------------------------------------------------------------------
 # opensearch_dsl validation
@@ -99,6 +100,11 @@ class CustomAnalyzer(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 class IndexSettings(BaseModel):
     """Settings block for an OpenSearch index or index template."""
@@ -119,6 +125,11 @@ class IndexSettings(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +188,11 @@ class IndexMapping(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 # ---------------------------------------------------------------------------
 # Time-series workload: ISMPolicy, IndexTemplate, DataStreamConfig
@@ -220,6 +236,11 @@ class IndexTemplate(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 class DataStreamConfig(BaseModel):
@@ -304,6 +325,11 @@ class UnsupportedPattern(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 # ---------------------------------------------------------------------------
 # Top-level contract
@@ -348,3 +374,8 @@ class OpenSearchModelOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)

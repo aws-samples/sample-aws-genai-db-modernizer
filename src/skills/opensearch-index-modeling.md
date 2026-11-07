@@ -11,16 +11,14 @@ The input comes from the `load_agent_input` tool (Bedrock) or the request file y
 - **context**: Growth multiplier, peak-to-average ratio, SLO targets
 - **decision_trace**: Pre-computed OpenSearch-specific signals:
   - `workload_classifications`: per-table workload type (SEARCH / TIMESERIES / NOT_SUITABLE) and time-series criteria details
-- **analysis.redesign_requirements**: routing scored these queries as the target design would serve them, not as the source runs them (ADR-031 Decision 2 Amendment 13): each entry names the `assumed_keys` the source does not have (`column` as `table.column`; `via` `equality`, `not_null_test` for a sparse index on a column the query tests `IS NOT NULL`, or `or_branch` for one index per branch of an `OR`; and `cardinality`, `"unknown"` with no statistics), its class `class_as_written` and `class_after_redesign`, and any `lifted_anti_patterns` with their `evidence`. Where `routing_depends` is true the plan only holds if the design serves the query through those keys: they are requirements. Where it is false the engine scores the query as well as written, and the keys are an index the design may add. Map each assumed key as a `keyword` (or the matching exact-value type) filter in the query's index and denormalize any joined fields it needs, and say how in its access pattern; if you cannot, say why in `trade_offs`.
+- **analysis.redesign_requirements**: routing scored these queries as the target design would serve them, not as the source runs them: each entry names the `assumed_keys` the source does not have (`column` as `table.column`; `via` `equality`, `not_null_test` for a sparse index on a column the query tests `IS NOT NULL`, or `or_branch` for one index per branch of an `OR`; and `cardinality`, `"unknown"` with no statistics), its class `class_as_written` and `class_after_redesign`, and any `lifted_anti_patterns` with their `evidence`. Where `routing_depends` is true the plan only holds if the design serves the query through those keys: they are requirements. Where it is false the engine scores the query as well as written, and the keys are an index the design may add. Map each assumed key as a `keyword` (or the matching exact-value type) filter in the query's index and denormalize any joined fields it needs, and say how in its access pattern; if you cannot, say why in `trade_offs`.
 - **analysis.carried_writes**: write-group members this engine serves poorly (#1362). Each names the statement (`query_id`), what it is for (`intent`: a retention delete, an orphan clean-up, a consistency repair sweep, a duplicate clean-up, a delete by any of several references, a bulk status flip, or another set-based write) and `approach`, the target-native way this engine serves that intent. Routing keeps these statements here because a table has one writer (ADR-031 Decision 1 Amendment 9), not because they fit. Model the statement's intent, not its source shape: the source's set-based SQL is where the investigation starts, not the design. Serve each one as its `approach` says; if the design cannot, say why in `trade_offs`. Name the mechanism in the statement's access pattern. On OpenSearch, never design one as a scan of the index.
 - **design_metrics**: numbers the pipeline computed for you. Read them; never recompute them. Validation rejects a design whose numbers disagree with these:
-  - `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied)
+  - `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied). A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
   - `tables[]`: per `table_id`, `data_gb` (`size_mb` / 1024)
   - `opensearch_shards`: the shard rule (`assumed_node_count`, `search_max_shard_gb`, `timeseries_max_shard_gb`) and, per table, `search_shards` and `timeseries_shards`
 
 `collector.queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `query_ids`, so coverage holds.
-
-Read all inputs silently before producing any output.
 
 ## Workload Classification
 
@@ -191,7 +189,7 @@ Translate the design into `OpenSearchModelOutputContract` (`src/contracts/opense
 - `opensearch_dsl`: the equivalent OpenSearch query DSL as a JSON string. Follow the translation rules in "Access Pattern Translation" above.
 - `index_or_stream`: the index name or data stream name that serves this pattern (must match an entry in `index_designs` or `data_stream_designs`).
 - `operation`: classify as `search` | `aggregate` | `get_by_id` | `bulk_index` based on the SQL shape.
-- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `query_ids`, the sum of theirs.
+- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `query_ids`, the sum of their rows (a row with `member_query_ids` counts once).
 - `in_scope`: `true` for patterns OpenSearch can serve. Set `false` for patterns included for completeness but not serviceable.
 - `out_of_scope_reason`: required when `in_scope=false`. Explain why OpenSearch cannot serve this pattern (e.g. "Requires transactional write isolation", "Multi-table JOIN without denormalization path").
 
@@ -213,11 +211,12 @@ Translate the design into `OpenSearchModelOutputContract` (`src/contracts/opense
 
 `unsupported_patterns` — one entry per query that OpenSearch cannot serve:
 
+- `query_ids`: the collector `query_id` values of the queries it covers.
 - `source_query`: copy the SQL from collector.
 - `reason`: specific explanation (not generic).
 - `recommendation`: concrete alternative (e.g. "Keep in relational DB", "Use DynamoDB for transactional writes"), naming only an engine in `effective_architecture.engines`.
 
-`trade_offs` — list of structured `TradeOff` objects. Each entry MUST be a JSON object:
+`trade_offs` — list of structured `TradeOff` objects, each one an object of this shape:
 
 ```json
 {
@@ -250,7 +249,7 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 
 Name only engines that remain in the target architecture. The analysis input's `effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list. `engines`, `eliminated_engines` and `absorbed_by` hold engine ids: in prose, name each engine by its AWS service name (`aurora_postgresql` is Aurora PostgreSQL, `aurora_mysql` Aurora MySQL, `dynamodb` DynamoDB, `documentdb` DocumentDB, `opensearch` OpenSearch, `elasticache` ElastiCache). Never write an engine id in prose (a trade-off, workaround, reason, note or recommendation); an IAM action or condition key such as `dynamodb:LeadingKeys` is AWS's own name and stays as written.
 
-Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+Trade-offs (`description`, `impact`), access patterns (`description`) and unsupported patterns (`reason`, `recommendation`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
 - None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.

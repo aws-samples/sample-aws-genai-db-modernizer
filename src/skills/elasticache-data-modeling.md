@@ -19,21 +19,23 @@ patterns or keys.
 
 ### Phase 1: Classify Source Patterns
 
-For each source query, classify into one of these use cases:
+For each source query, classify into one of these use cases. `use_case` and `data_type` take the values in backticks exactly:
 
-| Use Case | Redis Data Type | Key Pattern Example |
-|---|---|---|
-| Caching (frequent SELECTs) | `string` or `hash` | `users:{id}` |
-| Session store (cached copy of the owner's session rows) | `hash` with TTL | `sessions:{session_id}` |
-| Leaderboard / ranking | `sorted_set` | `scores:leaderboard` |
-| Geospatial search | `geo` | `locations:geo` |
-| Time series | `sorted_set` or `stream` | `events:stream` or `metrics:{metric_name}` |
-| JSON documents | `json` (RedisJSON) | `products:{id}:detail` |
-| Real-time analytics | `hyperloglog` or `bitmap` | `page_views:hll:{date}` |
-| Event sourcing (cached recent events from the owner's event table, capped and with a TTL) | `stream` | `orders:events:{order_id}` |
-| Recommendations / sets | `set` | `users:{user_id}:viewed` |
-| Reference data lookup | `hash` | `config:{key}` |
-| Rate limiting | `string` with INCR + TTL | `api_keys:{client_id}:rate` |
+| Use Case | `use_case` | `data_type` | Key Pattern Example |
+|---|---|---|---|
+| Caching (frequent SELECTs) | `caching` | `string` or `hash` | `users:{id}` |
+| Session store (cached copy of the owner's session rows) | `session_store` | `hash` with TTL | `sessions:{session_id}` |
+| Leaderboard / ranking | `leaderboard` | `sorted_set` | `scores:leaderboard` |
+| Geospatial search | `geospatial` | `geo` | `locations:geo` |
+| Time series | `time_series` | `sorted_set` or `stream` | `events:stream` or `metrics:{metric_name}` |
+| JSON documents | `json_document` | `json` (RedisJSON) | `products:{id}:detail` |
+| Real-time analytics | `real_time_analytics` | `hyperloglog` or `bitmap` | `page_views:hll:{date}` |
+| Event sourcing (cached recent events from the owner's event table, capped and with a TTL) | `event_sourcing` | `stream` | `orders:events:{order_id}` |
+| Recommendations / sets | `recommendation` | `set` | `users:{user_id}:viewed` |
+| Reference data lookup | `reference_data` | `hash` | `config:{key}` |
+| Rate limiting | `rate_limiting` | `string` with INCR + TTL | `api_keys:{client_id}:rate` |
+
+The contract's other values are `pub_sub` (`use_case`) and `list` and `bloom_filter` (`data_type`).
 
 ### Phase 2: Design Key Schema
 
@@ -52,8 +54,8 @@ For each classified pattern:
      traces back to its source table.
 2. Select the **optimal data type** based on access patterns
 3. Define a **TTL policy** for every key (the cache is never the system of record; the eviction reason is in Target Rules, rule 3)
-4. Estimate **key count** and **average value size** for capacity planning; keep values under 1 MB, ideally under 100 KB
-5. Provide a **concrete example** key and value
+4. Estimate **key count** and **average value size** for capacity planning, as whole numbers (`estimated_key_count`, `estimated_avg_value_bytes` in bytes); keep values under 1 MB, ideally under 100 KB
+5. Provide a **concrete example** key and value. `example_value` is a string: for a hash, set or JSON value, write it as a JSON string
 
 ### Phase 3: Map Access Patterns
 
@@ -70,7 +72,14 @@ Use **pipelining** (or `MGET`) for multi-key reads. Use **Lua scripts** for
 atomic multi-step operations that must be consistent. Both follow the hash slot
 rule in Target Rules below.
 
-Every `access_pattern` includes `source_query_ids`: the exact `query_id` values from the collector input it serves (all of them when one pattern serves several, and every member of a query pattern group), never invented ones. Its `pattern_id` is `EC-AP-1`, `EC-AP-2`, ..., in order of importance/frequency.
+`operation` is the pattern's primary command, exactly one of the command names
+the output schema lists. A fill with a TTL is `SET`, with
+the expiry in `command_example` (`SET users:42 "{...}" EX 3600`), never
+`SETEX`; a reverse score range is `ZRANGE key max min BYSCORE REV` or `ZREVRANGE`.
+A Lua script goes in `lua_script`, with its main command as `operation`, and
+the other commands of a pipeline or transaction go in `pipeline_commands`.
+
+Every `access_pattern` includes `source_query_ids`: the exact `query_id` values from the collector input it serves (all of them when one pattern serves several, and every member of a query pattern group), never invented ones. Every access pattern carries its own `pattern_id`: `EC-AP-1`, `EC-AP-2`, ..., in order of importance/frequency.
 
 ### Target Rules (ElastiCache)
 
@@ -86,26 +95,31 @@ A serverless cache always runs in cluster mode, and a node-based cluster does wh
 For every key design backed by a source-of-truth database:
 
 1. Identify which **write queries** affect the cached data
-2. Choose an invalidation strategy:
-   - **TTL-based**: Set expiry, accept staleness window
-   - **Write-through**: Update cache on every write
-   - **Write-behind**: Queue cache updates asynchronously
-   - **Event-driven**: Use CDC/triggers to invalidate
+2. Choose an invalidation `strategy`:
+   - `ttl`: the key expires; accept the staleness window up to the TTL
+   - `write_through`: the owner's write path also updates the key
+   - `event_driven`: change data capture from the owner deletes or updates the key
+   - `manual`: the application deletes the key after the owner's write
 3. Document the strategy and staleness tolerance
+
+The contract also has `write_behind`; never use it. Write-behind queues writes
+in the cache for the database, and here the owner serves every write.
 
 ### Phase 5: Identify Unsupported Patterns
 
-Flag queries that are NOT suitable for Redis:
+Flag queries that are not suitable for Redis:
 
 - Complex multi-table JOINs (unless pre-denormalized)
 - Ad-hoc analytical queries with arbitrary WHERE clauses
-- Full-text search (use OpenSearch instead)
+- Full-text search
 - Transactions spanning multiple unrelated keys
 - Queries returning very large result sets (>10K items)
 
+An unsupported query stays on its owner engine, uncached: say so in its `workaround`.
+
 ### Phase 6: Trade-offs
 
-Document at least one trade-off for each design decision. Each trade-off MUST be a structured object:
+Document at least one trade-off for each design decision, each one an object of this shape:
 
 ```json
 {
@@ -135,7 +149,7 @@ Write `description` and `impact` as plain, declarative facts; the engineering re
 Return a complete `ElastiCacheModelOutputContract` with:
 
 - At least one `key_design` per identified use case (denormalized for the read: Redis has no JOINs)
-- At least one `access_pattern` per source query
+- Every source query in one `access_pattern`'s `source_query_ids` (one access pattern per query pattern) or in `unsupported_patterns`
 - `cache_invalidation` for all cached data, with `source_write_query_ids` for the writes that trigger it
 - `unsupported_patterns` for queries that don't fit Redis, with `source_query_ids`
 - `validation_passed` = true if all patterns are covered
@@ -144,7 +158,7 @@ Return a complete `ElastiCacheModelOutputContract` with:
 
 Name only engines that remain in the target architecture. The analysis input's `effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list. `engines`, `eliminated_engines` and `absorbed_by` hold engine ids: in prose, name each engine by its AWS service name (`aurora_postgresql` is Aurora PostgreSQL, `aurora_mysql` Aurora MySQL, `dynamodb` DynamoDB, `documentdb` DocumentDB, `opensearch` OpenSearch, `elasticache` ElastiCache). Never write an engine id in prose (a trade-off, workaround, reason, note or recommendation); an IAM action or condition key such as `dynamodb:LeadingKeys` is AWS's own name and stays as written.
 
-Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+Trade-offs (`description`, `impact`), access patterns (`description`), unsupported patterns (`reason`, `workaround`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
 - None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
