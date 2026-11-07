@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -74,7 +75,7 @@ def _job(tmp_path: Path, **inputs) -> Path:
 def _run(tmp_path, command, *extra, clients=None, capsys):
     code = script.main([command, "--job-id", "job1", "--db", "shop", "--artifact-root", str(tmp_path),
                         *extra], clients=clients, sleep=lambda _s: None)  # fmt: skip
-    return code, json.loads(capsys.readouterr().out)
+    return code, json.loads(capsys.readouterr().out.splitlines()[-1])  # the result line is last
 
 
 def _clients(cred: StubbedCredMgr) -> script.MoveClients:
@@ -1390,3 +1391,365 @@ def test_status_names_what_dms_reports(tmp_path, capsys):
         code == 0
         and out["dms_reports"] == "DMS reports the task never started (ready, not running)"
     )
+
+
+# --- Prove: stalled validation, --until running, progress lines (#1995, #1996, #1997) ---------
+
+HOUR_AGO = datetime.now(UTC) - timedelta(hours=1)
+
+
+def _prove_task(cred, status="running", percent=100, validation=True, finished=HOUR_AGO,
+                settings=True, **stats):  # fmt: skip
+    """A task past its start, with its settings (validation on or off) and full-load dates."""
+    task_stats = {"FullLoadProgressPercent": percent, "TablesLoaded": 305, **stats}
+    if finished is not None and percent == 100:
+        task_stats["FullLoadFinishDate"] = finished
+    task = {"ReplicationTaskArn": TASK, "ReplicationTaskIdentifier": STACK, "Status": status,
+            "ReplicationTaskStats": task_stats}  # fmt: skip
+    if settings:
+        task["ReplicationTaskSettings"] = json.dumps(
+            {"ValidationSettings": {"EnableValidation": validation, "ValidationMode": "ROW_LEVEL"}}
+        )
+    cred.stub("dms").add_response("describe_replication_tasks", {"ReplicationTasks": [task]})
+
+
+def _rows(not_enabled=0, validated=0, pending=0, no_key=0, pending_records=1000, applied=(0, 0)):
+    """Table statistics shaped like a real step 1 snapshot (one row per table)."""
+    rows = []
+    for state, count in (("Not enabled", not_enabled), ("Validated", validated),
+                         ("Pending validation", pending), ("No primary Key", no_key)):  # fmt: skip
+        for i in range(count):
+            rows.append({"SchemaName": "public", "TableName": f"{state[:3].lower()}_{i}",
+                         "TableState": "Table completed", "FullLoadRows": 0 if state == "Not enabled" else 10,
+                         "AppliedInserts": applied[0], "AppliedUpdates": applied[1], "AppliedDeletes": 0,
+                         "ValidationState": state,
+                         "ValidationPendingRecords": pending_records if state == "Pending validation" else 0,
+                         "ValidationFailedRecords": 0, "ValidationSuspendedRecords": 0})  # fmt: skip
+    return rows
+
+
+def _prove_poll(cred, rows, **task):
+    _stack(cred)
+    _connections(cred)
+    _prove_task(cred, **task)
+    if task.get("status", "running") not in ("ready", *script.TASK_STOPPED):
+        cred.stub("dms").add_response(
+            "describe_table_statistics", {"ReplicationTaskArn": TASK, "TableStatistics": rows}
+        )
+
+
+# The snapshot of #1995: full load 100% (305 tables, 0 errors), validation on, and an hour later
+# 139 tables Not enabled and 64 pending validation, with the validator unable to connect.
+SNAPSHOT = {"not_enabled": 139, "validated": 98, "pending": 64, "no_key": 4}
+
+
+def _wait(cred, until="caught_up", seconds=540, interval=60, polls=10, on_poll=None, lag=None):
+    clock = iter([0, *(i * interval for i in range(polls + 2))])
+    return script.wait_status(_clients(cred), STACK, until, seconds, interval, sleep=lambda _s: None,
+                              clock=lambda: next(clock), on_poll=on_poll, lag=lag)  # fmt: skip
+
+
+def test_tables_not_enabled_long_after_the_full_load_with_validation_on_are_a_stalled_validation(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(**SNAPSHOT))
+    code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["phase"] == "validation_stalled"
+    assert out["validation_enabled"] is True and out["validation_running"] is False
+    assert out["validation"]["not_enabled_tables"] == 139
+    assert out["validation"]["pending_tables"] == 64 and out["validation"]["validated"] == 98
+    check = out["validation_check"]
+    assert "139 tables Not enabled and 64 pending" in check and "secrets" in check
+    _no_pending(cred)
+
+
+def test_tables_not_enabled_right_after_the_full_load_are_not_yet_judged_stalled(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(**SNAPSHOT), finished=datetime.now(UTC) - timedelta(seconds=60))
+    code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert out["phase"] == "validating" and out["validation_running"] is True
+    assert "validation_check" not in out
+
+
+def test_a_task_whose_finish_date_is_unknown_is_not_judged_on_not_enabled_tables(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(**SNAPSHOT), finished=None)
+    code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert out["phase"] == "validating" and out["validation_running"] is True
+
+
+def test_a_task_without_settings_is_not_judged_on_not_enabled_tables(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(**SNAPSHOT), settings=False)
+    code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert out["phase"] == "validating" and out["validation_enabled"] is None
+
+
+def test_validation_turned_off_in_the_task_settings_is_never_reported_as_stalled(tmp_path, capsys):
+    """Every table reads Not enabled when the task turns validation off: that is no stall."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(not_enabled=305), validation=False)
+    code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert out["phase"] == "caught_up" and out["validation_enabled"] is False
+    assert out["validation_running"] is None and "validation_check" not in out
+
+
+def test_validation_turned_off_is_never_stalled_however_long_the_wait():
+    cred = StubbedCredMgr()
+    for _ in range(10):
+        _prove_poll(cred, _rows(not_enabled=300, pending=5), validation=False)
+    out = _wait(cred)
+    assert out["phase"] == "validating" and out["reached"] is False
+    assert out["validation_running"] is None
+    _no_pending(cred)
+
+
+def test_pending_validation_with_no_progress_over_the_window_is_a_stalled_validation():
+    """No table is Not enabled; 64 stay pending, their pending records only grow (changes
+    keep arriving, nothing gets validated): after the window, the wait stops on it."""
+    cred = StubbedCredMgr()
+    for i in range(6):  # 0, 60, ..., 300 s: six polls with no progress
+        _prove_poll(cred, _rows(validated=98, pending=64, pending_records=1000 + i))
+    out = _wait(cred)
+    assert out["reached"] is True and out["phase"] == "validation_stalled"
+    assert out["validation_running"] is False
+    assert "64 tables pending with no validation progress for 300 s" in out["validation_check"]
+    _no_pending(cred)  # it stopped polling once it judged the stall
+
+
+def test_pending_validation_that_moves_is_not_stalled():
+    cred = StubbedCredMgr()
+    for i in range(10):
+        _prove_poll(cred, _rows(validated=98, pending=64, pending_records=1000 - i))
+    out = _wait(cred)
+    assert out["reached"] is False and out["phase"] == "validating"
+    assert out["validation_running"] is True
+    _no_pending(cred)
+
+
+def test_a_table_that_gets_validated_resets_the_window():
+    cred = StubbedCredMgr()
+    for i in range(9):  # 0 to 480 s: one more table validated at 240 s, then nothing moves
+        done = 1 if i >= 4 else 0
+        _prove_poll(cred, _rows(validated=98 + done, pending=64 - done))
+    out = _wait(cred, seconds=480, polls=9)
+    assert out["reached"] is False and out["phase"] == "validating"
+    _no_pending(cred)
+
+
+def test_no_progress_shortly_after_the_full_load_is_not_yet_a_stall():
+    cred = StubbedCredMgr()
+    recent = datetime.now(UTC) - timedelta(seconds=120)
+    for _ in range(10):
+        _prove_poll(cred, _rows(validated=98, pending=64), finished=recent)
+    out = _wait(cred)
+    assert out["reached"] is False and out["phase"] == "validating"
+
+
+def test_a_stalled_validation_through_the_cli_ends_the_wait_with_its_check(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(**SNAPSHOT))
+    code, out = _run(tmp_path, "status", "--until", "caught_up", "--wait-seconds", "540",
+                     "--interval-seconds", "60", clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["reached"] is True and out["phase"] == "validation_stalled"
+    _no_pending(cred)
+
+
+# --- --until running: /move --until moving (#1996)
+
+
+def test_until_running_is_reached_once_the_task_reads_running(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="starting", percent=0)
+    _prove_poll(cred, _rows(pending=3), status="running", percent=5)
+    code, out = _run(tmp_path, "status", "--until", "running", "--wait-seconds", "300",
+                     "--interval-seconds", "15", clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["reached"] is True and out["until"] == "running"
+    assert out["task_status"] == "running" and out["phase"] == "loading"
+    _no_pending(cred)
+
+
+def test_until_running_is_not_reached_while_the_task_is_still_starting():
+    cred = StubbedCredMgr()
+    for _ in range(3):
+        _prove_poll(cred, [], status="starting", percent=0)
+    out = _wait(cred, until="running", seconds=60, interval=30, polls=3)
+    assert out["reached"] is False and out["task_status"] == "starting"
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", ["stopped", "failed"])
+def test_until_running_ends_on_a_task_that_stopped(status):
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status=status, percent=0)
+    out = _wait(cred, until="running")
+    assert out["reached"] is True and out["phase"] == "task_stopped"
+    assert out["task_status"] == status
+
+
+def test_until_running_on_a_task_already_proving_is_reached_at_once(tmp_path, capsys):
+    """A later /move step-1 --until moving finds the task past its start: nothing to wait for."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=3))
+    code, out = _run(tmp_path, "status", "--until", "running", "--wait-seconds", "300",
+                     clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert out["reached"] is True and out["phase"] == "caught_up"
+
+
+@pytest.mark.parametrize("command", ["preflight", "gate", "plan", "summary", "start", "stop"])
+def test_until_is_refused_on_every_command_but_status(tmp_path, capsys, command):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    code, out = _run(tmp_path, command, "--until", "running", "--approve", clients=_clients(cred),
+                     capsys=capsys)  # fmt: skip
+    assert code == 1 and "--until is a status option" in out["message"]
+    _no_pending(cred)  # refused before any AWS call
+
+
+# --- progress lines while proving (#1997)
+
+
+def _lines(capsys) -> list[dict]:
+    return [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+
+def _status_cli(tmp_path, cred, *extra, cloudwatch=None):
+    return script.main(["status", "--job-id", "job1", "--db", "shop", "--artifact-root", str(tmp_path),
+                        *extra], clients=_clients(cred), sleep=lambda _s: None,
+                       **({"cloudwatch": cloudwatch} if cloudwatch is not None else {}))  # fmt: skip
+
+
+def test_the_caught_up_wait_prints_one_progress_line_per_poll_then_its_result_line(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(pending=2, pending_records=0), percent=40, finished=None,
+                TablesLoading=3)  # fmt: skip
+    _prove_poll(cred, _rows(validated=1, pending=1, applied=(7, 2)), percent=90, finished=None)
+    _prove_poll(cred, _rows(validated=2, applied=(9, 4)))
+    code = _status_cli(tmp_path, cred, "--until", "caught_up", "--wait-seconds", "540",
+                       "--interval-seconds", "60")  # fmt: skip
+    lines = _lines(capsys)
+    assert code == 0 and len(lines) == 3
+    progress, result = lines[:-1], lines[-1]
+    assert [p["status"] for p in progress] == ["progress", "progress"]
+    assert result["status"] == "complete" and result["reached"] is True
+    for line in progress:
+        assert set(line) == {"status", *script.PROGRESS_FIELDS}
+        assert datetime.fromisoformat(line["time"]).tzinfo is not None
+    first, second = progress
+    assert (first["full_load_percent"], first["tables_loaded"], first["pending_tables"]) == (
+        40,
+        305,
+        2,
+    )
+    assert (second["full_load_percent"], second["validated_tables"]) == (90, 1)
+    assert (second["inserts_applied"], second["updates_applied"]) == (14, 4)  # summed over tables
+    assert second["capture_lag_seconds"] is None  # no CloudWatch reader: no lag
+    assert first["not_enabled_tables"] == 0
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # the one-line output the other waits keep
+@pytest.mark.parametrize("until", [None, "stack", "connections"])
+def test_every_other_status_call_prints_its_one_line(tmp_path, capsys, until):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    _status_cli(tmp_path, cred, *(["--until", until, "--wait-seconds", "60"] if until else []))
+    lines = _lines(capsys)
+    assert len(lines) == 1 and lines[0]["status"] == "complete"
+
+
+def test_the_running_wait_prints_only_its_result_line(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="starting", percent=0)
+    _prove_poll(cred, _rows(pending=3), percent=5)
+    _status_cli(
+        tmp_path, cred, "--until", "running", "--wait-seconds", "60", "--interval-seconds", "15"
+    )
+    lines = _lines(capsys)
+    assert len(lines) == 1 and lines[0]["reached"] is True
+
+
+def _lag(cred, source=4.0, target=9.0):
+    cw = cred.stub("cloudwatch")
+    for metric in ("CDCLatencySource", "CDCLatencyTarget"):
+        cw.add_response("list_metrics", {"Metrics": [{"Namespace": "AWS/DMS", "MetricName": metric,
+                        "Dimensions": [{"Name": "ReplicationInstanceIdentifier", "Value": "ri"},
+                                       {"Name": "ReplicationTaskIdentifier", "Value": STACK}]}]})  # fmt: skip
+    now = datetime.now(UTC)
+    cw.add_response("get_metric_data", {"MetricDataResults": [
+        {"Id": "lag0", "Label": "CDCLatencySource", "StatusCode": "Complete",
+         "Timestamps": [now - timedelta(minutes=2), now - timedelta(minutes=1)], "Values": [1.0, source]},
+        {"Id": "lag1", "Label": "CDCLatencyTarget", "StatusCode": "Complete",
+         "Timestamps": [now - timedelta(minutes=1)], "Values": [target]}]})  # fmt: skip
+
+
+def _reader(cred) -> script.LagReader:
+    return script.LagReader(cred.client("cloudwatch"))
+
+
+def test_status_reads_the_latest_capture_lag_from_cloudwatch():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    _lag(cred)
+    out = script.status(_clients(cred), STACK, _reader(cred))
+    assert out["capture_lag_seconds"] == 4.0 and out["apply_lag_seconds"] == 9.0
+    _no_pending(cred)
+
+
+def test_a_wait_lists_the_lag_metrics_once_and_reads_their_data_every_poll():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(pending=2))
+    _lag(cred, source=6.0)
+    _prove_poll(cred, _rows(validated=2))
+    cred.stub("cloudwatch").add_response("get_metric_data", {"MetricDataResults": [
+        {"Id": "lag0", "Label": "CDCLatencySource", "StatusCode": "Complete",
+         "Timestamps": [datetime.now(UTC)], "Values": [2.0]}]})  # fmt: skip
+    seen = []
+    out = _wait(cred, on_poll=seen.append, lag=_reader(cred))
+    assert [p["capture_lag_seconds"] for p in seen] == [6.0]
+    assert out["reached"] is True and out["capture_lag_seconds"] == 2.0
+    assert out["apply_lag_seconds"] is None  # no CDCLatencyTarget datapoint this time
+    _no_pending(cred)
+
+
+def test_the_cli_status_passes_its_cloudwatch_client_to_the_lag_reader(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    _lag(cred, source=3.0)
+    _status_cli(tmp_path, cred, cloudwatch=cred.client("cloudwatch"))
+    assert _lines(capsys)[-1]["capture_lag_seconds"] == 3.0
+    _no_pending(cred)
+
+
+def test_a_lag_cloudwatch_refuses_to_read_leaves_the_status_as_is():
+    """Lag is progress, not proof: a read profile without CloudWatch access still polls."""
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    cred.stub("cloudwatch").add_client_error("list_metrics", "AccessDenied", "not allowed")
+    out = script.status(_clients(cred), STACK, _reader(cred))
+    assert out["phase"] == "caught_up" and out["capture_lag_seconds"] is None
+
+
+def test_no_lag_is_read_before_the_task_runs():
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _connections(cred)
+    _task(cred, status="ready")
+    out = script.status(_clients(cred), STACK, _reader(cred))
+    assert out["phase"] == "ready_to_start" and "capture_lag_seconds" not in out
+    _no_pending(cred)  # no CloudWatch call was stubbed, and none was made

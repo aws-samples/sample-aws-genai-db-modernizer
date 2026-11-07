@@ -5,7 +5,7 @@ Walks the customer through step 1 of a finished assessment's migration: the homo
 
 ## Tool Use
 
-Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it. Write the inputs file with the Write tool. Never run `aws` yourself: every AWS call goes through `scripts/run_dms_step.py`, and the commands the customer runs on their own (creating the cluster, the secrets, importing a certificate) are theirs to run. Run each command exactly as shown, on its own, and read the one JSON line it prints.
+Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it. Write the inputs file with the Write tool. Never run `aws` yourself: every AWS call goes through `scripts/run_dms_step.py`, and the commands the customer runs on their own (creating the cluster, the secrets, importing a certificate) are theirs to run. Run each command exactly as shown, on its own, and read the one JSON line it prints (Prove's poll prints a progress line per poll first: its result line is the last).
 
 ## Arguments
 
@@ -14,6 +14,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 - `--inputs <file.json>` — the inputs file (optional, see Check). Without it, the inputs file is `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, which Check writes. With it, pass `--inputs {inputs}` to every `scripts/run_dms_step.py` command below that is not `steps` or `summary`.
 - `--auto` — headless: never ask anything (see Headless).
 - `--approve-deploy` — only with `--auto` and `--inputs`: the customer's approval, given up front, for the three AWS writes of Move (create and execute the change set, test the endpoints, start the task).
+- `--until ready|moving` — stop early (optional). `ready`: once the preflight passes, before any AWS write; end with `MOVE_RESULT: stopped stage=check reason=until ready`. `moving`: once the task reads `running` (Move's step 6); end with `MOVE_RESULT: stopped stage=move reason=until moving`. A later `/move step-1` without `--until` resumes at the stage the stack is in (Resume). The `--auto` rules are unchanged: `--until moving` still needs `--inputs` and `--approve-deploy`, and without them the run stops where it does today. When Resume finds the step already past that stage (Move or Prove for `ready`, Prove for `moving`), end at once with the same line, with no AWS write. Any other value ends with `MOVE_RESULT: stopped stage=select reason=--until must be ready or moving`.
 
 ## Credentials and secrets
 
@@ -29,7 +30,7 @@ uv run python scripts/run_dms_step.py steps --job-id {job_id} --db {db}
 
 An error line that says there are no step plans: run Prepare's first two commands (they make no AWS call), then this command again. Show each entry's `step`, `title` and `wave`, and ask which step to move. Under `--auto`, do not ask: take step 1. A step whose `supported` is false ends with `MOVE_RESULT: stopped stage=select reason=only step 1 is supported`.
 
-**Resume.** When the inputs file exists, run `status` (Prove) once before Prepare and go straight to the stage its `phase` names: `no_stack` → Prepare; `stack_in_progress`, `connections_not_tested`, `connections_testing`, `connections_failed`, `ready_to_start` or `stack_failed` → Move at the matching point; `loading`, `validating`, `caught_up` or `task_stopped` → Prove. Tell the customer in one sentence where the step stands. When the customer asked to end the step, go to Ending the step instead, whatever the `phase`.
+**Resume.** When the inputs file exists, run `status` (Prove) once before Prepare and go straight to the stage its `phase` names: `no_stack` → Prepare; `stack_in_progress`, `connections_not_tested`, `connections_testing`, `connections_failed`, `ready_to_start` or `stack_failed` → Move at the matching point; `loading`, `validating`, `validation_stalled`, `caught_up` or `task_stopped` → Prove. Tell the customer in one sentence where the step stands. When the customer asked to end the step, go to Ending the step instead, whatever the `phase`.
 
 ## Stage 1: Prepare
 
@@ -106,7 +107,7 @@ Under `--auto`, do not ask: run the preflight once, with no `--confirm` flag: it
 
 ## Stage 3: Move
 
-Nothing in this stage runs without the customer's explicit approval: a "yes" to the question asked, never an earlier or a general one. Under `--auto`, `--approve-deploy` stands for every approval of this stage; without it, show the plan below and end with `MOVE_RESULT: stopped stage=move reason=deploy needs --approve-deploy`.
+Nothing in this stage runs without the customer's explicit approval: a "yes" to the question asked, never an earlier or a general one. Under `--auto`, `--approve-deploy` stands for every approval of this stage; without it, show the plan below and end with `MOVE_RESULT: stopped stage=move reason=deploy needs --approve-deploy`. With `--until ready`, nothing in this stage runs, with or without `--approve-deploy`: end with `MOVE_RESULT: stopped stage=check reason=until ready` before step 1.
 
 **1. Show the deploy.** No AWS call:
 
@@ -151,6 +152,14 @@ uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until
 uv run python scripts/run_dms_step.py start --job-id {job_id} --db {db} --approve
 ```
 
+**6. With `--until moving` only: wait for the task to run.** Read-only; without `--until moving`, go straight to Prove:
+
+```bash
+uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until running --wait-seconds 300 --interval-seconds 15
+```
+
+`reached` true with `task_status` `running`: tell the customer the full load has started and that `/move step-1` resumes at Prove, then end with `MOVE_RESULT: stopped stage=move reason=until moving`. `reached` false (still `starting`): run it again, in the same turn, up to 4 times, then end with `MOVE_RESULT: stopped stage=move reason=task still starting ({dms_reports}): run /move step-1 again to resume`. A `phase` of `task_stopped` ends as in Prove.
+
 Any error line in this stage ends with `MOVE_RESULT: stopped stage=move reason=<its message>` unless the customer fixes the cause and you rerun the same command.
 
 ## Stage 4: Prove
@@ -161,7 +170,7 @@ Any error line in this stage ends with `MOVE_RESULT: stopped stage=move reason=<
 uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until caught_up --wait-seconds 540 --interval-seconds 60
 ```
 
-After each line with `reached` false, give one progress line from it (`full_load_percent`, `tables_loaded`, the `validation` counts) and run it again in the same turn. Never end the turn while it is still loading: a turn that ends waits on nothing (see Waiting Rule). After 12 runs (about 2 hours) still not caught up, tell the customer where it stands and end with `MOVE_RESULT: stopped stage=prove reason=still loading: run /move step-1 again to resume`. A `phase` of `task_stopped` ends with `MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`.
+It prints one `"status": "progress"` line per poll, then its result line, always last (the one with `reached`). Relay each progress line in one short sentence, from its fields only: `time`, `full_load_percent`, `tables_loaded`, `inserts_applied` and `updates_applied`, `capture_lag_seconds` and `apply_lag_seconds` (null until CloudWatch has a datapoint), and `validated_tables`, `pending_tables` and `not_enabled_tables`. After a result line with `reached` false, give the same one sentence from its fields (`validation` holds its table counts) and run it again in the same turn. Never end the turn while it is still loading: a turn that ends waits on nothing (see Waiting Rule). After 12 runs (about 2 hours) still not caught up, tell the customer where it stands and end with `MOVE_RESULT: stopped stage=prove reason=still loading: run /move step-1 again to resume`. A `phase` of `task_stopped` ends with `MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`. A `phase` of `validation_stalled` means the full load is done but DMS validation is not running (tables still `Not enabled` although the task turns validation on, or pending with no progress over several polls); never keep polling it: show its `validation` counts and end with `MOVE_RESULT: stopped stage=prove reason=validation not running: <validation_check>`, with the line's `validation_check` (what to check). A task that turns validation off (`validation_enabled` false) is never reported this way.
 
 **Gate.** When `phase` is `caught_up` (the full load is at 100% and validation caught up), run the read-only gate (it runs `scripts/check_dms_step_gate.py` on the stack and prints that script's line):
 
