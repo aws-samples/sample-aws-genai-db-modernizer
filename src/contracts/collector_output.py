@@ -1186,9 +1186,26 @@ class MetricStats(BaseModel):
     max: float | None = Field(None, ge=0, description="Maximum value")
     min: float | None = Field(None, ge=0, description="Minimum value")
     p95: float | None = Field(None, ge=0, description="95th percentile value")
+    datapoints: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "How many CloudWatch periods the figures cover (#1990): with the metrics' "
+            "period_seconds, the days the peak-to-average ratio is observed over; None in "
+            "a collection written before"
+        ),
+    )
 
 
 class RDSCloudWatchMetrics(BaseModel):
+    period_seconds: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The CloudWatch period each datapoint covers (#1990): avg is the mean of the "
+            "periods' averages, max the highest maximum; None in a collection written before"
+        ),
+    )
     cpu_utilization: MetricStats | None = Field(None, description="CPU utilization percentage")
     freeable_memory_gb: MetricStats | None = Field(None, description="Freeable memory in GB")
     database_connections: MetricStats | None = Field(None, description="Database connections")

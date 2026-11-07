@@ -18,7 +18,6 @@ import pytest
 import src.agents.referee.migration_risks as migration_risks
 from src.agents.referee.migration_risks import (
     GATE_IDS_NAMED,
-    HOT_PARTITION_HIGH_PCT,
     PENDING_FACT_HOOKS,
     RULES,
     add_migration_risks,
@@ -743,11 +742,13 @@ def test_no_app_layer_risk_without_notes() -> None:
     assert _build(migration_waves=WAVES, schema_designs={AURORA: {"app_layer_notes": []}}) == []
 
 
-def _hot(pct: float, at_risk: bool = True) -> dict[str, Any]:
+def _hot(pct: float, at_risk: bool = True, table: str = "Orders") -> dict[str, Any]:
+    """A write entry at ``pct`` of one key value's 1,000-unit limit."""
     return {
-        "table_name": "Orders",
+        "table_name": table,
         "operation": "write",
-        "utilization_pct": pct,
+        "rcu_or_wcu_per_second": pct * 10,
+        "utilization_pct": min(pct, 100.0),
         "at_risk": at_risk,
         "contributing_patterns": ["h1"],
         "mitigation": "Shard the key",
@@ -756,22 +757,136 @@ def _hot(pct: float, at_risk: bool = True) -> dict[str, Any]:
 
 DESIGN_TABLES = [{"table_name": "Orders", "source_tables": ["db.b"]}]
 
+#: The collected source table: 50,000 orders, keyed by a unique id; status has 4 values.
+ORDERS_SOURCE = [
+    {
+        "table_id": "db.b",
+        "table_name": "b",
+        "row_count": 50_000,
+        "primary_key": ["id"],
+        "columns": [{"column_name": "id"}, {"column_name": "status", "cardinality": 4}],
+    }
+]
 
-@pytest.mark.parametrize(
-    ("pct", "severity"), [(85.0, "MEDIUM"), (HOT_PARTITION_HIGH_PCT, "HIGH"), (100.0, "HIGH")]
-)
-def test_a_hot_partition_is_medium_and_high_at_the_threshold(pct: float, severity: str) -> None:
-    risks = _build(
-        migration_waves=WAVES,
-        schema_designs={
-            DDB: {"hot_partition_analysis": [_hot(pct)], "table_definitions": DESIGN_TABLES}
-        },
+
+def _keyed(pk_column: str | None, constant: bool = False) -> list[dict[str, Any]]:
+    """``DESIGN_TABLES`` with a partition key on ``pk_column`` (or a constant)."""
+    attr: dict[str, Any] = {"name": "PK", "type": "S", "source_table": "db.b"}
+    if constant:
+        attr["calculation"] = {"type": "constant", "value": "ALL"}
+    else:
+        attr["source_column"] = pk_column
+    return [
+        {
+            **DESIGN_TABLES[0],
+            "partition_key": {"attribute_name": "PK", "attribute_type": "S"},
+            "attributes": [attr],
+        }
+    ]
+
+
+def _hot_risk(pct: float, tables: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
+    from src.shared.partition_load import hot_partition_rows
+
+    designs = {DDB: {"hot_partition_analysis": [_hot(pct)], "table_definitions": tables}}
+    rows = hot_partition_rows(designs, ORDERS_SOURCE)
+    return _one(
+        _build(migration_waves=WAVES, schema_designs=designs, hot_partitions=rows, **kw),
+        "design.hot_partition",
     )
-    risk = _one(risks, "design.hot_partition")
-    assert risk["severity"] == severity
+
+
+def test_a_table_total_over_the_limit_spread_over_many_keys_is_low() -> None:
+    """#1989: 303% of one key value's limit as a table total, over 50,000 unique keys:
+    the total never sets the severity, and its percentage is not capped."""
+    risk = _hot_risk(303.0, _keyed("id"))
+    assert risk["severity"] == "LOW"
     assert risk["affected_tables"] == ["db.b"]
     assert risk["query_ids"] == ["h1"]
     assert risk["wave"] == 3
+    # The maintainer's decision on #2001: the per-key figure first, the total second.
+    assert risk["description"] == (
+        "[dynamodb] 1 design table: the busiest estimated partition key value is at 0.0061% "
+        "of its limit at the design rate (spread evenly over 50,000 distinct key values; skew "
+        "across values not measured), and no estimated key value is above it. The table or "
+        "index total, an upper bound reached only if every request used the same key value, "
+        "is above 80% of one key value's limit (the highest at 303%)."
+    )
+    assert "Per-key load not measured" not in risk["description"]
+    assert risk["details"] == [
+        "Orders writes: 3,030 write units/s in total, 303% of one key value's 1,000 limit (an "
+        "upper bound); spread evenly over 50,000 distinct key values; skew across values not "
+        "measured: about 0.061 write units/s on the busiest key value, 0.0061% of its limit."
+    ]
+    assert "Watch the busiest key values" in risk["mitigation"]
+
+
+@pytest.mark.parametrize("lead", ["table_total", "per_key"])
+def test_the_low_risk_leads_with_the_figure_the_switch_names(monkeypatch, lead: str) -> None:
+    """The maintainer decides which figure the LOW description states first (#2001)."""
+    monkeypatch.setattr(migration_risks, "LOW_RISK_LEADS_WITH", lead)
+    text = _hot_risk(303.0, _keyed("id"))["description"]
+    total, per_key = text.index("the highest at 303%"), text.index("0.0061%")
+    assert (total < per_key) is (lead == "table_total")
+    assert migration_risks.__dict__["LOW_RISK_LEADS_WITH"] == lead
+
+
+def test_a_modulo_key_over_the_limit_is_high() -> None:
+    """A write shard of 4 values (``id % 4``) at 3,000 write units/s: 750 per value, 75%;
+    at 6,000, 150%: HIGH, never spread over the source column's 50,000 ids."""
+    tables = _keyed("id")
+    tables[0]["attributes"][0]["transformation"] = {"type": "number-format", "format": "id % 4"}
+    risk = _hot_risk(600.0, tables)
+    assert risk["severity"] == "HIGH"
+    assert "at most 4 values (a modulo key)" in risk["description"]
+
+
+def test_a_key_with_no_distinct_values_collected_says_per_key_load_not_measured() -> None:
+    risk = _hot_risk(150.0, _keyed("customer_id"))
+    assert risk["severity"] == "LOW"
+    assert "Per-key load not measured: the collection has no distinct-value count" in (
+        risk["description"]
+    )
+    assert "No estimated key value" not in risk["description"]
+    assert risk["details"][0].endswith("; per-key load not measured.")
+    assert "check how many distinct values" in risk["mitigation"]
+
+
+def test_a_constant_key_over_the_limit_is_high() -> None:
+    risk = _hot_risk(120.0, _keyed(None, constant=True))
+    assert risk["severity"] == "HIGH"
+    assert risk["description"] == (
+        "[dynamodb] 1 design table has a partition key value whose estimated load is above "
+        "its throughput limit at the design rate (the highest at 120% of the limit, every "
+        "request uses the same key value)."
+    )
+    assert "Spread the load on these key values" in risk["mitigation"]
+
+
+def test_a_few_distinct_values_over_the_limit_are_high() -> None:
+    """4 status values share 6,000 write units/s: 1,500 per value, 150% of the limit."""
+    risk = _hot_risk(600.0, _keyed("status"))
+    assert risk["severity"] == "HIGH"
+    assert (
+        "(the highest at 150% of the limit, spread evenly over 4 distinct key values; skew "
+        "across values not measured)"
+    ) in risk["description"]
+
+
+def test_a_single_key_under_the_limit_is_low() -> None:
+    """Every request on one key value at 90% of its limit: watched, not HIGH."""
+    risk = _hot_risk(90.0, _keyed(None, constant=True))
+    assert risk["severity"] == "LOW"
+    assert "the busiest estimated partition key value is at 90% of its limit" in (
+        risk["description"]
+    )
+
+
+def test_without_rows_the_design_alone_is_read_and_keys_are_not_measured() -> None:
+    designs = {DDB: {"hot_partition_analysis": [_hot(300.0)], "table_definitions": _keyed("id")}}
+    risk = _one(_build(migration_waves=WAVES, schema_designs=designs), "design.hot_partition")
+    assert risk["severity"] == "LOW"
+    assert "Per-key load not measured" in risk["description"]
 
 
 def test_a_partition_not_at_risk_raises_nothing() -> None:
@@ -1319,10 +1434,11 @@ def test_several_app_layer_notes_and_cache_patterns_are_one_risk_per_engine() ->
 
 
 def test_hot_partitions_on_several_tables_are_one_risk() -> None:
-    hot = [_hot(85.0), {**_hot(90.0), "table_name": "Posts"}]
+    hot = [_hot(85.0), _hot(90.0, table="Posts")]
     risks = _build(migration_waves=WAVES, schema_designs={DDB: {"hot_partition_analysis": hot}})
     risk = _one(risks, "design.hot_partition")
-    assert "2 design tables have a partition above 80%" in risk["description"]
+    assert "2 design tables have a table or index total above 80%" in risk["description"]
+    assert len(risk["details"]) == 2
 
 
 def test_a_detail_drops_its_review_marker_and_keeps_its_text() -> None:

@@ -3520,6 +3520,14 @@ def unreviewed_move_count(report: dict[str, Any]) -> int:
     return total
 
 
+def assumptions_block(items: Iterable[Mapping[str, Any]] | None) -> dict[str, Any] | None:
+    """The assumptions block (#1990): its items, and the line each deliverable prints."""
+    if items is None:
+        return None
+    rows = [dict(i) for i in items]
+    return {"assumptions": rows, "lines": [str(i["line"]) for i in rows if i.get("line")]}
+
+
 def compute_report_facts(
     report: dict[str, Any],
     waves: list[dict[str, Any]] | None = None,
@@ -3531,6 +3539,9 @@ def compute_report_facts(
     derived_copy_sync: Mapping[str, Any] | None = None,
     row_counts: Mapping[str, Any] | None = None,
     rate_windows: Mapping[str, Any] | None = None,
+    hot_partitions: Iterable[Mapping[str, Any]] | None = None,
+    assumptions: Iterable[Mapping[str, Any]] | None = None,
+    growth_scenarios: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3559,6 +3570,15 @@ def compute_report_facts(
     ``rate_windows`` is how many statements' call rates used each window basis
     (``src.shared.rate_window.rate_window_facts``, #1893), which needs the collection:
     synthesis passes it, and a report rebuilt without the collection has None.
+    ``hot_partitions`` is each DynamoDB design entry above the at-risk share of one
+    partition key value's limit, with its load per key value estimated
+    (``src.shared.partition_load.hot_partition_rows``, #1989), which needs the design and
+    the collection: synthesis passes it, and a report rebuilt later has None.
+    ``assumptions`` is the one assumptions block (``src.shared.assumptions.assumption_items``,
+    #1990: growth, peak source, rate window, region and prices, each with its origin) and
+    ``growth_scenarios`` the cost and busiest partition key value at 1×, 5× and 10× growth
+    (``growth_scenario_facts``), which need the collection and the TCO: synthesis passes
+    them, and a report rebuilt later has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3713,6 +3733,13 @@ def compute_report_facts(
         "row_counts": dict(row_counts) if row_counts is not None else None,
         # #1893: the window basis of each statement's call rate, and the 24-hour assumption.
         "rate_windows": dict(rate_windows) if rate_windows is not None else None,
+        # #1989: the hot-partition entries, the total as an upper bound and the per-key load.
+        "hot_partitions": (
+            [dict(r) for r in hot_partitions] if hot_partitions is not None else None
+        ),
+        # #1990: the assumptions block and the growth scenario, stated once.
+        "assumptions": assumptions_block(assumptions),
+        "growth_scenarios": dict(growth_scenarios) if growth_scenarios is not None else None,
     }
 
 

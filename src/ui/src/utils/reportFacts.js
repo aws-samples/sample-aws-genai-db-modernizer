@@ -417,6 +417,17 @@ export function rateWindowStatementOf(synthesis) {
   return typeof statement === 'string' && statement ? statement : null;
 }
 
+// #1990: the assumptions block's lines (growth, peak, rate window, region and prices,
+// each with its origin), then the growth scenario's (cost and busiest partition key value
+// at 1x, 5x and 10x), as the facts state them. Empty for a report written before them.
+export function assumptionLinesOf(synthesis) {
+  const facts = factsOf(synthesis);
+  if (!facts) return [];
+  const block = (facts.assumptions && facts.assumptions.lines) || [];
+  const scenario = (facts.growth_scenarios && facts.growth_scenarios.lines) || [];
+  return [...block, ...scenario].filter((line) => typeof line === 'string' && line);
+}
+
 // #1527: the stream sync of a DynamoDB design conflict's derived copies
 // (facts.derived_copy_sync), printed under the risk it belongs to. The sentences are the
 // facts' own; `basis` is the figures' assumptions, carried by the first sync only.

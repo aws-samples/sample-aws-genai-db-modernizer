@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "schema_design_input.SchemaDesignGroupsManifest"
+kind = "minor"
+reason = "AgentContextInput.growth_multiplier defaults to 5 (was 10) and peak_to_avg_ratio to None (was 3): growth is a stated scenario and the peak comes from the source's metrics; added optional AgentQueryPattern.rate_window_basis, so a sampled rate takes no peak factor."
+issue = 1990

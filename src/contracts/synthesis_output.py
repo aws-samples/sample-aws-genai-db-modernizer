@@ -2046,6 +2046,134 @@ class RowCountFacts(BaseModel):
     )
 
 
+class HotPartitionFacts(BaseModel):
+    """One DynamoDB design entry above the at-risk share of one partition key value's
+    limit, with its load per key value estimated (#1989), from
+    ``src.shared.partition_load.hot_partition_rows``."""
+
+    engine: str = Field(..., description="Canonical engine id of the design")
+    table_name: str = Field(..., description="The design table")
+    gsi_name: str | None = Field(None, description="The GSI, or None for the base table")
+    operation: Literal["read", "write"]
+    partition_limit: float = Field(
+        ..., description="One partition key value's limit: 3,000 read or 1,000 write units/s"
+    )
+    total_units_per_second: float = Field(
+        ...,
+        ge=0,
+        description=(
+            "The design's load on the whole table or index at the design rate: an upper "
+            "bound for one key value, never the severity"
+        ),
+    )
+    total_pct_of_key_limit: float = Field(
+        ..., ge=0, description="total_units_per_second / partition_limit × 100, never capped"
+    )
+    total_is_upper_bound: bool = Field(
+        True,
+        description=(
+            "Always true: the total is an upper bound for one key value, reached only if "
+            "every request used the same value; it never sets the severity"
+        ),
+    )
+    distinct_key_bound: Literal["collected", "at_most"] | None = Field(
+        None,
+        description=(
+            "collected: distinct_key_values is the collection's count (or a lower bound "
+            "on a wider key); at_most: a ``% n`` key transform or an access pattern's literal "
+            "key or IN list bounds it; None when not measured"
+        ),
+    )
+    per_key_source: Literal["key_values", "access_pattern"] | None = Field(
+        None,
+        description=(
+            "What set the per-key estimate: the key's distinct values, or an access "
+            "pattern whose calls reach at most distinct_key_values values (its share of the "
+            "load over them); None when not measured"
+        ),
+    )
+    distinct_key_values: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The partition key's distinct values from the collection (1 for a key every "
+            "item shares), or None when not collected"
+        ),
+    )
+    per_key_units_per_second: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The estimated load on the busiest key value: the total over "
+            "distinct_key_values; None when not measured"
+        ),
+    )
+    per_key_pct_of_limit: float | None = Field(
+        None, ge=0, description="per_key_units_per_second / partition_limit × 100, never capped"
+    )
+    per_key_basis: Literal["single_key", "distinct_values", "not_measured"] = Field(
+        ...,
+        description=(
+            "single_key: every request uses one key value; distinct_values: the total "
+            "spread evenly over the key's distinct values; not_measured: per-key load not "
+            "measured"
+        ),
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The entry's contributing queries"
+    )
+
+
+class AssumptionItem(BaseModel):
+    """One assumption the assessment rests on (#1990, ``src.shared.assumptions``)."""
+
+    key: str = Field(..., description="growth, peak, rate_window or pricing")
+    value: float | str | None = Field(None, description="Its value, when it has one")
+    origin: Literal["default", "collected", "customer"] = Field(
+        ..., description="Where the value comes from"
+    )
+    basis: str | None = Field(
+        None, description="For the peak: cloudwatch, sampled, not_measured or customer"
+    )
+    line: str = Field(..., description="The sentence every deliverable and the gate print")
+
+
+class AssumptionsFacts(BaseModel):
+    """The one assumptions block (#1990): its items and the lines the deliverables print."""
+
+    assumptions: list[AssumptionItem] = Field(default_factory=list)
+    lines: list[str] = Field(default_factory=list)
+
+
+class GrowthScenarioRow(BaseModel):
+    """The growth-dependent figures at one growth multiple (#1990)."""
+
+    growth: float = Field(..., gt=0)
+    monthly_cost_usd: float = Field(
+        ..., ge=0, description="The headline's arithmetic at the scaled rates (1×: the headline)"
+    )
+    busiest_key_pct_of_limit: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The busiest estimated partition key value's share of its limit at this growth; "
+            "None when no key value is measured"
+        ),
+    )
+
+
+class GrowthScenarioFacts(BaseModel):
+    """Growth as a separate scenario (#1990): never in the headline cost or the risks."""
+
+    growth: float = Field(..., gt=0, description="The job's growth: 5× unless the customer set it")
+    origin: Literal["default", "customer"]
+    scenarios: list[GrowthScenarioRow] = Field(default_factory=list)
+    busiest_key: dict[str, Any] | None = Field(
+        None, description="engine, table_name, gsi_name and operation of the busiest key value"
+    )
+    lines: list[str] = Field(default_factory=list)
+
+
 class RateWindowFacts(BaseModel):
     """How many collected statements' call rates used each window basis (#1893), from
     ``src.shared.rate_window.rate_window_facts``."""
@@ -2747,6 +2875,28 @@ class ReportFacts(BaseModel):
         description=(
             "The cache layer's cache candidates and designed cached reads (#1252); None "
             "when the report has no cache_overlay"
+        ),
+    )
+    assumptions: AssumptionsFacts | None = Field(
+        None,
+        description=(
+            "The one assumptions block (#1990): growth, peak source, rate window, region and "
+            "prices, each with its origin; None in a report rebuilt later, or written before"
+        ),
+    )
+    growth_scenarios: GrowthScenarioFacts | None = Field(
+        None,
+        description=(
+            "The cost and the busiest partition key value at 1×, 5× and 10× growth (#1990); "
+            "None in a report rebuilt later, or written before"
+        ),
+    )
+    hot_partitions: list[HotPartitionFacts] | None = Field(
+        None,
+        description=(
+            "The DynamoDB design entries above the at-risk share of one partition key "
+            "value's limit, each with its total as an upper bound and its estimated load "
+            "per key value (#1989); None in a report rebuilt later, or written before"
         ),
     )
     rate_windows: RateWindowFacts | None = Field(

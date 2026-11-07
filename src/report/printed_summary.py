@@ -240,6 +240,15 @@ def render_gate_block(
         designed = [str(e) for e in gate.get("schema_design_engines") or []]
         if designed:
             lines += [f"Schema design runs next for: {_names(designed)}.", ""]
+    # #1990: the assumptions block, stated once; approving the gate approves it.
+    assumptions = [str(a) for a in gate.get("assumptions") or [] if a]
+    if assumptions:
+        lines.append(
+            "Assumptions (approving the assignment approves them; the deliverables show the "
+            "costs at 1×, 5× and 10× growth):"
+        )
+        lines += [f"- {prose(a)}." for a in assumptions]
+        lines.append("")
     if summary_url:
         lines.append(f"- Summary page (the query flow and every query's engine): {summary_url}")
     return "\n".join(lines).rstrip() + "\n"

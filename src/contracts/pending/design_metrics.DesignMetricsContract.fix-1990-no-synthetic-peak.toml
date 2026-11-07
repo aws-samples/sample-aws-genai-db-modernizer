@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "design_metrics.DesignMetricsContract"
+kind = "minor"
+reason = "growth_multiplier defaults to 5 and is never applied to design_rps; peak_to_avg_ratio defaults to 1 and is the source metrics' measured ratio; added peak_basis (cloudwatch, sampled, not_measured, customer). A file written before still loads."
+issue = 1990

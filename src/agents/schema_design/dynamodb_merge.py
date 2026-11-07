@@ -821,7 +821,8 @@ def aggregate_hot_partitions(entries: Any, tables: set[str]) -> Any:
         agg["rcu_or_wcu_per_second"] = round(load, 2)
         limit = agg.get("partition_limit") or entry.get("partition_limit")
         if isinstance(limit, (int, float)) and limit > 0:
-            agg["utilization_pct"] = round(min(100.0, load / limit * 100), 1)
+            # Never capped (#1989): 303% of one key value's limit reads as 303%.
+            agg["utilization_pct"] = round(load / limit * 100, 1)
             agg["at_risk"] = agg["utilization_pct"] > 80
         agg["contributing_patterns"] = list(
             dict.fromkeys(

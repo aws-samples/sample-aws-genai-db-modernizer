@@ -209,7 +209,10 @@ def test_the_sync_is_computed_once_for_the_cost_and_the_fact(
     monkeypatch.setattr(module, "derived_copy_sync_facts", counted)
     report = _report(_overlap_schema())
 
-    assert len(calls) == 1
+    # Once for the cost and the fact; each growth scenario above 1× (#1990) re-prices its
+    # own scaled rates, never the headline's.
+    scenarios = report["facts"]["growth_scenarios"]["scenarios"]
+    assert len(calls) == 1 + sum(1 for s in scenarios if s["growth"] != 1.0)
     total = report["facts"]["derived_copy_sync"]["total_monthly_cost_usd"]
     base = _report(_without_overlap())
     assert _ddb_row(report)["monthly_cost_usd"] - _ddb_row(base)[

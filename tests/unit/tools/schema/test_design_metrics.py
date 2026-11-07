@@ -86,8 +86,8 @@ TABLES: list[dict[str, Any]] = [
     },
 ]
 
-# q1: 0.5 calls/s × 3 × 10 = 15.0. q2: no calls_per_second, 7200/h = 2/s -> 60.0.
-# q3: OTHER, 1 call an hour: 1/3600 × 30 = 0.008333... -> 0.0083.
+# #1990: no peak measured, no growth applied: design_rps is the measured rate.
+# q1: 0.5 calls/s. q2: no calls_per_second, 7200/h = 2/s. q3: OTHER, 1/3600 -> 0.0003.
 QUERIES: list[dict[str, Any]] = [
     {"query_id": "q1", "query_type": "SELECT", "calls_per_second": 0.5, "frequency_per_hour": 1800},
     {
@@ -119,9 +119,10 @@ def _metrics(engine: str, total: int | None = 4) -> dict:
 @pytest.mark.parametrize(
     "cps,per_hour,expected",
     [
-        (0.5, 1800, 15.0),  # calls_per_second wins over the hourly figure
-        (None, 7200, 60.0),  # 7200 / 3600 = 2/s × 30
-        (None, 1, 0.0083),  # 1/3600 × 30 = 0.00833
+        # #1990: no synthetic peak or growth factor, the measured rate as it is
+        (0.5, 1800, 0.5),  # calls_per_second wins over the hourly figure
+        (None, 7200, 2.0),  # 7200 / 3600 = 2/s
+        (None, 1, 0.0003),  # 1/3600 = 0.000278
         (0.0, 7200, 0.0),  # a measured zero is a zero, not a fallback to the hourly count
         (None, 0, 0.0),
     ],
@@ -130,8 +131,37 @@ def test_design_rps(cps, per_hour, expected):
     assert design_rps(cps, per_hour) == expected
 
 
-def test_design_rps_uses_the_context_multipliers():
-    assert design_rps(2.0, None, peak_to_avg_ratio=2.0, growth_multiplier=1.5) == 6.0
+def test_design_rps_takes_only_the_measured_peak_factor():
+    assert design_rps(2.0, None, peak_factor=2.5) == 5.0
+
+
+def test_the_metrics_apply_no_synthetic_factor_and_state_the_growth_apart():
+    """#1990: with no source metrics, design_rps is the measured rate; growth is recorded
+    for the scenario line and never multiplied in."""
+    metrics = _metrics("dynamodb")
+    assert (metrics["peak_basis"], metrics["peak_to_avg_ratio"]) == ("not_measured", 1.0)
+    assert metrics["growth_multiplier"] == 5.0
+    assert all(q["design_rps"] == round(q["base_rps"], 4) for q in metrics["queries"])
+
+
+def test_a_measured_peak_applies_to_average_rates_and_not_to_sampled_ones():
+    collector = _collector(4)
+    collector["metrics"] = {
+        "performance_metrics": {},
+        "rds_cloudwatch_metrics": {
+            "period_seconds": 3600,
+            "read_iops": {"avg": 10.0, "max": 25.0, "datapoints": 168},
+        },
+    }
+    first, second, *_ = collector["queries"]["query_patterns"]
+    second["rate_window_basis"] = "sampled"
+    metrics = design_metrics_from_collector("dynamodb", collector)
+    assert (metrics["peak_basis"], metrics["peak_to_avg_ratio"]) == ("cloudwatch", 2.5)
+    rows = {q["query_id"]: q for q in metrics["queries"]}
+    assert rows[first["query_id"]]["design_rps"] == round(
+        rows[first["query_id"]]["base_rps"] * 2.5, 4
+    )
+    assert rows[second["query_id"]]["design_rps"] == round(rows[second["query_id"]]["base_rps"], 4)
 
 
 @pytest.mark.parametrize(
@@ -177,9 +207,9 @@ def test_shard_count(data_gb, max_gb, nodes, expected):
 def test_table_and_query_metrics():
     metrics = DesignMetricsContract.model_validate(_metrics("dynamodb"))
     assert [(q.query_id, q.base_rps, q.design_rps) for q in metrics.queries] == [
-        ("q1", 0.5, 15.0),
-        ("q2", 2.0, 60.0),
-        ("q3", 0.000278, 0.0083),
+        ("q1", 0.5, 0.5),
+        ("q2", 2.0, 2.0),
+        ("q3", 0.000278, 0.0003),
     ]
     tables = {t.table_id: t for t in metrics.tables}
     assert tables["db.users"].avg_row_size_bytes == 2048
@@ -230,6 +260,7 @@ def test_engine_sections():
     assert shards["db.users"]["search_shards"] == 1
 
 
+@pytest.mark.passes_on_main  # guards main's behaviour the change keeps
 def test_projection_and_collector_shapes_agree():
     """The Bedrock path (Agent* projection) and external path (collector dict) agree."""
     projected = {
@@ -237,7 +268,8 @@ def test_projection_and_collector_shapes_agree():
             "tables": TABLES,
             "queries": {"query_patterns": QUERIES, "total_queries_analyzed": 4},
         },
-        "context": {"growth_multiplier": 10.0, "peak_to_avg_ratio": 3.0},
+        # #1990: no customer peak here, so both paths read the measured rates.
+        "context": {},
     }
     for engine in ("dynamodb", "documentdb", "opensearch"):
         assert design_metrics_from_projection(engine, projected) == _metrics(engine)
@@ -270,7 +302,7 @@ def _hot(units: float, op: str = "read", limit: float = 3000, pct: float = 10.0,
 
 @pytest.mark.parametrize(
     "rps,ok",
-    [(15.0, True), (15.1, True), (15.2, False), (30.0, False)],  # 1% of 15 = 0.15
+    [(0.5, True), (0.505, True), (0.52, False), (1.0, False)],  # within 0.01 of 0.5
 )
 def test_dynamodb_design_rps(rps, ok):
     design = {
@@ -279,15 +311,15 @@ def test_dynamodb_design_rps(rps, ok):
     errors = check_design_numbers("dynamodb", design, _metrics("dynamodb"))
     assert (errors == []) is ok
     if not ok:
-        assert "DDB-AP-1" in errors[0] and "15" in errors[0]
+        assert "DDB-AP-1" in errors[0] and "(0.5 = sum" in errors[0]
 
 
 def test_a_pattern_over_several_queries_sums_them():
-    pattern = {"pattern_id": "DDB-AP-1", "query_ids": ["q1", "q2"], "design_rps": 75.0}
+    pattern = {"pattern_id": "DDB-AP-1", "query_ids": ["q1", "q2"], "design_rps": 2.5}
     assert (
         check_design_numbers("dynamodb", {"access_patterns": [pattern]}, _metrics("dynamodb")) == []
     )
-    pattern["design_rps"] = 15.0
+    pattern["design_rps"] = 0.5
     assert check_design_numbers("dynamodb", {"access_patterns": [pattern]}, _metrics("dynamodb"))
 
 
@@ -306,7 +338,9 @@ def test_unknown_query_ids_are_left_to_the_scope_check():
         (_hot(300, limit=1000, pct=30.0), ["partition_limit 1000 for a read must be 3000"]),
         (_hot(900, op="write", limit=1000, pct=90.0, risk=True), []),  # 90% is at risk
         (_hot(900, op="write", limit=1000, pct=90.0), ["at_risk must be true"]),
-        (_hot(4000, pct=100.0, risk=True), []),  # capped at 100, as the merge does
+        # #1989: never capped (4000 / 3000 = 133.3%), as the merge does
+        (_hot(4000, pct=133.3, risk=True), []),
+        (_hot(4000, pct=100.0, risk=True), ["utilization_pct 100 disagrees", "= 133.3"]),
         (_hot(2400, pct=80.0), []),  # exactly 80% is not above the threshold
     ],
 )
@@ -433,11 +467,11 @@ def test_capped_text_columns_are_listed():
 def test_documentdb_design_rps_uses_source_query_ids():
     design = {
         "access_patterns": [
-            {"pattern_id": "DOC-AP-1", "source_query_ids": ["q2"], "design_rps": 2.0}
+            {"pattern_id": "DOC-AP-1", "source_query_ids": ["q2"], "design_rps": 6.0}
         ]
     }
     (error,) = check_design_numbers("documentdb", design, _metrics("documentdb"))
-    assert "60" in error
+    assert "(2 = sum" in error
 
 
 def _settings(shards: int, nodes: int = 3) -> dict:
@@ -587,7 +621,7 @@ def test_group_input_carries_design_metrics_without_coverage():
     )
     metrics = group["design_metrics"]
     assert metrics["coverage"] is None
-    assert [q["design_rps"] for q in metrics["queries"]] == [15.0, 60.0]
+    assert [q["design_rps"] for q in metrics["queries"]] == [0.5, 2.0]
     assert [t["table_id"] for t in metrics["tables"]] == ["db.posts", "db.users"]
 
 
@@ -619,18 +653,18 @@ def test_cost_check_computes_the_figures_and_flags_the_drafts_own():
         "hot_partition_analysis": [
             {**raw, "partition_limit": 1000, "utilization_pct": 9.0, "at_risk": False}
         ],
-        "access_patterns": [{"pattern_id": "DDB-AP-1", "query_ids": ["q1"], "design_rps": 0.5}],
+        "access_patterns": [{"pattern_id": "DDB-AP-1", "query_ids": ["q1"], "design_rps": 9.0}],
     }
     result = check_draft_costs(draft, _metrics("dynamodb", total=None))
     assert result["passed"] is False
     assert result["results"][0]["utilization_pct"] == 90.0  # the figure to copy
     messages = [e["error"] for e in result["errors"]]
     assert any("utilization_pct 9 disagrees" in m for m in messages)
-    assert any("design_rps 0.5 disagrees" in m for m in messages)
+    assert any("design_rps 9 disagrees" in m for m in messages)
 
     fixed = {
         "hot_partition_analysis": [computed],
-        "access_patterns": [{"pattern_id": "DDB-AP-1", "query_ids": ["q1"], "design_rps": 15.0}],
+        "access_patterns": [{"pattern_id": "DDB-AP-1", "query_ids": ["q1"], "design_rps": 0.5}],
     }
     assert check_draft_costs(fixed, _metrics("dynamodb", total=None))["passed"] is True
 
@@ -658,7 +692,7 @@ def test_finalize_keeps_a_design_whose_numbers_disagree_but_fails_it(tmp_path: P
     )
     design: dict[str, Any] = {
         "access_patterns": [
-            {"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"], "design_rps": 1.0}
+            {"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"], "design_rps": 3.0}
         ],
         "collections": [],
         "trade_offs": [],
@@ -671,13 +705,13 @@ def test_finalize_keeps_a_design_whose_numbers_disagree_but_fails_it(tmp_path: P
     result = handler.finalize_schema_design("job-1", "db", "documentdb", store)
     assert result["status"] == "complete"
     (warning,) = result["warnings"]
-    assert warning.startswith("design_metrics: ") and "design_rps 1 disagrees" in warning
+    assert warning.startswith("design_metrics: ") and "design_rps 3 disagrees" in warning
     output = store.read_json(written)
     assert output["validation_passed"] is False
     assert output["validation_failures"] == ["an unrelated failure", warning]
 
     # Re-finalizing the written design after the fix drops the stale mismatch.
-    fixed = {**output, "access_patterns": [{**design["access_patterns"][0], "design_rps": 15.0}]}
+    fixed = {**output, "access_patterns": [{**design["access_patterns"][0], "design_rps": 0.5}]}
     fixed["validation_failures"] = [warning]
     store.write_json(response, fixed)
     result = handler.finalize_schema_design("job-1", "db", "documentdb", store)
@@ -770,3 +804,84 @@ def test_coverage_counts_the_whole_log_after_the_assignment_filter():
     # q1 and q2 are in the log (q3 is OTHER): still 2 / 4, not 1 / 4.
     coverage = design_metrics_from_collector("documentdb", filtered)["coverage"]
     assert coverage["in_scope_patterns"] == 2 and coverage["coverage_ratio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# #1989: the load per partition key value
+# ---------------------------------------------------------------------------
+
+
+def test_the_table_metrics_carry_each_keys_distinct_values():
+    table = {
+        "table_id": "db.users",
+        "table_name": "users",
+        "row_count": 1_000,
+        "size_mb": 1.0,
+        "primary_key": ["id"],
+        "indexes": [{"index_name": "email", "columns": ["email"], "is_unique": True}],
+        "columns": [
+            {"column_name": "id", "normalized_data_type": "integer"},
+            {"column_name": "email", "normalized_data_type": "string", "max_length": 100},
+            {"column_name": "country", "normalized_data_type": "string", "cardinality": 30},
+        ],
+    }
+    (users,) = build_design_metrics("dynamodb", [table], []).model_dump(mode="json")["tables"]
+    assert users["key_distinct_values"] == [
+        {"columns": ["country"], "distinct_values": 30, "basis": "column_statistics"},
+        {"columns": ["email"], "distinct_values": 1_000, "basis": "unique_key"},
+        {"columns": ["id"], "distinct_values": 1_000, "basis": "unique_key"},
+    ]
+
+
+def test_a_design_metrics_file_written_before_1989_still_loads():
+    from src.contracts.design_metrics import DesignMetricsContract
+
+    old = {
+        "engine": "dynamodb",
+        "tables": [
+            {
+                "table_id": "db.users",
+                "row_count": 1,
+                "avg_row_size_bytes": 10,
+                "avg_row_size_kb": 0.01,
+                "size_estimated": False,
+                "schema_item_size_bytes": 10,
+                "data_gb": 0.0,
+            }
+        ],
+    }
+    assert DesignMetricsContract.model_validate(old).tables[0].key_distinct_values == []
+
+
+def test_the_cost_check_states_each_at_risk_entrys_load_per_key_value():
+    from src.tools.schema.dynamodb_cost_check import check_draft_costs
+
+    table = {
+        "table_id": "db.users",
+        "table_name": "users",
+        "row_count": 60_000,
+        "primary_key": ["id"],
+        "columns": [{"column_name": "id", "normalized_data_type": "integer"}],
+    }
+    metrics = build_design_metrics("dynamodb", [table], []).model_dump(mode="json")
+    entry = {**_hot(9_000, pct=300.0, risk=True)}
+    draft = {
+        "hot_partition_analysis": [entry],
+        "table_definitions": [
+            {
+                "table_name": "Users",
+                "partition_key": {"attribute_name": "id", "attribute_type": "N"},
+                "attributes": [
+                    {"name": "id", "type": "N", "source_table": "db.users", "source_column": "id"}
+                ],
+            }
+        ],
+    }
+    (finding,) = check_draft_costs(draft, metrics)["hot_partition_findings"]
+    assert finding["utilization_pct"] == 300.0  # the total, never capped
+    assert finding["per_key_basis"] == "distinct_values"
+    assert finding["distinct_key_values"] == 60_000
+    assert finding["per_key_utilization_pct"] == pytest.approx(0.005)
+    (unknown,) = check_draft_costs(draft)["hot_partition_findings"]
+    assert unknown["per_key_basis"] == "not_measured"
+    assert unknown["per_key_utilization_pct"] is None

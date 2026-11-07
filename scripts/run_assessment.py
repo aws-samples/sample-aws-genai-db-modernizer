@@ -1289,6 +1289,17 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--growth",
+        type=float,
+        default=None,
+        metavar="N",
+        help=(
+            "The growth multiple the deliverables' scenario line uses (#1990; default 5). "
+            "Recorded as the job's decisions/assumptions.json; never applied to the design "
+            "rates, the risks or the headline cost"
+        ),
+    )
+    parser.add_argument(
         "--resume-reality-check",
         action="store_true",
         help="Resume reality check after LLM response has been written",
@@ -1559,6 +1570,11 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         from src.agents.referee.engine_scope import record_engine_scope
 
         record_engine_scope(store, db_name, job_id, scope, via="cli")
+    # #1990: the customer's growth, recorded for the job; synthesis reads it.
+    if getattr(args, "growth", None) is not None:
+        from src.shared.assumptions import record_growth
+
+        record_growth(store, db_name, job_id, args.growth, via="cli")
 
     # Phase: Triage
     _start_phase("triage")
