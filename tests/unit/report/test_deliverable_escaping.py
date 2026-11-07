@@ -107,6 +107,30 @@ class TestEscapingHelpers:
         assert "\n" not in out
 
 
+
+    def test_md_text_leaves_code_span_unescaped(self) -> None:
+        """#2000: specials inside a complete code span must not be backslash-escaped."""
+        out = escaping.md_text("the `wp_posts` table")
+        assert "`wp_posts`" in out
+        assert "wp\_posts" not in out
+
+    def test_md_text_double_backtick_span(self) -> None:
+        out = escaping.md_text("code ``with ` tick`` here")
+        assert "``with ` tick``" in out
+
+    def test_md_text_unmatched_backtick_escapes_after(self) -> None:
+        out = escaping.md_text("unmatched ` then _italic_")
+        assert "\_" in out
+
+    def test_md_text_link_outside_still_escaped(self) -> None:
+        out = escaping.md_text("[click](http://evil) `code`")
+        assert "\[" in out
+        assert "`code`" in out
+
+    def test_md_text_link_inside_span_literal(self) -> None:
+        out = escaping.md_text("see `[click](http://evil)` please")
+        assert "`[click](http://evil)`" in out
+
 # ---------------------------------------------------------------------------
 # Fixtures: a synthesis report and an analysis export, both carrying the payload
 # ---------------------------------------------------------------------------
