@@ -340,6 +340,15 @@ DDL_WRITERS = {
     # test_quoted_schema_names_are_pinned_as_identifiers, test_quoted_definers_are_rewritten
     # and test_bad_arguments_are_value_errors.
     "src/tools/routines/rewrites.py",
+    # A MySQL routine's CREATE rebuilt from information_schema (#1652), kept in the job's
+    # routine sources and run by nothing here: every name is backticked with backticks
+    # doubled (quote_ident), every comment and time a string literal read under the
+    # routine's own sql_mode, an interval field only [A-Z_]+ and an amount an integer or a
+    # literal; the body is the source catalog's own text.
+    # tests/unit/agents/test_mysql_routine_create.py::test_identifiers_and_definers_are_quoted,
+    # test_strings_follow_the_sql_mode_they_are_read_under and
+    # test_composite_intervals_one_time_events_and_states.
+    "src/agents/collector/mysql_routine_create.py",
 }
 _DDL_START = re.compile(
     r"^\s*(?:-- )?(?:CREATE|ALTER|DROP|GRANT|TRUNCATE|USE|SET search_path)(?: |$)"

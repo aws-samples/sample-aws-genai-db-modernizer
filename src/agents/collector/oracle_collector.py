@@ -36,8 +36,16 @@ from src.agents.collector.mysql_collector import (
     _live_os_stats,
     _normalize_index_type,
     _parse_ddl_raw,
+    ddl_routines_stage,
+    trigger_shape_fields,
 )
-from src.agents.collector.routine_rows import dml_trigger, log_skipped_triggers
+from src.agents.collector.routine_rows import (
+    attach_routine_sources,
+    dml_trigger,
+    log_skipped_triggers,
+    routine_stats_status,
+)
+from src.agents.collector.routine_sources import body_fields
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -181,7 +189,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     )
 
     # Stage 2: schema
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
+    include = inp.collection_options.include_routine_bodies
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, include_bodies=include))
 
     # Stage 3: queries
     queries_raw = ckpt.load_or_run(
@@ -236,6 +245,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 rds_instance_metadata=rds_meta,
             ),
             query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+            # #1652: an older checkpoint's schema stage has none.
+            routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
         ),
         database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),
         queries=queries,
@@ -254,6 +265,8 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cred_mgr = _build_cred_mgr(inp)
 
     schema_raw = ckpt.load_or_run("ddl_schema", lambda: _parse_ddl_raw(inp, region))
+    # #1652: the procedures, functions and triggers the upload defines (bodies, no counts).
+    routines_raw = ddl_routines_stage(inp, ckpt, region)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
@@ -285,8 +298,13 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,
             ),
+            routine_stats_source=routine_stats_status(routines_raw.get("routine_stats_status")),
         ),
-        database_schema=Schema(tables=tables),
+        database_schema=Schema(
+            tables=tables,
+            procedures=_build_procedures(routines_raw.get("procedures") or []),
+            triggers=_build_triggers(routines_raw.get("triggers") or []),
+        ),
         queries=queries,
         metrics=metrics,
     )
@@ -297,7 +315,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 # ---------------------------------------------------------------------------
 
 
-def _collect_schema_raw(db: OracleRemoteCollector) -> dict:
+def _collect_schema_raw(db: OracleRemoteCollector, include_bodies: bool = True) -> dict:
     raw_tables = db.collect_tables()
     tables = []
     for t in raw_tables:
@@ -328,6 +346,18 @@ def _collect_schema_raw(db: OracleRemoteCollector) -> dict:
         triggers = db.collect_triggers()
     except Exception:
         logger.warning("Failed to collect triggers")
+    # #1652: the bodies, one ALL_SOURCE line per row, joined onto their routines here
+    # so the stage keeps only definitions (which a checkpoint redacts).
+    if include_bodies:
+        try:
+            attach_routine_sources(procedures, triggers, db.collect_routine_sources())
+        except Exception:
+            logger.warning("Failed to collect routine bodies")
+    else:
+        # #1652: include_routine_bodies = False reads no body.
+        for row in [*procedures, *triggers]:
+            if isinstance(row, dict):
+                row["body_status"] = "opted_out"
 
     global_stats = {}
     try:
@@ -346,9 +376,17 @@ def _collect_schema_raw(db: OracleRemoteCollector) -> dict:
         "views": views,
         "procedures": procedures,
         "triggers": triggers,
+        "routine_stats_status": dict(_ORACLE_STATS_STATUS),
         "global_stats": global_stats,
         "os_stats": os_stats,
     }
+
+
+#: Oracle keeps no per-routine execution count (#1652).
+_ORACLE_STATS_STATUS = {
+    "status": "not_tracked",
+    "reason": "Oracle keeps no per-routine execution count",
+}
 
 
 def _collect_queries_raw(db: OracleRemoteCollector, opts) -> list[dict] | dict[str, str]:
@@ -470,8 +508,12 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
             Procedure(
                 procedure_id=f"{p.get('schema_name', '')}.{p.get('routine_name', '')}",
                 procedure_name=p.get("routine_name", ""),
+                schema_name=p.get("schema_name") or None,
                 procedure_type=ptype,
                 language=p.get("language") or "PL/SQL",
+                # #1652: the body joined from its ALL_SOURCE lines (redacted).
+                definition=p.get("definition"),
+                **body_fields(p),
             )
         )
     return out
@@ -494,10 +536,14 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
             Trigger(
                 trigger_id=f"{t.get('schema_name', '')}.{t.get('trigger_name', '')}",
                 trigger_name=t.get("trigger_name", ""),
+                schema_name=t.get("schema_name") or None,
                 table_id=f"{t.get('schema_name', '')}.{t.get('table_name', '')}",
                 event_type=TriggerEventType(events[0]),
                 events=[TriggerEventType(e) for e in events],
                 timing=TriggerTiming(timing),
+                # #1652: orientation ('BEFORE EACH ROW'), state ('ENABLED') and body.
+                **trigger_shape_fields(t),
+                **body_fields(t),
             )
         )
     log_skipped_triggers(logger, skipped)

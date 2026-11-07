@@ -12,6 +12,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 |---|---|
 | `collector/output\.json` | `CollectorOutputContract` (`src.contracts.collector_output`) |
 | `uploads/collector-output\.json` | `CollectorOutputContract` (`src.contracts.collector_output`) |
+| `collector/routine_sources\.json` | `RoutineSourcesContract` (`src.contracts.routine_sources`): the index of the job's routine sources, whose gzip chunks `collector/routine_sources/part-<n>.json.gz` each hold a `RoutineSourcesChunk` (#1652) |
 | `referee-triage/triage\.json` | `TriageOutputContract` (`src.contracts.triage_output`) |
 | `analysis-[^/]+/analysis\.json` | `AnalysisOutputContract` (`src.contracts.analysis_output`) |
 | `analysis-dynamodb/decision-trace\.json` | `DynamoDBDecisionTrace` (`src.contracts.dynamodb_decision_trace`) |

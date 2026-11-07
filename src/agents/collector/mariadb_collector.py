@@ -35,7 +35,10 @@ from src.agents.collector.mysql_collector import (
     _enrich_patterns_from_pi_and_cw,
     _init_checkpoint_store,
     _live_os_stats,
+    _live_routines,
     _merge_into_queries,
+    attach_to_contract,
+    live_routine_fields,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import CollectorOutputContract
@@ -107,13 +110,17 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         },
     )
     use_span_settings(span_settings("mariadb", meta_raw.get("settings")))
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
+    # #1652: the opt-out reads no routine body. MariaDB moves 1:1 to Aurora MySQL, so its
+    # routine sources are read as MySQL's: SHOW CREATE, else the catalog rebuild.
+    include = inp.collection_options.include_routine_bodies
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, include_bodies=include))
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
     )
     queries_raw, query_error = query_stage_rows(queries_raw)
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
+    routine_sources = _live_routines(db, schema_raw, include_bodies=include, engine="mariadb")
     tables = _build_tables(
         schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw,
         inp.database_name,
@@ -146,7 +153,7 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         {"global_stats": pi_counters, "os_stats": _live_os_stats(schema_raw)}, rds_meta
     )
 
-    return _build_output(
+    output = _build_output(
         inp,
         start,
         version=meta_raw["version"],
@@ -160,4 +167,7 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+        **live_routine_fields(schema_raw),
     )
+    attach_to_contract(output, routine_sources)
+    return output

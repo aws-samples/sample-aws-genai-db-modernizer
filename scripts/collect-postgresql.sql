@@ -38,6 +38,15 @@
 -- statement_timeout shorter than the wait cancels pg_sleep: the measured time is then
 -- too short, and the rates come from one read. A first read that fails (no
 -- pg_stat_statements) also gives one read.
+--
+-- Procedure, function and trigger code (#1652), as a psql variable:
+--   -v include_routine_bodies=0  (or false) list functions, procedures and triggers by name and
+--                                size only, without their code (default: 1, kept)
+-- Each routine's whole CREATE statement (pg_get_functiondef, pg_get_triggerdef) needs
+-- no privilege beyond reading the catalog, and the routines and triggers are read from
+-- pg_proc and pg_trigger, which show a read-only user every one. Function call counts
+-- come from pg_stat_user_functions, which PostgreSQL fills only when track_functions is
+-- pl or all; the script never changes the setting and records which it was.
 -- ==========================================================================
 
 \set db_name :DBNAME
@@ -47,6 +56,13 @@
 \else
   \set min_executions 10
 \endif
+\if :{?include_routine_bodies}
+\else
+  \set include_routine_bodies 1
+\endif
+-- 0/1, false/true, no/yes or off/on, as INCLUDE_ROUTINE_BODIES reads them; anything else
+-- keeps the bodies.
+SELECT lower(:'include_routine_bodies') NOT IN ('0', 'false', 'f', 'no', 'off') AS routine_bodies_on \gset
 \if :{?query_limit}
   \set query_limit_clause 'LIMIT CAST(' :'query_limit' ' AS bigint)'
   \set query_limit_value 'CAST(' :'query_limit' ' AS bigint)'
@@ -136,6 +152,11 @@ metadata AS (
     'rate_sample', json_build_object(
       'seconds', CAST(:'rate_sample_seconds' AS integer),
       'elapsed_seconds', (SELECT elapsed_seconds FROM rate_sample_clock)
+    ),
+    -- How routine bodies were read (#1652): include_routine_bodies = 0 keeps none.
+    'routine_capture', json_build_object(
+      'include_bodies', CAST(:'routine_bodies_on' AS boolean),
+      'privileges_not_seen', '[]'::json
     )
   ) AS data
 ),
@@ -296,17 +317,62 @@ views_data AS (
 ),
 
 -- ===================== 8. Procedures & Functions =====================
+-- #1652: read from pg_proc, not information_schema.routines, which hides a routine whose
+-- EXECUTE the collection user lacks. definition is the whole CREATE (pg_get_functiondef)
+-- in every language. Aggregates and window functions are not listed (pg_get_functiondef
+-- cannot print one), nor a routine an extension owns (the extension creates it; the
+-- extensions section names it). Catalog reads, no table data.
 procedures_data AS (
-  SELECT coalesce(json_agg(p ORDER BY p.routine_type, p.routine_name), '[]'::json) AS data
+  SELECT coalesce(json_agg(p ORDER BY p.routine_type, p.routine_name, p.specific_name), '[]'::json) AS data
   FROM (
     SELECT
-      routine_name,
-      routine_type,
-      data_type AS return_type,
-      external_language AS language
-    FROM information_schema.routines
-    WHERE routine_schema NOT IN ('pg_catalog', 'information_schema')
-      AND routine_name NOT LIKE 'pg_%'
+      pr.proname AS routine_name,
+      n.nspname AS schema_name,
+      pr.proname || '_' || pr.oid AS specific_name,
+      pg_get_function_identity_arguments(pr.oid) AS identity_arguments,
+      CASE pr.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS routine_type,
+      pg_get_function_result(pr.oid) AS return_type,
+      upper(l.lanname) AS language,
+      pg_get_userbyid(pr.proowner) AS owner,
+      pr.prosecdef AS security_definer,
+      coalesce((
+        SELECT json_agg(json_build_object('kind', dep.kind, 'name', dep.name) ORDER BY dep.kind, dep.name)
+        FROM (
+          SELECT DISTINCT
+            CASE
+              WHEN d.refclassid = 'pg_proc'::regclass THEN 'function'
+              WHEN d.refclassid = 'pg_type'::regclass THEN 'type'
+              WHEN c.relkind IN ('r', 'p', 'f') THEN 'table'
+              WHEN c.relkind IN ('v', 'm') THEN 'view'
+              WHEN c.relkind = 'S' THEN 'sequence'
+            END AS kind,
+            CASE
+              WHEN d.refclassid = 'pg_proc'::regclass THEN d.refobjid::regprocedure::text
+              WHEN d.refclassid = 'pg_type'::regclass THEN d.refobjid::regtype::text
+              ELSE d.refobjid::regclass::text
+            END AS name
+          FROM pg_depend d
+          LEFT JOIN pg_class c ON d.refclassid = 'pg_class'::regclass AND c.oid = d.refobjid
+          WHERE d.classid = 'pg_proc'::regclass AND d.objid = pr.oid AND d.deptype = 'n'
+            AND d.refclassid IN ('pg_proc'::regclass, 'pg_type'::regclass, 'pg_class'::regclass)
+        ) dep
+        WHERE dep.kind IS NOT NULL
+      ), '[]'::json) AS depends_on,
+      length(pg_get_functiondef(pr.oid)) AS body_chars,
+      CASE WHEN CAST(:'routine_bodies_on' AS boolean) THEN pg_get_functiondef(pr.oid) END AS definition,
+      CASE WHEN CAST(:'routine_bodies_on' AS boolean) THEN 'collected' ELSE 'opted_out' END AS body_status
+    FROM pg_proc pr
+    JOIN pg_namespace n ON n.oid = pr.pronamespace
+    JOIN pg_language l ON l.oid = pr.prolang
+    WHERE pr.prokind IN ('f', 'p')
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+      AND n.nspname NOT LIKE 'pg_temp%'
+      AND pr.proname NOT LIKE 'pg_%'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_depend x
+        WHERE x.classid = 'pg_proc'::regclass AND x.objid = pr.oid
+          AND x.refclassid = 'pg_extension'::regclass AND x.deptype = 'e')
   ) p
 ),
 
@@ -316,7 +382,10 @@ triggers_data AS (
   FROM (
     -- pg_trigger, not information_schema.triggers: that view lists only the triggers
     -- on tables the user owns or holds more than SELECT on, so a read-only user saw
-    -- none (#1651). One row per trigger, with every event it fires on.
+    -- none (#1651). One row per trigger, with every event it fires on. #1652: its
+    -- orientation, state and function, and its whole CREATE (pg_get_triggerdef).
+    -- tgtype bits: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE,
+    -- 64 INSTEAD OF.
     SELECT
       t.tgname AS trigger_name,
       n.nspname AS schema_name,
@@ -328,10 +397,12 @@ triggers_data AS (
         CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END) AS event_type,
       CASE t.tgtype & 66 WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER' END
         AS timing,
-      -- the EXECUTE FUNCTION clause, as information_schema.triggers.action_statement
-      substring(pg_get_triggerdef(t.oid) FROM
-        position('EXECUTE FUNCTION' IN substring(pg_get_triggerdef(t.oid) FROM 48)) + 47)
-        AS definition
+      CASE WHEN t.tgtype & 1 <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS for_each,
+      t.tgenabled::text AS is_enabled,
+      t.tgfoid::regprocedure::text AS function_signature,
+      length(pg_get_triggerdef(t.oid)) AS body_chars,
+      CASE WHEN CAST(:'routine_bodies_on' AS boolean) THEN pg_get_triggerdef(t.oid) END AS definition,
+      CASE WHEN CAST(:'routine_bodies_on' AS boolean) THEN 'collected' ELSE 'opted_out' END AS body_status
     FROM pg_trigger t
     JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -341,6 +412,26 @@ triggers_data AS (
       AND coalesce(to_jsonb(t) ->> 'tgparentid', '0') = '0'
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   ) tr
+),
+
+-- ===================== 9b. Routine stats (#1652) =====================
+-- The call counts PostgreSQL keeps per function and procedure: pg_stat_user_functions
+-- is filled only when track_functions is pl or all. The collection never changes the
+-- setting and records which it was.
+routine_stats_data AS (
+  SELECT coalesce(json_agg(f ORDER BY f.schema_name, f.routine_name), '[]'::json) AS data
+  FROM (
+    SELECT funcname AS routine_name, schemaname AS schema_name,
+           'FUNCTION' AS object_type, calls AS execution_count,
+           round(total_time::numeric, 3) AS total_time_ms
+    FROM pg_stat_user_functions
+  ) f
+),
+routine_stats_status_data AS (
+  SELECT CASE WHEN current_setting('track_functions') = 'none'
+              THEN json_build_object('status', 'not_tracked', 'reason', 'track_functions is none')
+              ELSE json_build_object('status', 'tracked')
+         END AS data
 ),
 
 -- ===================== 10. Query Patterns (pg_stat_statements) =====================
@@ -377,7 +468,11 @@ queries_data AS (
       round(extract(epoch FROM now() - (to_jsonb(s) ->> 'stats_since')::timestamptz)::numeric, 3)
         AS stats_since_age_seconds,
       -- #1908: the entry's calls at the first read; null when it was not there then.
-      r.c AS sample_first_count
+      r.c AS sample_first_count,
+      -- #1652: false when the statement ran inside a function or procedure (PostgreSQL
+      -- 14+ with pg_stat_statements.track = all); read through to_jsonb, so an older
+      -- server, which has no such column, reports null.
+      (to_jsonb(s) ->> 'toplevel')::boolean AS toplevel
     FROM pg_stat_statements s
     LEFT JOIN rate_sample_start r
       ON r.k = s.userid::text || '/' || s.queryid::text || '/'
@@ -429,6 +524,8 @@ SELECT json_build_object(
   'views', (SELECT data FROM views_data),
   'procedures', (SELECT data FROM procedures_data),
   'triggers', (SELECT data FROM triggers_data),
+  'routine_stats', (SELECT data FROM routine_stats_data),
+  'routine_stats_status', (SELECT data FROM routine_stats_status_data),
   'queries', (SELECT data FROM queries_data),
   'global_stats', (SELECT data FROM global_stats_data),
   'extensions', (SELECT data FROM extensions_data)
