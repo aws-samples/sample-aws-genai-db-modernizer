@@ -1,0 +1,440 @@
+{
+  "job_id": "job-1654",
+  "metadata": {
+    "source_database": {
+      "engine": "sqlserver",
+      "version": "16.0.4135.4",
+      "database_name": "RoutineUnits"
+    }
+  },
+  "database_schema": {
+    "tables": [
+      {
+        "table_id": "dbo.Users",
+        "table_name": "Users",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "UserId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "Username",
+            "data_type": "nvarchar",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "UserId"
+        ],
+        "row_count": 1000
+      },
+      {
+        "table_id": "dbo.Orders",
+        "table_name": "Orders",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "OrderId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "UserId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "Total",
+            "data_type": "decimal",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "Status",
+            "data_type": "nvarchar",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "OrderId"
+        ],
+        "row_count": 50000
+      },
+      {
+        "table_id": "dbo.OrderItems",
+        "table_name": "OrderItems",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "OrderId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "LineNo",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "ProductId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "Qty",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "OrderId",
+          "LineNo"
+        ],
+        "row_count": 200000
+      },
+      {
+        "table_id": "dbo.Inventory",
+        "table_name": "Inventory",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "ProductId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "Qty",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "ProductId"
+        ],
+        "row_count": 5000
+      },
+      {
+        "table_id": "dbo.Products",
+        "table_name": "Products",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "ProductId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "Category",
+            "data_type": "nvarchar",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "ProductId"
+        ],
+        "row_count": 5000
+      },
+      {
+        "table_id": "dbo.Shipments",
+        "table_name": "Shipments",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "ShipmentId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "ProductId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "Qty",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "ArrivedAt",
+            "data_type": "datetime2",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "ShipmentId"
+        ],
+        "row_count": 10000
+      },
+      {
+        "table_id": "dbo.OrderAudit",
+        "table_name": "OrderAudit",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "AuditId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "OrderId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "ChangedAt",
+            "data_type": "datetime2",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "AuditId"
+        ],
+        "row_count": 50000
+      },
+      {
+        "table_id": "dbo.ShipmentLog",
+        "table_name": "ShipmentLog",
+        "schema_name": "dbo",
+        "columns": [
+          {
+            "column_name": "LogId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": true
+          },
+          {
+            "column_name": "ShipmentId",
+            "data_type": "int",
+            "is_nullable": false,
+            "is_primary_key": false
+          },
+          {
+            "column_name": "LoggedAt",
+            "data_type": "datetime2",
+            "is_nullable": false,
+            "is_primary_key": false
+          }
+        ],
+        "primary_key": [
+          "LogId"
+        ],
+        "row_count": 100
+      }
+    ],
+    "procedures": [
+      {
+        "procedure_id": "dbo.usp_PlaceOrder",
+        "procedure_name": "usp_PlaceOrder",
+        "schema_name": "dbo",
+        "procedure_type": "PROCEDURE",
+        "language": "T-SQL"
+      }
+    ],
+    "triggers": [
+      {
+        "trigger_id": "trg_Orders_Audit",
+        "trigger_name": "trg_Orders_Audit",
+        "schema_name": "dbo",
+        "table_id": "dbo.Orders",
+        "event_type": "INSERT",
+        "timing": "AFTER",
+        "events": [
+          "INSERT"
+        ]
+      },
+      {
+        "trigger_id": "trg_Shipments_Log",
+        "trigger_name": "trg_Shipments_Log",
+        "schema_name": "dbo",
+        "table_id": "dbo.Shipments",
+        "event_type": "DELETE",
+        "timing": "AFTER",
+        "events": [
+          "DELETE"
+        ]
+      }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "app-order-get",
+        "query_text": "SELECT OrderId, UserId, Total FROM dbo.Orders WHERE OrderId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 150.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-total",
+        "query_text": "SELECT Total FROM dbo.Orders WHERE OrderId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 90.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-item-get",
+        "query_text": "SELECT OrderId, LineNo, ProductId, Qty FROM dbo.OrderItems WHERE OrderId = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 80.0,
+        "rows_returned_avg": 4,
+        "tables_accessed": [
+          "dbo.OrderItems"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-order-status",
+        "query_text": "UPDATE dbo.Orders SET Status = ? WHERE OrderId = ?",
+        "query_type": "UPDATE",
+        "calls_per_second": 4.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-stock-report",
+        "query_text": "SELECT p.Category, SUM(i.Qty) AS OnHand FROM dbo.Inventory i JOIN dbo.Products p ON p.ProductId = i.ProductId WHERE p.Category IN (?, ?) GROUP BY p.Category ORDER BY OnHand DESC",
+        "query_type": "SELECT",
+        "calls_per_second": 6.0,
+        "rows_returned_avg": 20,
+        "tables_accessed": [
+          "dbo.Inventory",
+          "dbo.Products"
+        ],
+        "has_joins": true,
+        "join_count": 1,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "app-restock",
+        "query_text": "UPDATE i SET i.Qty = i.Qty + s.Qty FROM dbo.Inventory i JOIN dbo.Products p ON p.ProductId = i.ProductId JOIN dbo.Shipments s ON s.ProductId = p.ProductId WHERE s.ArrivedAt > ?",
+        "query_type": "UPDATE",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 50,
+        "tables_accessed": [
+          "dbo.Inventory",
+          "dbo.Products",
+          "dbo.Shipments"
+        ],
+        "has_joins": true,
+        "join_count": 2,
+        "parent_routine_ids": []
+      },
+      {
+        "query_id": "po-insert-order",
+        "query_text": "INSERT INTO dbo.Orders (UserId, Total, Status) VALUES (@UserId, @Total, ?)",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Orders"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.usp_PlaceOrder"
+        ]
+      },
+      {
+        "query_id": "po-insert-item",
+        "query_text": "INSERT INTO dbo.OrderItems (OrderId, LineNo, ProductId, Qty) VALUES (@OrderId, @LineNo, @ProductId, @Qty)",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.OrderItems"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.usp_PlaceOrder"
+        ]
+      },
+      {
+        "query_id": "po-take-stock",
+        "query_text": "UPDATE dbo.Inventory SET Qty = Qty - @Qty WHERE ProductId = @ProductId",
+        "query_type": "UPDATE",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.Inventory"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.usp_PlaceOrder"
+        ]
+      },
+      {
+        "query_id": "trg-audit",
+        "query_text": "INSERT INTO dbo.OrderAudit (OrderId, ChangedAt) SELECT OrderId, GETDATE() FROM inserted",
+        "query_type": "INSERT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.OrderAudit"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.trg_Orders_Audit"
+        ]
+      },
+      {
+        "query_id": "trg-shipment-log",
+        "query_text": "INSERT INTO dbo.ShipmentLog (ShipmentId, LoggedAt) SELECT ShipmentId, GETDATE() FROM deleted",
+        "query_type": "INSERT",
+        "calls_per_second": 0.1,
+        "rows_returned_avg": 1,
+        "tables_accessed": [
+          "dbo.ShipmentLog"
+        ],
+        "has_joins": false,
+        "join_count": 0,
+        "parent_routine_ids": [
+          "dbo.trg_Shipments_Log"
+        ]
+      }
+    ]
+  }
+}

@@ -24,7 +24,12 @@ export function StepText({ t, step }) {
     );
   }
   if (step.kind === 'group') {
-    const kind = step.group_kind === 'co_dependency' ? 'co-dependency' : 'independent';
+    const kind =
+      step.group_kind === 'co_dependency'
+        ? 'co-dependency'
+        : step.group_kind === 'routine'
+          ? 'routine'
+          : 'independent';
     return (
       <SpaceBetween size="xxs">
         <Box variant="h4">

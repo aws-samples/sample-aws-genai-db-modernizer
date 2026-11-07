@@ -55,11 +55,7 @@ from src.agents.referee.aurora_choice import (
     pick_aurora_engine_with_tie,
     source_database_engine,
 )
-from src.agents.referee.cache_overlay import (
-    apply_cache_overlay,
-    can_own,
-    overlay_summary,
-)
+from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
 from src.agents.referee.co_dependency import (
     build_co_dependency_groups,
     group_engine_scores,
@@ -95,12 +91,18 @@ from src.agents.referee.query_scoring import (
     waiver_table,
 )
 from src.agents.referee.reality_check import justification_verdicts
-from src.agents.referee.routine_units import RoutineFollowers, follow_reason, unplaced_reason
-from src.agents.referee.routing_trace import RoutingTrace
-from src.agents.referee.table_assignments import (
-    derive_table_assignments,
-    retained_engine_for,
+from src.agents.referee.routine_units import (
+    ROUTINE_UNIT_LABEL,
+    RoutineFollowers,
+    build_routine_units,
+    follow_reason,
+    routine_unit_label,
+    routine_unit_members,
+    unplaced_reason,
+    without_unservable_routine_units,
 )
+from src.agents.referee.routing_trace import RoutingTrace
+from src.agents.referee.table_assignments import derive_table_assignments, retained_engine_for
 from src.agents.referee.table_resolution import SourceScope, TableNameResolver
 from src.agents.referee.tie_break import (
     TIE_KIND_SOURCE_COMPATIBLE,
@@ -109,10 +111,7 @@ from src.agents.referee.tie_break import (
     pick_unresolved_tie_placeholder,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.agents.referee.utility_statements import (
-    is_utility_statement,
-    procedure_internal_reason,
-)
+from src.agents.referee.utility_statements import is_utility_statement, procedure_internal_reason
 from src.agents.referee.write_groups import (
     WRITE_GROUP_LABEL,
     build_write_groups,
@@ -127,6 +126,7 @@ from src.contracts.assignment_models import (
     AuroraEngineChoice,
     CacheOverlaySummary,
     QueryAssignment,
+    RoutineUnit,
     UnservableQueryAssignment,
 )
 from src.contracts.move_ledger import (
@@ -137,12 +137,9 @@ from src.contracts.move_ledger import (
     ReasonCode,
 )
 from src.shared import catalog
-from src.shared.engine_names import (
-    PLACEHOLDER_ENGINES,
-    display_engine,
-    without_placeholder_engines,
-)
+from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
 from src.shared.move_reasons import render_group_gates
+from src.shared.progress import say
 from src.shared.signal_labels import signal_noun
 from src.tools.sql.view_lineage import access_text
 
@@ -283,17 +280,59 @@ class AssignmentResolver:
         # group (ADR-031 Amendment 9, #992): all of a table's writes and locking
         # reads land on one engine, its source of truth. The two kinds merge
         # where they share a query, and each merged unit moves as one.
+        query_by_id_early = {q["query_id"]: q for q in queries}
+        # A procedure's statements, and a trigger's with the writes that fire it, run
+        # together in the routine on the source: each routine unit (#1654, ADR-031
+        # Decision 4 Amendment 21) is the merge's third source, and moves as one too.
         co_dep_groups = build_co_dependency_groups(queries, tables)
         write_groups = build_write_groups(queries, source_engine, source_scope)
-        placement_units = placement_groups(co_dep_groups, write_groups)
+        routine_units = build_routine_units(
+            queries, source_scope, collector_output.get("database_schema") or {}, source_engine
+        )
+        routine_members = routine_unit_members(routine_units)
+        placement_units = placement_groups(co_dep_groups, write_groups, routine_members)
+        if routine_members:
+            # No cap on how far a routine merges (#1654): the size of the largest unit a
+            # routine merged, and its tables, are logged so a run shows how large they get.
+            routine_ids = {q for members in routine_members.values() for q in members}
+            merged = [u for u in placement_units if set(u) & routine_ids]
+            if merged:
+                largest = max(merged, key=len)
+                largest_tables = {
+                    str(t)
+                    for qid in largest
+                    for t in (query_by_id_early.get(qid) or {}).get("tables_accessed") or []
+                }
+                say(
+                    f"[assignment] Routine units: {len(merged)} placement unit(s) merged "
+                    f"by {len(routine_members)} routine(s); the largest holds "
+                    f"{len(largest)} statement(s) over {len(largest_tables)} table(s)"
+                )
         write_members = set(write_group_tables(write_groups))
+        routines_of: dict[str, list[str]] = {}
+        for rid, members in routine_members.items():
+            for qid in members:
+                routines_of.setdefault(qid, []).append(rid)
         query_by_id = {q["query_id"]: q for q in queries}
         # A write unit's engine is its call-rate-weighted mean (#992, ADR-031
         # Amendment 9); other units keep the plain mean.
         unit_weights = unit_call_weights(placement_units, write_groups, query_by_id)
 
         def _group_label(qid: str) -> str:
-            return WRITE_GROUP_LABEL if qid in write_members else "co-dependency group"
+            if qid in write_members:
+                return WRITE_GROUP_LABEL
+            if qid in routines_of:
+                return routine_unit_label(routines_of[qid])
+            return "co-dependency group"
+
+        def _group_rule(qid: str) -> ReasonCode:
+            """The ledger rule a unit member is placed by: its table's write group, else
+            its routine unit (#1654), else its co-dependency group."""
+            if qid in write_members:
+                return ReasonCode.WRITE_GROUP
+            if qid in routines_of:
+                return ReasonCode.ROUTINE
+            return ReasonCode.GROUP_MEAN
 
         # Step 4: Score each query against each engine (adjusted), via the
         # one shared pipeline (``score_query_for_engine``): the hard
@@ -610,9 +649,7 @@ class AssignmentResolver:
                     qid,
                     best[0],
                     pass_=MovePass.CO_DEPENDENCY,
-                    reason_code=(
-                        ReasonCode.WRITE_GROUP if qid in write_members else ReasonCode.GROUP_MEAN
-                    ),
+                    reason_code=_group_rule(qid),
                     score_after=_score(qid, best[0]),
                     runner_up=best_other(group_score, best[0]),
                     evidence=_evidence(query_by_id[qid], group_scores=group_score),
@@ -1218,7 +1255,11 @@ class AssignmentResolver:
                     gates=unservable_gates(move.evidence.candidates, move.evidence.group_gates),
                     group_key=move.group_key,
                     group=(
-                        ("write group" if qid in write_members else "co-dependency group")
+                        (
+                            "write group"
+                            if qid in write_members
+                            else ROUTINE_UNIT_LABEL if qid in routines_of else "co-dependency group"
+                        )
                         if move.group_key
                         else None
                     ),
@@ -1276,6 +1317,7 @@ class AssignmentResolver:
         co_dep_lists, write_groups = without_unservable_groups(
             co_dep_groups, write_groups, unservable
         )
+        routine_units = without_unservable_routine_units(routine_units, unservable)
 
         # #616 (ADR-031 Amendment 3): v1 must replay from its own Moves, the same
         # write-time check every later version passes; an unservable query replays to
@@ -1296,6 +1338,7 @@ class AssignmentResolver:
             table_assignments=table_assignments,
             co_dependency_groups=co_dep_lists,
             write_groups=write_groups,
+            routine_units=[RoutineUnit.model_validate(u) for u in routine_units],
             validation_warnings=[],
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
             unresolved_table_names=unresolved_table_names,

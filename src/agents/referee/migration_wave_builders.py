@@ -367,6 +367,7 @@ def _kv_wave(
     retained_engine: str | None,
     source_engine: str,
     after_cache: bool = False,
+    routine_query_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """The key-value wave. ``after_cache`` is whether the plan has a cache wave before it:
     only then does the rationale say the cache took the read pressure off first."""
@@ -382,7 +383,9 @@ def _kv_wave(
         if after_cache
         else ""
     )
-    groups = _dynamodb_table_groups(engine, rows, co_dependency_groups, query_assignments)
+    groups = _dynamodb_table_groups(
+        engine, rows, co_dependency_groups, query_assignments, routine_query_ids
+    )
     n_groups = len(groups) or len(rows)
     query = _query_noun(n)
     group = _plural(n_groups, "group")

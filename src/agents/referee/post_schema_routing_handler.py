@@ -25,11 +25,7 @@ from collections.abc import Callable
 
 from src.agents.referee.engine_scope import check_in_scope, scope_from_store
 from src.agents.referee.query_pattern import write_access_patterns
-from src.agents.referee.routine_units import (
-    RoutineFollowers,
-    follow_routines,
-    relational_engine_of,
-)
+from src.agents.referee.routine_units import RoutineFollowers, follow_routines, relational_engine_of
 from src.agents.referee.write_groups import (
     assignment_placement_groups,
     assignment_unit_weights,
@@ -330,11 +326,13 @@ class PostSchemaRouting:
             customer_pinned=router_held_ids(assignment, scoring["followers"]),
             # Co-dependency and write groups (ADR-031 Decision 4 and Amendment 9):
             # a reroute moves a table's writes together.
-            co_dependency_groups=assignment_placement_groups(assignment),
+            co_dependency_groups=assignment_placement_groups(assignment, scoring.get("collector")),
             # A pinned write holds its table's other writes in place (#992).
             write_groups=saved_write_groups(assignment),
             # A write unit is judged on its call-rate-weighted mean (#992).
-            unit_weights=assignment_unit_weights(assignment, scoring.get("query_map") or {}),
+            unit_weights=assignment_unit_weights(
+                assignment, scoring.get("query_map") or {}, scoring.get("collector")
+            ),
             # A pinned key-scoped count holds its table's writes too (#1151).
             pinned_counts=pinned_counts_by_table(
                 assignment.get("query_assignments", []),
@@ -348,7 +346,7 @@ class PostSchemaRouting:
                 for qa in assignment.get("query_assignments", [])
                 if qa.get("tied_engines")
             },
-            **{k: v for k, v in scoring.items() if k != "followers"},
+            **{k: v for k, v in scoring.items() if k not in ("followers", "collector")},
         )
         router_output.job_id = job_id
 
@@ -1166,4 +1164,6 @@ class PostSchemaRouting:
             ),
             # The statements on temporary objects that follow their routine (#1891).
             "followers": RoutineFollowers.from_collector(collector),
+            # An assignment saved before routine units reads the collection's (#1654).
+            "collector": collector,
         }

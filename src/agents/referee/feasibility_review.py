@@ -342,6 +342,44 @@ def _detect_stranded_counts(
     return findings
 
 
+def _detect_routine_unit_splits(
+    assignment: Assignment, collector_output: dict
+) -> list[FeasibilityFinding]:
+    """A routine whose statements a customer edit put on two or more engines (#1654).
+
+    Routing places a routine unit as one (ADR-031 Decision 4 Amendment 21); only a
+    customer's explicit picks split one, and that choice stands, as a co-dependency
+    split's does, with this advisory finding saying what it costs."""
+    from src.agents.referee.routine_units import routine_units_for
+
+    engine_by_query = _in_scope_engine_by_query(assignment)
+    findings: list[FeasibilityFinding] = []
+    for unit in routine_units_for(assignment, collector_output):
+        members = [*unit["query_ids"], *unit["fired_by"]]
+        engines = {engine_by_query[q] for q in members if q in engine_by_query}
+        if len(engines) < 2:
+            continue
+        placed = sorted(q for q in members if q in engine_by_query)
+        what = unit["kind"]
+        findings.append(
+            FeasibilityFinding(
+                kind=FindingKind.ROUTINE_UNIT_SPLIT,
+                severity=FindingSeverity.ADVISORY,
+                table=None,
+                engines=sorted(engines),
+                query_ids=placed,
+                message=(
+                    f"The statements of {what} {unit['routine_id']} ({_query_list(placed)}) "
+                    f"are split across {_engine_names(engines)}. On the source they run "
+                    f"together in the {what}; split, the {what} has to be rewritten to call "
+                    "each engine, and a transaction it opens no longer spans them. Keep its "
+                    "statements on one engine, or confirm this is intended."
+                ),
+            )
+        )
+    return findings
+
+
 def review_assignment_feasibility(
     assignment: Assignment, collector_output: dict
 ) -> list[FeasibilityFinding]:
@@ -352,6 +390,7 @@ def review_assignment_feasibility(
     """
     findings = _detect_read_write_splits(assignment, collector_output)
     findings += _detect_co_dependency_splits(assignment)
+    findings += _detect_routine_unit_splits(assignment, collector_output)
     findings += _detect_stranded_counts(assignment, collector_output)
     findings.sort(key=lambda f: 0 if f.severity is FindingSeverity.BLOCKING else 1)
     return findings

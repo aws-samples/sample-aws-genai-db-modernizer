@@ -49,7 +49,12 @@ from typing import TYPE_CHECKING, Any
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.co_dependency import build_co_dependency_groups, group_engine_scores
-from src.agents.referee.routine_units import RoutineFollowers
+from src.agents.referee.routine_units import (
+    RoutineFollowers,
+    collector_routine_units,
+    routine_unit_members,
+    routine_units_for,
+)
 from src.agents.referee.tie_break import (
     DECIDED_BY_SETTLED_WORKLOAD,
     DECIDED_BY_UNROUNDED_SCORE,
@@ -180,6 +185,8 @@ def build_pending_choices(
     collector_output: Mapping | None,
     ctx: ScoringContext | None,
     source_compatible_engine: str | None = None,
+    *,
+    assignment: Any = None,
 ) -> list[PendingEngineChoice]:
     """The open ties of ``query_assignments`` grouped per table (#1003), sorted by id.
 
@@ -205,6 +212,13 @@ def build_pending_choices(
                 queries, (collector_output.get("database_schema") or {}).get("tables") or []
             ),
             write_groups,
+            # The version's routine units (#1654), the collection's for one saved
+            # before them (or with no version given).
+            routine_unit_members(
+                routine_units_for(assignment, collector_output)
+                if assignment is not None
+                else collector_routine_units(collector_output)
+            ),
         )
         if queries
         else []

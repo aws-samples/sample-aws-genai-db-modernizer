@@ -208,6 +208,8 @@ ID_FIELD_PATHS = frozenset(
         ("table_owner_lines", "cache_engines"),  # TableOwnershipFacts.cache_engines
         ("replicas", "engine"),  # TableSource.replicas[].engine (#992)
         ("routine_followers", "engine"),  # RoutineFollower.engine (#1891)
+        ("routine_units", "engine"),  # RoutineUnitFact.engine (#1654)
+        ("routine_units", "engines"),  # RoutineUnitFact.engines (#1654)
         ("table_sources", "table"),  # TableSource.table / ReplicatedTableFact.table (#992)
         ("replicated_tables", "table"),  # ReplicatedTableFact.table (#992)
         ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)

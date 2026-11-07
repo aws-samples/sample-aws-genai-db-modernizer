@@ -80,6 +80,7 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.TIE_DECIDED_FOR_YOU: "tie decided automatically",
     ReasonCode.GROUP_MEAN: "co-dependency group",
     ReasonCode.ROUTINE_FOLLOW: "follows its routine",
+    ReasonCode.ROUTINE: "routine unit: runs together in its routine",
     ReasonCode.WRITE_GROUP: "write group: one source of truth",
     ReasonCode.OVERRIDE_TEXT_SEARCH: "full-text search",
     ReasonCode.OVERRIDE_UTILITY: "administration statement",
@@ -258,6 +259,15 @@ def _first_assignment(move: Move) -> str:
             f"Placed on {to} with the routine it runs in: a statement on temporary "
             "objects follows its routine's other statements and is not scored on its own."
         )
+    if code == ReasonCode.ROUTINE:
+        group_score = move.evidence.group_scores.get(move.to_engine, move.score_after)
+        return (
+            f"Placed on {to} with its routine unit: a procedure's statements run together "
+            "in the procedure (in one transaction where it opens one), and a trigger's run "
+            "with the write that fires it, so they are placed together, and "
+            f"{to} has the best mean score across the unit's queries "
+            f"({format_score(group_score)})."
+        )
     if code == ReasonCode.OVERRIDE_TEXT_SEARCH:
         return f"Routed to {to} because the query needs full-text search."
     if code == ReasonCode.OVERRIDE_UTILITY:
@@ -327,6 +337,13 @@ def _engine_change(move: Move) -> str:
         why = _decided_for_you(move)
     elif code == ReasonCode.ROUTINE_FOLLOW:
         why = "it follows the other statements of the routine it runs in, which moved there"
+    elif code == ReasonCode.ROUTINE:
+        group_score = move.evidence.group_scores.get(move.to_engine, move.score_after)
+        why = (
+            "the statements of its routine unit run together in the routine and move "
+            f"together, and {to} has the best mean score across the unit "
+            f"({format_score(group_score)})"
+        )
     elif code == ReasonCode.GROUP_CUSTOMER_PROPAGATION:
         why = (
             "it moves with a co-dependent query the customer re-routed"
@@ -410,6 +427,8 @@ def _same_engine(move: Move) -> str:
         return f"Kept on {to} with its co-dependency group."
     if code == ReasonCode.ROUTINE_FOLLOW:
         return f"Kept on {to} with the routine it runs in."
+    if code == ReasonCode.ROUTINE:
+        return f"Kept on {to} with its routine unit."
     if code == ReasonCode.WRITE_GROUP:
         return f"Kept on {to} with its write group, the table's source of truth."
     return f"Stays on {to} ({rule_label(code)})."

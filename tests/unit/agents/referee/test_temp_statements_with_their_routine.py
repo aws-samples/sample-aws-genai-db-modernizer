@@ -34,10 +34,7 @@ from src.agents.referee import (
     reality_check_rules,
 )
 from src.agents.referee.assignment_handler import run_assignment_resolver
-from src.agents.referee.assignment_overrides import (
-    QueryOverrideInput,
-    apply_assignment_overrides,
-)
+from src.agents.referee.assignment_overrides import QueryOverrideInput, apply_assignment_overrides
 from src.agents.referee.move_ledger import apply_to_assignment, ledger_for
 from src.agents.referee.post_schema_routing_handler import PostSchemaRouting, router_held_ids
 from src.agents.referee.reality_check_handler import (
@@ -585,12 +582,25 @@ SCOPE = ["dynamodb", "documentdb"]
 
 
 def _split_collection() -> dict:
-    """dbo.AddOrder's routed statements on two engines: search-read runs in it too."""
+    """dbo.AddOrder's routed statements on two engines: search-read runs in it too.
+
+    Since #1654 a routine's routed statements form a routine unit and land on one
+    engine, so routing no longer splits them; these runs give the first assignment no
+    routine units (:func:`_without_routine_units`)."""
     collection = _collection(busy=False)
     for q in collection["queries"]["query_patterns"]:
         if q["query_id"] == "search-read":
             q["parent_routine_ids"] = [ADD_ORDER, SEARCH]
     return collection
+
+
+def _without_routine_units(mp: pytest.MonkeyPatch) -> None:
+    """Routing no longer splits a routine's routed statements (#1654). To keep testing
+    the follower's last resort on a split routine, these runs give the first assignment
+    no routine units: it saves an empty ``routine_units``, so no later pass places one
+    (``routine_units.routine_units_for`` reads the saved, empty list), and the routine's
+    statements are placed apart as they were before #1654."""
+    mp.setattr(assignment_resolver, "build_routine_units", lambda *a, **k: [])
 
 
 @pytest.fixture(scope="module")
@@ -604,10 +614,13 @@ def scoped(tmp_path_factory) -> Iterator[tuple[LocalArtifactStore, int]]:
 
 
 @pytest.fixture(scope="module")
-def scoped_split(tmp_path_factory) -> tuple[LocalArtifactStore, int]:
-    return _run(
-        tmp_path_factory.mktemp("scoped-split"), scope=SCOPE, collection=_split_collection()
-    )
+def scoped_split(tmp_path_factory) -> Iterator[tuple[LocalArtifactStore, int]]:
+    with pytest.MonkeyPatch.context() as mp:
+        _without_routine_units(mp)
+        out = _run(
+            tmp_path_factory.mktemp("scoped-split"), scope=SCOPE, collection=_split_collection()
+        )
+    yield out
 
 
 def _versions(store: LocalArtifactStore, final: int) -> list[int]:
@@ -862,6 +875,7 @@ def test_a_sweep_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
 
 def test_a_sweep_that_joins_its_routine_brings_it_back(tmp_path) -> None:
     with pytest.MonkeyPatch.context() as mp:
+        _without_routine_units(mp)
         _sweep_moving(mp, "search-read", "dynamodb")
         store, final = _run(tmp_path, scope=SCOPE, collection=_split_collection())
     assert "order-tmp" in {u["query_id"] for u in _raw(store, 1)["unservable_queries"]}
@@ -872,12 +886,32 @@ def test_a_sweep_that_joins_its_routine_brings_it_back(tmp_path) -> None:
     assert "order-tmp" not in {u["query_id"] for u in _raw(store, final)["unservable_queries"]}
 
 
+@pytest.mark.passes_on_main
 def test_a_customer_edit_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
+    """Since #1654 a pick on one of the routine's statements moves its whole routine
+    unit, so only an edit that picks two engines for them splits it."""
+    store, _ = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())
+    result = apply_assignment_overrides(
+        store,
+        DB,
+        JOB,
+        [
+            QueryOverrideInput("app-orders", assigned_engine="documentdb"),
+            QueryOverrideInput("order-insert", assigned_engine="dynamodb"),
+        ],
+    )
+    _unplaced(store, result.assignment.version)
+
+
+def test_a_customer_pick_of_one_statement_moves_its_routine_and_the_follower(tmp_path) -> None:
+    """#1654: a pick on one of the routine's statements moves the routine unit, and the
+    follower follows it there."""
     store, _ = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())
     result = apply_assignment_overrides(
         store, DB, JOB, [QueryOverrideInput("app-orders", assigned_engine="documentdb")]
     )
-    _unplaced(store, result.assignment.version)
+    qas = {qa.query_id: qa.assigned_engine for qa in result.assignment.query_assignments}
+    assert qas["order-insert"] == qas["order-tmp"] == "documentdb"
 
 
 def test_a_post_schema_reroute_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
@@ -963,6 +997,7 @@ def test_a_follower_that_comes_back_logs_no_unexplained_engine(tmp_path, caplog)
         pytest.MonkeyPatch.context() as mp,
         caplog.at_level("WARNING", logger="src.agents.referee.move_ledger"),
     ):
+        _without_routine_units(mp)
         _sweep_moving(mp, "search-read", "dynamodb")
         store, final = _run(tmp_path, scope=SCOPE, collection=_split_collection())
     assert "without a Move" not in caplog.text

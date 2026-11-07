@@ -170,6 +170,12 @@ Version History:
 - 1.25 (2026-11-06, #1891): Added the ``group.routine_follow`` reason code value
   (``ReasonCode.ROUTINE_FOLLOW``, #1891): a SQL Server statement on temporary objects
   placed on the engine its routine's other statements are on.
+- 1.26 (2026-11-07, #1654): Added Assignment.routine_units (RoutineUnit: routine_id,
+  kind, query_ids, fired_by), the group.routine reason code value (ReasonCode.ROUTINE)
+  and the routine_unit_split feasibility finding kind: a procedure's statements, or a
+  trigger's and the writes that fire it, placed as one unit (#1654). Backward
+  compatible: routine_units defaults to an empty list, and a version without it reads
+  the collection's units.
 """
 
 from datetime import datetime
@@ -658,11 +664,36 @@ class AutoDecidedChoice(BaseModel):
     decided_in_version: int = Field(..., ge=1, description="The version that applied it")
 
 
+class RoutineUnit(BaseModel):
+    """A routine unit (#1654, ADR-031 Decision 4 Amendment 21): the statements of one
+    procedure, function or trigger, which run together in the routine on the source
+    (in one transaction where the routine opens one), placed as one unit."""
+
+    routine_id: str = Field(..., description="The routine, '<schema>.<name>'")
+    kind: Literal["procedure", "function", "trigger"] = Field(
+        ..., description="What the routine is, as the collection's schema lists it"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The routine's statements routed on their own (QueryPattern.parent_routine_ids "
+            "names it): no utility statement and no statement that follows its routine"
+        ),
+    )
+    fired_by: list[str] = Field(
+        default_factory=list,
+        description=(
+            "For a trigger: the routed writes of its table whose statement type fires it, "
+            "which run with it, in the firing statement. Empty for a procedure or function"
+        ),
+    )
+
+
 class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.25", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.26", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")
@@ -688,6 +719,15 @@ class Assignment(BaseModel):
             "every query that writes the table (INSERT, UPDATE, DELETE, MERGE) or takes "
             "a row lock on it. They land on one engine, the table's source of truth "
             "(ADR-031 Amendment 9). Empty for an artifact written before 1.17."
+        ),
+    )
+    routine_units: list[RoutineUnit] = Field(
+        default_factory=list,
+        description=(
+            "Each routine unit of two or more statements (#1654): every routing pass "
+            "places it as one, merged with the co-dependency and write groups it touches "
+            "(ADR-031 Decision 4 Amendment 21). Empty for a collection that names no "
+            "statement's routine, and for an artifact written before routine units."
         ),
     )
     validation_warnings: list[str] = Field(..., description="Warnings from assignment validation")

@@ -16,7 +16,7 @@ import logging
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -67,8 +67,12 @@ from src.agents.referee.query_pattern import read_analysis_outputs, write_access
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.routine_units import (
     RoutineFollowers,
+    collector_routine_units,
     follow_routines,
     relational_engine_of,
+    routine_unit_members,
+    routine_units_for,
+    without_unservable_routine_units,
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
@@ -86,6 +90,7 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     PostSchemaReroute,
     QueryAssignment,
+    RoutineUnit,
     ValidationResult,
 )
 from src.contracts.move_ledger import EngineScore, MoveActor, MoveEvidence, MovePass, ReasonCode
@@ -896,6 +901,7 @@ def apply_assignment_overrides(
         scores=scores,
         ctx=ctx,
         decided_ids={o.query_id for o in owner_overrides if o.auto_pick is not None},
+        assignment=raw,
     )
     excluded.extend(group_excluded)
     # #1151: a count the customer picks onto an engine whose waiver this same edit
@@ -1264,6 +1270,7 @@ def _propagate_codependent_overrides(
     scores: Callable[[str, str, str], dict] | None = None,
     ctx: ScoringContext | None = None,
     decided_ids: Iterable[str] = (),
+    assignment: Any = None,
 ) -> tuple[list[str], list[ExcludedOverride]]:
     """Move a customer-re-routed query's co-dependent group-mates, and the other
     writes of the tables it writes, with it.
@@ -1326,10 +1333,22 @@ def _propagate_codependent_overrides(
             queries, collector_output.get("database_schema", {}).get("tables", [])
         )
         write_groups = collector_write_groups(collector_output)
-        groups = placement_groups(co_groups, write_groups)
+        # The edited version's routine units (#1654), the collection's for a version
+        # saved before them.
+        routine_members = routine_unit_members(
+            routine_units_for(assignment, collector_output)
+            if assignment is not None
+            else collector_routine_units(collector_output)
+        )
+        groups = placement_groups(co_groups, write_groups, routine_members)
     except Exception:  # noqa: BLE001 - never block a customer edit on a grouping error
         return [], []
     tables_written_by = write_group_tables(write_groups)
+    # A routine unit's member moves with its routine (#1654): its reason names it.
+    routines_of: dict[str, list[str]] = {}
+    for rid, members in routine_members.items():
+        for member in members:
+            routines_of.setdefault(member, []).append(rid)
 
     propagated: list[str] = []
     excluded: list[ExcludedOverride] = []
@@ -1400,13 +1419,22 @@ def _propagate_codependent_overrides(
             f"{anchor} was decided automatically" if by_rule else f"the customer re-routed {anchor}"
         )
         change = "an automatic decision" if by_rule else "a customer routing change"
-        qa.assignment_reason = (
-            f"Moved with the other writes of table {table} when {cause}: "
-            "a table's writes stay on one engine, its source of truth."
-            if table
-            else f"Co-located with co-dependent query group of {anchor} (shared JOIN) "
-            f"after {change}."
-        )
+        if table:
+            qa.assignment_reason = (
+                f"Moved with the other writes of table {table} when {cause}: "
+                "a table's writes stay on one engine, its source of truth."
+            )
+        elif qid in routines_of:
+            qa.assignment_reason = (
+                f"Moved with the other statements of routine {', '.join(routines_of[qid])} "
+                f"when {cause}: a routine's statements run together in the routine, so "
+                "they are placed on one engine."
+            )
+        else:
+            qa.assignment_reason = (
+                f"Co-located with co-dependent query group of {anchor} (shared JOIN) "
+                f"after {change}."
+            )
         propagated.append(qid)
 
     for group in groups:
@@ -1467,6 +1495,13 @@ def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> 
         write_groups,
         assignment.unservable_queries,
     )
+    # #1654: the routine units too, as one unit each.
+    assignment.routine_units = [
+        RoutineUnit.model_validate(u)
+        for u in without_unservable_routine_units(
+            routine_units_for(assignment, collector_output), assignment.unservable_queries
+        )
+    ]
     assignment.table_assignments = table_assignments
     assignment.unresolved_table_names = unresolved_table_names
 
@@ -1543,6 +1578,9 @@ def refresh_consolidated_assignment(
     # #1329: a group with no assigned member (unservable as one unit) is left out.
     out["co_dependency_groups"], out["write_groups"] = without_unservable_groups(
         co_dependency_groups, write_groups, raw.get("unservable_queries") or []
+    )
+    out["routine_units"] = without_unservable_routine_units(
+        routine_units_for(raw, collector_output), raw.get("unservable_queries") or []
     )
     out["validation_warnings"] = validation.warnings
     out["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
@@ -1684,6 +1722,7 @@ def reroute_split_writes(
             queries, collector_output.get("database_schema", {}).get("tables", [])
         ),
         write_groups,
+        routine_unit_members(routine_units_for(raw, collector_output)),
     )
     weights = unit_call_weights(units, write_groups, query_by_id)
     kept = sorted({qa.assigned_engine for qa in qa_map.values() if qa.in_scope})
@@ -1962,6 +2001,7 @@ def pending_choices_from(
         collector_output,
         ctx,
         SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output)),
+        assignment=assignment,
     )
 
 

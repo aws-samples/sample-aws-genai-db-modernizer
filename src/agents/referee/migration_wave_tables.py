@@ -10,11 +10,7 @@ from typing import Any
 from src.contracts.synthesis_output import join_gate_parts
 from src.shared.engine_names import display_engine
 from src.shared.gate_facts import GATE_TABLES_SHOWN
-from src.shared.migration_wave_engines import (
-    KV_ENGINES,
-    NON_OWNER_ENGINES,
-    RELATIONAL_ENGINES,
-)
+from src.shared.migration_wave_engines import KV_ENGINES, NON_OWNER_ENGINES, RELATIONAL_ENGINES
 
 
 def _plural(n: int, noun: str) -> str:
@@ -213,8 +209,14 @@ def _dynamodb_table_groups(
     rows: list[dict[str, Any]],
     co_dependency_groups: list[list[str]],
     query_assignments: list[dict[str, Any]],
+    routine_query_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """DynamoDB's tables, table group by table group, respecting co-dependency groups.
+
+    ``co_dependency_groups`` may hold routine units too (#1654, ADR-031 Decision 4
+    Amendment 21: a procedure's statements, merged with the co-dependency groups they
+    touch); a group holding a member of one (``routine_query_ids``) is ``kind:
+    "routine"``, so its tables move together like a co-dependency group's.
 
     ``rows`` is DynamoDB's *served* tables (#562, ``_served_tables``) --
     every table at least one DynamoDB-assigned query touches, primary or
@@ -253,6 +255,7 @@ def _dynamodb_table_groups(
     # queries only -- the group's "shape" does not depend on which other,
     # non-member queries happen to touch the same tables.
     bucket_tables: list[set[str]] = []
+    kinds: list[str] = []
     grouped_tables: set[str] = set()
     for group in co_dependency_groups:
         qids = set(group) & dynamo_qids
@@ -264,9 +267,9 @@ def _dynamodb_table_groups(
         if not tables:
             continue
         bucket_tables.append(tables)
+        kinds.append("routine" if set(group) & routine_query_ids else "co_dependency")
         grouped_tables |= tables
 
-    kinds = ["co_dependency"] * len(bucket_tables)
     remaining = dynamo_tables - grouped_tables
     if remaining:
         bucket_tables.append(remaining)
