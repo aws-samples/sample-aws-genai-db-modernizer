@@ -155,16 +155,21 @@ repos:
         exclude: ^contrib/
         args: ['--fix', '--config', '.markdownlint.yaml']
 
-  # Commit message validation
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v3.0.0
+  # Commit message validation. conventional-pre-commit has no merge exception, so a
+  # local wrapper skips merge commits (also in a worktree, #1968) and otherwise runs
+  # conventional-pre-commit itself, pinned here at the version it was before.
+  - repo: local
     hooks:
       - id: conventional-pre-commit
         name: Validate commit message format
+        entry: python scripts/conventional_commit_hook.py
+        language: python
+        additional_dependencies: ['conventional-pre-commit==3.0.0']
         stages: [commit-msg]
+        pass_filenames: true
 
   # Commit message shape: subject length, 2-4 line body, Closes/Refs trailer,
-  # no Co-Authored-By (#570). Skips merge and fixup/squash/amend commits.
+  # no Co-Authored-By (#570). Skips merge (also in a worktree, #1968) and fixup/squash/amend commits.
   - repo: local
     hooks:
       - id: check-commit-message

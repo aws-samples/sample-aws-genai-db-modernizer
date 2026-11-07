@@ -22,8 +22,8 @@ this hook has an opinion on that particular token.
 
 Skipped entirely (exit 0, nothing checked):
 
-- merge commits (a ``Merge ...`` subject, or an in-progress merge via
-  ``.git/MERGE_HEAD``);
+- merge commits (a ``Merge ...`` subject, or an in-progress merge, found with
+  ``git rev-parse --git-path MERGE_HEAD`` so it also works in a worktree);
 - fixup/squash/amend commits (a ``fixup!``/``squash!``/``amend!`` subject
   prefix, git's own ``commit --fixup``/``--squash`` convention);
 - default ``git revert`` messages: subject ``Revert "..."`` with a body of
@@ -272,8 +272,28 @@ def check_message(message: str, *, comment_char: str = DEFAULT_COMMENT_CHAR) -> 
     return violations
 
 
+def merge_in_progress(repo: Path = REPO_ROOT) -> bool:
+    """True while a merge is being concluded in ``repo``.
+
+    Asks git where ``MERGE_HEAD`` lives (``git rev-parse --git-path``), because
+    in a linked worktree ``.git`` is a file and the merge state sits in the
+    worktree's own git dir (#1968). Any git failure counts as "no merge".
+    """
+    try:
+        out = subprocess.run(  # nosec B603 B607 -- fixed argv, git resolved from PATH
+            ["git", "rev-parse", "--git-path", "MERGE_HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=repo,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return False
+    return bool(out) and (repo / out).exists()
+
+
 def _merge_in_progress() -> bool:
-    return (REPO_ROOT / ".git" / "MERGE_HEAD").exists()
+    return merge_in_progress()
 
 
 def check_single_message(message: str, *, comment_char: str = DEFAULT_COMMENT_CHAR) -> list[str]:
