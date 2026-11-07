@@ -96,7 +96,7 @@ def test_the_engineering_report_prints_the_extensions_escaped(tmp_path: Path) ->
     md = out["engineering-report"].content.decode("utf-8")
     line = next(ln for ln in md.splitlines() if "Found in extension acme" in ln)
     assert line.endswith(
-        r"Found in extension acme\_geo, extension evil\]\(http://x.example\)`\*, "
+        r"Found in extension acme\_geo, extension evil\]\(http://x.example\)\`\*, "
         r"extension roaringbitmap."
     )
     assert "](http://x.example)" not in md
