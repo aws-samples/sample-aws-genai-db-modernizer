@@ -16,8 +16,12 @@ callers that must agree exactly:
 
 Both also *compute* the arithmetic the skill no longer asks the model to do
 (#626): ``partition_limit`` (3000 for reads, 1000 for writes),
-``utilization_pct = min(100, rcu_or_wcu_per_second / partition_limit × 100)``
-to one decimal, and ``at_risk = utilization_pct > 80``. The model supplies an
+``utilization_pct = rcu_or_wcu_per_second / partition_limit × 100`` to one
+decimal (never capped, #1989), and ``at_risk = utilization_pct > 80``. An entry is
+the table or index total, an upper bound for one partition key value: with the
+group's ``design_metrics``, each at-risk finding also carries the load per key value
+estimated from the key's collected distinct values
+(``src.shared.partition_load.partition_load``), or says it is not measured. The model supplies an
 entry's table, operation, ``rcu_or_wcu_per_second``, contributing patterns
 and mitigation; the returned ``results`` carry the computed three, which the
 design copies. ``check_draft_costs`` reports a draft whose own values disagree
@@ -51,6 +55,7 @@ from pydantic import ValidationError
 
 from src.contracts.design_metrics import DynamoDBPartitionLimits
 from src.contracts.dynamodb_model_output import HotPartitionEntry
+from src.shared.partition_load import DistinctValues, partition_load
 from src.tools.schema.design_metrics import (
     RPS_ABS_TOLERANCE,
     check_design_numbers,
@@ -336,6 +341,17 @@ def compute_performances_and_costs_entries(
     return computed
 
 
+def _per_key(entry: dict, draft: dict, values: DistinctValues) -> dict:
+    """An at-risk finding's estimated load per partition key value (#1989): the entry
+    is the table or GSI total, an upper bound for one key value."""
+    row = partition_load(entry, draft, values)
+    return {
+        "per_key_basis": row["per_key_basis"],
+        "distinct_key_values": row["distinct_key_values"],
+        "per_key_utilization_pct": row["per_key_pct_of_limit"],
+    }
+
+
 def check_draft_costs(draft: dict, design_metrics: dict | None = None) -> dict:
     """Run :func:`compute_performances_and_costs_entries` over a draft's
     ``hot_partition_analysis`` and summarise the outcome.
@@ -348,7 +364,9 @@ def check_draft_costs(draft: dict, design_metrics: dict | None = None) -> dict:
     Returns ``{"passed", "entry_count", "results", "per_table",
     "keys_only_fetch", "hot_partition_findings", "errors"}`` where ``results`` are the validated
     entries with the computed figures, ``per_table`` the capacity figures per table/GSI/operation,
-    ``hot_partition_findings`` the at-risk entries with their mitigation, and
+    ``hot_partition_findings`` the at-risk entries with their mitigation and their load per
+    partition key value (``per_key_basis``, ``distinct_key_values``,
+    ``per_key_utilization_pct``: from ``design_metrics``' distinct values, #1989), and
     ``errors`` one ``{"index", "error"}`` per rejected entry (``index`` is
     ``None`` when ``hot_partition_analysis`` itself is missing or not a list,
     or for an access pattern whose ``design_rps`` disagrees with
@@ -368,6 +386,7 @@ def check_draft_costs(draft: dict, design_metrics: dict | None = None) -> dict:
 
     results: list[dict] = []
     errors: list[dict] = []
+    per_key_values = DistinctValues.from_design_metrics(design_metrics)
     for index, entry in enumerate(entries):
         try:
             computed = computed_entry(entry)
@@ -416,6 +435,7 @@ def check_draft_costs(draft: dict, design_metrics: dict | None = None) -> dict:
                 "utilization_pct": r["utilization_pct"],
                 "mitigation": r["mitigation"],
                 "contributing_patterns": r["contributing_patterns"],
+                **_per_key(r, draft, per_key_values),
             }
             for r in results
             if r["at_risk"]

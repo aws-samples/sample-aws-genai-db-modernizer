@@ -77,6 +77,10 @@ def test_check_draft_passes_and_reports_at_risk_findings() -> None:
             "utilization_pct": 90.0,
             "mitigation": "write sharding on autoload with 4 suffixes",
             "contributing_patterns": ["q2"],
+            # #1989: no design_metrics, so the key's distinct values are not known.
+            "per_key_basis": "not_measured",
+            "distinct_key_values": None,
+            "per_key_utilization_pct": None,
         }
     ]
     assert report["per_table"] == [

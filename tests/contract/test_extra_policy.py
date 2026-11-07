@@ -71,6 +71,7 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
     "design_metrics.DesignMetricsContract": ("allow", _ROUND_TRIP),
     "design_metrics.QueryDesignMetrics": ("allow", _ROUND_TRIP),
     "design_metrics.TableDesignMetrics": ("allow", _ROUND_TRIP),
+    "design_metrics.KeyDistinctValues": ("allow", _ROUND_TRIP),
     "design_metrics.CoverageMetrics": ("allow", _ROUND_TRIP),
     "design_metrics.DynamoDBPartitionLimits": ("allow", _ROUND_TRIP),
     "design_metrics.EmbeddingSizeMetrics": ("allow", _ROUND_TRIP),
