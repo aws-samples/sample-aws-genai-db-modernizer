@@ -165,3 +165,42 @@ def test_the_correction_turn_offers_a_constant_only_for_a_source_column_finding(
     assert prompt.endswith("Keep everything else unchanged, and return the complete output.")
     # A message that only mentions the prefix text later on is no source-column finding.
     assert "constant" not in numbers_correction_prompt(["x: see source columns: below"])
+
+
+ELASTICACHE_SKILLS = ("elasticache-data-modeling.md", "elasticache-pe-review.md")
+
+
+@pytest.mark.parametrize("name", ELASTICACHE_SKILLS)
+@pytest.mark.parametrize(
+    "rule",
+    [
+        # #1484: multi-key commands and Lua scripts need one hash slot (hash tags),
+        # and a shared tag concentrates load on one slot.
+        r"same hash slot",
+        r"hash tag",
+        r"CROSSSLOT",
+        r"hot slot",
+        r"Lua script needs at least one key",
+        # No KEYS on a production cache (unavailable on serverless); SCAN instead.
+        r"`KEYS`.{0,400}?`SCAN`",
+        # Logical databases: database 0 only in cluster mode before Valkey 9.0.
+        r"`SELECT`.{0,200}?Valkey 9\.0",
+        # Every key has a TTL, because serverless evicts only keys with one.
+        r"volatile-lru",
+        # Version gates, each from the ElastiCache engine-version notes.
+        r"JSON.{0,80}?Redis OSS 6\.2\.6",
+        r"Bloom.{0,80}?Valkey 8\.1",
+        r"hash-field TTL.{0,80}?Valkey 9\.0",
+        # Each rule cites the AWS documentation it rests on.
+        r"docs\.aws\.amazon\.com/AmazonElastiCache/latest/dg/RedisConfiguration\.html",
+        r"docs\.aws\.amazon\.com/AmazonElastiCache/latest/dg/engine-versions\.html",
+    ],
+)
+def test_elasticache_skills_state_each_design_rule(name: str, rule: str) -> None:
+    text = " ".join((SKILLS_DIR / name).read_text().split())
+    assert re.search(rule, text, re.IGNORECASE), f"{name}: {rule}"
+
+
+def test_the_pe_review_blocks_keys_on_a_production_cache() -> None:
+    text = " ".join((SKILLS_DIR / "elasticache-pe-review.md").read_text().split())
+    assert re.search(r"Any `KEYS` command in an access pattern is a `blocker`", text)
