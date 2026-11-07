@@ -38,3 +38,15 @@ pattern_match = 0.40
 complexity = 0.30
 performance = 0.20
 cost = 0.10
+
+# Engine-analysis rate thresholds (#1994). A rate is a statement's calls over its observed
+# window (#1901), so a threshold derives from the engine's documented capacity for the
+# access pattern, or is aligned with the other engine's floor for the same queries;
+# both Aurora engines carry the same values.
+[thresholds.memory_read_capacity_calls_per_second]
+value = 21875.0
+why = "Rate at which one query alone fills the documented read capacity of the smallest instance: Aurora MySQL's documented figure, the same for both Aurora engines until a measurement of Aurora PostgreSQL replaces it (#936): the Amazon Aurora Performance Assessment Technical Guide (AWS, June 2019) measured close to 700,000 SELECTs per second on one Aurora MySQL db.r4.16xlarge instance (64 vCPUs, sysbench read-only); scaled by vCPUs to db.r6g.large (2 vCPUs), the smallest memory-optimized class the price table lists, that is 700,000 x 2 / 64 = 21,875. Below it a primary-key point read or a small rarely-changing read is served from the buffer pool, so high-frequency-pk-lookup and simple-cache-read flag only queries above it."
+
+[thresholds.high_volume_text_search_min_calls_per_second]
+value = 10.0
+why = "Combined text-search calls/s on a table above which high-volume-text-search points it at OpenSearch. Aligned, not derived: it is OpenSearch's own floor when the source's text index already serves the pattern (native_override_min_calls_per_second in opensearch.toml, #326), so the two analyses agree on the same queries; no documented capacity backs the figure."

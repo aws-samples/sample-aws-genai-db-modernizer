@@ -427,9 +427,6 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset(
             {
                 "STANDARD_CRUD_MIN_CPS",
-                "HIGH_FREQUENCY_PK_LOOKUP_CPS",
-                "CACHE_READ_CPS_THRESHOLD",
-                "HIGH_VOLUME_TEXT_SEARCH_CPS",
                 "TEXT_COLUMN_RATIO_THRESHOLD",
             }
         ),
@@ -1121,6 +1118,11 @@ class TestNoRoutingRuleOutsideTheCatalog:
                 "AURORA_COMMON_ANTI_PATTERNS",
                 "CATALOG_ENGINE_HINTS",
                 "CATALOG_ENGINE_GUIDANCE",
+                # The rate thresholds: the Aurora engine files' [thresholds] (#1994).
+                "MEMORY_READ_CAPACITY_CPS",
+                "HIGH_FREQUENCY_PK_LOOKUP_CPS",
+                "CACHE_READ_CPS_THRESHOLD",
+                "HIGH_VOLUME_TEXT_SEARCH_CPS",
             },
         }
         for path, names in migrated.items():

@@ -20,6 +20,7 @@ under the names the analysis tools import. Edit the TOML file, not this module.
 """
 
 from src.shared.catalog import score_weights
+from src.shared.catalog.engines import CatalogError, engine_ids, engine_threshold
 from src.shared.catalog.patterns import catalog_entries, pattern
 from src.tools.analysis.pattern_catalog_base import (
     CatalogAntiPattern,
@@ -128,11 +129,30 @@ SKIP_QUERY_TYPES: frozenset[str] = frozenset({"SHOW", "DESCRIBE", "EXPLAIN", "SE
 # Minimum CPS threshold for standard-crud pattern (avoids noise from rarely-used queries)
 STANDARD_CRUD_MIN_CPS: float = 0.5
 
-# Thresholds
-HIGH_FREQUENCY_PK_LOOKUP_CPS: float = 30.0
+# Rate thresholds: the Aurora engine files' ``[thresholds]`` (#1994), each with its
+# documented source there. Both Aurora engines carry the same values (a CatalogError if
+# they disagree), so the two analyses agree on the same access pattern.
+
+
+def _aurora_threshold(name: str) -> float:
+    values = {
+        float(engine_threshold(e, name))
+        for e in sorted(engine_ids(status="active", role="relational"))
+    }
+    if len(values) != 1:
+        raise CatalogError(f"the Aurora engine files disagree on thresholds.{name}: {values}")
+    return values.pop()
+
+
+# A primary-key point read, or a small rarely-changing read, is served from the buffer
+# pool below this rate: aurora-anti-01 and aurora-anti-02 flag only queries above it.
+MEMORY_READ_CAPACITY_CPS: float = _aurora_threshold("memory_read_capacity_calls_per_second")
+HIGH_FREQUENCY_PK_LOOKUP_CPS: float = MEMORY_READ_CAPACITY_CPS
 # The high-ingest threshold is shared with every engine: pattern_catalog_base.
-CACHE_READ_CPS_THRESHOLD: float = 20.0
-HIGH_VOLUME_TEXT_SEARCH_CPS: float = 10.0
+CACHE_READ_CPS_THRESHOLD: float = MEMORY_READ_CAPACITY_CPS
+HIGH_VOLUME_TEXT_SEARCH_CPS: float = _aurora_threshold(
+    "high_volume_text_search_min_calls_per_second"
+)
 TEXT_COLUMN_RATIO_THRESHOLD: float = 0.40
 
 # Text data types for column ratio calculation

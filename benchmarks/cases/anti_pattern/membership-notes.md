@@ -2,6 +2,21 @@
 
 Why a committed case's query list changed, case by case, for whoever reviews its sheet. The lists are written by `uv run python -m benchmarks.runner.anti_pattern_cases`, never by hand; these notes only record the evidence for a change. They say which queries joined or left a case, not which rows the pipeline flags: that stays out of the review, as the blind sheets require (ADR-030 Amendment 2).
 
+## 2026-11-07, #1994: calibrated rate thresholds and whole-table ordered reads
+
+Two rule changes, so the builder was rerun on the three samples. The selection rule did not change.
+
+### wordpress-simple-cache-read (removed)
+
+`simple-cache-read` is now reported only above the documented read capacity of Aurora's smallest memory-optimized instance (21,875 calls/s, the Aurora engine files' `memory_read_capacity_calls_per_second`). No wordpress read comes near it, so the pattern decides no query there and the builder selects no case; the case and its sheet are gone.
+
+### discourse-no-relational-need
+
+`no-relational-need` no longer covers a read of the first rows of a whole table in key order (`ORDER BY <key> LIMIT n`, no value pinned), which a key-value engine serves only as a Scan. The queries the penalty decides changed, and so did their decoys:
+
+- Left: `-1091174960893812121`, `-1249005700589742180`, `-1328873741424793931`, `-572822285798391684`, `-7772446406543866798` (each `SELECT <table>.* FROM <table> ORDER BY <table>.id ASC LIMIT $1`), and `-1330754677166013668` (`SELECT ai_agents.id, ai_agents.name, ... FROM ai_agents ...`).
+- Joined: `2029652543742243616` (`SELECT api_keys.* FROM api_keys WHERE (revoked_at IS NULL) ...`), `264505752143190844` (`SELECT posts.id, posts.user_id, posts.topic_id, ...`) and `9059380364521111339` (`SELECT color_schemes.* FROM color_schemes WHERE ...`).
+
 ## 2026-11-05, #1893: call rates over each statement's own window
 
 Every collector used to divide a statement's execution count by 24 hours. Since #1893 it divides it by the window the count covers: on wordpress (MySQL) and trailgear (SQL Server), each statement's own `first_seen` to `last_seen` (discourse, a PostgreSQL collection with no statistics reset time, keeps its 24-hour rates and its cases did not change). The selection rule did not change; the cases were rebuilt with the builder because the rates it reads moved. Rates below are calls per second, over 24 hours before and over the statement's own window after (the sheets' `calls/s` column shows the new ones).

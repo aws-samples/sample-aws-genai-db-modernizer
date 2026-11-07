@@ -455,8 +455,10 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # ``8c66eaee...`` (the wp_comments COUNT, 0.44 calls/s, 0.27 before) lifts DocumentDB
     # 77 -> 79 over DynamoDB's 77 and is first-assigned there: dynamodb -1, documentdb +1.
     assert rc["before_distribution"] == {
-        "dynamodb": 37,
-        "aurora_mysql": 58,
+        # #1994: wp_postmeta's meta_id read by post and key moved from DynamoDB to Aurora
+        # MySQL; simple-cache-read no longer penalizes it below Aurora's read capacity.
+        "dynamodb": 36,
+        "aurora_mysql": 59,
         "documentdb": 11,
         "opensearch": 1,
     }

@@ -28,29 +28,33 @@ kind = "unscored"
 supported = true
 why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
 
-# Detection signals: High-freq reads of small/static data, TTL-like patterns
+# Detection signals: a single-table SELECT of at most 10 rows above the Aurora engine file's
+# memory_read_capacity_calls_per_second (21,875, its documented source there; #1994)
 [engines.aurora_postgresql]
 kind = "anti_pattern"
 supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-anti-02"
 severity = 0.7
-why = "High-frequency reads of small, rarely-changing data (config, sessions, feature flags). Aurora serves them natively from memory once read (MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared_buffers), so a cache in front is a latency choice."
+why = "Reads of small, rarely-changing data (config, sessions, feature flags) above 21,875 calls/second, the documented read capacity of Aurora's smallest memory-optimized instance (thresholds in the Aurora engine file). Below it Aurora serves them natively from memory once read (MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared_buffers), so a cache in front is a latency choice."
 engine_hint = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
 guidance = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
 guidance_names_engine = true
+better_served_by = ["elasticache"]
 
-# Detection signals: High-freq reads of small/static data, TTL-like patterns
+# Detection signals: a single-table SELECT of at most 10 rows above the Aurora engine file's
+# memory_read_capacity_calls_per_second (21,875, its documented source there; #1994)
 [engines.aurora_mysql]
 kind = "anti_pattern"
 supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-anti-02"
 severity = 0.7
-why = "High-frequency reads of small, rarely-changing data (config, sessions, feature flags). Aurora serves them natively from memory once read (MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared_buffers), so a cache in front is a latency choice."
+why = "Reads of small, rarely-changing data (config, sessions, feature flags) above 21,875 calls/second, the documented read capacity of Aurora's smallest memory-optimized instance (thresholds in the Aurora engine file). Below it Aurora serves them natively from memory once read (MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared_buffers), so a cache in front is a latency choice."
 engine_hint = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
 guidance = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
 guidance_names_engine = true
+better_served_by = ["elasticache"]
 
 [engines.neptune]
 kind = "future"

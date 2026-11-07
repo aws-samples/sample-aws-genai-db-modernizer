@@ -31,6 +31,7 @@ catalog_id = "os-ap-02"
 severity = 0.6
 why = "Frequent UPDATE/DELETE operations (> 1 CPS) indicate mutable data with ACID transactional requirements. OpenSearch has no multi-document transactions: each document write stands alone (OpenSearch documentation, Bulk API)."
 guidance = "Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
+better_served_by = ["aurora_postgresql", "aurora_mysql"]
 
 [engines.elasticache]
 kind = "unscored"

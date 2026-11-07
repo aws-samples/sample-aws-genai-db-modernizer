@@ -38,7 +38,10 @@ pytestmark = pytest.mark.deterministic
 # instead of 24 hours: wordpress $512.58 to $749.21 (Aurora MySQL's sized load, 96.5 to
 # 118.3 calls/s, takes the next instance size) and trailgear $433.15 to $432.19.
 # discourse is unchanged: a PostgreSQL collection with no stats reset time assumes 24 hours.
-WHOLE_DOLLARS = {"wordpress": 749, "discourse": 535, "trailgear": 432}
+# #1994: wordpress $749.21 to $757.62. wp_postmeta's meta_id read (23.8 calls/s) moves from
+# DynamoDB to Aurora MySQL once simple-cache-read fires only above Aurora's documented read
+# capacity: Aurora MySQL $484.94 to $497.25, DynamoDB $79.68 to $75.78.
+WHOLE_DOLLARS = {"wordpress": 758, "discourse": 535, "trailgear": 432}
 
 
 def _report(run: PipelineResult) -> dict:

@@ -39,7 +39,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from src.agents.referee.access_pattern import KEY_LOOKUP, KEY_SCOPED, SchemaKeys, query_access
+from src.agents.referee.access_pattern import (
+    KEY_LOOKUP,
+    KEY_SCOPED,
+    UNPARSED,
+    UTILITY,
+    SchemaKeys,
+    query_access,
+)
 
 # Reads per write at or above which a table is read-mostly (reference data written
 # rarely, the metadata/config shape).
@@ -126,6 +133,23 @@ class KeyAccessReader:
             pins_value=any(s.pinned for s in read.scopes),
             tables=frozenset(t for s in read.scopes for t in s.tables),
         )
+
+    def ordered_table_scan(self, query: Mapping) -> bool:
+        """A SELECT of the first rows of a whole table in some order (#920, #1994): it pins
+        no column to a value, so no partition key value can address it, and it has a row
+        limit after an ORDER BY. DynamoDB serves it only as a Scan with a client-side sort
+        (its ``ordered-scan`` anti-pattern); Aurora's ``no-relational-need`` and
+        ``single-access-pattern-table`` leave it out for the same reason. A statement the
+        SQL facade cannot read is never called one."""
+        if str(query.get("query_type") or "").upper() != "SELECT":
+            return False
+        access = self.access(query)
+        if access.access_class in (UNPARSED, UTILITY) or access.pins_value:
+            return False
+        from src.tools.sql.query_facts import query_facts
+        from src.tools.sql.view_lineage import access_text
+
+        return bool(query_facts(access_text(query), self.source_engine).top_n)
 
     def is_junction(self, table_id: str) -> bool:
         return table_id in self.junctions

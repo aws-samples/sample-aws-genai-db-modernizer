@@ -3,8 +3,11 @@
 
 """Integration test: validates graduated scoring produces honest differentiation."""
 
+import pytest
+
 from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+from src.tools.analysis.aurora_common_pattern_catalog import HIGH_FREQUENCY_PK_LOOKUP_CPS
 
 
 def _make_input(tables, queries):
@@ -110,6 +113,7 @@ class TestGraduatedScoringDifferentiation:
             f"sessions={sessions_rec.confidence_score}"
         )
 
+    @pytest.mark.passes_on_main  # an anti-01 table still scores lower
     def test_anti_patterns_reduce_confidence(self):
         """Tables with anti-patterns should have lower confidence."""
         inp = _make_input(
@@ -133,7 +137,8 @@ class TestGraduatedScoringDifferentiation:
                     "query_type": "SELECT",
                     "query_text": "SELECT value FROM cache_table WHERE key = $1",
                     "tables_accessed": ["cache_table"],
-                    "calls_per_second": 35.0,  # triggers anti-01 (>30)
+                    # Above the calibrated anti-01 rate (#1994: the documented capacity).
+                    "calls_per_second": HIGH_FREQUENCY_PK_LOOKUP_CPS + 1.0,
                     "has_joins": False,
                     "join_count": 0,
                     "rows_returned_avg": 1.0,

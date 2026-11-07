@@ -83,8 +83,14 @@ EXPECTED_RULES: dict[str, list[str]] = {
 # The open risks each sample lists (analysis risks and migration risks). #1893: wordpress
 # gains one HIGH analysis risk: over its own observed window `SELECT meta_id FROM wp_postmeta`
 # runs at 23.8 calls/s (14.6 over 24 hours), past Aurora MySQL's simple-cache-read threshold
-# (20), so it routes to DynamoDB and Aurora MySQL's finding is flagged on it.
-EXPECTED_OPEN = {"wordpress": 5, "discourse": 12, "trailgear": 14}
+# (20), so it routes to DynamoDB and Aurora MySQL's finding is flagged on it. #1994: that
+# threshold is now Aurora's documented read capacity (21,875 calls/s), so the read stays on
+# Aurora MySQL and the HIGH is gone (wordpress 5 -> 4); trailgear loses its HIGH the same
+# way (two reads Aurora PostgreSQL's simple-cache-read flagged on DynamoDB, 14 -> 13).
+# Discourse gains one MEDIUM (12 -> 13): single-access-pattern-table no longer covers its
+# whole-table ordered reads, so the 7 queries it still flags on DocumentDB are under
+# BROAD_FLAGGED_QUERIES and get their own risk instead of joining the coverage gap.
+EXPECTED_OPEN = {"wordpress": 4, "discourse": 13, "trailgear": 13}
 
 DESIGNED_RULES = [
     "sync.wave",

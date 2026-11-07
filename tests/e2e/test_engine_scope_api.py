@@ -175,8 +175,10 @@ def test_wordpress_scope_through_the_api_is_recorded_for_the_job(scoped: dict) -
 @pytest.mark.deterministic
 def test_wordpress_scope_through_the_api_routes_only_to_it(scoped: dict) -> None:
     first, final = scoped["versions"][0], scoped["versions"][-1]
-    assert _distribution(first) == {"dynamodb": 40, "aurora_postgresql": 67}
-    assert _distribution(final) == {"dynamodb": 40, "aurora_postgresql": 67}
+    # #1994: wp_postmeta's meta_id read no longer takes simple-cache-read on Aurora (it is
+    # far below Aurora's documented read capacity), so it moves off DynamoDB.
+    assert _distribution(first) == {"dynamodb": 39, "aurora_postgresql": 68}
+    assert _distribution(final) == {"dynamodb": 39, "aurora_postgresql": 68}
     for version in scoped["versions"]:
         for qa in version["query_assignments"]:
             assert qa["assigned_engine"] in SCOPED

@@ -34,6 +34,7 @@ import pytest
 
 from src.agents.referee.query_scoring import build_anti_pattern_map
 from src.shared.catalog.patterns import PENALTY_POINTS, PatternEntry, patterns
+from src.tools.analysis.aurora_common_pattern_catalog import HIGH_FREQUENCY_PK_LOOKUP_CPS
 from src.tools.analysis.aurora_pg_analysis_tools import analyze_aurora_pg_use_cases
 from src.tools.analysis.documentdb_analysis_tools import analyze_documentdb_use_cases
 from src.tools.analysis.dynamodb_analysis_tools import analyze_dynamodb_use_cases
@@ -207,6 +208,8 @@ def _q(
     }
 
 
+# A rate above the Aurora engine files' memory read capacity (#1994).
+HOT = HIGH_FREQUENCY_PK_LOOKUP_CPS + 1.0
 KEY_READ = "SELECT * FROM orders WHERE id = $1"
 FOUR_TABLE_JOIN = (
     "SELECT o.id FROM orders o JOIN order_items i ON i.order_id = o.id "
@@ -378,14 +381,15 @@ CASES = [
     (
         "high-frequency-pk-lookup",
         "aurora_postgresql",
-        _q("pos", KEY_READ, ["orders"], cps=500, rows=1),
-        _q("neg", KEY_READ, ["orders"], cps=5, rows=1),
+        # Above and below the calibrated rate (#1994: Aurora's documented capacity).
+        _q("pos", KEY_READ, ["orders"], cps=HOT, rows=1),
+        _q("neg", KEY_READ, ["orders"], cps=500, rows=1),
     ),
     (
         "simple-cache-read",
         "aurora_postgresql",
-        _q("pos", "SELECT * FROM orders WHERE status = $1 LIMIT 5", ["orders"], cps=500, rows=5),
-        _q("neg", "SELECT * FROM orders WHERE status = $1 LIMIT 5", ["orders"], cps=1, rows=5),
+        _q("pos", "SELECT * FROM orders WHERE status = $1 LIMIT 5", ["orders"], cps=HOT, rows=5),
+        _q("neg", "SELECT * FROM orders WHERE status = $1 LIMIT 5", ["orders"], cps=500, rows=5),
     ),
     (
         "large-result-sets",

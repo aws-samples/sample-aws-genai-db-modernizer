@@ -15,6 +15,7 @@ from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.analysis_output import TargetDatabase as OutputTargetDB
 from src.shared.contract_versioning import current_version
+from src.tools.analysis.aurora_common_pattern_catalog import HIGH_FREQUENCY_PK_LOOKUP_CPS
 
 # ==========================================================================
 # Fixtures
@@ -146,7 +147,8 @@ def high_freq_pk_fixture():
             "query_type": "SELECT",
             "query_text": "SELECT * FROM sessions WHERE id = $1",
             "tables_accessed": ["sessions"],
-            "calls_per_second": 500.0,
+            # Above Aurora's documented read capacity, the calibrated anti-01 rate (#1994).
+            "calls_per_second": HIGH_FREQUENCY_PK_LOOKUP_CPS + 1.0,
             "has_joins": False,
             "join_count": 0,
             "rows_returned_avg": 1.0,
