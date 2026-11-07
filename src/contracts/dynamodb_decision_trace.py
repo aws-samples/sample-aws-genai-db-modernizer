@@ -40,7 +40,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.contracts import decision_trace_base as base
 from src.contracts.analysis_output import MigrationComplexity
@@ -53,6 +53,7 @@ from src.contracts.decision_trace_base import (
     TimestampColumnsTrace,
     TraceSummary,
 )
+from src.contracts.schema_design_output import null_lists_as_empty
 
 # The shapes ``src/agents/referee/transaction_shape.py`` classifies a write into.
 TransactionShapeKind = Literal["single item", "bounded", "key scoped", "unbounded"]
@@ -188,6 +189,12 @@ class AggregateKeyDesign(BaseModel):
         description="query_ids from the input that justify this key design",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        # The advisor's strict tool schema offers null for this list; it means none.
+        return null_lists_as_empty(cls, data)
+
 
 class DenormStrategy(BaseModel):
     """Denormalization strategy recommendation for a detected opportunity."""
@@ -199,6 +206,12 @@ class DenormStrategy(BaseModel):
         default_factory=list,
         description="query_ids from the input that justify this strategy",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        # The advisor's strict tool schema offers null for this list; it means none.
+        return null_lists_as_empty(cls, data)
 
 
 class LlmAdvisorTrace(base.LlmAdvisorTrace):

@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
 
 from src.agents.prompt_framing import frame_untrusted
 from src.contracts.analysis_output import (
@@ -277,6 +277,12 @@ class DenormalizationStrategy(BaseModel):
 class LlmDocumentDBOutput(BaseModel):
     denormalization_strategies: list[DenormalizationStrategy]
     collection_design_notes: str = ""
+
+    @field_validator("collection_design_notes", mode="before")
+    @classmethod
+    def _null_notes_are_empty(cls, v: object) -> object:
+        # The advisor's strict tool schema offers null for this field; it means no notes.
+        return "" if v is None else v
 
 
 # ---------------------------------------------------------------------------

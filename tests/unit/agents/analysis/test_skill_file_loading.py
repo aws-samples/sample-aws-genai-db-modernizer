@@ -19,8 +19,8 @@ class TestDynamoDBAdvisorLoadsFromFile:
         from src.tools.analysis.dynamodb_analysis_tools import load_advisor_prompt
 
         prompt = load_advisor_prompt()
-        assert "MUST list the specific query_ids" in prompt
-        assert "Do NOT hallucinate" in prompt
+        assert "lists the specific query_ids" in prompt
+        assert "Name only tables, columns, query_ids and patterns that are in the input" in prompt
 
     def test_advisor_uses_loaded_prompt(self):
         from src.tools.analysis.dynamodb_analysis_tools import LlmAdvisor, load_advisor_prompt
@@ -41,8 +41,8 @@ class TestDocumentDBAdvisorLoadsFromFile:
         from src.tools.analysis.documentdb_analysis_tools import load_docdb_advisor_prompt
 
         prompt = load_docdb_advisor_prompt()
-        assert "embed, reference, or hybrid" in prompt
-        assert "Do NOT produce generic advice" in prompt
+        assert "choose `embed`, `reference` or `hybrid`" in prompt
+        assert "No generic advice" in prompt
 
     def test_advisor_uses_loaded_prompt(self):
         from src.tools.analysis.documentdb_analysis_tools import (
