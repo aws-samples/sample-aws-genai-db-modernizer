@@ -70,9 +70,30 @@ def md_text(value: Any) -> str:
     one of these escapes once the special characters are escaped too. Backticks and
     pipes are untouched here -- not special in flowing text, and :func:`md_code` /
     :func:`md_cell` are the right helpers for the contexts where they are.
+
+    Text inside a complete inline code span (a run of N backticks, content, then a
+    matching run of exactly N backticks) is left as written (#2000). Backslash
+    escapes are shown literally inside a code span, so escaping specials there
+    would make them visible. An unmatched backtick is not a code span, so everything
+    after it is escaped as usual.
     """
     s = str(value)
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    spans = _code_spans(s)
+    if not spans:
+        return _md_text_escape(s)
+    out: list[str] = []
+    last = 0
+    for start, end in spans:
+        out.append(_md_text_escape(s[last:start]))
+        out.append(s[start:end])  # leave code span content as written
+        last = end
+    out.append(_md_text_escape(s[last:]))
+    return "".join(out)
+
+
+def _md_text_escape(s: str) -> str:
+    """Apply the full md_text escaping to a segment that is outside any code span."""
     s = s.replace("<", "&lt;").replace(">", "&gt;")
     s = s.replace("\\", "\\\\")
     for ch in "[]()!*_":
@@ -119,7 +140,7 @@ def _code_spans(text: str) -> list[tuple[int, int]]:
 
 
 def md_text_with_ids(value: Any, query_ids: Collection[str]) -> str:
-    """:func:`md_text`, with each of the report's query ids (full, or its 8-character
+    """func:`md_text`, with each of the report's query ids (full, or its 8-character
     prefix, as the report's tables name one) that ``value`` holds as a whole word set
     as a code span, as the report prints every other query id. Only the ids the
     report itself holds count, so a hash or UUID in model prose stays prose; an id
