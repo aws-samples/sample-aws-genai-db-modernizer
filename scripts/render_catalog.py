@@ -60,10 +60,7 @@ from src.shared.catalog.patterns import (  # noqa: E402
     PatternEntry,
     patterns,
 )
-from src.shared.catalog.routine_checks import (  # noqa: E402
-    RoutineCheckRule,
-    routine_check_rules,
-)
+from src.shared.catalog.routine_checks import RoutineCheckRule, routine_check_rules  # noqa: E402
 from src.shared.catalog.routine_rewrites import (  # noqa: E402
     RoutineRewriteRule,
     routine_rewrite_rules,
@@ -641,8 +638,10 @@ _ROUTINE_CHECK_CLAIMS = {
 }
 
 
-# The MySQL checker's tests behind each MySQL rule's row (#1936).
+# The MySQL checker's tests behind each MySQL rule's row (#1936), and its version-change
+# tests (#1952).
 _MYSQL_ROUTINE_TESTS = "tests/unit/tools/routines/test_mysql_routine_checks.py::"
+_VERSION_TESTS = "tests/unit/tools/routines/test_mysql_version_change_checks.py::"
 _MYSQL_ROUTINE_CHECK_CLAIMS = {
     "parse": (
         _MYSQL_ROUTINE_TESTS + "test_bodies_that_do_not_close_are_unparseable",
@@ -666,8 +665,26 @@ _MYSQL_ROUTINE_CHECK_CLAIMS = {
         + "test_the_unknown_mode_check_gives_the_same_answer_with_any_subset_of_rules",
     ),
     "dynamic_sql": (_MYSQL_ROUTINE_TESTS + "test_dynamic_sql",),
+    "reserved_word": (
+        _VERSION_TESTS + "test_words_80_reserves_used_as_identifiers",
+        _VERSION_TESTS + "test_a_parameter_or_label_named_with_a_reserved_word_is_found",
+        _VERSION_TESTS + "test_for_each_row_and_the_routine_s_own_name_are_not_identifiers",
+    ),
+    "group_by": (_VERSION_TESTS + "test_group_by_sorting",),
     "dependencies": _DEPENDENCY_CHECK_CLAIM,
 }
+# The statement rules that read system variables or removed functions, version-change ones
+# included (#1952).
+_MYSQL_VERSION_STATEMENT_CLAIM = (
+    _VERSION_TESTS + "test_removed_functions_variables_and_deprecated_modifiers",
+)
+# A version-change rule's row (#1952): when it runs.
+_VERSION_CHANGE_CLAIM = (
+    _VERSION_TESTS + "test_rules_never_run_on_a_same_major_target",
+    _VERSION_TESTS + "test_a_57_source_gets_the_rules_on_every_line",
+    _VERSION_TESTS + "test_an_unknown_source_version_leaves_the_rules_unknown_never_pass",
+    _VERSION_TESTS + "test_the_version_change_scope",
+)
 
 
 def _codes(values: tuple[str, ...]) -> str:
@@ -703,9 +720,29 @@ def _routine_check_text(rule: RoutineCheckRule) -> str:
             parts.append("a SET of a " + _codes(match.set_scopes) + " variable")
         if match.set_variables:
             parts.append("a SET of " + _codes(match.set_variables))
+        if match.system_variables:
+            parts.append("a SET or an `@@` read of " + _codes(match.system_variables))
         if match.function_calls:
             parts.append("a call to " + _codes(match.function_calls))
         return "; ".join(parts) + "; a prepared statement's literal text counts too"
+    if match.check == "reserved_word":
+        text = (
+            "one of " + _codes(match.reserved_words) + " written as an unquoted identifier "
+            "after the routine's name (a parameter, variable, label, column or table name; "
+            "not after a `.`, not an `@` or `@@` variable), a prepared statement's literal "
+            "text included"
+        )
+        if match.reserved_word_contexts:
+            text += "; not inside " + _codes(match.reserved_word_contexts)
+        return text
+    if match.check == "group_by":
+        if match.group_by == "without_order_by":
+            return (
+                "a SELECT (a cursor's included) whose own GROUP BY has no ORDER BY after it "
+                "at the same level, or a GROUP BY at any level with a LIMIT and no ORDER BY "
+                "at its level (a grouped subquery, an INSERT ... SELECT)"
+            )
+        return "a GROUP BY that sorts its columns with `ASC` or `DESC`, at any level"
     if match.check == "sql_mode":
         if match.unknown_sql_modes:
             return "a stored sql_mode holding a mode no other rule names and MySQL does not list"
@@ -723,13 +760,33 @@ def _routine_check_text(rule: RoutineCheckRule) -> str:
     return text + "; any other language fails"
 
 
+def _version_change_text(rule: RoutineCheckRule) -> str:
+    """When a version-change rule runs (#1952), as a sentence for its row; empty for any
+    other rule."""
+    if rule.version_change is None:
+        return ""
+    line = rule.version_change.line
+    return (
+        f"; runs only when the source's version line is older than {line} and the target "
+        f"line is {line} or later (never on a same-major target; an unknown source version "
+        "is unknown, never a pass)"
+    )
+
+
 def _routine_check_claim(rule: RoutineCheckRule) -> str:
-    """The claim marker of a rule's row: its engine's checker tests for its check."""
+    """The claim marker of a rule's row: its engine's checker tests for its check (and, for
+    a version-change rule, the tests of when it runs)."""
     if rule.source_engines == ("postgresql",):
-        return _claim(_ROUTINE_CHECK_CLAIMS[rule.match.check])
-    if rule.source_engines == ("mysql",):
-        return _claim(_MYSQL_ROUTINE_CHECK_CLAIMS[rule.match.check])
-    return ""
+        tests = _ROUTINE_CHECK_CLAIMS[rule.match.check]
+    elif rule.source_engines == ("mysql",):
+        tests = _MYSQL_ROUTINE_CHECK_CLAIMS[rule.match.check]
+        if rule.match.check == "statement" and rule.version_change is not None:
+            tests = (*tests, *_MYSQL_VERSION_STATEMENT_CLAIM)
+    else:
+        return ""
+    if rule.version_change is not None:
+        tests = (*tests, *_VERSION_CHANGE_CLAIM)
+    return _claim(tests)
 
 
 def render_routine_checks_md(
@@ -746,7 +803,12 @@ def render_routine_checks_md(
         "the statement does not parse, and never holds the routine's statement or its literals."
         + _claim(_ROUTINE_SECTION_CLAIM)
         + " The target version line is the one the gap check's move lands on for the "
-        "source's installed extensions." + _claim(_ROUTINE_LINE_CLAIM),
+        "source's installed extensions."
+        + _claim(_ROUTINE_LINE_CLAIM)
+        + " A rule with a version change (#1952) checks what a newer major version changed: "
+        "it runs only when the source's version line is older than that version and the "
+        "target line has it, so never on a same-major target, and its outcome is unknown, "
+        "never a pass, when the source's version is unknown." + _claim(_VERSION_CHANGE_CLAIM),
         "",
         "| Rule | Sources | Targets | Kinds | Impact | Checks |",
         "|---|---|---|---|---|---|",
@@ -756,7 +818,8 @@ def render_routine_checks_md(
         out.append(
             f"| [`{r.id}`](#{r.id}) | {', '.join(r.source_engines)} | {md_cell(targets)} | "
             f"{', '.join(r.kinds)} | {_IMPACT_LABELS[r.impact]} | "
-            f"{md_cell(_routine_check_text(r))}{_routine_check_claim(r)} |"
+            f"{md_cell(_routine_check_text(r) + _version_change_text(r))}"
+            f"{_routine_check_claim(r)} |"
         )
     out.append("")
     for r in rules:

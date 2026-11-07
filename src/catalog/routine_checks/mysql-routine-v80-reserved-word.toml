@@ -1,0 +1,27 @@
+# Routine check mysql-routine-v80-reserved-word (#1952). Fields: src/shared/catalog/routine_checks.py.
+# Source: MySQL 8.0 Reference Manual, Keywords and Reserved Words (the words marked (R) that are new or became reserved in 8.0); Upgrading MySQL, Preparing Your Installation for Upgrade.
+id = "mysql-routine-v80-reserved-word"
+feature = "A word MySQL 8.0 reserves, used as an identifier"
+source_engines = ["mysql"]
+targets = ["aurora_mysql"]
+kinds = ["procedure", "function", "trigger", "event"]
+impact = "needs_rewrite"
+reason = "The routine uses as a name (a parameter, variable, label, column or table) a word that MySQL 8.0 reserves, so on Aurora MySQL 3 and later the statement no longer parses and the routine cannot be created."
+fix_hint = "Quote the name with backticks wherever the routine writes it (`rank`), or rename it, and do the same in the statements that call the routine or read the column."
+docs = "MySQL 8.0 Reference Manual, Keywords and Reserved Words; Preparing Your Installation for Upgrade"
+
+# A MySQL 5.7 routine moving to an 8.0 or later line: an 8.0 source already rejects these words.
+[version_change]
+line = "8.0"
+
+# Words reserved in MySQL 8.0 that 5.7 did not reserve (INFORMATION_SCHEMA.KEYWORDS, RESERVED = 1 on
+# the 8.0 line; ARRAY and MEMBER were reserved only briefly after 8.0.17 and are not today). FUNCTION, ROW and ROWS were 5.7
+# keywords, so their keyword uses in a 5.7 routine are left out (the contexts).
+[match]
+reserved_words = [
+  "CUBE", "CUME_DIST", "DENSE_RANK", "EMPTY", "EXCEPT", "FIRST_VALUE", "FUNCTION",
+  "GROUPING", "GROUPS", "INTERSECT", "JSON_TABLE", "LAG", "LAST_VALUE", "LATERAL", "LEAD",
+  "NTH_VALUE", "NTILE", "OF", "OVER", "PERCENT_RANK", "RANK", "RECURSIVE", "ROW",
+  "ROWS", "ROW_NUMBER", "SYSTEM", "WINDOW",
+]
+reserved_word_contexts = ["EACH ROW", "ROW (", "DROP FUNCTION", "SHOW FUNCTION", "CREATE FUNCTION", "ALTER FUNCTION", "ON FUNCTION"]

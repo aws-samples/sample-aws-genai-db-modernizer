@@ -129,7 +129,14 @@ def test_the_dependency_check_shows_in_the_verdict_and_unknown_does_not_block() 
         kind="procedure",
         create_sql="CREATE PROCEDURE p() BEGIN PREPARE s FROM @q; EXECUTE s; END",
     )
-    verdict = check_mysql_routine(routine, target_engine="aurora_mysql", target_user="admin")
+    # A same-major move, so no version-change rule (#1952) is in the verdict.
+    verdict = check_mysql_routine(
+        routine,
+        target_engine="aurora_mysql",
+        target_line="8.0",
+        target_user="admin",
+        source_version="8.0.36",
+    )
     node = mysql_node(routine, verdict)
     assert not node.dependencies_complete
     checked = with_dependency_check(verdict, node, MovedObjects())
@@ -194,7 +201,9 @@ def test_moved_objects_of_a_step_holds_its_routines() -> None:
 def test_mysql_and_postgresql_nodes_carry_the_checkers_dependencies() -> None:
     text = (CORPUS / "clean-procedure.sql").read_text(encoding="utf-8")
     routine = MySqlRoutine(routine_id="shop.clean_procedure", kind="procedure", create_sql=text)
-    verdict = check_mysql_routine(routine, target_engine="aurora_mysql", target_user="admin")
+    verdict = check_mysql_routine(
+        routine, target_engine="aurora_mysql", target_user="admin", source_version="8.0.36"
+    )
     node = mysql_node(routine, verdict)
     assert (node.schema_name, node.name) == ("shop", "clean_procedure")
     assert node.dependencies == verdict.dependencies and node.dependencies_complete

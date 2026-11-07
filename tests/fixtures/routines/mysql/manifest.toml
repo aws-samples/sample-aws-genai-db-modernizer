@@ -2,7 +2,9 @@
 # made up for the tests; none comes from a customer. Checked with target_user = "admin".
 #
 # Per routine: file, kind, sql_mode (default STRICT_TRANS_TABLES), optional security_type
-# and definer metadata, the expected status, parsed flag, findings ("<rule id>:<evidence>"),
+# and definer metadata, the source server's version (source_version, default none, #1952), the target
+# line (target_line, default none),
+# the expected status, parsed flag, findings ("<rule id>:<evidence>"),
 # dependencies ("table:<schema>.<name>" or "routine:<schema>.<name>", schema may be empty)
 # and dependencies_complete (default true).
 
@@ -275,3 +277,86 @@ status = "as_is"
 parsed = true
 findings = []
 dependencies = ["table:.orders"]
+
+# MySQL 5.7 routines for the 5.7 to 8.0 version-change rules (#1952), checked with
+# source_version = "5.7.44-log"; every other entry has no source_version, so those rules
+# are unknown there, never a pass.
+
+[[routine]]
+file = "v57-clean.sql"
+kind = "procedure"
+source_version = "5.7.44-log"
+status = "as_is"
+parsed = true
+findings = []
+dependencies = ["table:.customer_totals", "table:.customers", "table:.orders"]
+
+[[routine]]
+file = "v57-reserved-words.sql"
+kind = "procedure"
+source_version = "5.7.44-log"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v80-reserved-word:GROUPS", "mysql-routine-v80-reserved-word:LAG", "mysql-routine-v80-reserved-word:RANK", "mysql-routine-v80-reserved-word:SYSTEM"]
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "v57-found-rows.sql"
+kind = "procedure"
+source_version = "5.7.44-log"
+status = "as_is"
+parsed = true
+findings = ["mysql-routine-v80-found-rows:FOUND_ROWS()", "mysql-routine-v80-found-rows:SQL_CALC_FOUND_ROWS"]
+dependencies = ["table:.orders"]
+
+[[routine]]
+file = "v57-group-by.sql"
+kind = "procedure"
+source_version = "5.7.44-log"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v80-group-by-direction:GROUP BY DESC", "mysql-routine-v80-group-by-sort:GROUP BY without ORDER BY"]
+dependencies = ["table:.customers"]
+dependencies_complete = false
+
+[[routine]]
+file = "v57-removed-functions.sql"
+kind = "function"
+source_version = "5.7.44-log"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v80-removed-function:ENCRYPT()", "mysql-routine-v80-removed-function:PASSWORD()", "mysql-routine-v80-removed-spatial-function:ASTEXT()", "mysql-routine-v80-removed-spatial-function:X()"]
+dependencies = []
+dependencies_complete = false
+
+[[routine]]
+file = "v57-sql-cache.sql"
+kind = "trigger"
+source_version = "5.7.44-log"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v80-query-cache-hint:SQL_CACHE"]
+dependencies = ["table:.orders"]
+dependencies_complete = false
+
+[[routine]]
+file = "v57-removed-variables.sql"
+kind = "event"
+source_version = "5.7.44-log"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v80-removed-system-variable:@@tx_read_only", "mysql-routine-v80-removed-system-variable:SET tx_isolation"]
+dependencies = ["table:.app_logs"]
+
+# An 8.0 routine bound for the 8.4 line: the 8.0 to 8.4 rules (#2006 review).
+[[routine]]
+file = "v80-to-84.sql"
+kind = "procedure"
+source_version = "8.0.36"
+target_line = "8.4"
+status = "needs_attention"
+parsed = true
+findings = ["mysql-routine-v84-removed-function:WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS()", "mysql-routine-v84-removed-statement:FLUSH HOSTS", "mysql-routine-v84-removed-system-variable:SET expire_logs_days", "mysql-routine-v84-reserved-word:QUALIFY"]
+# sqlglot reads QUALIFY as a keyword, so the statement naming orders is not read.
+dependencies = []
+dependencies_complete = false
