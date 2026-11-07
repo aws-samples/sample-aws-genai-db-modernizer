@@ -21,11 +21,11 @@ Version History:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 # ---------------------------------------------------------------------------
 # Building blocks
@@ -90,6 +90,11 @@ class IndexDefinition(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
     @field_validator("index_type", mode="before")
     @classmethod
     def _null_index_type_is_compound(cls, v: object) -> object:
@@ -124,6 +129,11 @@ class CollectionDefinition(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
     @model_validator(mode="after")
     def validate_doc_size(self) -> CollectionDefinition:
@@ -232,3 +242,8 @@ class DocumentDBModelOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)

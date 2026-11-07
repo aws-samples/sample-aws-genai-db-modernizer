@@ -19,7 +19,7 @@ script's work.
   (triggers, procedures, views). An index `USING fulltext` or `USING spatial` is
   a FULLTEXT or SPATIAL index: the merge keeps it, and an Aurora MySQL delta
   names no method.
-- **analysis.redesign_requirements** (inside `design_view.analysis`): queries routing scored as a redesigned target would serve them (ADR-031 Decision 2 Amendment 13), each with `index_on`, the `table.column` filters the source has no index on. Where `routing_depends` is true the plan relies on that index: add it in the delta (`add_indexes`, or a partial index for a column tested `IS NOT NULL`). Where it is false the engine already scores the query as well as written: add the index only if the query is hot.
+- **analysis.redesign_requirements** (inside `design_view.analysis`): queries routing scored as a redesigned target would serve them, each with `index_on`, the `table.column` filters the source has no index on. Where `routing_depends` is true the plan relies on that index: add it in the delta (`add_indexes`; for a column tested `IS NOT NULL`, a plain index on that column, since Aurora MySQL has no partial indexes). Where it is false the engine already scores the query as well as written: add the index only if the query is hot.
 - **analysis.carried_writes** (inside `design_view.analysis`): write-group members this engine serves poorly (#1362). Each names the statement (`query_id`), what it is for (`intent`: a retention delete, an orphan clean-up, a consistency repair sweep, a duplicate clean-up, a delete by any of several references, a bulk status flip, or another set-based write) and `approach`, the target-native way this engine serves that intent. Routing keeps these statements here because a table has one writer (ADR-031 Decision 1 Amendment 9), not because they fit. Model the statement's intent, not its source shape: the source's set-based SQL is where the investigation starts, not the design. Serve each one as its `approach` says; if the design cannot, say why in `trade_offs`. On Aurora the delta holds index changes only: an index the approach needs goes in `add_indexes` (a carried write's approach counts as a reason for an index, like a hot query); a constraint, a trigger, partitioning or a rule the database can enforce goes in `optimizations` (category `partitioning` or `other`) as a recommendation, and a rule the application must enforce in `app_layer_notes`.
 - **migration_strategy**: `carry_over` (source is MySQL) or `translate`
   (source is another engine).
@@ -43,7 +43,8 @@ regenerates the DDL and validates the full contract.
    often:
    - `DECIMAL(p,s)` with no precision/scale is lossy by itself — confirm the
      precision and scale from observed values or query patterns; never leave a
-     bare `DECIMAL`.
+     bare `DECIMAL`. Aurora MySQL caps precision at 65 and scale at 30, and the
+     scale never exceeds the precision; the merge rejects a wider type.
    - Length-less strings must be sized deliberately: pick `VARCHAR(n)` when
      cardinality and observed max length support a bound, or `TEXT` when
      values are unbounded or the source column had no reliable max.
@@ -56,12 +57,19 @@ regenerates the DDL and validates the full contract.
    source; if it can't be expressed as a column attribute, note it).
 4. **Add Aurora optimizations** driven by `hot_queries`: partitioning for
    large hot tables and read-replica routing for read-heavy patterns. Put each
-   in `optimizations`. Express index
+   in `optimizations`, with a `category` of `partitioning`, `read_replica`,
+   `index` or `other`, a `target`, a `recommendation` and a `rationale`. The
+   contract also has `io_optimized`; never use it (see Storage configuration
+   below). Express index
    changes for frequent filter/sort columns without an index as
    `tables[].add_indexes` / `modify_indexes` (structured entries
    `{index_name, columns, unique}` over that table's columns; the script renders
    the DDL) and `remove_indexes` (names). modify/remove name an index from that
-   table's `indexes`. Every `aurora_type` is a plain SQL type such as `BIGINT`
+   table's `indexes`. Those entries are the only source of index DDL: an
+   `index` optimization records an index recommendation you do not add, and
+   never creates one. An Aurora MySQL index entry takes no `method`, `include`
+   or `where`: those are Aurora PostgreSQL only, and the merge rejects them
+   here. Every `aurora_type` is a plain SQL type such as `BIGINT`
    or `VARCHAR(255)`, never a constraint or default.
 
    **Storage configuration.** Do not choose Standard or I/O-Optimized from write
@@ -70,7 +78,7 @@ regenerates the DDL and validates the full contract.
    spending" and Standard when it is below 25%
    (<https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.StorageReliability.html>).
    The pipeline's cost estimate states the storage configuration (the sizing
-   module's figure, design on issue #1000); take it from there and never decide
+   module's figure); take it from there and never decide
    it in the design.
 
    **Serverless v2.** If you propose Aurora Serverless v2 with a minimum of 0 ACU
@@ -106,7 +114,7 @@ Return only an `AuroraDesignDeltaContract`: `delta_version` ("1.0"),
 
 Name only engines that remain in the target architecture. `design_view.analysis.effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list. `engines`, `eliminated_engines` and `absorbed_by` hold engine ids: in prose, name each engine by its AWS service name (`aurora_postgresql` is Aurora PostgreSQL, `aurora_mysql` Aurora MySQL, `dynamodb` DynamoDB, `documentdb` DocumentDB, `opensearch` OpenSearch, `elasticache` ElastiCache). Never write an engine id in prose (a trade-off, workaround, reason, note or recommendation); an IAM action or condition key such as `dynamodb:LeadingKeys` is AWS's own name and stays as written.
 
-Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+Trade-offs (`description`, `impact`), optimizations (`recommendation`, `rationale`) and app-layer notes (`recommendation`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
 - None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
