@@ -5,13 +5,16 @@
 
 Decision 4 once said statements in one transaction move together. The code never
 did that: the collected statistics carry no transaction boundary, so no group can
-form from one. Units form from two sources only, merged by
+form from one. Units form from three sources only, merged by
 ``write_groups.placement_groups`` for every routing pass:
 
 - a co-dependency (JOIN) group: queries sharing a significant join on a table
   (``co_dependency.build_co_dependency_groups``);
 - a table's write group: its writes and its locking reads (Amendment 9,
-  ``write_groups.build_write_groups``). A plain read stays per query.
+  ``write_groups.build_write_groups``). A plain read stays per query;
+- a routine unit: the statements the collection links to one procedure, function or
+  trigger (Amendment 21, #1654, ``routine_units.build_routine_units``), which run in one
+  transaction on the source. A collection that links no statement to a routine has none.
 
 Transaction groups are #1533. When that lands, these tests and Decision 4's text
 change together.
@@ -180,11 +183,12 @@ class TestDecision4StatesWhatTheCodeDoes:
             _decision_4()
         )
 
-    def test_decision_4_names_both_sources_and_the_merge(self) -> None:
+    def test_decision_4_names_the_three_sources_and_the_merge(self) -> None:
         text = _decision_4()
         for name in (
             "co_dependency.build_co_dependency_groups",
             "write_groups.build_write_groups",
+            "routine_units.build_routine_units",
             "write_groups.placement_groups",
         ):
             assert f"`{name}`" in text, name

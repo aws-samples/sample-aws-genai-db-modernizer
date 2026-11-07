@@ -602,6 +602,11 @@ Version History:
   statements, following their routine"``, a new blame group: SQL Server statements on
   temporary objects only, each on the engine its routine's other statements are on,
   #1891).
+- 1.80 (2026-11-07, #1654): Added SynthesisOutputContract.routine_units
+  (RoutineUnitFact: merged_by, query_ids, tables, engine, engines), each placement unit
+  a procedure, function or trigger merged, and the routine value of TableGroup.kind, a
+  wave table group from a routine unit (#1654). Backward compatible: routine_units
+  defaults to an empty list.
 """
 
 from datetime import datetime
@@ -1029,11 +1034,13 @@ class TableGroup(BaseModel):
             "for a multi-table query)"
         ),
     )
-    kind: Literal["co_dependency", "independent"] | None = Field(
+    kind: Literal["co_dependency", "routine", "independent"] | None = Field(
         None,
         description=(
-            "Whether this group came from a co-dependency group or is the remainder. "
-            "None for a wave written before this field existed."
+            "Whether this group came from a co-dependency group, a routine unit (a "
+            "procedure's or trigger's statements, #1654, merged with the co-dependency "
+            "groups it touches) or is the remainder. None for a wave written before this "
+            "field existed."
         ),
     )
 
@@ -2252,6 +2259,37 @@ class RoutineFollower(BaseModel):
     engine: str = Field(..., description="The engine its routine's other statements are on")
 
 
+class RoutineUnitMerge(BaseModel):
+    """A routine behind a routine unit's merge (#1654)."""
+
+    kind: Literal["procedure", "function", "trigger"] = Field(
+        ..., description="What the routine is, as the collection's schema lists it"
+    )
+    id: str = Field(..., description="The routine, '<schema>.<name>'")
+
+
+class RoutineUnitFact(BaseModel):
+    """A placement unit one or more routines merged (#1654, ADR-031 Decision 4
+    Amendment 21): its statements move as one, because on the source they run together
+    in the routine (in one transaction where the routine opens one)."""
+
+    merged_by: list[RoutineUnitMerge] = Field(
+        default_factory=list, description="The procedures and triggers behind the merge"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The unit's in-scope statements, in placement order"
+    )
+    tables: list[str] = Field(
+        default_factory=list, description="The source tables those statements read or write"
+    )
+    engine: str | None = Field(
+        None, description="The one engine the unit is on; None when an edit split it"
+    )
+    engines: list[str] = Field(
+        default_factory=list, description="Every engine the unit's statements are on"
+    )
+
+
 class TableSource(BaseModel):
     """A written table's source of truth and replicas (#992, ADR-031 Amendment 9)."""
 
@@ -2920,7 +2958,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.79",
+        default="1.80",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -3061,6 +3099,14 @@ class SynthesisOutputContract(BaseModel):
             "The SQL Server statements on temporary objects that follow the routine they "
             "run in (#1891): each on the engine its routine's other statements are on, not "
             "scored on its own. Empty when none does (a collection that names no routine)."
+        ),
+    )
+    routine_units: list[RoutineUnitFact] = Field(
+        default_factory=list,
+        description=(
+            "Each placement unit a procedure or trigger merged (#1654): which routines "
+            "merged it, its statements, tables and engine. Empty when none did (a "
+            "collection that names no routine)."
         ),
     )
     table_sources: list[TableSource] | None = Field(

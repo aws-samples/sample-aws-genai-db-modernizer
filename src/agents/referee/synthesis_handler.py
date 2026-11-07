@@ -39,7 +39,7 @@ from src.agents.referee.query_pattern import (
     fixable_findings,
     redesign_requirements,
 )
-from src.agents.referee.routine_units import following
+from src.agents.referee.routine_units import following, routine_unit_facts, routine_units_of
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.summary_input_slim import slim_summary_input
@@ -372,6 +372,8 @@ def run_synthesis_deterministic(
         table_assignments=raw_table_assignments,
         query_assignments=assignment.get("query_assignments") or [],
         co_dependency_groups=assignment.get("co_dependency_groups") or [],
+        # #1654: a routine's tables move together in a wave, as a JOIN group's do.
+        routine_units=routine_units_of(assignment, data.collector),
         cache_overlay=cache_overlay,
         source_engine=source_database_engine(data.collector),
         source=SourceScope.from_collector(data.collector),
@@ -1415,6 +1417,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         "summary_input_budget": result.get("summary_input_budget"),
         # #1891: the statements on temporary objects that follow their routine.
         "routine_followers": following(data.assignment, data.collector),
+        # #1654: each placement unit a procedure or trigger merged, and what merged it.
+        "routine_units": routine_unit_facts(data.assignment, data.collector),
         # #992: each written table's source of truth and replicas, from the
         # assignment's write groups (None for an assignment written before them).
         "table_sources": (

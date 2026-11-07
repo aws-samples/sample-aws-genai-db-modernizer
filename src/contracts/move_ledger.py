@@ -149,6 +149,9 @@ Version History:
   (``group.routine_follow``): a SQL Server statement on temporary objects placed on the
   engine its routine's other statements are on, neither scored nor gated with them
   (#1891, ADR-031 Decision 4 Amendment 20).
+- 1.13 (2026-11-07, #1654): Added the ReasonCode.ROUTINE value (group.routine): a member
+  of a routine unit no write group holds, placed with the unit on its mean (#1654,
+  ADR-031 Decision 4 Amendment 21).
 """
 
 from __future__ import annotations
@@ -215,6 +218,11 @@ class ReasonCode(str, Enum):
     # other statements are on (#1891, ADR-031 Decision 4 Amendment 20): it follows the
     # routine and is neither scored nor gated with it.
     ROUTINE_FOLLOW = "group.routine_follow"
+    # A member of a routine unit no write group holds (#1654, ADR-031 Decision 4
+    # Amendment 21): a procedure's statements, or a trigger's and the writes that fire
+    # it, run together in the routine on the source, so they move as one unit, placed on
+    # the unit's mean.
+    ROUTINE = "group.routine"
     # A unit holding a table's write group: all of a table's writes share one
     # engine, its source of truth (ADR-031 Amendment 9, #992), placed on the unit's mean.
     WRITE_GROUP = "group.write"

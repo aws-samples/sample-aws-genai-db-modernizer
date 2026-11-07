@@ -130,7 +130,11 @@ _SUGGESTED_PATH_NOTE = (
 
 # Readable labels for a TableGroup's "kind" (#225): the raw contract value is
 # snake_case for machine consumers, never shown verbatim to a reader.
-_GROUP_KIND_LABELS = {"co_dependency": "co-dependency", "independent": "independent"}
+_GROUP_KIND_LABELS = {
+    "co_dependency": "co-dependency",
+    "routine": "routine",
+    "independent": "independent",
+}
 
 
 # How many names the kept-in-sync line and the wave's table list show before "+N more".

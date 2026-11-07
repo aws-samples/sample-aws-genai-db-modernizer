@@ -1015,6 +1015,8 @@
   "graph-explorer.walkthroughs.gate": "Gate: {{gate}}",
   "graph-explorer.walkthroughs.group-co-dependency_one": "Wave {{wave}}, group {{index}} of {{total}}: this {{count}} table moves with the rest of its group because their queries are co-dependent",
   "graph-explorer.walkthroughs.group-co-dependency_other": "Wave {{wave}}, group {{index}} of {{total}}: these {{count}} tables move together because their queries are co-dependent",
+  "graph-explorer.walkthroughs.group-routine_one": "Wave {{wave}}, group {{index}} of {{total}}: this {{count}} table moves with the rest of its group because a procedure or trigger runs their queries together",
+  "graph-explorer.walkthroughs.group-routine_other": "Wave {{wave}}, group {{index}} of {{total}}: these {{count}} tables move together because a procedure or trigger runs their queries together",
   "graph-explorer.walkthroughs.group-independent_one": "Wave {{wave}}, group {{index}} of {{total}}: this {{count}} table has no co-dependent queries",
   "graph-explorer.walkthroughs.group-independent_other": "Wave {{wave}}, group {{index}} of {{total}}: these {{count}} tables have no co-dependent queries, so they move as one independent group",
   "graph-explorer.walkthroughs.group-queries_one": "{{count}} query moves in this group, to {{engines}}.",

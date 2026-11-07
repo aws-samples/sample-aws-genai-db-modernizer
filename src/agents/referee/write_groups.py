@@ -18,7 +18,9 @@ the members, every member servable, ties through ``tie_break``.
 
 A write group and a co-dependency group that share a statement must move
 together, or one of them would split, so every routing pass places
-:func:`placement_groups`: the two kinds merged where they overlap.
+:func:`placement_groups`: the two kinds merged where they overlap, with a third
+source, routine units (#1654, ADR-031 Amendment 21: ``routine_units.
+build_routine_units``), merged the same way.
 Administration statements (``TRUNCATE``, DDL, ...) never enter routing (the
 utility pin keeps them on the source-compatible engine), so they join no write
 group. Neither does a placeholder or dummy table (``unknown``, ``None``, ``DUAL``,
@@ -191,17 +193,22 @@ def build_write_groups(
 def placement_groups(
     co_dependency_groups: Iterable[Iterable[str]],
     write_groups: Mapping[str, Iterable[str]] | None,
+    routine_units: Mapping[str, Iterable[str]] | None = None,
 ) -> list[list[str]]:
-    """The units every routing pass places as one: co-dependency groups and write
-    groups (two or more members), merged where they share a query.
+    """The units every routing pass places as one: co-dependency groups, write
+    groups and routine units (#1654: ``routine_units.routine_unit_members``, a
+    procedure's statements, or a trigger's and the writes that fire it), each of
+    two or more members, merged where they share a query.
 
     Deterministic: units come in the order of their first member (co-dependency
-    groups first, in their order, then write groups by table), members in the
-    order first seen. A co-dependency group no write group touches comes back
-    exactly as given.
+    groups first, in their order, then write groups by table, then routine units
+    by routine id), members in the order first seen. A co-dependency group no
+    write group or routine unit touches comes back exactly as given, and with no
+    routine units the result is exactly the two-source merge.
     """
     sources = [list(g) for g in co_dependency_groups]
     sources += [list(m) for _, m in sorted((write_groups or {}).items()) if len(list(m)) >= 2]
+    sources += [list(m) for _, m in sorted((routine_units or {}).items()) if len(list(m)) >= 2]
     parent: dict[str, str] = {}
 
     def find(x: str) -> str:
@@ -252,14 +259,21 @@ def unit_write_tables(
     )
 
 
-def assignment_placement_groups(assignment: Mapping | None) -> list[list[str]]:
+def assignment_placement_groups(
+    assignment: Mapping | None, collector_output: Mapping | None = None
+) -> list[list[str]]:
     """:func:`placement_groups` of an assignment artifact (a dict): its
-    ``co_dependency_groups`` and ``write_groups``. An artifact written before
-    write groups existed gives its co-dependency groups alone."""
+    ``co_dependency_groups``, ``write_groups`` and ``routine_units`` (#1654). An
+    artifact written before write groups existed gives its co-dependency groups
+    alone; one written before routine units reads ``collector_output``'s
+    (``routine_units.routine_units_for``), and none without it."""
+    from src.agents.referee.routine_units import routine_units_of
+
     assignment = assignment or {}
     return placement_groups(
         assignment.get("co_dependency_groups") or [],
         saved_write_groups(assignment),
+        routine_units_of(assignment, collector_output),
     )
 
 
@@ -432,10 +446,14 @@ def _call_rate(query: Mapping | None) -> float:
 
 
 def assignment_unit_weights(
-    assignment: Mapping | None, query_by_id: Mapping[str, Mapping]
+    assignment: Mapping | None,
+    query_by_id: Mapping[str, Mapping],
+    collector_output: Mapping | None = None,
 ) -> dict[str, float]:
     """:func:`unit_call_weights` of an assignment artifact's placement units."""
     assignment = assignment or {}
     return unit_call_weights(
-        assignment_placement_groups(assignment), saved_write_groups(assignment), query_by_id
+        assignment_placement_groups(assignment, collector_output),
+        saved_write_groups(assignment),
+        query_by_id,
     )

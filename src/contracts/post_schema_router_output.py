@@ -49,6 +49,8 @@ Version History:
 - 1.9 (2026-11-06, #1891): Added the ``group.routine_follow`` reason code value
   (``ReasonCode.ROUTINE_FOLLOW``, #1891): a SQL Server statement on temporary objects
   placed on the engine its routine's other statements are on.
+- 1.10 (2026-11-07, #1654): Added the group.routine reason code value
+  (ReasonCode.ROUTINE, #1654): a member of a routine unit placed with the unit.
 """
 
 from __future__ import annotations
@@ -148,7 +150,7 @@ class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.9", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.10", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")

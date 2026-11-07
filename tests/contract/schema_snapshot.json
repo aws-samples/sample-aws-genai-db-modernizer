@@ -1464,6 +1464,7 @@
                     "co_dependency_on_non_join_engine",
                     "co_dependency_split",
                     "read_write_split",
+                    "routine_unit_split",
                     "stranded_count",
                     "write_split"
                   ]
@@ -2144,6 +2145,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine",
                               "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
@@ -2256,6 +2258,7 @@
                     "gate.key_scoped_count",
                     "group.customer_propagation",
                     "group.mean",
+                    "group.routine",
                     "group.routine_follow",
                     "group.write",
                     "group.write_customer_propagation",
@@ -2690,6 +2693,55 @@
           ]
         }
       },
+      "routine_units": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "fired_by": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "kind": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "function",
+                    "procedure",
+                    "trigger"
+                  ]
+                }
+              },
+              "query_ids": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "routine_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
       "source": {
         "required": false,
         "schema": {
@@ -3009,8 +3061,8 @@
         }
       }
     },
-    "schema_hash": "00856f80ab03afb9b760899b6253a6be72589922b9a8e4b39e5bfe97f9b79f1a",
-    "version": "1.25"
+    "schema_hash": "6102a9d0abf52c10473f2e39bd11a35c8ff4dfad9a0096acba7dfd7615081f32",
+    "version": "1.26"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -20741,6 +20793,7 @@
                                   "gate.key_scoped_count",
                                   "group.customer_propagation",
                                   "group.mean",
+                                  "group.routine",
                                   "group.routine_follow",
                                   "group.write",
                                   "group.write_customer_propagation",
@@ -21047,8 +21100,8 @@
         }
       }
     },
-    "schema_hash": "7acfe0c7b0edd2558dcc3fd700bac9e480c69b79dfed2f282f54b1e4569d22ff",
-    "version": "1.9"
+    "schema_hash": "590a3ebb74253c408266968bac3f8b1a3d13345500c2d9352e87f717f12dea70",
+    "version": "1.10"
   },
   "reality_check_marker.RealityCheckMarker": {
     "fields": {
@@ -29490,7 +29543,8 @@
                                       "kind": "enum",
                                       "values": [
                                         "co_dependency",
-                                        "independent"
+                                        "independent",
+                                        "routine"
                                       ]
                                     },
                                     {
@@ -30526,6 +30580,7 @@
                                         "gate.key_scoped_count",
                                         "group.customer_propagation",
                                         "group.mean",
+                                        "group.routine",
                                         "group.routine_follow",
                                         "group.write",
                                         "group.write_customer_propagation",
@@ -30965,6 +31020,7 @@
                                       "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.routine",
                                       "group.routine_follow",
                                       "group.write",
                                       "group.write_customer_propagation",
@@ -31164,6 +31220,7 @@
                                       "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.routine",
                                       "group.routine_follow",
                                       "group.write",
                                       "group.write_customer_propagation",
@@ -31498,6 +31555,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine",
                               "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
@@ -31632,6 +31690,7 @@
                               "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.routine",
                               "group.routine_follow",
                               "group.write",
                               "group.write_customer_propagation",
@@ -32165,6 +32224,92 @@
                 "schema": {
                   "kind": "scalar",
                   "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "routine_units": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "engine": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "engines": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "merged_by": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "object",
+                    "properties": {
+                      "id": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "kind": {
+                        "required": true,
+                        "schema": {
+                          "kind": "enum",
+                          "values": [
+                            "function",
+                            "procedure",
+                            "trigger"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "kind": "array"
+                }
+              },
+              "query_ids": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "tables": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
                 }
               }
             }
@@ -33509,8 +33654,8 @@
         }
       }
     },
-    "schema_hash": "1bc6629a14a3957b108e99e972e3e9f86b0b7a8191da20dafe507333fd2a9634",
-    "version": "1.79"
+    "schema_hash": "21602683bbd1980be64a347d7248a249c3de6e7a3445573c4e56e4d2fb8b1037",
+    "version": "1.80"
   },
   "transformation_contract.StepContract": {
     "fields": {

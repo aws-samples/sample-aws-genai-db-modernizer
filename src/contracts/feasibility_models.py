@@ -23,6 +23,8 @@ Version History:
 - 1.3 (2026-10-20, #1151): Added ``FindingKind.STRANDED_COUNT``: a key-scoped count left
   on an engine its waiver no longer covers, because a reroute held a customer's pin
   (ADR-031 Decision 2 Amendment 12). Blocking.
+- 1.4 (2026-11-07, #1654): Added FindingKind.ROUTINE_UNIT_SPLIT: a routine unit a
+  customer edit split across engines (ADR-031 Decision 4 Amendment 21). Advisory.
 """
 
 from __future__ import annotations
@@ -49,6 +51,11 @@ class FindingKind(str, Enum):
     # there (ADR-031 Decision 2 Amendment 12), whose table's writes are elsewhere: a
     # count the customer pinned, which a reroute held rather than move (#1151). Blocking.
     STRANDED_COUNT = "stranded_count"
+    # A routine unit a customer edit split across engines (#1654, ADR-031 Decision 4
+    # Amendment 21): the routine's statements run together on the source, so the routine
+    # has to be rewritten to call each engine, and a transaction it opens no longer spans
+    # them. Advisory: the customer's split stands, as a co-dependency split's does.
+    ROUTINE_UNIT_SPLIT = "routine_unit_split"
 
 
 class FindingSeverity(str, Enum):

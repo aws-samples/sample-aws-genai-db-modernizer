@@ -34,6 +34,9 @@ REASON_CODES: Mapping[ReasonCode, PublicReasonCode] = {
     R.GROUP_CUSTOMER_PROPAGATION: "co_dependency",
     # A statement on temporary objects that follows its routine's engine (#1891).
     R.ROUTINE_FOLLOW: "co_dependency",
+    # A member of a routine unit (#1654): the 1.3 contract has no routine code, so it
+    # reads as the co-dependency rule (contract 1.4, #1656, gives routine groups a kind).
+    R.ROUTINE: "co_dependency",
     R.WRITE_GROUP: "write_group",
     # Moved with a write of the same table: a table's writes share one engine.
     R.WRITE_GROUP_CUSTOMER_PROPAGATION: "write_group",

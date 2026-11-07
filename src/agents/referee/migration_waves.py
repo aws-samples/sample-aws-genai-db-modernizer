@@ -133,7 +133,7 @@ union to both engines at once.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.agents.referee.assignment_resolver import retained_engine_for
@@ -316,8 +316,14 @@ def build_migration_waves(
     aurora_engine_choice: dict[str, Any] | None = None,
     source: SourceScope | None = None,
     engine_scope: Iterable[str] | None = None,
+    routine_units: Mapping[str, Iterable[str]] | None = None,
 ) -> list[dict[str, Any]] | None:
     """The incremental migration roadmap for this report, or ``None`` with no assignment.
+
+    ``routine_units`` (#1654, ``routine_units.routine_unit_members``: a procedure's
+    statements, or a trigger's and the writes that fire it) join the co-dependency
+    groups as table groups do (``write_groups.placement_groups``), so a wave never
+    splits a routine's tables; with none, ``co_dependency_groups`` is used as given.
 
     Pure function of the synthesis data already loaded for ``ranking``,
     ``table_mappings``/``cache_overlay`` and the assignment artifact
@@ -372,6 +378,14 @@ def build_migration_waves(
     relational target, so wave 1 names none (#1329): never the source-compatible
     engine the scope left out.
     """
+    routine_query_ids: frozenset[str] = frozenset(
+        q for members in (routine_units or {}).values() for q in members
+    )
+    if routine_query_ids:
+        from src.agents.referee.write_groups import placement_groups
+
+        co_dependency_groups = placement_groups(co_dependency_groups, {}, routine_units)
+
     if not ranking:
         return None
     by_engine = {str(r["target"]): r for r in ranking if r.get("target")}
@@ -444,6 +458,7 @@ def build_migration_waves(
             retained_engine,
             source_engine,
             after_cache=cache is not None,
+            routine_query_ids=routine_query_ids,
         )
 
     doc_wave = None

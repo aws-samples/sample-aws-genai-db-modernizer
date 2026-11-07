@@ -122,6 +122,9 @@ def categorize(reason: str) -> str:
     if "write group: one source of truth" in reason:
         # #992 (ADR-031 Amendment 9): a unit holding a table's write group.
         return "write_group_tie" if "scores tie with" in reason else "write_group"
+    if reason.startswith("routine unit (") or " routine unit (" in reason:
+        # #1654 (ADR-031 Amendment 21): a member its routine unit placed.
+        return "routine_unit_tie" if "scores tie with" in reason else "routine_unit"
     if "co-dependency group" in reason:
         # "scores tie with" (#503): break_owner_tie's wording changed from
         # "(tie with X: ...)" to a full, honest sentence built with

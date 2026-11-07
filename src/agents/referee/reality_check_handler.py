@@ -60,11 +60,7 @@ from src.agents.referee.reality_check_request import (
     with_read_pages,
 )
 from src.agents.referee.reality_check_summary import finalize_executive_summary
-from src.agents.referee.routine_units import (
-    RoutineFollowers,
-    follow_routines,
-    relational_engine_of,
-)
+from src.agents.referee.routine_units import RoutineFollowers, follow_routines, relational_engine_of
 from src.agents.referee.tie_break import settled_counts
 from src.agents.referee.write_groups import (
     assignment_placement_groups,
@@ -846,8 +842,12 @@ def _apply_model_flags(result: dict, flags: list) -> None:
         settled=_flag_settled_counts(result, kept_engines),
         # Co-dependency and write groups (ADR-031 Decision 4 and Amendment 9): each unit
         # moves as one, so a flag never splits a table's writes.
-        co_dependency_groups=assignment_placement_groups(result.get("assignment")),
-        unit_weights=assignment_unit_weights(result.get("assignment"), query_map),
+        co_dependency_groups=assignment_placement_groups(
+            result.get("assignment"), result.get("collector_output")
+        ),
+        unit_weights=assignment_unit_weights(
+            result.get("assignment"), query_map, result.get("collector_output")
+        ),
         ledger=_ledger(result),
     )
     result["flag_decisions"] = _drop_superseded_ignored(
@@ -951,8 +951,12 @@ def _run_sanity_sweep(det: dict) -> None:
         # moves as one unit instead of being split between destinations.
         # Write groups too (ADR-031 Amendment 9, #992): a table's writes stay
         # on one engine whatever the sweep moves.
-        co_dependency_groups=assignment_placement_groups(det.get("assignment")),
-        unit_weights=assignment_unit_weights(det.get("assignment"), query_map),
+        co_dependency_groups=assignment_placement_groups(
+            det.get("assignment"), det.get("collector_output")
+        ),
+        unit_weights=assignment_unit_weights(
+            det.get("assignment"), query_map, det.get("collector_output")
+        ),
         # The same eligibility rule Phase 2 applies needs to know which
         # specialty signals this query matched (#579 round 3,
         # ``may_absorb``'s specialist-absorb restriction).

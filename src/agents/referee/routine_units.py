@@ -27,6 +27,27 @@ Not a follower, and kept with the utility statements as #1876 does: a statement 
 routine the collection does not name (``parent_routine_ids`` None or empty), one it links
 to two or more routines (a shape several routines share is not one routine's), and one
 whose routine runs nothing routed on its own.
+
+Routine units (#1654, ADR-031 Decision 4 Amendment 21)
+------------------------------------------------------
+
+On the source, a procedure's statements run together, in the routine (in one transaction
+where the routine opens one), and a trigger's run in the statement, and so the
+transaction, of the write that fires it. Each routine the collection names gives a
+*routine unit* (:func:`build_routine_units`): its leaders (the statements routed on their
+own, so no utility statement and no follower), and, for an enabled trigger, the routed
+writes that fire it (a write of the trigger's table whose statement type is one of the
+trigger's events; a ``MERGE``, or a write whose type the collection does not give, fires
+every event). A unit keeps only these statements and is dropped below two. Routing
+places each unit as one, through the one placement-group merge
+(``write_groups.placement_groups``, a third source next to co-dependency groups and write
+groups); its engine comes from the shared group rule, and the first assignment records
+``group.routine`` for a member no write group holds. The assignment saves the units
+(``Assignment.routine_units``), and every later pass reads the saved ones
+(:func:`routine_units_for`); only an assignment saved before routine units, which
+records none, falls back to the collection's. ``report.json`` lists what each merged
+unit holds and which routines merged it (:func:`routine_unit_facts`). A collection that
+names no routine has no unit, and routes exactly as before.
 """
 
 from __future__ import annotations
@@ -39,10 +60,21 @@ from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement, procedure_internal_reason
 from src.shared.engine_names import display_engine
+from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.view_lineage import access_text
 
 __all__ = [
+    "ROUTINE_UNIT_LABEL",
     "RoutineFollowers",
+    "build_routine_units",
+    "collector_routine_units",
+    "routine_unit_facts",
+    "routine_unit_label",
+    "routine_unit_members",
+    "routine_units_for",
+    "routine_units_of",
+    "saved_routine_units",
+    "without_unservable_routine_units",
     "follow_reason",
     "follow_routines",
     "following",
@@ -425,3 +457,295 @@ def follow_routines(
         )
         moved.append(qid)
     return moved
+
+
+# ---------------------------------------------------------------------------
+# Routine units (#1654, ADR-031 Decision 4 Amendment 21)
+# ---------------------------------------------------------------------------
+
+# The assignment reason's label for a member placed by its routine unit (the move
+# ledger's rule is ``group.routine``).
+ROUTINE_UNIT_LABEL = "routine unit"
+
+# The trigger events a write of each statement type fires. A ``MERGE`` (and a write the
+# collection types ``OTHER``, a data-modifying CTE for one) can insert, update and delete,
+# so it fires every event: keeping too much together never splits a transaction.
+_ALL_EVENTS = frozenset({"INSERT", "UPDATE", "DELETE"})
+_FIRES: dict[str, frozenset[str]] = {
+    "INSERT": frozenset({"INSERT"}),
+    "UPDATE": frozenset({"UPDATE"}),
+    "DELETE": frozenset({"DELETE"}),
+    "REPLACE": frozenset({"INSERT", "DELETE"}),
+}
+
+
+def _norm(name: object) -> str:
+    return str(name or "").strip().strip('[]"`').lower()
+
+
+def _split_name(name: object) -> tuple[str, str]:
+    """``(schema, table)`` of a collected name, lower-case, ``""`` for no schema."""
+    parts = [_norm(p) for p in str(name or "").split(".") if p.strip()]
+    if not parts:
+        return "", ""
+    return (parts[-2] if len(parts) >= 2 else ""), parts[-1]
+
+
+def _same_table(trigger_table: object, schema: object, written: object) -> bool:
+    """Whether a written table is the trigger's: the same name, and the same schema
+    when both name one (the trigger's ``schema_name`` stands in for a bare
+    ``table_id``)."""
+    t_schema, t_name = _split_name(trigger_table)
+    t_schema = t_schema or _norm(schema)
+    w_schema, w_name = _split_name(written)
+    if not t_name or t_name != w_name:
+        return False
+    return not t_schema or not w_schema or t_schema == w_schema
+
+
+def _trigger_routine_id(trigger: Mapping) -> str:
+    """The id the collection's statement links give a trigger: ``<schema>.<name>``
+    (``routine_links.routine_id``), or its ``trigger_id`` when that already names a
+    schema."""
+    from src.tools.database.routine_links import routine_id
+
+    tid = str(trigger.get("trigger_id") or "")
+    if "." in tid:
+        return tid
+    return routine_id(trigger.get("schema_name"), trigger.get("trigger_name") or tid) or tid
+
+
+def _fires(
+    query: Mapping, trigger: Mapping, source_engine: str, source: SourceScope | None
+) -> bool:
+    """Whether ``query``, a routed statement, is a write that fires ``trigger``."""
+    from src.agents.referee.cache_overlay import is_write_query
+    from src.agents.referee.write_groups import written_tables
+
+    if trigger.get("is_enabled") is False or not is_write_query(query, source_engine):
+        return False
+    events = {str(e).upper() for e in trigger.get("events") or []} or {
+        str(trigger.get("event_type") or "").upper()
+    }
+    fired = _FIRES.get(str(query.get("query_type") or "").upper(), _ALL_EVENTS)
+    if not events & fired:
+        return False
+    return any(
+        _same_table(trigger.get("table_id"), trigger.get("schema_name"), table)
+        for table in written_tables(query, source_engine, source)
+    )
+
+
+def build_routine_units(
+    queries: Iterable[Mapping],
+    source: SourceScope | None,
+    schema: Mapping | None = None,
+    source_engine: str = "",
+) -> list[dict[str, Any]]:
+    """Each routine unit of a collection's statements (see the module docstring):
+    ``[{routine_id, kind, query_ids, fired_by}]``, by routine id.
+
+    ``query_ids`` are the routine's leaders (``routine_leaders``), in query order;
+    ``fired_by``, for an enabled trigger in ``schema`` (``database_schema``), the
+    routed writes that fire it, in query order, none of them its own statements.
+    ``kind`` is ``trigger`` for a trigger in ``schema``, ``function`` for a procedure
+    entry of type ``FUNCTION``, else ``procedure``. A unit of fewer than two statements
+    is left out. Empty for a collection that names no statement's routine.
+    """
+    queries = list(queries)
+    if not any(_routine_ids(q) for q in queries):
+        return []
+    source_engine = source_engine or ((source.engine if source else None) or "")
+    schema = schema or {}
+    leaders = routine_leaders(queries, source)
+    triggers = {
+        _norm(_trigger_routine_id(t)): t
+        for t in schema.get("triggers") or []
+        if isinstance(t, Mapping)
+    }
+    functions = {
+        _norm(p.get("procedure_id"))
+        for p in schema.get("procedures") or []
+        if isinstance(p, Mapping) and str(p.get("procedure_type") or "").upper() == "FUNCTION"
+    }
+    routed = [
+        q
+        for q in queries
+        if q.get("query_id")
+        and not is_utility_statement(access_text(q), q.get("tables_accessed"), source)
+    ]
+    units: list[dict[str, Any]] = []
+    for rid in sorted(leaders):
+        members = list(leaders[rid])
+        trigger = triggers.get(_norm(rid))
+        fired_by: list[str] = []
+        if trigger is not None:
+            own = set(members)
+            fired_by = [
+                str(q["query_id"])
+                for q in routed
+                if str(q["query_id"]) not in own and _fires(q, trigger, source_engine, source)
+            ]
+        if len(members) + len(fired_by) < 2:
+            continue
+        kind = (
+            "trigger"
+            if trigger is not None
+            else "function" if _norm(rid) in functions else "procedure"
+        )
+        units.append({"routine_id": rid, "kind": kind, "query_ids": members, "fired_by": fired_by})
+    return units
+
+
+def collector_routine_units(collector_output: Mapping | None) -> list[dict[str, Any]]:
+    """:func:`build_routine_units` of a collector output's statements and schema, read
+    in its source engine's dialect."""
+    collector_output = collector_output or {}
+    return build_routine_units(
+        (collector_output.get("queries") or {}).get("query_patterns") or [],
+        SourceScope.from_collector(dict(collector_output)),
+        collector_output.get("database_schema") or {},
+        source_engine_of(collector_output),
+    )
+
+
+def _unit_dict(unit: Any) -> dict[str, Any]:
+    raw = unit if isinstance(unit, Mapping) else unit.model_dump(mode="json")
+    return {
+        "routine_id": str(raw.get("routine_id") or ""),
+        "kind": str(raw.get("kind") or "procedure"),
+        "query_ids": [str(q) for q in raw.get("query_ids") or []],
+        "fired_by": [str(q) for q in raw.get("fired_by") or []],
+    }
+
+
+def routine_unit_members(units: Iterable[Any]) -> dict[str, list[str]]:
+    """``{routine_id: [query_id, ...]}``: each unit's statements, then the writes that
+    fire it, each once; the third source :func:`~src.agents.referee.write_groups.
+    placement_groups` merges."""
+    out: dict[str, list[str]] = {}
+    for unit in units:
+        u = _unit_dict(unit)
+        if u["routine_id"]:
+            out[u["routine_id"]] = list(dict.fromkeys([*u["query_ids"], *u["fired_by"]]))
+    return out
+
+
+def saved_routine_units(assignment: Any) -> list[dict[str, Any]]:
+    """An assignment's routine units (``Assignment.routine_units``, a dict's key or a
+    model's field), as dicts; ``[]`` for an assignment saved before #1654."""
+    raw = (
+        assignment.get("routine_units")
+        if isinstance(assignment, Mapping)
+        else getattr(assignment, "routine_units", None)
+    )
+    return [_unit_dict(u) for u in raw or []]
+
+
+def records_routine_units(assignment: Any) -> bool:
+    """Whether ``assignment`` records its routine units (#1654): a dict with the
+    ``routine_units`` key, or an ``Assignment`` whose field was set (read from a file
+    that has it, or built by a pass that set it). An assignment saved before routine
+    units records none."""
+    if isinstance(assignment, Mapping):
+        return "routine_units" in assignment
+    fields_set = getattr(assignment, "model_fields_set", None)
+    return fields_set is not None and "routine_units" in fields_set
+
+
+def routine_units_for(assignment: Any, collector_output: Mapping | None) -> list[dict[str, Any]]:
+    """The routine units a pass deriving a version from ``assignment`` places: the ones
+    the assignment saved, or, for an assignment saved before routine units (which
+    records none), the collection's (:func:`collector_routine_units`). Every pass after
+    the first assignment reads its units here."""
+    if records_routine_units(assignment):
+        return saved_routine_units(assignment)
+    return collector_routine_units(collector_output) if collector_output else []
+
+
+def routine_units_of(
+    assignment: Any, collector_output: Mapping | None = None
+) -> dict[str, list[str]]:
+    """:func:`routine_unit_members` of :func:`routine_units_for`."""
+    return routine_unit_members(routine_units_for(assignment, collector_output))
+
+
+def without_unservable_routine_units(
+    units: Iterable[Any], unservable: Iterable[Any]
+) -> list[dict[str, Any]]:
+    """The routine units of an assignment's assigned queries: a unit is unservable as
+    one (#1329), so one whose every statement is unservable is left out, the same rule
+    ``engine_scope.without_unservable_groups`` applies to the other groups."""
+    ids = {
+        str(u.get("query_id") if isinstance(u, Mapping) else getattr(u, "query_id", u))
+        for u in unservable
+    }
+    out = [_unit_dict(u) for u in units]
+    if not ids:
+        return out
+    return [u for u in out if not set(u["query_ids"]) | set(u["fired_by"]) <= ids]
+
+
+def routine_unit_label(routines: Iterable[str]) -> str:
+    """The assignment reason's label for a member a routine unit placed."""
+    return f"{ROUTINE_UNIT_LABEL} ({', '.join(routines)})"
+
+
+def routine_unit_facts(
+    assignment: Mapping | None, collector_output: Mapping | None = None
+) -> list[dict[str, Any]]:
+    """``report.json``'s ``routine_units`` (#1654): each placement unit a routine merged,
+    with what merged it, ``[{merged_by: [{kind, id}], query_ids, tables, engine,
+    engines}]``, in the order of the placement units; ``kind`` is the routine's
+    (``procedure``, ``function`` or ``trigger``), procedures and functions first.
+
+    ``query_ids`` are the unit's in-scope statements, ``tables`` the source tables they
+    read or write, ``engines`` the engines they are on and ``engine`` the one engine
+    when there is one (None when a customer edit split the unit). Empty for an
+    assignment saved before routine units, or with none.
+    """
+    from src.agents.referee.write_groups import assignment_placement_groups
+
+    assignment = assignment or {}
+    units = routine_units_for(assignment, collector_output)
+    if not units:
+        return []
+    records = {
+        str(qa.get("query_id")): qa
+        for qa in assignment.get("query_assignments") or []
+        if qa.get("query_id") and qa.get("in_scope", True)
+    }
+    members = routine_unit_members(units)
+    kinds = {u["routine_id"]: u["kind"] for u in units}
+    out: list[dict[str, Any]] = []
+    for group in assignment_placement_groups(assignment, collector_output):
+        in_group = set(group)
+        merged_by = [
+            {"kind": kinds[rid], "id": rid}
+            for rid in sorted(members, key=lambda r: (kinds[r] == "trigger", r))
+            if set(members[rid]) & in_group
+        ]
+        if not merged_by:
+            continue
+        placed = [q for q in group if q in records]
+        if not placed:
+            continue
+        engines = sorted({str(records[q].get("assigned_engine") or "") for q in placed} - {""})
+        tables: dict[str, None] = {}
+        for q in placed:
+            for t in records[q].get("source_tables") or []:
+                tables.setdefault(str(t), None)
+        # The one engine, never a pick among several (a split unit has none).
+        engine: str | None = None
+        if len(engines) == 1:
+            (engine,) = engines
+        out.append(
+            {
+                "merged_by": merged_by,
+                "query_ids": placed,
+                "tables": sorted(tables),
+                "engine": engine,
+                "engines": engines,
+            }
+        )
+    return out
