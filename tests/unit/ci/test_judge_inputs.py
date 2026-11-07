@@ -137,6 +137,90 @@ def test_tables_served_falls_back_to_assignment_then_query_groups() -> None:
     }
 
 
+def _copy_read_report() -> dict:
+    """``shop.orders``: DynamoDB is its one writer and Aurora MySQL reads a copy kept in
+    sync via CDC (ADR-031 Amendment 9); ``shop.items``: Aurora MySQL owns it, no copy.
+    The only design group is DynamoDB's, so query_groups never shows Aurora reading
+    orders: the report's owner lines are where that is stated."""
+    report = _report()
+    report["facts"] = {
+        "table_owner_lines": {
+            "table_lines": [
+                {"table": "shop.orders", "owner": "dynamodb", "also_read_by": ["aurora_mysql"]},
+                {"table": "shop.items", "owner": "aurora_mysql", "also_read_by": []},
+            ]
+        }
+    }
+    return report
+
+
+def test_derived_tables_served_counts_a_table_read_through_a_copy() -> None:
+    """#1988: the reader through a copy serves the table as well as its writer."""
+    served = judge_facts.derive_tables_served(_copy_read_report())
+    assert served["aurora_mysql"] == ["items", "orders"]
+    assert served["dynamodb"] == ["items", "orders"]
+
+
+def test_tables_served_from_assignment_adds_the_copy_readers_the_report_states() -> None:
+    assignment = {
+        "query_assignments": [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["shop.orders"]},
+            {"query_id": "q9", "assigned_engine": "aurora_mysql", "source_tables": ["shop.items"]},
+        ]
+    }
+    facts = judge_facts.build_facts(_copy_read_report(), None, assignment)
+    served = {e["engine"]: e["tables_served"] for e in facts["engines"]}
+    assert served == {"dynamodb": ["orders"], "aurora_mysql": ["items", "orders"]}
+    shared = facts["migration_risk_facts"]["tables_served_by_several_engines"]
+    assert shared == {
+        "count": 1,
+        "tables": [{"table": "orders", "engines": ["aurora_mysql", "dynamodb"]}],
+    }
+
+
+def test_effective_architecture_gains_the_copy_readers_the_report_states() -> None:
+    """The e2e-llm path: llm_input's effective_architecture left the copy out (#1988)."""
+    llm_input = {
+        "effective_architecture": {
+            "engines": [
+                {"engine": "dynamodb", "tables": ["orders"]},
+                {"engine": "aurora_mysql", "tables": ["items"]},
+            ]
+        }
+    }
+    facts = judge_facts.build_facts(_copy_read_report(), llm_input)
+    served = {e["engine"]: e["tables_served"] for e in facts["engines"]}
+    assert served == {"dynamodb": ["orders"], "aurora_mysql": ["items", "orders"]}
+    assert "table_owner_lines" in facts["source"]["tables_served"]
+
+
+@pytest.mark.passes_on_main  # what must not change
+def test_owner_lines_never_give_a_table_to_an_engine_the_report_does_not_name() -> None:
+    report = _copy_read_report()
+    report["facts"]["table_owner_lines"]["table_lines"][0]["also_read_by"] = []
+    llm_input = {
+        "effective_architecture": {
+            "engines": [
+                {"engine": "dynamodb", "tables": ["orders"]},
+                {"engine": "aurora_mysql", "tables": ["items"]},
+            ]
+        }
+    }
+    facts = judge_facts.build_facts(report, llm_input)
+    served = {e["engine"]: e["tables_served"] for e in facts["engines"]}
+    assert served == {"dynamodb": ["orders"], "aurora_mysql": ["items"]}
+
+
+@pytest.mark.passes_on_main  # what must not change
+def test_a_report_without_owner_lines_keeps_the_query_scope() -> None:
+    llm_input = {
+        "effective_architecture": {"engines": [{"engine": "dynamodb", "tables": ["orders"]}]}
+    }
+    facts = judge_facts.build_facts(_report(), llm_input)
+    assert facts["engines"][0]["tables_served"] == ["orders"]
+    assert "table_owner_lines" not in facts["source"]["tables_served"]
+
+
 def test_query_groups_fallback_marks_unknown_scope_as_null() -> None:
     facts = judge_facts.build_facts(_report())
     aurora = next(e for e in facts["engines"] if e["engine"] == "aurora_mysql")
