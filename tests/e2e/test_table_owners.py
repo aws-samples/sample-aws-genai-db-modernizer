@@ -13,9 +13,10 @@ executive report state the same lines and counts. The UI results page is checked
 ``tests/e2e/test_ui.py``.
 
 The cases are the ones #212 found: ``wp_postmeta``, mapped to one engine while another
-reads it; ``wp_users``, which no query writes (``wp_usermeta`` until #1893, whose reads
-then all moved to Aurora MySQL, so it left the map); and a table the cache fronts, which
-must keep its system-of-record owner and count where that owner's tables count.
+reads it; a table no query writes (``wp_usermeta`` until #1893, then ``wp_users`` until
+the refreshed sample of #1955 wrote it, now ``wp_wc_tax_rate_classes``); and a table the
+cache fronts, which must keep its system-of-record owner and count where that owner's
+tables count.
 """
 
 from __future__ import annotations
@@ -39,6 +40,13 @@ pytestmark = pytest.mark.deterministic
 POSTMETA = "wordpress.wp_postmeta"
 USERS = "wordpress.wp_users"
 OPTIONS = "wordpress.wp_options"
+TAX_RATE_CLASSES = "wordpress.wp_wc_tax_rate_classes"
+# The bundled sample's designed job, and the same job on the collection bundled before
+# #1955, whose table shapes the refreshed sample lacks (main's checks, on main's data).
+JOBS = [
+    "designed_run",
+    pytest.param("designed_pre_1955", marks=pytest.mark.passes_on_main),
+]
 
 
 def _report(job: PipelineResult) -> dict[str, Any]:
@@ -110,10 +118,53 @@ def test_wp_postmeta_is_owned_by_its_writer_and_also_read_by_the_other_engine(
     assert cells[1:4] == ["DynamoDB", "Aurora MySQL", "ElastiCache"], cells
 
 
-def test_wp_users_has_a_system_of_record_owner_though_no_query_writes_it(
+def test_wp_users_is_owned_by_its_writer_and_a_table_no_query_writes_by_its_reader(
     designed_run: PipelineResult,
 ) -> None:
-    """#212's second case: no query writes ``wp_users``, so its owner is the engine
+    """#212's second case: a table no query writes is owned by the engine serving most
+    of its queries.
+
+    #1893: this was ``wp_usermeta``, then ``wp_users``. #1955: the refreshed sample's
+    workload creates customers, so queries write ``wp_users`` (its writes are on
+    DynamoDB, which owns it; Aurora MySQL reads a copy), and the one mapped table no
+    query writes is ``wp_wc_tax_rate_classes``, read only on DynamoDB. A table no query
+    writes that two engines read is covered by
+    tests/unit/shared/test_table_owner_facts.py
+    (``test_a_table_no_query_writes_is_owned_by_the_engine_serving_most_of_its_queries``)."""
+    report = _report(designed_run)
+    assignment = _assignment(designed_run, report)
+    writers = {
+        qa["assigned_engine"]
+        for qa in assignment["query_assignments"]
+        if qa["query_id"] in assignment["write_groups"][USERS]
+    }
+    assert writers == {"dynamodb"}
+    assert set(_engines_reading(assignment, USERS)) == {"dynamodb", "aurora_mysql"}
+    row = _mapping(report, USERS)
+    assert (row["owner"], row["owner_basis"], row["also_read_by"]) == (
+        "dynamodb",
+        "writes",
+        ["aurora_mysql"],
+    )
+    assert row["owner"] not in CACHE_ENGINES
+    cells = _map_rows(designed_run)[USERS]
+    assert cells[1:4] == ["DynamoDB", "Aurora MySQL", "ElastiCache"], cells
+    assert TAX_RATE_CLASSES not in (assignment.get("write_groups") or {})
+    assert set(_engines_reading(assignment, TAX_RATE_CLASSES)) == {"dynamodb"}
+    row = _mapping(report, TAX_RATE_CLASSES)
+    assert (row["owner"], row["owner_basis"], row["also_read_by"]) == (
+        "dynamodb",
+        "most_queries",
+        [],
+    )
+
+
+@pytest.mark.passes_on_main  # main's check, on the collection main bundled
+def test_a_table_no_query_writes_and_two_engines_read_is_owned_by_most_queries(
+    designed_pre_1955: PipelineResult,
+) -> None:
+    """#212's second case with two readers, on the collection bundled before #1955
+    (``designed_pre_1955``): no query writes ``wp_users``, so its owner is the engine
     serving most of its queries, here not the engine the map recommends.
 
     #1893: this was ``wp_usermeta`` (3 reads on Aurora MySQL, 1 on DynamoDB). Over its own
@@ -122,8 +173,9 @@ def test_wp_users_has_a_system_of_record_owner_though_no_query_writes_it(
     four reads are on Aurora MySQL and the table is no longer mapped. ``wp_users`` is the
     same case, and the cache now fronts it too: ``ed65b0b6`` (``SELECT * FROM wp_users
     WHERE ID = ?``) reads it at 1.35 calls/s, over the 1 call/s hot-read floor."""
-    report = _report(designed_run)
-    assignment = _assignment(designed_run, report)
+    job = designed_pre_1955
+    report = _report(job)
+    assignment = _assignment(job, report)
     assert USERS not in (assignment.get("write_groups") or {})
     reads = _engines_reading(assignment, USERS)
     assert reads == {"aurora_mysql": 3, "dynamodb": 2}
@@ -135,20 +187,26 @@ def test_wp_users_has_a_system_of_record_owner_though_no_query_writes_it(
         ["dynamodb"],
     )
     assert row["owner"] not in CACHE_ENGINES
-    cells = _map_rows(designed_run)[USERS]
+    cells = _map_rows(job)[USERS]
     assert cells[1:4] == ["Aurora MySQL", "DynamoDB", "ElastiCache"], cells
 
 
+@pytest.mark.parametrize("job_name", JOBS)
 def test_a_cached_table_keeps_its_owner_and_counts_as_migrating(
-    designed_run: PipelineResult,
+    job_name: str, request: pytest.FixtureRequest
 ) -> None:
     """The "N tables migrate" against "Migration map (N tables)" mismatch (#212): a
     table the cache fronts has a system-of-record owner and is counted where that
-    owner's tables are, never on a cache-layer line of its own."""
-    report = _report(designed_run)
+    owner's tables are, never on a cache-layer line of its own.
+
+    #1955: on the refreshed sample every mapped table migrates (each one's writes are on
+    DynamoDB), so its heading has no split; the collection bundled before it keeps two
+    tables in sync from Aurora MySQL, so its heading names the split ("N migrate")."""
+    job: PipelineResult = request.getfixturevalue(job_name)
+    report = _report(job)
     row = _mapping(report, OPTIONS)
     assert row["cached_by"] == "elasticache" and row["owner"] == "dynamodb"
-    cells = _map_rows(designed_run)[OPTIONS]
+    cells = _map_rows(job)[OPTIONS]
     assert cells[1] == "DynamoDB" and cells[3] == "ElastiCache", cells
     dynamodb_wave = next(w for w in report["migration_waves"] if w["engines"] == ["dynamodb"])
     assert OPTIONS in dynamodb_wave["tables"]
@@ -157,18 +215,25 @@ def test_a_cached_table_keeps_its_owner_and_counts_as_migrating(
     assert sum(split.values()) == len(report["table_mappings"])
     heading = next(
         line
-        for line in designed_run.deliverable("engineering-report.md").read_text().splitlines()
+        for line in job.deliverable("engineering-report.md").read_text().splitlines()
         if line.startswith("## Migration map")
     )
     assert "cache layer" not in heading
-    assert f"{split['migrate']} migrate" in heading
+    if job_name == "designed_pre_1955":
+        assert split.get("kept_in_sync"), split
+        assert f"{split['migrate']} migrate" in heading
+    else:
+        assert split == {"migrate": len(report["table_mappings"])}
+        assert heading == f"## Migration map ({split['migrate']} tables)"
     assert split["migrate"] == report["facts"]["tables_migrate"]
 
 
-def test_every_line_follows_the_owner_rule(designed_run: PipelineResult) -> None:
+@pytest.mark.parametrize("job_name", JOBS)
+def test_every_line_follows_the_owner_rule(job_name: str, request: pytest.FixtureRequest) -> None:
     """A written table's owner is its source of truth and its replicas are among the
     engines that also read it; no line names a cache as its owner or a reader."""
-    report = _report(designed_run)
+    job: PipelineResult = request.getfixturevalue(job_name)
+    report = _report(job)
     sources = {r["table"]: r for r in report["table_sources"]}
     lines = report["facts"]["table_owner_lines"]["table_lines"]
     # The wave plan's owner lines name the same owner (#212 review: one owner rule).
@@ -177,7 +242,14 @@ def test_every_line_follows_the_owner_rule(designed_run: PipelineResult) -> None
         for w in report["migration_waves"]
         for o in w.get("table_owners") or []
     }
-    assert wave_owner, "the designed job keeps some table in sync from its owner"
+    # #1955: the refreshed sample's designed job keeps no table in sync from an owner in
+    # another wave (every mapped table's writes are on DynamoDB, the last wave), so its
+    # wave plan names no owner line; the job on the collection bundled before #1955 keeps
+    # wp_term_relationships and wp_users in sync from Aurora MySQL.
+    if job_name == "designed_pre_1955":
+        assert wave_owner, "the designed job keeps some table in sync from its owner"
+    else:
+        assert wave_owner == {}, "the refreshed sample keeps no table in sync"
     for line in lines:
         if line["table"] in wave_owner:
             assert line["owner"] == wave_owner[line["table"]], line

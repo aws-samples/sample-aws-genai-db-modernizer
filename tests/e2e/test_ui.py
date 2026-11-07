@@ -680,13 +680,26 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
     the engines that also read it and its cache, with the same counts. Collapsed when
     the page opens; a job with no table_mappings has no such section. On the designed
     wordpress job, wp_postmeta is owned by DynamoDB and also read by Aurora MySQL, and
-    wp_users, which no query writes, is owned by Aurora MySQL (wp_usermeta until #1893,
-    whose reads all moved to Aurora MySQL; tests/e2e/test_table_owners.py)."""
+    wp_wc_tax_rate_classes, which no query writes, is owned by the engine serving its
+    reads, DynamoDB (wp_usermeta until #1893, then wp_users until the refreshed sample of
+    #1955 wrote it; tests/e2e/test_table_owners.py). On the same job on the collection
+    bundled before #1955, wp_users, which no query writes there, is owned by Aurora MySQL
+    and also read by DynamoDB."""
     from src.shared.engine_names import display_engine
 
-    designed = _designed_runs(all_runs)
+    runs = list(all_runs)
+    pre_1955 = None
+    if not any(r.external for r in all_runs):
+        # The designed job on the collection bundled before #1955, built into the UI's
+        # artifact root: its wp_users, which no query writes, is owned by Aurora MySQL
+        # and also read by DynamoDB, a row the refreshed sample has no table for.
+        from tests.e2e.designed_run import run_pre_1955_designed_wordpress
+
+        pre_1955 = run_pre_1955_designed_wordpress(all_runs[0].artifact_root, "ui-pre1")
+        runs.append(pre_1955)
+    designed = _designed_runs(runs)
     assert designed, "no job with a schema design in this session"
-    for r in all_runs:
+    for r in runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         facts = (report.get("facts") or {}).get("table_owner_lines")
         ev = _watch(page)
@@ -731,10 +744,18 @@ def test_results_page_states_each_tables_owner_also_read_by_and_cache(
             )
             assert postmeta.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
             assert postmeta.locator('[data-cell="also-read-by"]').inner_text() == "Aurora MySQL"
-            users = section.locator('[data-table="wordpress.wp_users"]').locator(
-                "xpath=ancestor::tr"
-            )
-            assert users.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
+            if r is pre_1955:
+                users = section.locator('[data-table="wordpress.wp_users"]').locator(
+                    "xpath=ancestor::tr"
+                )
+                assert users.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
+                assert users.locator('[data-cell="also-read-by"]').inner_text() == "DynamoDB"
+            else:
+                unwritten = section.locator(
+                    '[data-table="wordpress.wp_wc_tax_rate_classes"]'
+                ).locator("xpath=ancestor::tr")
+                assert unwritten.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
+                assert unwritten.locator('[data-cell="also-read-by"]').inner_text() == "—"
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
 
 

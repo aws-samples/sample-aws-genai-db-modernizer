@@ -29,7 +29,7 @@ uv sync
 
 ### 2. Run the bundled sample
 
-The repository ships a WordPress + WooCommerce sample (50 tables, 107 queries). Open the folder in Claude Code and run:
+The repository ships a WordPress + WooCommerce sample (50 tables, 163 queries). Open the folder in Claude Code and run:
 
 ```
 /modernize docs/examples/wordpress/wordpress-collection.json

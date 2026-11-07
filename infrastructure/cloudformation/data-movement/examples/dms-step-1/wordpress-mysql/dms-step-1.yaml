@@ -14,15 +14,15 @@ Metadata:
 Parameters:
   InstanceClass:
     Type: String
-    Default: dms.t3.medium
+    Default: dms.r6i.large
     AllowedPattern: ^dms\.[a-z0-9]+\.[a-z0-9]+$
-    Description: 'Replication instance class. Sized from the collection: 0.135 GB and 21.251 writes per
-      second: up to 10 GB and 50 writes per second. Burstable class for a demo or a small database: up
-      to 10 GB and 50 writes per second fit its 4 GiB of memory; 50 GB of storage holds task logs and
-      spilled changes (this catalog''s choice).'
+    Description: 'Replication instance class. Sized from the collection: 0.2998 GB and 190.986 writes
+      per second: up to 500 GB and 1000 writes per second. Memory-optimized (16 GiB) so changes stay in
+      memory up to 1,000 writes per second; 100 GB of storage holds task logs and changes that spill from
+      memory during a full load of up to 500 GB (this catalog''s choice).'
   AllocatedStorage:
     Type: Number
-    Default: 50
+    Default: 100
     MinValue: 5
     MaxValue: 6144
     Description: Replication instance storage in GB (task logs and cached changes)
@@ -200,7 +200,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
   SubnetGroup:
     Type: AWS::DMS::ReplicationSubnetGroup
     Properties:
@@ -213,7 +213,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
   ReplicationInstance:
     Type: AWS::DMS::ReplicationInstance
     Properties:
@@ -243,7 +243,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
   SourceEndpoint:
     Type: AWS::DMS::Endpoint
     Properties:
@@ -270,7 +270,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
   TargetEndpoint:
     Type: AWS::DMS::Endpoint
     Properties:
@@ -301,7 +301,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
   ReplicationTask:
     Type: AWS::DMS::ReplicationTask
     Properties:
@@ -902,7 +902,7 @@ Resources:
       - Key: modernizer:step
         Value: '1'
       - Key: modernizer:contract-sha256
-        Value: e91c079481a50c7a87d6eeee849130f3be9f47c1c377532f23e15e9f9f4f04cf
+        Value: 40165f42e067aae66ae023f9412eb5df814bfbf252441912abeb7ca2505c6674
 Outputs:
   ReplicationInstanceArn:
     Value:

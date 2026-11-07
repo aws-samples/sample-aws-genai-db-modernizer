@@ -454,10 +454,23 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # (20), so the 20-point penalty sends it to DynamoDB: aurora_mysql -1, dynamodb +1.
     # ``8c66eaee...`` (the wp_comments COUNT, 0.44 calls/s, 0.27 before) lifts DocumentDB
     # 77 -> 79 over DynamoDB's 77 and is first-assigned there: dynamodb -1, documentdb +1.
+    # #1955 (the refreshed sample, 163 statements: 58 new, 2 gone): the two gone
+    # ``SELECT SQL_CALC_FOUND_ROWS wp_users.ID ... JOIN wp_usermeta`` reads were on
+    # DocumentDB (documentdb -2); the new ones go aurora_mysql +31, dynamodb +15,
+    # documentdb +12. Of the 105 shared queries 7 change first engine: two
+    # wp_woocommerce_order_itemmeta reads (``8485f064...``, ``96ca5829...``) pass the
+    # simple-cache-read threshold (41.1 and 24.8 calls/s) and leave Aurora MySQL for a
+    # DocumentDB/DynamoDB tie settled on DynamoDB; the wp_commentmeta and wp_postmeta
+    # reads ``65f7884e...`` and ``3dbc7d9a...`` go from DynamoDB to DocumentDB (80 over 77,
+    # 72 over 71); ``3a74580e...`` (wp_usermeta) and ``06584926...``
+    # (wp_actionscheduler_actions) tie Aurora MySQL with DocumentDB and go to it as the
+    # source-compatible engine; ``1794daed...`` (wp_woocommerce_api_keys) ties DocumentDB
+    # and DynamoDB at 79, settled on DynamoDB: aurora_mysql +31, dynamodb +16,
+    # documentdb +9 (every moved query is in the #1955 PR).
     assert rc["before_distribution"] == {
-        "dynamodb": 37,
-        "aurora_mysql": 58,
-        "documentdb": 11,
+        "dynamodb": 53,
+        "aurora_mysql": 89,
+        "documentdb": 20,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

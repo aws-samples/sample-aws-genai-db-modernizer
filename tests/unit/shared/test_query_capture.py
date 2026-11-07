@@ -440,5 +440,8 @@ def test_the_library_ingest_cuts_nothing_and_records_the_capture(tmp_path):
     store = LocalArtifactStore(str(tmp_path / "artifacts"))
     data = ingest_offline_collection(store, "lib00001", "sample", raw)
     capture = data["metadata"]["query_capture"]
-    assert capture["query_limit"] is None and capture["truncated"] is None
+    # #1955: the refreshed sample records its script settings (no limit), so the ingest
+    # knows nothing was cut; an older collection's unknown is covered by
+    # tests/unit/shared/test_offline_query_capture.py.
+    assert capture["query_limit"] is None and capture["truncated"] is False
     assert capture["captured"] == len(data["queries"]["query_patterns"])
