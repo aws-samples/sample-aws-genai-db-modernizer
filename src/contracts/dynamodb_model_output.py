@@ -35,11 +35,11 @@ Version History:
   notes are listed apart.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 # ---------------------------------------------------------------------------
 # Enums (as str Enum via Literal in discriminated unions)
@@ -541,6 +541,11 @@ class TableDefinition(BaseModel):
         ..., ge=1, description="Average item size in bytes across all item types"
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
     @model_validator(mode="after")
     def validate_attributes_xor_entities(self) -> "TableDefinition":
         has_attrs = self.attributes is not None and len(self.attributes) > 0
@@ -624,6 +629,11 @@ class AccessPattern(BaseModel):
     in_scope: bool = Field(default=True)
     out_of_scope_reason: str | None = Field(None, description="Required when in_scope=False.")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 # ---------------------------------------------------------------------------
 # Supporting sections
@@ -701,6 +711,11 @@ class UnresolvedMergeConflict(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 class DynamoDBTradeOff(TradeOff):
@@ -792,3 +807,8 @@ class DynamoDBModelOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)

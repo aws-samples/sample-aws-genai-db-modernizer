@@ -157,7 +157,7 @@ For each pattern the base table key cannot serve:
 Before finalising, estimate the RCU/s or WCU/s each partition key value receives at `design_rps` and run the cost check (see `hot_partition_analysis` below): it computes the utilization against `design_metrics.dynamodb_partition_limits` and flags every value above the at-risk threshold. Apply mitigation (shard suffix, time-bucket PK) where it flags one and update the key design.
 
 **Step 6 — Settle the structure of each table**
-Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `index_name`, `partition_key` as a list of `KeyDefinition`, `sort_key` and `projection`), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` (`identifying_relationship` and `separate` tables) or `entities` (`item_collection` tables only), never both and never neither.
+Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `gsi_name`, `partition_key` as a list of `KeyDefinition`, `sort_key`, `projection`, and its own `item_count`, the items the index holds, and `item_size_bytes`, the average projected item size, at most the table's; `[]` for a table with no GSI), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` (`identifying_relationship` and `separate` tables) or `entities` (`item_collection` tables only), never both and never neither.
 
 ---
 
@@ -284,7 +284,7 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
   9. Target is reached through an intermediate table → `chain`
   10. FK points to a junction/many-to-many table → `lookup-table`
   11. Simple FK resolving an ID to a scalar → `foreign-key`
-  12. Derived value (SUM, COUNT, AVG, MIN, MAX) → `calculation.aggregate`
+  12. Derived value (SUM, COUNT, AVG, MIN, MAX) → `calculation.aggregate`, which needs all four of its fields: `{"type": "aggregate", "target_table": ..., "join_condition": ..., "operation": ..., "select_column": ...}`, where `target_table` is the related source table the rows are aggregated from, `join_condition` the SQL condition that joins its rows to the attribute's `source_table` (`order_items.order_id = orders.id`), `operation` one of `SUM`, `COUNT`, `AVG`, `MIN` or `MAX`, and `select_column` the column or expression aggregated (`order_items.price * order_items.quantity`, or `*` for `COUNT(*)`)
   13. Code/enum mapping → `calculation.case`
   14. Same literal on every item of the entity (entity-type label, a flag every item carries) → `calculation.constant`, no `source_column`; a marker only some rows carry → `calculation.case` with no `else_value`
   15. Value format conversion → `transformation`
@@ -392,11 +392,11 @@ Version History:
   notes are listed apart.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .schema_design_output import TradeOff
+from .schema_design_output import TradeOff, null_lists_as_empty
 
 # ---------------------------------------------------------------------------
 # Enums (as str Enum via Literal in discriminated unions)
@@ -898,6 +898,11 @@ class TableDefinition(BaseModel):
         ..., ge=1, description="Average item size in bytes across all item types"
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
     @model_validator(mode="after")
     def validate_attributes_xor_entities(self) -> "TableDefinition":
         has_attrs = self.attributes is not None and len(self.attributes) > 0
@@ -981,6 +986,11 @@ class AccessPattern(BaseModel):
     in_scope: bool = Field(default=True)
     out_of_scope_reason: str | None = Field(None, description="Required when in_scope=False.")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
+
 
 # ---------------------------------------------------------------------------
 # Supporting sections
@@ -1058,6 +1068,11 @@ class UnresolvedMergeConflict(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 
 
 class DynamoDBTradeOff(TradeOff):
@@ -1149,4 +1164,9 @@ class DynamoDBModelOutputContract(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_lists(cls, data: Any) -> Any:
+        return null_lists_as_empty(cls, data)
 ````
