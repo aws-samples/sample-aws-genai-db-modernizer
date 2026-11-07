@@ -18,6 +18,7 @@ from src.report.engineering_report import render_engineering_report_md
 from src.report.executive_report import render_executive_report_pdf
 from src.report.facts import report_facts
 from src.report.printed_summary import render_final_summary, render_gate_block
+from src.shared.cache_role import cache_role_sentence
 from src.shared.report_facts import cache_layer_facts
 from tests.executive_pdf import text as pdf_text
 from tests.unit.report.test_cache_layer_deliverables import _report, _shrink_report
@@ -60,6 +61,7 @@ class TestFacts:
             "designed_read_count": 14,
             "designed_call_share_percent": 76.1,
             "owner_only_read_count": 6,
+            "role_sentence": cache_role_sentence("elasticache"),
         }
         assert report_facts(_shrink_report())["cache_layer"]["owner_only_read_count"] == 6
 
