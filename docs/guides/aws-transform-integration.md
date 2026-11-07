@@ -96,8 +96,16 @@ Prefer a parametrized agent over copy-paste when a phase has per-engine variants
 | `AGENT_TYPE` | (required) | Which agent this container serves; no default |
 | `ARTIFACT_DIR` | `/app/artifacts` | Local artifact directory (used when `S3_BUCKET` is unset) |
 | `S3_BUCKET` | (unset) | Set to use S3 instead of the local filesystem |
-| `MODEL_ID` | the `ATX_AGENT` role default in `src/shared/models.py` | Orchestrator and subagent model (a cross-region inference profile) |
+| `MODEL_ID` | the `ATX_AGENT` role default in `src/shared/models.py` | Orchestrator and subagent model (a global cross-Region inference profile; `pipeline/iam-roles.yaml` grants only the profiles in `MODEL_IDS`, so an override onto another profile needs its own grant) |
 | `AWS_REGION` | `us-east-1` | AWS region |
+
+## Moving a deployed fleet from `us.` to `global.` model IDs
+
+The model IDs and `pipeline/iam-roles.yaml` changed together (#2004): the `AgentCoreExecutionRole` policy now grants the `global.` inference profiles in `MODEL_IDS` and no `us.` profile, and the policy before it granted `us.` profiles and no `global.` one. <!-- claim: tests/unit/tools/aws/test_iam_templates.py::test_every_bedrock_grant_is_a_model_id_in_use --> A runtime's model IDs are fixed when it starts, so the stack and the runtimes have to move together:
+
+1. **Check for pinned `us.` IDs first.** A runtime keeps whatever it was deployed with: `MODEL_ID` from `pipeline/atx_deploy.py apply` (the `ATX_AGENT` default, or `ATX_MODEL_ID` / `--model` when set), and any `SCHEMA_AGENT_MODEL_ID` or other role override in its environment. Each `us.` value there fails with `AccessDenied` once the stack is updated; change it to the `global.` ID, or grant that profile yourself.
+2. **Then either** (a) update the IAM stack and right away rebuild the image and re-run `apply` (model calls fail between the two steps), **or** (b) for no gap, add the template's three `BedrockGlobalProfile*` statements by hand to the deployed `AgentCoreExecutionPolicy` next to the old statement, roll the image and runtimes, then update the stack. The hand edit in (b) is out-of-band drift: CloudFormation does not track it, and the stack update overwrites it on purpose, which also removes the old `us.` statement.
+3. **Rolling back** has the same problem the other way round: an image or runtime on `us.` IDs is denied by the new policy. Restore a `us.`-compatible policy first (deploy the previous `pipeline/iam-roles.yaml`, or add its old statement back next to the new ones), then roll the image and runtimes back; or roll the stack and the runtimes back together.
 
 ## Build and deploy
 

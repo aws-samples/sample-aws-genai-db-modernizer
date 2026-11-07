@@ -69,7 +69,7 @@ Parameters:
     Type: String
     Description: >-
       Optional guardrail profile ARN. Set it when the model calls use a
-      cross-region inference profile (the default model IDs are "us." profiles),
+      cross-region inference profile (the default model IDs are "global." profiles),
       so the guardrail can be evaluated in the regions the request is routed to.
       Example: arn:aws:bedrock:us-east-1:111122223333:guardrail-profile/us.guardrail.v1:0
     Default: ''

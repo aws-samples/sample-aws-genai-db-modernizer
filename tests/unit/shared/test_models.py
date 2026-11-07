@@ -243,23 +243,37 @@ def test_schema_design_resolves_to_opus_five_five_at_medium_effort():
 
 
 def test_defaults_are_the_five_five_family():
-    assert resolve_model_id(Role.SCHEMA_DESIGN) == "us.anthropic.claude-opus-5-5"
-    assert resolve_model_id(Role.SUMMARY) == "us.anthropic.claude-sonnet-5-5"
-    assert resolve_model_id(Role.VALIDATOR) == "us.anthropic.claude-sonnet-5-5"
-    assert resolve_model_id(Role.ANALYSIS_ADVISOR) == "us.anthropic.claude-sonnet-5-5"
-    assert resolve_model_id(Role.ATX_AGENT) == "us.anthropic.claude-sonnet-5-5"
-    assert resolve_model_id(Role.LIGHT_CHECK) == "us.anthropic.claude-haiku-5-5"
+    assert resolve_model_id(Role.SCHEMA_DESIGN) == "global.anthropic.claude-opus-5-5"
+    assert resolve_model_id(Role.SUMMARY) == "global.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.VALIDATOR) == "global.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.ANALYSIS_ADVISOR) == "global.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.ATX_AGENT) == "global.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.LIGHT_CHECK) == "global.anthropic.claude-haiku-5-5"
 
 
-def test_defaults_fit_todays_iam_policy():
-    """``pipeline/iam-roles.yaml`` allows in-region inference profiles and
-    ``us-*`` foundation models. A ``us.`` profile routes only to ``us-*``
-    regions; a ``global.`` one does not, so it needs a policy change first."""
-    policy = (REPO_ROOT / "pipeline" / "iam-roles.yaml").read_text(encoding="utf-8")
-    assert '"arn:aws:bedrock:us-*::foundation-model/*"' in policy
-    assert "inference-profile/*" in policy
-    for role in Role:
-        assert models.ROLE_SPECS[role].default_model.startswith("us.anthropic."), role
+#: Bedrock system-defined inference profile prefixes: ``global.`` and the
+#: geographic ones. A bare foundation-model ID (``anthropic.claude-...``) is
+#: not on-demand callable for these models outside one or two Regions.
+_PROFILE_PREFIXES = ("global.", "us.", "eu.", "apac.", "au.", "jp.", "ca.", "in.")
+
+
+@pytest.mark.parametrize("name", sorted(MODEL_IDS))
+@pytest.mark.passes_on_main  # a guard: main's IDs and policy already hold
+def test_every_model_id_is_an_inference_profile(name):
+    model_id = MODEL_IDS[name]
+    assert model_id.startswith(_PROFILE_PREFIXES), model_id
+    assert model_id.partition(".")[2].startswith("anthropic.claude-"), model_id
+
+
+@pytest.mark.parametrize("name", sorted(MODEL_IDS))
+def test_every_model_id_is_a_global_profile(name):
+    """#2004: every model in the table has a ``global.`` profile on Bedrock
+    (model cards checked 2026-11-06), so none stays on a geographic one. A
+    model added without one keeps its ``us.`` ID, says why in ``MODEL_IDS``,
+    and is listed here."""
+    geo_only: set[str] = set()
+    expected = "us." if name in geo_only else "global."
+    assert MODEL_IDS[name].startswith(expected), MODEL_IDS[name]
 
 
 @pytest.mark.parametrize("env_var", ["SCHEMA_AGENT_MODEL_ID", "BEDROCK_MODEL_ID"])
@@ -353,7 +367,7 @@ def test_schema_design_4x_shape_unchanged():
     kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN, model_id=MODEL_IDS["opus-4.6"])
     kwargs.pop("cache_config")  # prompt caching (#626), pinned in test_prompt_cache.py
     assert kwargs == {
-        "model_id": "us.anthropic.claude-opus-4-6-v1",
+        "model_id": "global.anthropic.claude-opus-4-6-v1",
         "max_tokens": 65536,
         "temperature": 1.0,
         "additional_request_fields": {"thinking": {"type": "enabled", "budget_tokens": 6000}},
@@ -388,7 +402,7 @@ def test_schema_design_max_tokens_env(monkeypatch):
 
 def test_summary_4x_shape_unchanged():
     assert bedrock_model_kwargs(Role.SUMMARY, model_id=MODEL_IDS["sonnet-4.6"]) == {
-        "model_id": "us.anthropic.claude-sonnet-4-6",
+        "model_id": "global.anthropic.claude-sonnet-4-6",
         "max_tokens": 512,
         "temperature": 0.2,
     }
@@ -397,19 +411,19 @@ def test_summary_4x_shape_unchanged():
 def test_validator_4x_shape_unchanged():
     four_x = MODEL_IDS["sonnet-4.6"]
     assert bedrock_model_kwargs(Role.VALIDATOR, model_id=four_x) == {
-        "model_id": "us.anthropic.claude-sonnet-4-6",
+        "model_id": "global.anthropic.claude-sonnet-4-6",
         "max_tokens": 4096,
         "temperature": 0.0,
     }
     assert converse_request_fields(Role.VALIDATOR, model_id=four_x) == {
-        "modelId": "us.anthropic.claude-sonnet-4-6",
+        "modelId": "global.anthropic.claude-sonnet-4-6",
         "inferenceConfig": {"maxTokens": 4096, "temperature": 0.0},
     }
 
 
 def test_analysis_advisor_4x_shape_unchanged():
     assert bedrock_model_kwargs(Role.ANALYSIS_ADVISOR, model_id=MODEL_IDS["sonnet-4.6"]) == {
-        "model_id": "us.anthropic.claude-sonnet-4-6",
+        "model_id": "global.anthropic.claude-sonnet-4-6",
     }
 
 
@@ -454,28 +468,28 @@ def test_default_requests_exactly():
     assert (cache.strategy, cache.tools_ttl) == ("auto", True)
     assert models.min_cacheable_tokens(schema["model_id"]) == 512
     assert schema == {
-        "model_id": "us.anthropic.claude-opus-5-5",
+        "model_id": "global.anthropic.claude-opus-5-5",
         "max_tokens": 65536,
         "additional_request_fields": {"output_config": {"effort": "medium"}},
     }
     assert bedrock_model_kwargs(Role.SUMMARY) == {
-        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "model_id": "global.anthropic.claude-sonnet-5-5",
         "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
         "additional_request_fields": {"output_config": {"effort": "low"}},
     }
     assert bedrock_model_kwargs(Role.VALIDATOR) == {
-        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "model_id": "global.anthropic.claude-sonnet-5-5",
         "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
         "additional_request_fields": {"output_config": {"effort": "medium"}},
         "strict_tools": True,  # #746: Bedrock accepted the validator schema in strict mode
     }
     assert converse_request_fields(Role.VALIDATOR) == {
-        "modelId": "us.anthropic.claude-sonnet-5-5",
+        "modelId": "global.anthropic.claude-sonnet-5-5",
         "inferenceConfig": {"maxTokens": ADAPTIVE_MAX_TOKENS_FLOOR},
         "additionalModelRequestFields": {"output_config": {"effort": "medium"}},
     }
     assert bedrock_model_kwargs(Role.ANALYSIS_ADVISOR) == {
-        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "model_id": "global.anthropic.claude-sonnet-5-5",
         "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
         "additional_request_fields": {"output_config": {"effort": "medium"}},
         "strict_tools": True,
@@ -724,7 +738,7 @@ def test_schema_agents_keep_the_4x_request(monkeypatch, engine, max_tokens):
     with patch("src.shared.role_bedrock_model.RoleBedrockModel") as bedrock_model:
         module._build_model()
     kwargs = bedrock_model.call_args.kwargs
-    assert kwargs["model_id"] == "us.anthropic.claude-opus-4-6-v1"
+    assert kwargs["model_id"] == "global.anthropic.claude-opus-4-6-v1"
     assert kwargs["max_tokens"] == max_tokens
     assert kwargs["temperature"] == 1.0
     assert kwargs["additional_request_fields"] == {
