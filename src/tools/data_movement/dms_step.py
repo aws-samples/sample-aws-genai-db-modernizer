@@ -41,11 +41,25 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.contracts.data_movement_plan import DataMovementPlan, DmsReplication, UnboundedVarchar
+from src.contracts.data_movement_plan import (
+    DataMovementPlan,
+    DmsReplication,
+    LobTable,
+    UnboundedVarchar,
+)
 from src.contracts.lineage_ops import CopyOp, UnsupportedOp
-from src.contracts.transformation_contract import Rule, StepContract
+from src.contracts.transformation_contract import NOT_MOVED, Rule, StepContract
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.shared.engine_names import display_engine
+from src.tools.data_movement.dms_sizing import (
+    DMS_MAX_LOB_KB,
+    MEASURE_LOB,
+    fails_on_lob_truncation,
+    table_lob_limits,
+    task_lob_mode,
+    unmeasured_lob_tables,
+)
 from src.tools.transformation_contract.hashing import contract_sha256
 
 STEP_DIR = "data-movement/step-1"
@@ -113,6 +127,8 @@ class Step1Inputs:
     ddl: str
     # Blocked rules, left out of the table mappings and the DDL, by table id.
     skipped: tuple[SkippedRule, ...] = ()
+    # Rules that move no rows (#1918): in the DDL, left out of the table mappings, by table id.
+    not_moved: tuple[SkippedRule, ...] = ()
     # The moved tables' unsupported fields, by table id and column.
     unsupported: tuple[UnsupportedField, ...] = ()
     # Moved columns whose collector default is a zero date (``table_id.column``, sorted).
@@ -171,6 +187,20 @@ def skipped_rules(contract: StepContract) -> tuple[SkippedRule, ...]:
     )
 
 
+def not_moved_rules(contract: StepContract) -> tuple[SkippedRule, ...]:
+    """The unblocked rules whose table step 1 creates but its task does not move (``moves_rows``
+    false, #1918: a type DMS does not migrate), sorted by table id, with their not_moved findings.
+    """
+    return tuple(
+        SkippedRule(
+            table_id=r.source_table,
+            reason="; ".join(f.message for f in r.findings if f.code == NOT_MOVED),
+        )
+        for r in _selected(contract)
+        if not r.moves_rows
+    )
+
+
 def unsupported_fields(contract: StepContract) -> tuple[UnsupportedField, ...]:
     """The unsupported fields of the rules step 1 moves (a blocked rule's are not listed:
     its table does not move), sorted by table id and column."""
@@ -188,10 +218,11 @@ def unsupported_fields(contract: StepContract) -> tuple[UnsupportedField, ...]:
 
 
 def contract_tables(contract: StepContract) -> list[ContractTable]:
-    """The tables step 1 moves: the contract's unblocked rules, sorted by table id. Views
-    are never rules, so never here."""
+    """The tables step 1 moves: the contract's unblocked rules, sorted by table id, but not a
+    rule that moves no rows (#1918, its table is still in the DDL). Views are never rules, so
+    never here."""
     out = []
-    for rule in _selected(contract):
+    for rule in (r for r in _selected(contract) if r.moves_rows):
         schema, _, name = rule.source_table.rpartition(".")
         keyed = not any(f.code == "no_key" for f in rule.findings)
         out.append(ContractTable(table_id=rule.source_table, schema=schema, name=name, keyed=keyed))
@@ -247,8 +278,9 @@ def _checked(inputs: Step1Inputs) -> Step1Inputs:
     if inputs.ddl:
         _check_ddl(inputs.ddl, contract)
     return dataclasses.replace(
-        inputs, skipped=skipped_rules(contract), unsupported=unsupported_fields(contract)
-    )
+        inputs, skipped=skipped_rules(contract), unsupported=unsupported_fields(contract),
+        not_moved=not_moved_rules(contract),
+    )  # fmt: skip
 
 
 def _database_name_keys(inputs: Step1Inputs) -> list[str]:
@@ -390,9 +422,12 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
-    """One explicit selection rule per moved table, and no other rule.
+    """One explicit selection rule per moved table, then, from a PostgreSQL source, a limited LOB
+    rule for each table that needs a larger LOB limit than the task's
+    (:func:`_lob_settings_rules`) and a validation rule per character array column
+    (:func:`_array_validation_rules`).
 
-    No ``table-settings`` rule carries ``lob-settings``: DMS rejects the per-table full LOB
+    No ``table-settings`` rule runs a table in full LOB mode: DMS rejects the per-table full LOB
     rule (``bulk-max-size`` 0) when the task is created, and a nonzero size is combination
     full LOB mode, which MySQL and PostgreSQL endpoints lack. Full LOB mode is a task setting
     (:func:`task_settings`)."""
@@ -402,29 +437,98 @@ def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
         rules.append({"rule-type": "selection", "rule-id": n, "rule-name": n,
                       "object-locator": {"schema-name": table.schema, "table-name": table.name},
                       "rule-action": "include", "filters": []})  # fmt: skip
-    return {"rules": rules}
+    rules += _lob_settings_rules(inputs, len(rules) + 1)
+    return {"rules": rules + _array_validation_rules(inputs, len(rules) + 1)}
 
 
-def _any_full_lob_table(inputs: Step1Inputs) -> bool:
-    """True when a moved table is in full LOB mode in the plan's ``replication.lob_tables``."""
-    full_lob = {t.table for t in _replication(inputs).lob_tables if t.mode == "full"}
-    return any(t.table_id in full_lob for t in contract_tables(inputs.contract))
+def _source_dialect(inputs: Step1Inputs) -> str:
+    return inputs.plan.source.dialect or inputs.plan.source.engine
+
+
+def _lob_mode(inputs: Step1Inputs) -> tuple[bool, int]:
+    """(FullLobMode, LobMaxSize KB) over the moved tables in the plan's ``replication.lob_tables``."""
+    replication = _replication(inputs)
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    tables = [t for t in replication.lob_tables if t.table in moved]
+    return task_lob_mode(_source_dialect(inputs), tables, replication.lob_max_size_kb)
+
+
+def _own_lob_limits(inputs: Step1Inputs) -> list[LobTable]:
+    """The moved keyed tables whose plan LOB size is above the task's LobMaxSize (a PostgreSQL
+    source, #1918); a plan written before then sizes the task for every table, so none."""
+    if not fails_on_lob_truncation(_source_dialect(inputs)):
+        return []
+    keyed = {t.table_id for t in contract_tables(inputs.contract) if t.keyed}
+    replication = _replication(inputs)
+    tables = [t for t in replication.lob_tables if t.table in keyed]
+    return table_lob_limits(tables, _lob_mode(inputs)[1])
+
+
+def _lob_settings_rules(inputs: Step1Inputs, first_id: int) -> list[dict[str, Any]]:
+    """A ``table-settings`` rule with ``lob-settings`` (mode ``limited``, ``bulk-max-size`` in KB)
+    per table of :func:`_own_lob_limits`: it overrides the task's LOB settings for that table
+    only, so the task's buffers stay at its own LobMaxSize (#1918)."""
+    rules: list[dict[str, Any]] = []
+    for i, t in enumerate(_own_lob_limits(inputs)):
+        schema, _, name = t.table.rpartition(".")
+        n = str(first_id + i)
+        rules.append({"rule-type": "table-settings", "rule-id": n, "rule-name": n,
+                      "object-locator": {"schema-name": schema, "table-name": name},
+                      "lob-settings": {"mode": "limited", "bulk-max-size": str(t.max_size_kb)}})  # fmt: skip
+    return rules
+
+
+# A character array column (VARCHAR[], TEXT[], ...). DMS validation compares a PostgreSQL
+# character column through convert_to(), which has no array form: in a live run (#1918) the
+# validator failed on a VARCHAR[] column with "function convert_to(character varying[], unknown)
+# does not exist" and retried about 40 times a minute, reconnecting each time, while the task's
+# memory grew by 250 to 500 MB a minute until DMS stopped it out of memory. Validating the MD5 of
+# the array's text form on both sides avoids the error (the text form alone was truncated by the
+# validator's fetch of a long array in a live run; the MD5 is 32 characters).
+_CHARACTER_ARRAY = re.compile(
+    r"^(?:VARCHAR|CHARACTER VARYING|TEXT|CHAR|CHARACTER|BPCHAR|CITEXT|NAME)\s*(?:\(\s*\d+\s*\))?\s*(?:\[\d*\])+$",
+    re.IGNORECASE,
+)
+
+
+def _array_validation_rules(inputs: Step1Inputs, first_id: int) -> list[dict[str, Any]]:
+    """A ``validation`` rule per character array column of a moved table (a PostgreSQL source,
+    #1918) that validates ``md5(CAST(column AS text))`` on both sides
+    (``override-validation-function``)."""
+    if not fails_on_lob_truncation(_source_dialect(inputs)):
+        return []
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    cast = "md5(CAST(${column-name} AS text))"
+    rules: list[dict[str, Any]] = []
+    for rule in sorted(
+        (r for r in inputs.contract.rules if r.source_table in moved), key=lambda r: r.source_table
+    ):
+        schema, _, name = rule.source_table.rpartition(".")
+        for f in sorted(rule.fields, key=lambda f: f.target_column):
+            if _CHARACTER_ARRAY.match(f.target_type.strip()):
+                n = str(first_id + len(rules))
+                rules.append({"rule-type": "validation", "rule-id": n, "rule-name": n, "rule-target": "column",
+                              "object-locator": {"schema-name": schema, "table-name": name,
+                                                 "column-name": f.source_column},
+                              "rule-action": "override-validation-function",
+                              "source-function": cast, "target-function": cast})  # fmt: skip
+    return rules
 
 
 def task_settings(inputs: Step1Inputs) -> dict[str, Any]:
     """The fixed task settings (spec section 5); only the LOB mode and size come from the plan.
 
     Full LOB mode (never truncates) applies to the whole task when any moved table needs it,
-    otherwise limited LOB mode at the plan's size."""
-    replication = _replication(inputs)
-    full_lob = _any_full_lob_table(inputs)
+    otherwise limited LOB mode at the plan's size. A PostgreSQL source always runs limited LOB
+    mode, and its endpoint fails the task on a larger LOB (#1918, :func:`task_lob_mode`)."""
+    full_lob, lob_max_kb = _lob_mode(inputs)
     return {
         "TargetMetadata": {
             "SupportLobs": True,
             "FullLobMode": full_lob,
             "LobChunkSize": FULL_LOB_CHUNK_KB,
             "LimitedSizeLobMode": not full_lob,
-            "LobMaxSize": replication.lob_max_size_kb,
+            "LobMaxSize": lob_max_kb,
             # Transactional apply keeps each key's changes in commit order for the connector
             # that later reads Aurora (ADR-033 Decision 10).
             "BatchApplyEnabled": False,
@@ -686,6 +790,10 @@ def _source_endpoint(inputs: Step1Inputs, engine_name: str, settings_key: str) -
     # table in the source (HeartbeatSchema, public by default; the README says so); it keeps an
     # idle replication slot advancing, so the slot does not hold WAL.
     extra = {"CaptureDdls": False, "HeartbeatEnable": True}
+    if fails_on_lob_truncation(_source_dialect(inputs)):
+        # Limited LOB mode truncates a LOB above LobMaxSize with a warning; this stops the task
+        # instead, so no value is cut short silently (#1918).
+        extra["FailTasksOnLobTruncation"] = True
     limit = inputs.unbounded_varchar.max_bytes
     # CloudFormation's PostgreSqlSettings has no UnboundedVarcharMaxSize; the DMS guide
     # documents it as the source extra connection attribute unboundedVarcharMaxSize.
@@ -1092,6 +1200,60 @@ def _dms_user_lines(engine: str, line: str | None, database: str, schema: str) -
     ]
 
 
+def _lob_lines(inputs: Step1Inputs) -> list[str]:
+    """The LOB size step 1's task runs at and where it comes from (a PostgreSQL source, #1918)."""
+    if not fails_on_lob_truncation(_source_dialect(inputs)):
+        return []
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    lob = [t for t in _replication(inputs).lob_tables if t.table in moved]
+    if not lob:
+        return []
+    _, size = _lob_mode(inputs)
+    instance = _replication(inputs).sizing.instance_class
+    unmeasured = unmeasured_lob_tables(lob, _source_dialect(inputs))
+    head = (f"LOB columns: {len(lob)} moved table{'' if len(lob) == 1 else 's'} have LOB columns (text, json, "
+            f"jsonb, arrays and the like). The DMS task runs in limited LOB mode at {size} KB (LobMaxSize) on "
+            f"{instance}: from a PostgreSQL source, full LOB mode writes a NULL LOB as an empty value. ")  # fmt: skip
+    if own := _own_lob_limits(inputs):
+        n = len(own)
+        head += (f"{n} table{' gets' if n == 1 else 's get'} a larger limit of {'its' if n == 1 else 'their'} own "
+                 "(a table-settings rule with lob-settings, mode limited, bulk-max-size in KB), sized from "
+                 "the measured longest values: " + ", ".join(f"{t.table} at {t.max_size_kb} KB" for t in own)
+                 + f". {dms_sizing().lob.table_settings_why} ")  # fmt: skip
+    if unmeasured:
+        head += (f"{len(unmeasured)} of them have a LOB column the collection did not measure, so this size is "
+                 "not a measured one for them: "
+                 + _first_tables(unmeasured) + f". Before the full load, run {MEASURE_LOB} on the source for "
+                 f"each of their LOB columns; if 2 bytes per byte of the longest value is above that "
+                 f"size, raise the task's LobMaxSize (at most {DMS_MAX_LOB_KB} KB) and the stack's "
+                 "InstanceClass with it, or collect again and write the plan again. ")  # fmt: skip
+    else:
+        head += ("The size comes from the collection's measured longest values (the plan's "
+                 "replication.lob_tables gives each table's); measure again before the full load if the data "
+                 "grew. ")  # fmt: skip
+    head += ("During change capture DMS allocates memory in proportion to the LOB limit times the LOB columns, "
+             "so the plan sizes the replication instance for the largest limit. A larger value is truncated: the source "
+             "endpoint sets FailTasksOnLobTruncation, but in a live full load DMS still truncated such a value "
+             "with only a warning in the task log, so DMS validation is what reports those rows (as "
+             "mismatched). The tables: " + _first_tables([t.table for t in lob]) + ".")  # fmt: skip
+    return ["", head]
+
+
+def _not_moved_lines(inputs: Step1Inputs) -> list[str]:
+    """The tables this file creates that the DMS task does not move (#1918)."""
+    if not inputs.not_moved:
+        return []
+    return ["Tables created but not moved (the DMS task leaves them out; rebuild their rows after cutover):",
+            *(f"- {s.table_id}: {s.reason}" for s in inputs.not_moved)]  # fmt: skip
+
+
+def _first_tables(names: list[str], shown: int = 10) -> str:
+    more = len(names) - shown
+    return ", ".join(names[:shown]) + (
+        f" and {more} more (the plan's replication.lob_tables)" if more > 0 else ""
+    )
+
+
 def render_ddl(inputs: Step1Inputs) -> str:
     """``step-1.ddl.sql``: the license header, the disclaimer and the instructions as
     comments, then the database (Aurora MySQL) or schema (Aurora PostgreSQL), then the DDL;
@@ -1157,12 +1319,14 @@ def render_ddl(inputs: Step1Inputs) -> str:
         head += ["", f"Zero dates: aurora-target.yaml sets sql_mode = {ZERO_DATE_SQL_MODE} in the writer's "
                  f"DB parameter group. Why: {_zero_date_reason(counts)} The columns: "
                  + ", ".join(f"{t}.{c}" for t, c in zero) + "."]  # fmt: skip
+    head += _lob_lines(inputs)
     head.append("")
     if inputs.skipped:
         head.append("Tables left out (blocked in the contract; DMS does not move them):")
         head += [f"- {s.table_id}: {s.reason}" for s in inputs.skipped]
     else:
         head.append("Tables left out: none.")
+    head += _not_moved_lines(inputs)
     if inputs.unsupported:
         head.append(
             "Unsupported fields (DMS copies the source value; Aurora converts it or refuses the row):"

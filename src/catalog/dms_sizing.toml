@@ -71,7 +71,89 @@ default_max_kb = 32
 # (AWS DMS User Guide, "Endpoint settings when using PostgreSQL as a source").
 unbounded_varchar_max_bytes = 10485760
 why = "Limited LOB mode is the fast path; above 1 MB this catalog runs those tables in full LOB mode (AWS DMS User Guide, Setting LOB support for source databases in an AWS DMS task; the 1 MB threshold is this catalog's choice)."
+# Source dialects whose step 1 task never runs in full LOB mode (#1918). From a PostgreSQL
+# source into Aurora PostgreSQL, full LOB mode writes each row first and its LOB columns in a
+# second statement, and writes a NULL LOB as an empty value: a unique index over a nullable
+# text column refuses the second such row, and an array column refuses the empty value.
+# Limited LOB mode writes the row in one statement. A table whose LOB columns the collection
+# measured runs at the measured size (measured_* below); one whose LOB sizes are neither
+# declared nor measured runs at undeclared_max_kb, and the plan says so. The source endpoint sets
+# FailTasksOnLobTruncation, but in a live full load DMS 3.5.4 still truncated a larger value with
+# only a warning in the task log, so the size, not that setting, keeps values whole. During
+# change capture DMS allocates memory in proportion to LobMaxSize times the LOB columns: in a
+# live run on a 311-table source (about 100 tables with LOB columns), 100 MB, 8 MB and 2 MB ran
+# a dms.t3.medium out of memory within minutes of change capture, 64 KB did not
+# (lob.instance_classes sizes the class).
+limited_only = ["postgresql"]
+undeclared_max_kb = 64
+limited_only_why = "On a PostgreSQL source into Aurora PostgreSQL, full LOB mode turns a NULL LOB into an empty value (a live step 1 run, #1918), so step 1 runs limited LOB mode; an unmeasured LOB runs at 64 KB, this catalog's choice: DMS notes that a limit above 63 KB slows the load, and larger limits ran the smallest instance out of memory during change capture in that run."
+# Measured LOB sizes (#1918): the PostgreSQL collection script records each LOB column's
+# longest value in bytes (max_value_bytes, the UTF-8 octet length; a bytea's raw length). DMS
+# counts a character LOB in at most 2 bytes per character (a live run: 64 KB kept a value of
+# 31,978 characters whole), and 2 bytes per UTF-8 byte bounds both encodings. LobMaxSize is the
+# largest measured value in that count, times measured_headroom, rounded up to measured_round_kb.
+# A measured size never goes below undeclared_max_kb. A table whose LOB columns are not all
+# measured runs at undeclared_max_kb, and the plan says so.
+measured_bytes_per_character = 2
+measured_headroom = 1.25
+measured_round_kb = 1024
+measured_why = "Sized from the collection's measured longest values: 2 bytes per stored byte of a character LOB (DMS counts at most 2 bytes per character), 1.25 times headroom, rounded up to 1 MB steps (this catalog's choice)."
+# A table whose measured values need more than the task's LobMaxSize gets its own limit (#1918):
+# a table-settings rule with lob-settings (mode limited, bulk-max-size in KB) overrides the task's
+# LOB settings for that table only (AWS DMS User Guide, "Table and collection settings rules and
+# operations"). The task stays at most at undeclared_max_kb unless every LOB table needs more, and a
+# table without a primary key keeps its size task-wide (DMS takes LOB settings only on a keyed
+# table). In a live run a task-wide 5120 KB, sized for one cache table, ran a dms.r6i.large out
+# of memory after about 55 minutes of change capture under a heavier write load (with the
+# validator's retry loop on a character array column, which dms_step's validation rules remove).
+table_settings_why = "A task-wide limit sized for one table costs memory for every LOB column of every table DMS buffers (in a live run a task-wide 2048 KB ran a 4 GiB replication instance out of memory within minutes of change capture, where a 64 KB task with one table at 5120 KB held), so only these tables get the larger limit."
 scalars_why = "Types the DMS PostgreSQL source maps to non-LOB types (AWS DMS User Guide, Source data types for PostgreSQL); the list is this catalog's reading of that table, and a type not on it is moved in full LOB mode."
+
+# The replication instance the LOB limits need (#1918), smallest first. max_lob_kb is the
+# largest task-wide LobMaxSize the class holds; max_table_lob_kb the largest limit one table may
+# have of its own (table_settings_why) while the task runs at most at max_lob_kb. During change
+# capture DMS allocates memory in proportion to a limit times the LOB columns it covers, so a
+# task-wide limit costs far more than one table's. The plan takes the larger of the sizing row's
+# class and the first class here that holds both the task's LobMaxSize and the largest table
+# limit; a limit above the last class keeps it, with a note. Live runs on a PostgreSQL 16 source
+# with 311 tables (about 100 with LOB columns), into Aurora PostgreSQL: dms.t3.medium held a
+# task-wide 64 KB through 20 minutes of change capture and ran out of memory at 2048 KB and above,
+# and held the task at 64 KB with one table at 5120 KB through a heavy write load (1000
+# iterations, 20 virtual users) and 30 more minutes with about 1.8 GB free throughout;
+# dms.r6i.large held a task-wide 5120 KB through 30 minutes of a light load (dms.c5.large has the
+# same 4 GiB as dms.t3.medium, so it is not listed). The other limits scale with memory (this
+# catalog's choice, not measured).
+[[lob.instance_classes]]
+instance_class = "dms.t3.medium"
+memory_gib = 4
+max_lob_kb = 64
+max_table_lob_kb = 5120
+included_storage_gb = 50
+why = "4 GiB held a 64 KB task with one table at 5120 KB through change capture under a heavy write load in a live run; a task-wide 2048 KB ran it out of memory."
+
+[[lob.instance_classes]]
+instance_class = "dms.r6i.large"
+memory_gib = 16
+max_lob_kb = 5120
+max_table_lob_kb = 20480
+included_storage_gb = 100
+why = "16 GiB held a task-wide 5120 KB LobMaxSize through the full load and change capture in a live run; a table's own limit scales from dms.t3.medium's with memory (this catalog's choice, not measured)."
+
+[[lob.instance_classes]]
+instance_class = "dms.r6i.xlarge"
+memory_gib = 32
+max_lob_kb = 10240
+max_table_lob_kb = 40960
+included_storage_gb = 100
+why = "32 GiB: twice dms.r6i.large's memory, so twice its LobMaxSize (this catalog's choice, not measured)."
+
+[[lob.instance_classes]]
+instance_class = "dms.r6i.2xlarge"
+memory_gib = 64
+max_lob_kb = 20480
+max_table_lob_kb = 81920
+included_storage_gb = 100
+why = "64 GiB: four times dms.r6i.large's memory, so four times its LobMaxSize (this catalog's choice, not measured)."
 
 [lob.types]
 # The source types DMS reads as BLOB, CLOB or NCLOB (AWS DMS User Guide, "Source data types for
@@ -104,3 +186,12 @@ postgresql = [
     "character", "varchar", "money", "oid", "point", "line", "lseg", "box", "circle",
     "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange",
 ]
+
+[not_moved]
+# Source types DMS does not migrate (AWS DMS User Guide, "Source data types for PostgreSQL":
+# TSVECTOR is not supported; in a live run the source read truncated long tsvector values and
+# the load failed with a tsvector syntax error). Step 1's contract flags a table with such a
+# column as not moved (#1918): its DDL still creates the table, so the application works after
+# cutover, but the DMS task leaves it out and the customer rebuilds its rows.
+postgresql = ["tsvector"]
+why = "DMS does not migrate tsvector; rebuild it after cutover (e.g. the application's search reindex)"

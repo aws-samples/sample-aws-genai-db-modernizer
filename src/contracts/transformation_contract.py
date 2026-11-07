@@ -33,6 +33,8 @@ from .lineage_ops import (
 InputSchema = Literal["collector", "step-1"]
 StepStatus = Literal["valid", "has_blocked_rules", "no_relational_anchor", "staged_move_pending"]
 RuleStatus = Literal["valid", "blocked"]
+# The finding code of a rule whose table the step creates but does not move (#1918).
+NOT_MOVED = "not_moved"
 Severity = Literal["error", "warning"]
 TableClass = Literal["stays", "leaves", "replicated_out", "unread"]
 
@@ -107,6 +109,17 @@ class Rule(BaseModel):
     fields: list[FieldRule] = Field(default_factory=list)
     status: RuleStatus = "valid"
     findings: list[Finding] = Field(default_factory=list)
+    # Left out of the dump when true, so a contract with no such rule keeps the bytes (and the
+    # SHA-256 a plan pins) it had before the field existed.
+    moves_rows: bool = Field(
+        True,
+        exclude_if=lambda moves: moves is True,
+        description=(
+            "False when the step creates the target table but does not move its rows: a "
+            "column of a type the mover does not migrate (DMS and tsvector, #1918); a "
+            "not_moved warning finding says why and what to rebuild after cutover"
+        ),
+    )
 
     @model_validator(mode="after")
     def _own_row(self) -> "Rule":
@@ -125,6 +138,14 @@ class Rule(BaseModel):
             raise ValueError(
                 f"rule status {self.status} disagrees with its findings: "
                 "a rule is blocked exactly when it has an error finding"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _not_moved_says_why(self) -> "Rule":
+        if not self.moves_rows and not any(f.code == NOT_MOVED for f in self.findings):
+            raise ValueError(
+                f"{self.source_table}: a rule that moves no rows needs a {NOT_MOVED} finding"
             )
         return self
 

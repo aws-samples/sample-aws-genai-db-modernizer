@@ -265,6 +265,7 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
     replication = plan.replication
     warnings = [f.message for r in contract.rules for f in r.findings if f.severity == "warning"]
     blocked = [r.source_table for r in contract.rules if r.status == "blocked"]
+    not_moved = [{"table": n.table_id, "reason": n.reason} for n in inputs.not_moved]
     files = {
         name: f"{db}/{job_id}/{STEP_DIR}/{name}"
         for name in (AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE)
@@ -279,7 +280,8 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
         "contract": {"status": contract.status, "status_reason": contract.status_reason,
                      "sha256": inputs.contract_sha256, "blocked_rules": blocked,
                      "unsupported_count": contract.unsupported_count,
-                     "warning_count": len(warnings), "warnings": warnings[:10]},
+                     "warning_count": len(warnings), "warnings": warnings[:10],
+                     "not_moved": not_moved},
         "replication_instance": None if replication is None else {
             "instance_class": replication.sizing.instance_class,
             "allocated_storage_gb": replication.sizing.allocated_storage_gb,

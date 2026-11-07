@@ -30,6 +30,14 @@ def test_lob_rules_name_types_per_dialect():
     assert "bytea" in lob.types["postgresql"] and 1 <= lob.default_max_kb <= lob.limited_max_kb
 
 
+def test_only_postgresql_never_runs_full_lob_mode_and_its_size_is_within_dms_limit():
+    # #1918: full LOB mode turns a NULL LOB into an empty value on Aurora PostgreSQL. MySQL
+    # rehearsals passed in full LOB mode, so MySQL and MariaDB keep it.
+    lob = dms_sizing().lob
+    assert lob.limited_only == ("postgresql",)
+    assert 1 <= lob.undeclared_max_kb <= 102400 and "#1918" in lob.limited_only_why
+
+
 def test_the_gate_lag_limit_is_30_seconds_with_a_reason():
     gate = dms_sizing().gate
     assert gate.max_lag_seconds == 30 and "EventsPollInterval" in gate.why
@@ -38,9 +46,12 @@ def test_the_gate_lag_limit_is_30_seconds_with_a_reason():
 def _write(tmp_path: Path, rows: str) -> Path:
     path = tmp_path / "dms_sizing.toml"
     path.write_text(rows + '\n[gate]\nmax_lag_seconds = 30\nwhy = "w"\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
-                    'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\n'
+                    'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\nundeclared_max_kb = 8192\nlimited_only_why = "w"\n'
+                    'measured_bytes_per_character = 2\nmeasured_headroom = 1.25\nmeasured_round_kb = 1024\nmeasured_why = "w"\ntable_settings_why = "w"\n'
+                    '[[lob.instance_classes]]\ninstance_class = "dms.t3.medium"\nmemory_gib = 4\nmax_lob_kb = 64\nmax_table_lob_kb = 64\n'
+                    'included_storage_gb = 50\nwhy = "w"\n'
                     '[lob.types]\nmysql = ["text"]\npostgresql = ["text"]\n'
-                    '[lob.scalars]\npostgresql = ["int4"]\n')  # fmt: skip
+                    '[lob.scalars]\npostgresql = ["int4"]\n[not_moved]\npostgresql = ["tsvector"]\nwhy = "w"\n')  # fmt: skip
     return path
 
 

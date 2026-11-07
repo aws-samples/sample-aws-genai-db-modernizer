@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "collector_output.CollectorOutputContract"
+kind = "minor"
+reason = "Added optional ``Column.max_value_bytes``: the longest stored value of a LOB column in bytes, measured by the PostgreSQL collection script, which sizes the step 1 DMS LobMaxSize."
+issue = 1918

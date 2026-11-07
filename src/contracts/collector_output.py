@@ -465,6 +465,14 @@ class Column(BaseModel):
         None, description="Normalized data type for cross-database comparison"
     )
     max_length: int | None = Field(None, ge=0, description="Maximum length for string types")
+    max_value_bytes: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The longest stored value in bytes (UTF-8 octets; a bytea's raw length), measured "
+            "by the collection for a LOB column (PostgreSQL, #1918); None when not measured"
+        ),
+    )
     numeric_precision: int | None = Field(
         None,
         ge=0,

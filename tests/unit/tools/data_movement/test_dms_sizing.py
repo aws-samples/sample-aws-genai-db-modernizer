@@ -7,13 +7,16 @@ from __future__ import annotations
 
 import pytest
 
+from src.contracts.data_movement_plan import LobTable
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.tools.data_movement.dms_sizing import (
     database_gb,
+    fails_on_lob_truncation,
     lob_plan,
     size_from_collector,
     size_instance,
     target_engine_line,
+    task_lob_mode,
     unbounded_varchar,
     write_rate,
 )
@@ -147,14 +150,48 @@ def test_one_unbounded_column_makes_the_whole_table_full():
     )
 
 
-def test_a_large_or_unknown_lob_runs_in_full_mode():
-    big = _collector(columns=_lob_cols(("body", "longtext", 4294967295)))
-    unknown = _collector(
-        engine="postgresql", version="16.4", columns=_lob_cols(("body", "text", None))
-    )
-    assert lob_plan(big, ["shop.orders"], "mysql")[1][0].mode == "full"
-    size, tables = lob_plan(unknown, ["shop.orders"], "postgresql")
-    assert tables[0].mode == "full" and size == dms_sizing().lob.default_max_kb
+@pytest.mark.passes_on_main  # MySQL keeps full LOB mode (#1918 changes PostgreSQL only)
+@pytest.mark.parametrize("dialect", ["mysql", "mariadb"])
+def test_a_large_or_unknown_mysql_lob_runs_in_full_mode(dialect):
+    for size in (4294967295, None):
+        c = _collector(engine=dialect, columns=_lob_cols(("body", "longtext", size)))
+        size_kb, tables = lob_plan(c, ["shop.orders"], dialect)
+        assert (tables[0].mode, tables[0].max_size_kb) == ("full", None)
+        assert size_kb == dms_sizing().lob.default_max_kb and "full LOB mode" in tables[0].reason
+
+
+def test_a_postgresql_lob_of_unknown_size_runs_limited_at_the_catalogs_size():
+    # #1918: full LOB mode wrote a NULL LOB as an empty value on Aurora PostgreSQL.
+    lob = dms_sizing().lob
+    size, tables = _plan([("id", "int4", None), ("body", "text", None)], dialect="postgresql")
+    assert size == lob.undeclared_max_kb
+    assert [(t.mode, t.columns, t.max_size_kb) for t in tables] == [
+        ("limited", ["body"], lob.undeclared_max_kb)
+    ]
+    why = tables[0].reason
+    assert "no declared maximum" in why and f"limited LOB mode at {lob.undeclared_max_kb} KB" in why
+    # A live full load truncated a larger value despite FailTasksOnLobTruncation: the reason
+    # says the size is not measured and a larger value is truncated, never that it stops the task.
+    assert "did not measure" in why and "is truncated" in why and "stops the task" not in why
+    assert "max(octet_length(<column>::text))" in why and "2 bytes per byte" in why
+    assert "full LOB mode moves" not in why
+
+
+@pytest.mark.passes_on_main  # a declared size within the limit was already limited mode
+def test_a_postgresql_table_with_known_small_lobs_keeps_its_own_size():
+    # A bounded LOB (a bytea of a known maximum) stays at its size: the rule only replaces
+    # full LOB mode.
+    size, tables = _plan([("b", "bytea", 2048)], dialect="postgresql")
+    assert (size, tables[0].mode, tables[0].max_size_kb) == (2, "limited", 2)
+
+
+def test_a_postgresql_lob_above_the_catalogs_size_runs_at_its_declared_size_up_to_dms_maximum():
+    lob = dms_sizing().lob
+    over = lob.undeclared_max_kb * 2 * 1024  # bytes, a bytea
+    _, tables = _plan([("b", "bytea", over)], dialect="postgresql")
+    assert (tables[0].mode, tables[0].max_size_kb) == ("limited", lob.undeclared_max_kb * 2)
+    _, tables = _plan([("b", "bytea", 10**12)], dialect="postgresql")
+    assert (tables[0].mode, tables[0].max_size_kb) == ("limited", 102400)
 
 
 @pytest.mark.parametrize(
@@ -163,19 +200,33 @@ def test_a_large_or_unknown_lob_runs_in_full_mode():
 )
 def test_postgresql_arrays_composites_and_unclassified_types_are_lobs_of_unknown_size(data_type):
     _, tables = _plan([("v", data_type, None)], dialect="postgresql", version="16.4")
-    assert [(t.mode, t.columns) for t in tables] == [("full", ["v"])]
+    assert [(t.mode, t.columns, t.max_size_kb) for t in tables] == [
+        ("limited", ["v"], dms_sizing().lob.undeclared_max_kb)
+    ]
 
 
-def test_a_named_postgresql_type_runs_its_table_in_full_mode_scalars_do_not():
+def test_a_named_postgresql_type_runs_its_table_as_a_lob_of_unknown_size_scalars_do_not():
     assert _plan([("a", "int4", None), ("b", "varchar", 40), ("c", "timestamp without time zone", None)],
                  dialect="postgresql")[1] == []  # fmt: skip
     for udt in ("my_enum", "halfvec", "some_composite"):
         _, tables = _plan([("a", "int4", None), ("c", udt, None)], dialect="postgresql")
-        assert [(t.mode, t.columns) for t in tables] == [("full", ["c"])]
-        assert (
-            "type not known to map to a non-LOB DMS type (full LOB mode is the safe side)"
-            in tables[0].reason
-        )
+        assert [(t.mode, t.columns) for t in tables] == [("limited", ["c"])]
+        assert "c has a type not known to map to a non-LOB DMS type" in tables[0].reason
+
+
+def test_the_task_lob_mode_is_full_only_off_postgresql():
+    lob = dms_sizing().lob
+    full = [LobTable(table="s.a", mode="full", columns=["x"])]
+    limited = [LobTable(table="s.b", mode="limited", columns=["y"], max_size_kb=40)]
+    for dialect in ("mysql", "mariadb", None):
+        assert task_lob_mode(dialect, full + limited, 40) == (True, 40)
+        assert task_lob_mode(dialect, limited, 40) == (False, 40)
+        assert not fails_on_lob_truncation(dialect)
+    # A plan written before #1918 lists a PostgreSQL table in full mode: it runs limited.
+    assert task_lob_mode("postgresql", full + limited, 40) == (False, lob.undeclared_max_kb)
+    assert task_lob_mode("postgresql", limited, 40) == (False, 40)
+    assert task_lob_mode("postgresql", [], 32) == (False, 32)
+    assert fails_on_lob_truncation("postgresql")
 
 
 @pytest.mark.parametrize("data_type", ["double precision", "character varying", "time with time zone",

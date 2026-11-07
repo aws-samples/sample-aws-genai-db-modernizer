@@ -67,6 +67,7 @@ from src.contracts.data_movement_plan import (
     HubTopic,
     InitialLoad,
     LaggingRead,
+    LobTable,
     ParityGate,
     SourceSetting,
     SourceSpec,
@@ -83,9 +84,14 @@ from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.tools.data_movement.dms_sizing import (
     lob_plan,
+    lob_size_note,
+    not_moved_columns,
+    size_for_lob,
     size_from_collector,
+    table_lob_limits,
     target_engine_line,
     unbounded_varchar,
+    unmeasured_lob_tables,
 )
 
 # The cost model's components (#1424); each is stated in the plan's cost_assumptions.
@@ -598,6 +604,38 @@ def _no_price(what: str) -> str:
     return f"The price table (src/catalog/prices.toml) has no price for {what}, so the cost is not stated"
 
 
+def _dms_moved(job: _JobView, base_tables: list[str]) -> list[str]:
+    """The base tables step 1's DMS task moves: not those with a type DMS does not migrate
+    (#1918; the contract flags them, the DDL still creates them)."""
+    dialect = dialect_of(job.legacy)
+    return [
+        t
+        for t in base_tables
+        if not not_moved_columns(job.schema.tables[t].get("columns") or [], dialect)
+    ]
+
+
+def _dms_lob_notes(job: _JobView, replication: DmsReplication) -> list[str]:
+    """The plan's finding when the collection did not measure a moved table's LOB sizes (#1918)."""
+    unmeasured = unmeasured_lob_tables(replication.lob_tables, dialect_of(job.legacy))
+    note = lob_size_note(unmeasured, replication.lob_max_size_kb)
+    return [note] if note else []
+
+
+def _lob_sized(
+    sizing: DmsSizing, lob_max: int, lob_tables: list[LobTable], dialect: str | None
+) -> DmsSizing:
+    """The class for the largest LOB limit (#1918): the task's LobMaxSize, or the largest table
+    with a larger limit of its own (its table-settings rule)."""
+    own = table_lob_limits(lob_tables, lob_max)
+    if not own:
+        return size_for_lob(sizing, lob_max, dialect)
+    top = max(own, key=lambda t: (t.max_size_kb or 0, t.table))
+    return size_for_lob(
+        sizing, int(top.max_size_kb or 0), dialect, table=top.table, task_kb=lob_max
+    )
+
+
 def _dms_replication(
     job: _JobView, wave: Mapping[str, Any], base_tables: list[str]
 ) -> DmsReplication:
@@ -607,11 +645,11 @@ def _dms_replication(
     # first relational engine it names is the target.
     target = next((e for e in _wave_engines(wave) if e in RELATIONAL_ENGINES), None)
     dialect = dialect_of(job.legacy)
-    lob_max, lob_tables = lob_plan(collector, base_tables, dialect)
+    lob_max, lob_tables = lob_plan(collector, _dms_moved(job, base_tables), dialect)
     return DmsReplication(
         target_engine=target,
         target_engine_line=target_engine_line(collector, target) if target else None,
-        sizing=size_from_collector(collector),
+        sizing=_lob_sized(size_from_collector(collector), lob_max, lob_tables, dialect),
         multi_az_default=True,
         lob_max_size_kb=lob_max,
         lob_tables=lob_tables,
@@ -1283,6 +1321,8 @@ def _plan_wave(
         "the lagging reads' tolerance"
     )
     replication = _dms_replication(job, wave, base_tables) if tool == "dms" else None
+    if replication is not None:
+        notes.extend(_dms_lob_notes(job, replication))
     cost, assumptions, gaps = _monthly_cost(
         job.prices, job, tool, hub, targets, False, replication=replication
     )

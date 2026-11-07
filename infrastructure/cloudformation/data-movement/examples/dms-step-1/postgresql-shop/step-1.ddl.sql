@@ -42,6 +42,20 @@
 -- triggers during the load, which needs rds_superuser (or, if your Aurora version allows it,
 -- GRANT SET ON PARAMETER session_replication_role); drop that grant after the cutover.
 --
+-- LOB columns: 2 moved tables have LOB columns (text, json, jsonb, arrays and the like). The
+-- DMS task runs in limited LOB mode at 64 KB (LobMaxSize) on dms.t3.medium: from a PostgreSQL
+-- source, full LOB mode writes a NULL LOB as an empty value. 2 of them have a LOB column the
+-- collection did not measure, so this size is not a measured one for them: public.customers,
+-- public.orders. Before the full load, run SELECT max(octet_length(<column>::text)) FROM
+-- <table> on the source for each of their LOB columns; if 2 bytes per byte of the longest value
+-- is above that size, raise the task's LobMaxSize (at most 102400 KB) and the stack's
+-- InstanceClass with it, or collect again and write the plan again. During change capture DMS
+-- allocates memory in proportion to the LOB limit times the LOB columns, so the plan sizes the
+-- replication instance for the largest limit. A larger value is truncated: the source endpoint
+-- sets FailTasksOnLobTruncation, but in a live full load DMS still truncated such a value with
+-- only a warning in the task log, so DMS validation is what reports those rows (as mismatched).
+-- The tables: public.customers, public.orders.
+--
 -- Tables left out: none.
 -- Unsupported fields: none.
 
