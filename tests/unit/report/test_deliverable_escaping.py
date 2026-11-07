@@ -83,15 +83,75 @@ class TestEscapingHelpers:
         assert "\\[not a link\\]" not in out.replace("\\\\", "\\")
 
     def test_md_text_hostile_input_battery(self) -> None:
-        """Pipe, backtick, newline, <, link, image -- the full battery #211 asks for."""
+        """Pipe, lone backtick, newline, <, link, image -- the full battery
+        #211 (and the #2000 follow-up) asks for."""
         out = escaping.md_text("a|b`c\nd<e>![f](g)[h](i)")
         assert "\n" not in out
         assert "<e>" not in out
         assert "![f](g)" not in out
         assert "[h](i)" not in out
-        # Pipes and backticks are untouched -- not special outside a table
-        # cell / code span, which is what md_cell / md_code are for.
-        assert "a|b`c" in out
+        # Pipes are untouched -- not special outside a table cell, which is
+        # what md_cell is for. The lone backtick has no matching close, so
+        # it is not a code span and is backslash-escaped like any other
+        # special character (#2000 follow-up, security): otherwise it could
+        # pair across a rendered line with the opening backtick of a
+        # complete span in an unrelated, separately-escaped value.
+        assert "a|b\\`c" in out
+
+    def test_md_text_leaves_a_code_span_unescaped(self) -> None:
+        """#2000: a complete code span's content is left exactly as written,
+        backticks included -- Markdown already shows backslash escapes
+        literally inside a span, so escaping its content would put a
+        visible backslash in the rendered report instead of leaving the
+        span alone."""
+        out = escaping.md_text("the `wp_posts` table")
+        assert out == "the `wp_posts` table"
+
+    def test_md_text_leaves_a_double_backtick_span_with_inner_backtick_unescaped(self) -> None:
+        out = escaping.md_text("see `` `wp_posts` `` here_too")
+        assert out == "see `` `wp_posts` `` here\\_too"
+
+    def test_md_text_escapes_after_an_unmatched_backtick(self) -> None:
+        """An unpaired backtick is not a code span: it is backslash-escaped
+        like any other special character (#2000 follow-up, security), so it
+        can't pair with a span-opening backtick in an unrelated value placed
+        later on the same rendered line. Everything after it is escaped
+        exactly as it would be with no backtick at all."""
+        out = escaping.md_text("a `unterminated span with _em_ after")
+        assert out == "a \\`unterminated span with \\_em\\_ after"
+
+    def test_md_text_escapes_an_unmatched_trailing_backtick_so_it_cannot_pair_across_values(
+        self,
+    ) -> None:
+        """#2000 follow-up (security, R3/#211 regression): two independently
+        escaped md_text() values are routinely placed on one rendered line
+        (a table row, a list item). Before this fix, an unescaped lone
+        backtick left in one value could pair across the line with the
+        opening backtick of a complete span in the other value, shifting
+        that span's boundary and exposing its "inside a span" text as live,
+        unescaped markup. Escaping every backtick that is not part of a
+        complete span means a backtick surviving in a result always
+        belongs to one."""
+        assert escaping.md_text("x `") == "x \\`"
+
+    @pytest.mark.passes_on_main
+    def test_md_text_escapes_link_syntax_outside_a_span(self) -> None:
+        out = escaping.md_text("see `code` then [click](http://evil)")
+        assert out == "see `code` then \\[click\\]\\(http://evil\\)"
+
+    def test_md_text_leaves_link_syntax_inside_a_span_unescaped(self) -> None:
+        """Link syntax inside a code span stays literal; it is harmless there."""
+        out = escaping.md_text("see `[click](http://evil)` here")
+        assert out == "see `[click](http://evil)` here"
+
+    @pytest.mark.passes_on_main
+    def test_md_text_collapses_a_newline_inside_a_span_too(self) -> None:
+        """#2000 follow-up: _code_spans matches across newlines, so a span
+        is not exempt from the newline collapse that keeps one value from
+        injecting extra list items or breaking the block."""
+        out = escaping.md_text("see `line1\nline2` here")
+        assert "\n" not in out
+        assert out == "see `line1 line2` here"
 
     def test_md_yaml_value_escapes_quotes_and_newlines(self) -> None:
         out = escaping.md_yaml_value('db"name\nleak: value')

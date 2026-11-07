@@ -55,29 +55,62 @@ def md_cell(value: Any) -> str:
     return s
 
 
+def _escape_outside_span(s: str) -> str:
+    """The escaping :func:`md_text` applies to the text outside any code span."""
+    s = s.replace("<", "&lt;").replace(">", "&gt;")
+    s = s.replace("\\", "\\\\")
+    s = s.replace("`", "\\`")
+    for ch in "[]()!*_":
+        s = s.replace(ch, "\\" + ch)
+    return s
+
+
 def md_text(value: Any) -> str:
     """Escape a value for **Markdown flowing text** (list items, prose lines).
 
     Not inside a table, so pipes are fine, but newlines still have to be tamed so a
     single logical value cannot inject extra list items or break the block, and
-    inline HTML is neutralized for the same reason as :func:`md_cell`.
+    inline HTML is neutralized for the same reason as :func:`md_cell`. Newlines are
+    collapsed across the whole value before anything else, including inside a code
+    span (#2000): a span containing a raw newline would otherwise survive this
+    function unchanged, reopening the very block-breaking injection the collapse
+    exists to close.
 
-    Link/image syntax and emphasis markers (``[ ] ( ) ! * _``) are backslash-escaped
-    (#211): without this, untrusted text containing ``![](http://evil/x.png)`` or
-    ``[click](http://evil)`` renders as a live remote image fetch or a clickable
-    link, and ``*``/``_`` turn plain words into emphasis. The backslash itself is
-    escaped first, so a value already containing one is not mistaken for part of
-    one of these escapes once the special characters are escaped too. Backticks and
-    pipes are untouched here -- not special in flowing text, and :func:`md_code` /
+    A complete code span (#2000) -- a run of n backticks, content, then a run of
+    exactly n backticks, as :func:`_code_spans` finds them -- is left exactly as
+    written, backticks included: Markdown already shows backslash escapes literally
+    inside a span, so escaping its content would put a visible backslash in the
+    rendered report instead of leaving the span's own text alone. An unmatched
+    backtick is not a code span, so everything from it onward is escaped like any
+    other text.
+
+    Outside a span, link/image syntax and emphasis markers (``[ ] ( ) ! * _``) are
+    backslash-escaped (#211): without this, untrusted text containing
+    ``![](http://evil/x.png)`` or ``[click](http://evil)`` renders as a live remote
+    image fetch or a clickable link, and ``*``/``_`` turn plain words into emphasis.
+    The backslash itself is escaped first, so a value already containing one is not
+    mistaken for part of one of these escapes once the special characters are
+    escaped too. A backtick outside a span is backslash-escaped too (#2000 follow-up):
+    two independently escaped values are routinely placed on one rendered line (a
+    table row, a list item), and an unescaped lone backtick in one value could pair
+    with a span-opening backtick in the other, shifting that span's boundary and
+    exposing its "inside a span" text as live, unescaped markup -- a regression of
+    #211/R3. Escaping every backtick that is not part of a complete span means any
+    backtick left in a result belongs to one. Pipes outside a span are still
+    untouched here -- not special in flowing text, and :func:`md_code` /
     :func:`md_cell` are the right helpers for the contexts where they are.
     """
-    s = str(value)
-    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    s = s.replace("<", "&lt;").replace(">", "&gt;")
-    s = s.replace("\\", "\\\\")
-    for ch in "[]()!*_":
-        s = s.replace(ch, "\\" + ch)
-    return s
+    text = str(value)
+    text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    spans = _code_spans(text)
+    out: list[str] = []
+    last = 0
+    for start, end in spans:
+        out.append(_escape_outside_span(text[last:start]))
+        out.append(text[start:end])
+        last = end
+    out.append(_escape_outside_span(text[last:]))
+    return "".join(out)
 
 
 def md_code(value: Any) -> str:
