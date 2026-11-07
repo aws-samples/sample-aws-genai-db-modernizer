@@ -68,7 +68,7 @@ aws cloudformation deploy --template-file dms-step-1.yaml \
     SourceCertificateArn=<source certificate ARN> TargetCertificateArn=<Aurora certificate ARN>
 ```
 
-Add `InstanceClass`, `AllocatedStorage`, `MultiAZ=false` (for a demo), `TargetDatabaseName`, the KMS key ARNs or `SecretsManagerEndpointOverride` when you need them. You can deploy the stack before the DDL has run, but the task is not started by the stack: start it only after the DDL ran. First test both endpoints, then read the result:
+Add `InstanceClass`, `AllocatedStorage`, `MultiAZ=false` (for a demo), `TargetDatabaseName`, the KMS key ARNs or `SecretsManagerEndpointOverride` when you need them. You can deploy the stack before the DDL has run, but the task is not started by the stack: start it only after the DDL ran. First test both endpoints, then read the result: The replication instance runs AWS DMS engine 3.6.1, because on the default 3.5.4 the data validator can retry one endpoint secret read forever and stall validation on large sources; set `EngineVersion` to run another version. <!-- claim: tests/unit/tools/data_movement/test_dms_step_templates.py::test_the_replication_instance_runs_the_catalogs_engine_version -->
 
 ```bash
 aws dms test-connection --replication-instance-arn <ReplicationInstanceArn output> --endpoint-arn <SourceEndpointArn output>

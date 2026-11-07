@@ -20,6 +20,13 @@ Parameters:
       second: up to 10 GB and 50 writes per second. Burstable class for a demo or a small database: up
       to 10 GB and 50 writes per second fit its 4 GiB of memory; 50 GB of storage holds task logs and
       spilled changes (this catalog''s choice).'
+  EngineVersion:
+    Type: String
+    Default: 3.6.1
+    AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    Description: AWS DMS engine version of the replication instance. On the default engine (3.5.4) the
+      data validator can fail to read an endpoint secret and retry one table indefinitely, which stalls
+      validation on large sources; on 3.6.1 it re-reads the secret and recovers.
   AllocatedStorage:
     Type: Number
     Default: 50
@@ -227,6 +234,8 @@ Resources:
         - true
         - false
       PubliclyAccessible: false
+      EngineVersion:
+        Ref: EngineVersion
       AutoMinorVersionUpgrade: true
       ReplicationSubnetGroupIdentifier:
         Ref: SubnetGroup

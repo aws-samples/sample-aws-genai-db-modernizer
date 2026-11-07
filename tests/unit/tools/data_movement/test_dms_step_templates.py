@@ -14,6 +14,7 @@ import pytest
 from src.contracts.data_movement_plan import UnboundedVarchar
 from src.contracts.lineage_ops import UnsupportedOp
 from src.contracts.transformation_contract import Finding
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.tools.data_movement.debezium_connector import dump_template
 from src.tools.data_movement.dms_step import (
     AURORA_TEMPLATE,
@@ -353,6 +354,46 @@ def test_the_task_is_full_load_and_cdc_with_the_compiled_mappings_and_settings()
     assert {"Key": CONTRACT_TAG, "Value": inputs.contract_sha256} in task["Tags"]
 
 
+def test_the_replication_instance_runs_the_catalogs_engine_version():
+    template = render_dms_template(make_step1_inputs())
+    param = template["Parameters"]["EngineVersion"]
+    engine = dms_sizing().engine
+    assert param["Default"] == engine.version == "3.6.1"
+    assert engine.why in param["Description"]
+    assert template["Resources"]["ReplicationInstance"]["Properties"]["EngineVersion"] == {
+        "Ref": "EngineVersion"
+    }
+
+
+def test_a_plan_written_before_the_engine_version_falls_back_to_the_catalog():
+    inputs = make_step1_inputs()
+    old = inputs.plan.replication.model_copy(
+        update={"engine_version": None, "engine_version_why": None}
+    )
+    inputs = dataclasses.replace(inputs, plan=inputs.plan.model_copy(update={"replication": old}))
+    assert render_dms_template(inputs)["Parameters"]["EngineVersion"]["Default"] == "3.6.1"
+
+
+@pytest.mark.parametrize(
+    "value, ok",
+    [
+        ("3.6.1", True),
+        ("3.5.4", True),
+        ("3.10.12", True),
+        ("3.6", False),
+        ("3.6.1\n", False),
+        ("latest", False),
+        ("3.6.1; x", False),
+        ("", False),
+    ],
+)
+def test_the_engine_version_pattern_full_matches_a_version_only(value, ok):
+    pattern = render_dms_template(make_step1_inputs())["Parameters"]["EngineVersion"][
+        "AllowedPattern"
+    ]
+    assert bool(re.fullmatch(pattern, value)) is ok
+
+
 def test_the_compiled_json_is_byte_stable():
     first = render_dms_template(make_step1_inputs())["Resources"]["ReplicationTask"]["Properties"]
     again = render_dms_template(make_step1_inputs())["Resources"]["ReplicationTask"]["Properties"]
@@ -381,7 +422,7 @@ def test_the_sized_instance_is_the_default_and_multi_az_defaults_to_true():
     assert instance["MultiAZ"] == {"Fn::If": ["IsMultiAZ", True, False]}
     assert instance["KmsKeyId"] == {"Fn::If": ["HasReplicationKey", {"Ref": "ReplicationKmsKeyArn"},
                                                {"Ref": "AWS::NoValue"}]}  # fmt: skip
-    assert "EngineVersion" not in instance
+    assert instance["EngineVersion"] == {"Ref": "EngineVersion"}
 
 
 def test_every_taggable_resource_is_tagged_and_the_outputs_are_the_named_ones():
@@ -873,12 +914,15 @@ def _every_pattern(engine: str):
                 yield label, name, param["AllowedPattern"]
 
 
+@pytest.mark.passes_on_main  # guards every pattern; the new EngineVersion has its own test above
 @pytest.mark.parametrize("engine", ENGINES)
 def test_every_rendered_allowed_pattern_full_matches_a_valid_value(engine):
     """CloudFormation matches the whole value; ``re.match`` would accept a prefix."""
     unmatched = []
     for label, name, pattern in _every_pattern(engine):
-        if name == "EngineVersion":
+        if name == "EngineVersion" and label == "dms":
+            value = "3.6.1"
+        elif name == "EngineVersion":
             value = _REAL_ENGINE_VERSION[engine]
         elif name == "InstanceClass":
             value = "dms.r5.large" if label == "dms" else "db.r6g.large"
