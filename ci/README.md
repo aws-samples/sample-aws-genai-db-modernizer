@@ -444,8 +444,8 @@ produced.
 
 **Sandbox**: the claude process runs with `MODERNIZER_CI_SANDBOX=1` (only
 that process and its tool calls, not the rest of this script). Every
-allowlisted script then refuses `--file`/`--artifact-root` values that
-resolve outside the repo and `--db`/`--job-id` values that aren't a single
+allowlisted script then refuses `--file`/`--artifact-root`/`--assumptions`
+values outside the repo and `--db`/`--job-id` values that aren't a single
 `[A-Za-z0-9_.-]+` path component (`scripts/_sandbox.py`), exiting with its
 normal JSON error. This covers what permission rules can't: a `Read` deny
 rule doesn't stop an allowlisted Python script from opening a path itself.

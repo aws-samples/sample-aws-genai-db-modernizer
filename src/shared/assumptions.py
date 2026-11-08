@@ -25,6 +25,14 @@ window and divisor, and the region and price date, each with its origin (``defau
 ``collected`` or ``customer``). The approval gate and every deliverable print its
 lines; approving the gate approves them, and nothing asks about them.
 
+#1991: a customer sets them in one place, the optional assumptions file
+(``src.shared.assumptions_file``, ``run_assessment.py --assumptions``), or growth alone
+with ``--growth``. :func:`record_assumptions` records the values under
+``decisions/assumptions.json`` with each one's origin (``flag``, ``file``, or
+``customer`` for any other writer), and keeps a value another writer recorded. A peak
+the customer sets is every designer's peak (:func:`design_context`); growth never
+reaches a designer.
+
 #1991 adds the rate window's length and dates and the divisor reminder to the
 ``rate_window`` item, and its representativeness check as the ``rate_window_check``
 item (``src.shared.rate_window.window_check_facts``): a window that is short, short
@@ -37,7 +45,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
-Origin = Literal["default", "collected", "customer"]
+#: ``flag`` and ``file`` (#1991): set with ``--growth`` or the assumptions file;
+#: ``customer``: by any other writer, and every report written before #1991.
+Origin = Literal["default", "collected", "customer", "flag", "file"]
 PeakBasis = Literal["cloudwatch", "sampled", "not_measured", "customer"]
 
 DEFAULT_GROWTH = 5.0
@@ -50,6 +60,36 @@ PEAK_MAX_DAYS = 14.0
 PEAK_METRICS = ("read_iops", "write_iops")
 
 ASSUMPTIONS_FILE = "decisions/assumptions.json"
+
+#: The assumptions a customer can set (#1991), by their recorded key: the file's key,
+#: the lowest value (and whether it is allowed) and the highest. Growth below 1× is a
+#: shrinking workload; a peak below 1× would be a busiest hour quieter than the mean.
+SETTABLE: dict[str, tuple[str, float, bool, float]] = {
+    "growth_multiplier": ("growth", 0.0, False, 100.0),
+    "peak_to_avg_ratio": ("peak", 1.0, True, 100.0),
+}
+#: The origin a writer records (``via``): anything else is the customer's.
+_ORIGIN_BY_VIA: dict[str, Origin] = {"cli": "flag", "file": "file"}
+
+
+def check_value(key: str, value: object) -> float:
+    """``value`` as the assumption ``key`` takes it; ValueError naming the range if not."""
+    import math
+
+    if key not in SETTABLE:
+        raise ValueError(f"{key!r} is not an assumption a customer can set")
+    name, low, low_ok, high = SETTABLE[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number, got {type(value).__name__}")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(
+            f"{name} must be a number between {low:g} and {high:g}, not NaN or infinity"
+        )
+    if number > high or number < low or (number == low and not low_ok):
+        bound = f"{low:g} (included)" if low_ok else f"{low:g} (excluded)"
+        raise ValueError(f"{name} must be between {bound} and {high:g}, got {number:g}")
+    return number
 
 
 def _num(value: object) -> float | None:
@@ -106,7 +146,10 @@ def peak_assumption(
             "basis": "customer",
             "ratio": custom,
             "coverage_days": None,
-            "statement": f"{_ratio(custom)}× peak-to-average ratio, set by the customer",
+            # #1991: where the customer set it (the assumptions file), for the block; the
+            # block's line says who set it.
+            "statement": f"{_ratio(custom)}× peak-to-average ratio",
+            "origin": (context or {}).get("peak_origin") or "customer",
         }
     cw = _cloudwatch(collector)
     period = _num(cw.get("period_seconds"))
@@ -178,12 +221,92 @@ def query_peak_factor(query: Mapping[str, Any], peak: Mapping[str, Any]) -> floa
     return 1.0
 
 
+def _recorded_origin(decision: Mapping[str, Any], key: str) -> Origin:
+    """The origin recorded for ``key``; a decision written before #1991 has none, and
+    its writer (``via``) says it: ``--growth`` recorded ``cli``."""
+    origins = decision.get("origins")
+    origin = origins.get(key) if isinstance(origins, Mapping) else None
+    if origin in ("flag", "file", "customer"):
+        return origin  # type: ignore[no-any-return]
+    return _ORIGIN_BY_VIA.get(str(decision.get("via") or ""), "customer")
+
+
+#: How the gate and the deliverables say who set a value (#1991 review): the facts keep
+#: the origin itself.
+ORIGIN_LABELS: dict[str, str] = {
+    "flag": "set in the run's options",
+    "file": "set in the assumptions file",
+    "customer": "set by the customer",
+}
+
+
+def origin_label(origin: str) -> str:
+    """The words a line uses for ``origin``: ``default`` and ``collected`` as they are."""
+    return ORIGIN_LABELS.get(origin, origin)
+
+
+def out_of_range_notes(decision: Mapping[str, Any] | None) -> dict[str, str]:
+    """By assumptions block key, why a saved value is not used (#1991 review): a job
+    recorded before the ranges (any positive growth) keeps loading, at the default, and
+    says so instead of stating the default silently."""
+    notes: dict[str, str] = {}
+    for key, (name, *_rest) in SETTABLE.items():
+        if decision is None or decision.get(key) is None:
+            continue
+        try:
+            check_value(key, decision.get(key))
+        except ValueError as exc:
+            value = _num(decision.get(key))
+            shown = _times(value) if value is not None else "value"
+            notes[name] = f"the saved {name} {shown} is out of range ({exc}), so it is not used"
+    return notes
+
+
+def _recorded(decision: Mapping[str, Any] | None, key: str) -> float | None:
+    """The recorded value of ``key`` when it is one the customer could set."""
+    try:
+        return check_value(key, (decision or {}).get(key))
+    except ValueError:
+        return None
+
+
 def growth_assumption(decision: Mapping[str, Any] | None) -> tuple[float, Origin]:
     """The growth multiple and its origin: the customer's recorded value, else 5×."""
-    value = _num((decision or {}).get("growth_multiplier"))
-    if value is not None and value > 0:
-        return value, "customer"
+    value = _recorded(decision, "growth_multiplier")
+    if value is not None and decision is not None:
+        return value, _recorded_origin(decision, "growth_multiplier")
     return DEFAULT_GROWTH, "default"
+
+
+def peak_context(decision: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The design context of the customer's recorded peak (#1991), or ``{}``: the
+    ``context`` :func:`peak_assumption` reads. Growth is never in it."""
+    value = _recorded(decision, "peak_to_avg_ratio")
+    if value is None or decision is None:
+        return {}
+    return {
+        "peak_to_avg_ratio": value,
+        "peak_origin": _recorded_origin(decision, "peak_to_avg_ratio"),
+    }
+
+
+def read_assumptions(store: Any, database_name: str, job_id: str) -> dict | None:
+    """The job's recorded assumptions (``decisions/assumptions.json``), or None."""
+    key = f"{database_name}/{job_id}/{ASSUMPTIONS_FILE}"
+    try:
+        found = store.read_json(key) if store.exists(key) else None
+    except Exception:  # noqa: BLE001 -- an unreadable decision keeps the defaults, logged
+        from src.shared.progress import say
+
+        say(f"[assumptions] Unreadable assumptions decision {key}; using the defaults")
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def design_context(store: Any, database_name: str, job_id: str) -> dict[str, Any]:
+    """The context every designer's ``design_metrics`` take for the job (#1991): the
+    customer's peak, when one is recorded."""
+    return peak_context(read_assumptions(store, database_name, job_id))
 
 
 def scenario_growths(growth: float) -> list[float]:
@@ -204,8 +327,13 @@ def assumption_items(
     rate_window_statement: str | None,
     context: Mapping[str, Any] | None = None,
     rate_windows: Mapping[str, Any] | None = None,
+    notes: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The assumptions block: one item per assumption, with its value, origin and line.
+
+    ``notes`` (:func:`out_of_range_notes`): by item key, why a saved value is not used;
+    the item's line says it after its origin. Each line names its origin in words
+    (:func:`origin_label`); the item keeps the origin itself.
 
     ``rate_windows`` is the collection's rate window facts
     (``src.shared.rate_window.rate_window_facts``, #1991): when given, the rate window
@@ -216,10 +344,16 @@ def assumption_items(
     peak_origin: Origin = {
         "cloudwatch": "collected",
         "sampled": "collected",
-        "customer": "customer",
+        "customer": peak.get("origin") or "customer",
     }.get(
         peak["basis"], "default"
     )  # type: ignore[assignment]
+    notes = notes or {}
+
+    def said(key: str, origin: str) -> str:
+        label = origin_label(origin)
+        return f"({label}; {notes[key]})" if notes.get(key) else f"({label})"
+
     items: list[dict[str, Any]] = [
         {
             "key": "growth",
@@ -227,7 +361,8 @@ def assumption_items(
             "origin": growth_origin,
             "basis": None,
             "line": (
-                f"Growth: {_times(growth)} ({growth_origin}), stated as a separate scenario; "
+                f"Growth: {_times(growth)} {said('growth', growth_origin)}, stated as a separate "
+                "scenario; "
                 "never applied to the design rates, the risks or the headline cost"
             ),
         },
@@ -236,7 +371,7 @@ def assumption_items(
             "setting": peak["ratio"] if peak["basis"] in ("cloudwatch", "customer") else None,
             "origin": peak_origin,
             "basis": peak["basis"],
-            "line": f"Peak: {peak['statement']} ({peak_origin})",
+            "line": f"Peak: {peak['statement']} {said('peak', peak_origin)}",
         },
     ]
     windows = rate_windows or {}
@@ -301,10 +436,18 @@ __all__ = [
     "PEAK_MIN_DAYS",
     "SCENARIO_GROWTHS",
     "assumption_items",
+    "SETTABLE",
     "assumption_lines",
+    "check_value",
+    "design_context",
     "growth_assumption",
+    "origin_label",
+    "out_of_range_notes",
     "peak_assumption",
+    "peak_context",
     "query_peak_factor",
+    "read_assumptions",
+    "record_assumptions",
     "scenario_growths",
 ]
 
@@ -342,6 +485,14 @@ def _share(n: float) -> str:
     return f"{n:.2g}%"
 
 
+def _growth_said(origin: str) -> str:
+    """How the scenario line marks the job's own growth: "the default growth", "the
+    growth set in the assumptions file"."""
+    if origin in ("flag", "file"):
+        return f" (the growth {origin_label(origin)})"
+    return f" (the {origin} growth)"
+
+
 def growth_scenario_facts(
     collector: Mapping[str, Any] | None,
     *,
@@ -376,7 +527,7 @@ def growth_scenario_facts(
     costs = ", ".join(
         f"{_times(r['growth'])} {_usd(r['monthly_cost_usd'])}/mo"
         + (" (the headline)" if r["growth"] == 1.0 else "")
-        + (f" (the {origin} growth)" if r["growth"] == growth and growth != 1.0 else "")
+        + (_growth_said(origin) if r["growth"] == growth and growth != 1.0 else "")
         for r in rows
     )
     lines = [f"Growth scenario: {costs}; not in the headline cost or the risks"]
@@ -433,27 +584,62 @@ def gate_assumption_lines(
             price_basis=price_basis(),
             rate_window_statement=windows.get("statement"),
             rate_windows=windows,
+            context=peak_context(decision),
+            notes=out_of_range_notes(decision),
         )
     )
+
+
+def record_assumptions(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    values: Mapping[str, object],
+    *,
+    via: str,
+    file_sha256: str | None = None,
+    origins: Mapping[str, Origin] | None = None,
+) -> dict:
+    """Record the customer's assumptions for the job (``decisions/assumptions.json``).
+
+    ``values`` maps :data:`SETTABLE` keys to their values; each is recorded with the
+    origin its writer gives it (``via``: ``cli`` is a flag, ``file`` the assumptions
+    file, #1991). A value already recorded and not in ``values`` keeps its own value and
+    origin. ``origins`` overrides the origin of some of ``values``: one write records the
+    file's values and a flag's together. ``file_sha256`` identifies the file the values
+    came from (its text is never recorded), and stays while any value is still the
+    file's. Raises ValueError, before writing anything, for a value out of range."""
+    from datetime import UTC, datetime
+
+    checked = {key: check_value(key, value) for key, value in values.items()}
+    if not checked:
+        raise ValueError("no assumption to record")
+    prior = read_assumptions(store, database_name, job_id) or {}
+    kept = {k: v for k in SETTABLE if k not in checked and (v := _recorded(prior, k)) is not None}
+    origin = _ORIGIN_BY_VIA.get(via, "customer")
+    recorded = {
+        **{k: _recorded_origin(prior, k) for k in kept},
+        **{k: (origins or {}).get(k) or origin for k in checked},
+    }
+    record: dict[str, Any] = {
+        "job_id": job_id,
+        "database_name": database_name,
+        **kept,
+        **checked,
+        "origins": recorded,
+        "via": via,
+        "decided_at": datetime.now(UTC).isoformat(),
+    }
+    sha = file_sha256 or prior.get("file_sha256")
+    if sha and "file" in recorded.values():
+        record["file_sha256"] = sha
+    store.write_json(f"{database_name}/{job_id}/{ASSUMPTIONS_FILE}", record)
+    return record
 
 
 def record_growth(store: Any, database_name: str, job_id: str, growth: float, via: str) -> dict:
     """Record the customer's growth for the job (``decisions/assumptions.json``, #1990).
 
     Growth reaches only the scenario lines synthesis writes, so a change re-runs
-    synthesis alone. Raises ValueError for a value that is not a positive number."""
-    from datetime import UTC, datetime
-
-    value = _num(growth)
-    if value is None or value <= 0:
-        raise ValueError(f"growth must be a positive number, got {growth!r}")
-    record = {
-        "job_id": job_id,
-        "database_name": database_name,
-        "growth_multiplier": value,
-        "origin": "customer",
-        "via": via,
-        "decided_at": datetime.now(UTC).isoformat(),
-    }
-    store.write_json(f"{database_name}/{job_id}/{ASSUMPTIONS_FILE}", record)
-    return record
+    synthesis alone. Raises ValueError for a value out of :data:`SETTABLE`'s range."""
+    return record_assumptions(store, database_name, job_id, {"growth_multiplier": growth}, via=via)

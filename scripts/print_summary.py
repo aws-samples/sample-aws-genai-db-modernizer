@@ -62,14 +62,12 @@ def gate_text(store, job_id: str, db: str, mode: str = "chat") -> str:
     gate["executive_summary"] = rc.get("executive_summary")
     gate["architectural_patterns"] = rc.get("architectural_patterns") or []
     # #1990: the assumptions block, the lines the assignment page states too.
-    from src.shared.assumptions import ASSUMPTIONS_FILE, gate_assumption_lines
+    from src.shared.assumptions import gate_assumption_lines, read_assumptions
     from src.storage.collector_for_models import read_collector_for_models
 
-    key = f"{db}/{job_id}/{ASSUMPTIONS_FILE}"
-    decision = store.read_json(key) if store.exists(key) else None
     gate["assumptions"] = gate_assumption_lines(
         read_collector_for_models(store, db, job_id, missing_ok=True),
-        decision if isinstance(decision, dict) else None,
+        read_assumptions(store, db, job_id),
     )
     return render_gate_block(
         gate,

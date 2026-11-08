@@ -26659,7 +26659,9 @@
                                       "values": [
                                         "collected",
                                         "customer",
-                                        "default"
+                                        "default",
+                                        "file",
+                                        "flag"
                                       ]
                                     }
                                   },
@@ -28500,7 +28502,9 @@
                               "kind": "enum",
                               "values": [
                                 "customer",
-                                "default"
+                                "default",
+                                "file",
+                                "flag"
                               ]
                             }
                           },
@@ -36172,8 +36176,8 @@
         }
       }
     },
-    "schema_hash": "dde181b405c390564770dacee66c009cf4bd15a67a6c2e13931f9f737028a8f8",
-    "version": "1.85"
+    "schema_hash": "140516af8cdcfbaa29eadc5a266091b3a221408dd7b0c3e51cd288143be3abdd",
+    "version": "1.86"
   },
   "transformation_contract.StepContract": {
     "fields": {

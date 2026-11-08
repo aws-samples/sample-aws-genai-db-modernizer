@@ -59,6 +59,9 @@ def test_missing_and_none_attributes_are_ignored() -> None:
         ("file", "../outside.json"),
         ("artifact_root", "/"),
         ("artifact_root", "./artifacts/../../elsewhere"),
+        # #1991: the assumptions file a headless /modernize may pass.
+        ("assumptions", "/etc/passwd"),
+        ("assumptions", "../assumptions.json"),
     ],
 )
 def test_rejects_paths_outside_repo(attr: str, value: str) -> None:

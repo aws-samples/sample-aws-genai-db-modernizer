@@ -633,6 +633,9 @@ Version History:
   lower_bound, upper_bound, not_measured) and per_key_upper_bound (PerKeyUpperBound):
   what each per-key figure is, and the upper bound set aside when it was over the limit,
   the evidence its per-key load is not measured. A report written before still loads.
+- 1.86 (2026-11-08, #1991): facts.assumptions items and facts.growth_scenarios take
+  origin flag (--growth) or file (the assumptions file); customer stays for other
+  writers and older reports
 """
 
 from datetime import datetime
@@ -2208,8 +2211,12 @@ class AssumptionItem(BaseModel):
     setting: float | str | None = Field(
         None, description="Its value (a growth or peak multiple, a region), when it has one"
     )
-    origin: Literal["default", "collected", "customer"] = Field(
-        ..., description="Where the value comes from"
+    origin: Literal["default", "collected", "customer", "flag", "file"] = Field(
+        ...,
+        description=(
+            "Where the value comes from: flag (--growth) or file (the assumptions file, "
+            "#1991); customer for any other writer and every report written before #1991"
+        ),
     )
     basis: str | None = Field(
         None, description="For the peak: cloudwatch, sampled, not_measured or customer"
@@ -2245,7 +2252,7 @@ class GrowthScenarioFacts(BaseModel):
     """Growth as a separate scenario (#1990): never in the headline cost or the risks."""
 
     growth: float = Field(..., gt=0, description="The job's growth: 5× unless the customer set it")
-    origin: Literal["default", "customer"]
+    origin: Literal["default", "customer", "flag", "file"]
     scenarios: list[GrowthScenarioRow] = Field(default_factory=list)
     busiest_key: dict[str, Any] | None = Field(
         None, description="engine, table_name, gsi_name and operation of the busiest key value"
@@ -3273,7 +3280,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.85",
+        default="1.86",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

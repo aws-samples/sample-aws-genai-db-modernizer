@@ -416,7 +416,7 @@ def _dispatch_llm_redesign(
     import json
     import tempfile
 
-    from src.agents.schema_design.handler import _dispatch_schema_agent
+    from src.agents.schema_design.handler import _dispatch_schema_agent, with_design_context
 
     # Build revision context
     context = build_revision_context(request, current_schema)
@@ -427,6 +427,7 @@ def _dispatch_llm_redesign(
     context_tmp.close()
 
     collector_data, analysis_data = _revision_designer_inputs(store, database_name, job_id, engine)
+    collector_data = with_design_context(collector_data, store, database_name, job_id)
 
     collector_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     json.dump(collector_data, collector_tmp)

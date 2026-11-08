@@ -64,6 +64,7 @@ from src.contracts.schema_design_input import (
     SchemaDesignGroupEntry,
     SchemaDesignGroupsManifest,
 )
+from src.shared.assumptions import design_context
 from src.shared.placeholder_tables import is_placeholder_table
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import source_engine_of
@@ -837,6 +838,7 @@ def _group_input(
     total_queries: int,
     decision_trace: dict | None = None,
     context_owners: dict[str, int] | None = None,
+    design_context: dict | None = None,
 ) -> dict:
     # The group subagent reads this file: it says its content is data, not
     # instructions (#1317). The Bedrock group designer reads only its
@@ -862,6 +864,7 @@ def _group_input(
             context_owners=(
                 group.get("context_owners") or {} if context_owners is None else context_owners
             ),
+            design_context=design_context,
         )
     )
 
@@ -952,6 +955,8 @@ def split_schema_input(
             max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
         )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
+    # #1991: the customer's peak, when one is recorded, is every group's peak.
+    peak = design_context(store, database_name, job_id)
 
     def measure(group: dict) -> int:
         tables = tables_for_queries(expand(group["queries"]), all_tables, resolver)
@@ -971,6 +976,7 @@ def split_schema_input(
             context_owners={
                 str(t.get("table_id")): len(design_queries) for t in tables if t.get("table_id")
             },
+            design_context=peak,
         )
         text = render_group_input(data)
         if len(read_pages(text)) > MAX_GROUP_INPUT_PAGES:
@@ -1007,6 +1013,7 @@ def split_schema_input(
                 analysis_output,
                 len(design_queries),
                 decision_trace,
+                design_context=peak,
             )
         )
         input_file = f"input_group_{idx}.json"

@@ -218,6 +218,12 @@ def _table_metrics(table: Mapping[str, Any]) -> TableDesignMetrics:
 #: compares the whole log against ``total_queries_analyzed`` (#626).
 UNFILTERED_PATTERNS_KEY = "_unfiltered_in_scope_patterns"
 
+#: Key the schema design handler records the job's design context under, at the top of
+#: the collector file it writes for a Bedrock designer (#1991): the customer's peak
+#: (``src.shared.assumptions.design_context``). The designer's input tool passes it to
+#: the projection, which keeps no ``_``-prefixed key, so no model reads it.
+DESIGN_CONTEXT_KEY = "_design_context"
+
 
 def in_scope_pattern_count(queries: Iterable[Mapping[str, Any]]) -> int:
     """Query patterns whose type is not OTHER."""

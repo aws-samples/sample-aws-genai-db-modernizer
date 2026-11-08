@@ -106,6 +106,9 @@ E2E_LLM_PROMPT: tuple[str, ...] = (
     # columns (#1431).
     "src/tools/schema/design_metrics.py",
     "src/tools/schema/dynamodb_attribute_columns.py",
+    # The peak factor of every designer's design_rps, the customer's when the assumptions
+    # file sets one (#1990, #1991).
+    "src/shared/assumptions.py",
     # The write-intent catalog's approach text reaches the designer word for word
     # through analysis_output.carried_writes (#1362), and its loader.
     "src/catalog/write_intents/*",

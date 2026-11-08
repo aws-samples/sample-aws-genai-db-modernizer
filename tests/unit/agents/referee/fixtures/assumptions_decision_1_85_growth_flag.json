@@ -1,0 +1,8 @@
+{
+ "job_id": "job-hot",
+ "database_name": "shop",
+ "growth_multiplier": 3.0,
+ "origin": "customer",
+ "via": "cli",
+ "decided_at": "2026-11-08T22:07:24.670955+00:00"
+}

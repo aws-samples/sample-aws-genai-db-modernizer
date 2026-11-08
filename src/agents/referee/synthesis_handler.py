@@ -97,10 +97,12 @@ from src.contracts.executive_summary_response import (
 from src.contracts.skipped_placeholders import SkippedSynthesisReport
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.assumptions import (
-    ASSUMPTIONS_FILE,
     assumption_items,
     growth_assumption,
     growth_scenario_facts,
+    out_of_range_notes,
+    peak_context,
+    read_assumptions,
 )
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.catalog.prices import estimates_price_basis
@@ -1336,13 +1338,7 @@ def _carried_writes(
 
 def _assumptions_decision(store: ArtifactStore, database_name: str, job_id: str) -> dict | None:
     """The customer's recorded assumptions (``decisions/assumptions.json``, #1990)."""
-    key = f"{database_name}/{job_id}/{ASSUMPTIONS_FILE}"
-    try:
-        found = store.read_json(key) if store.exists(key) else None
-    except Exception:  # noqa: BLE001 -- an unreadable file keeps the defaults, logged
-        say(f"[synthesis] Unreadable assumptions decision {key}; using the defaults")
-        return None
-    return found if isinstance(found, dict) else None
+    return read_assumptions(store, database_name, job_id)
 
 
 def _hot_partitions(data: SynthesisData) -> list[dict]:
@@ -1600,9 +1596,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     rate_windows = collection_rate_window_facts(data.collector)
     # #1990: the growth synthesis priced its scenarios at (an older caller's result
     # without it reads the decision here).
-    growth, growth_origin = result.get("growth") or growth_assumption(
-        _assumptions_decision(store, result["database_name"], result["job_id"])
-    )
+    decision = _assumptions_decision(store, result["database_name"], result["job_id"])
+    growth, growth_origin = result.get("growth") or growth_assumption(decision)
     output_data["facts"] = compute_report_facts(
         output_data,
         view_ids=view_ids,
@@ -1633,6 +1628,10 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
                 price_basis=price_list,
                 rate_window_statement=(rate_windows or {}).get("statement"),
                 rate_windows=rate_windows,
+                # #1991: the customer's peak, the one every design was written at.
+                context=peak_context(decision),
+                # A saved value out of range says why the default stands (#1991 review).
+                notes=out_of_range_notes(decision),
             )
             if data.collector
             else None
