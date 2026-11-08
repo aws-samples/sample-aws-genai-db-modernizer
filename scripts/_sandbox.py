@@ -26,7 +26,7 @@ from typing import Any
 SANDBOX_ENV = "MODERNIZER_CI_SANDBOX"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-PATH_ARGS: tuple[str, ...] = ("file", "artifact_root", "check_costs")
+PATH_ARGS: tuple[str, ...] = ("file", "artifact_root", "check_costs", "assumptions")
 NAME_ARGS: tuple[str, ...] = ("db", "job_id")
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")

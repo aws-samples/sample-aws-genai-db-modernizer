@@ -1313,6 +1313,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--assumptions",
+        default=None,
+        metavar="FILE",
+        help=(
+            'A JSON file of the assumptions to set, for example {"growth": 3, "peak": 2} '
+            "(#1991): growth (above 0, at most 100) and peak, the peak-to-average ratio "
+            "the DynamoDB, DocumentDB and OpenSearch design rates take (1 to 100). "
+            "Recorded with origin file in the job's "
+            "decisions/assumptions.json; an unknown key or a value out of range is refused"
+        ),
+    )
+    parser.add_argument(
         "--resume-reality-check",
         action="store_true",
         help="Resume reality check after LLM response has been written",
@@ -1442,6 +1454,43 @@ def main() -> None:
         console.close()
 
 
+def _check_assumptions(args) -> None:  # type: ignore[no-untyped-def]
+    """Refuse a bad ``--growth`` or ``--assumptions`` before anything is written (#1991).
+
+    The file is read here, once (``args.assumptions_parsed``); its text never reaches a
+    log or the status line, only its checked values. Both flags set a job's assumptions
+    when it starts at triage: a run past triage keeps the ones it started with."""
+    growth = getattr(args, "growth", None)
+    path = getattr(args, "assumptions", None)
+    args.assumptions_parsed = None
+    if growth is None and path is None:
+        return
+    if args.resume_reality_check or args.choose or args.decide_for_me:
+        _error(
+            "init",
+            "--growth and --assumptions apply when a run starts at triage (--file, or "
+            "--job-id with --db); a job past triage keeps the assumptions it started with",
+        )
+    from src.shared.assumptions import check_value
+    from src.shared.assumptions_file import AssumptionsFileError, read_assumptions_file
+
+    if growth is not None:
+        try:
+            check_value("growth_multiplier", growth)
+        except ValueError as exc:
+            _error("init", f"--growth: {exc}")
+    if path is not None:
+        try:
+            args.assumptions_parsed = read_assumptions_file(path)
+        except AssumptionsFileError as exc:
+            _error("init", f"--assumptions: {exc}")
+        if growth is not None and "growth_multiplier" in args.assumptions_parsed.values:
+            _error(
+                "init",
+                "--growth and the assumptions file both set growth: set growth in one place",
+            )
+
+
 def _run(args) -> None:  # type: ignore[no-untyped-def]
     """Run the phases ``args`` asks for (main() has set up the output mode)."""
 
@@ -1469,6 +1518,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
+
+    _check_assumptions(args)
 
     if getattr(args, "target_database_ids", None) is not None and (
         args.resume_reality_check or args.choose or args.decide_for_me
@@ -1583,11 +1634,28 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         from src.agents.referee.engine_scope import record_engine_scope
 
         record_engine_scope(store, db_name, job_id, scope, via="cli")
-    # #1990: the customer's growth, recorded for the job; synthesis reads it.
-    if getattr(args, "growth", None) is not None:
+    # #1991: the assumptions file's values (origin file) and --growth (origin flag),
+    # recorded for the job in one write, with the file's hash; the designers read its
+    # peak, synthesis the growth (#1990).
+    parsed = getattr(args, "assumptions_parsed", None)
+    growth = getattr(args, "growth", None)
+    if parsed is not None:
+        from src.shared.assumptions import record_assumptions
+
+        flag = {} if growth is None else {"growth_multiplier": growth}
+        record_assumptions(
+            store,
+            db_name,
+            job_id,
+            {**parsed.values, **flag},
+            via="file",
+            file_sha256=parsed.sha256,
+            origins={key: "flag" for key in flag},
+        )
+    elif growth is not None:
         from src.shared.assumptions import record_growth
 
-        record_growth(store, db_name, job_id, args.growth, via="cli")
+        record_growth(store, db_name, job_id, growth, via="cli")
 
     # Phase: Triage
     _start_phase("triage")

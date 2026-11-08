@@ -24,7 +24,9 @@ def test_the_customers_growth_is_stated_as_the_customers(tmp_path, monkeypatch) 
 
     _store(tmp_path, monkeypatch, cached=False)
     record_growth(assignments.artifact_store, DB, JOB, 2, via="api")
-    assert client.get(_url()).json()["assumptions"][0].startswith("Growth: 2× (customer)")
+    assert (
+        client.get(_url()).json()["assumptions"][0].startswith("Growth: 2× (set by the customer)")
+    )
 
 
 def test_the_chat_gate_prints_the_same_lines_once() -> None:

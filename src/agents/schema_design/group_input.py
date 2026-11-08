@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -358,8 +358,12 @@ def build_group_input(
     decision_trace: dict | None = None,
     context_owners: dict[str, int] | None = None,
     pattern_units: Sequence[Sequence[dict]] | None = None,
+    design_context: Mapping[str, Any] | None = None,
 ) -> dict:
     """The compact input for one group (see the module docstring).
+
+    ``design_context`` (#1991): the job's design context, the customer's peak
+    (``src.shared.assumptions.design_context``), which the design metrics take.
 
     ``context_owners``: each table the group's queries touch that another group owns
     (#1243), with that group's index. Listed as ``group_context_tables``: the owner
@@ -517,8 +521,9 @@ def build_group_input(
             group_tables,
             group_queries if pattern_units is None else group_queries_section["query_patterns"],
             members=None if pattern_units is None else listed_members(group_collector),
-            # #1990: the peak factor from the whole collection's metrics.
-            peak=peak_assumption(collector_output),
+            # #1990: the peak factor from the whole collection's metrics, or the
+            # customer's (#1991).
+            peak=peak_assumption(collector_output, design_context),
         ).model_dump(mode="json")
     if decision_trace is not None:
         group_input["decision_trace"] = scope_decision_trace(decision_trace, group_collector)

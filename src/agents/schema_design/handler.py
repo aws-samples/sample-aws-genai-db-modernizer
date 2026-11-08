@@ -59,6 +59,7 @@ from src.contracts.analysis_output import (
 )
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
+from src.shared.assumptions import design_context
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.placeholder_tables import saved_write_groups
 from src.shared.progress import in_context, say
@@ -67,6 +68,7 @@ from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 from src.storage.collector_for_models import read_collector_for_models
 from src.tools.schema.design_metrics import (
+    DESIGN_CONTEXT_KEY,
     METRIC_ENGINES,
     UNFILTERED_PATTERNS_KEY,
     check_design_numbers,
@@ -385,6 +387,16 @@ def _invalidation_writes(
     return out
 
 
+def with_design_context(
+    collector: dict, store: ArtifactStore, database_name: str, job_id: str
+) -> dict:
+    """``collector`` as a Bedrock designer's collector file carries it (#1991): with the
+    job's design context (the customer's peak) under :data:`DESIGN_CONTEXT_KEY`, or
+    ``collector`` itself when the job has none."""
+    context = design_context(store, database_name, job_id)
+    return {**collector, DESIGN_CONTEXT_KEY: context} if context else collector
+
+
 def prepare_schema_design_input(
     job_id: str,
     database_name: str,
@@ -455,7 +467,10 @@ def prepare_schema_design_input(
         "job_id": job_id,
     }
     if target_type in METRIC_ENGINES:
-        llm_input["design_metrics"] = design_metrics_from_collector(target_type, collector_output)
+        # #1991: the customer's peak, when one is recorded, is the designs' peak.
+        llm_input["design_metrics"] = design_metrics_from_collector(
+            target_type, collector_output, design_context(store, database_name, job_id)
+        )
     # The engine's own analysis evidence, scoped to this call's queries (#1068).
     full_trace = _read_decision_trace(store, database_name, job_id, target_type)
     if full_trace is not None:
@@ -918,6 +933,7 @@ def run_schema_design(
     say(f"[schema-design/{target_type}] Loaded analysis output")
 
     # --- Write to temp files for the Strands agent ---
+    collector_output = with_design_context(collector_output, store, database_name, job_id)
     collector_raw = json.dumps(collector_output, indent=2, default=str).encode()
     analysis_raw = json.dumps(analysis_output, indent=2, default=str).encode()
 
@@ -1360,6 +1376,7 @@ def run_schema_design_auto(
         # Write group data to temp files for the agent
         import tempfile
 
+        group_collector = with_design_context(group_collector, store, database_name, job_id)
         collector_raw = json.dumps(group_collector, indent=2, default=str).encode()
         analysis_raw = json.dumps(group_analysis, indent=2, default=str).encode()
 
@@ -1516,6 +1533,7 @@ def run_schema_design_with_injected(
         )
 
     # Write to temp files and invoke agent
+    collector_output = with_design_context(collector_output, store, database_name, job_id)
     collector_raw = json.dumps(collector_output, indent=2, default=str).encode()
     analysis_raw = json.dumps(analysis_output, indent=2, default=str).encode()
 

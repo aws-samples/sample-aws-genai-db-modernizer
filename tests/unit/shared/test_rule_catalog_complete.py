@@ -464,6 +464,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "the assessment's stated assumptions (#1990): the default growth of the scenario "
         "line and the CloudWatch coverage a peak ratio is taken from; never read by routing",
     ),
+    "src/shared/assumptions_file.py": (
+        frozenset({"_SHOWN_KEY_CHARS"}),
+        "how much of a refused key an assumptions file's error shows (#1991), not a routing rule",
+    ),
     "src/shared/collection_database_name.py": (
         frozenset({"_MAX_LENGTH"}),
         "the artifact-path name length limit (#420, #1096), not a routing rule",

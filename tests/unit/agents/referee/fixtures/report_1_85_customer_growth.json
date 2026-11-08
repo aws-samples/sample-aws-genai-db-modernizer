@@ -1,0 +1,988 @@
+{
+ "agent_type": "referee-synthesis",
+ "assignment_summary": {
+  "aurora_engine_choice": null,
+  "co_dependency_groups": 0,
+  "in_scope_count": 3,
+  "query_count": 3,
+  "source": null,
+  "status": null,
+  "tie_unresolved_count": 0,
+  "version": 2
+ },
+ "auto_decided_choices": [],
+ "cache_overlay": null,
+ "carried_writes": [],
+ "considered_not_recommended": [],
+ "contract_version": "1.85",
+ "database_name": "shop",
+ "engines_in_use": [
+  "mysql"
+ ],
+ "facts": {
+  "access_pattern_totals": {
+   "cache_layer_pattern_count": 0,
+   "listed_pattern_count": 0,
+   "owned_pattern_count": 0
+  },
+  "assumptions": {
+   "assumptions": [
+    {
+     "basis": null,
+     "key": "growth",
+     "line": "Growth: 3\u00d7 (customer), stated as a separate scenario; never applied to the design rates, the risks or the headline cost",
+     "origin": "customer",
+     "setting": 3.0
+    },
+    {
+     "basis": "not_measured",
+     "key": "peak",
+     "line": "Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days): the rates are used as measured (default)",
+     "origin": "default",
+     "setting": null
+    },
+    {
+     "basis": null,
+     "key": "rate_window",
+     "line": "Rate window: execution counts are divided by each statement's own observed window (0 statements), the server uptime (0), or an assumed 24 hours (0); 3 statements recorded no window (an older collector output, whose rates assumed 24 hours, or a Performance Insights rate); costs assume that rate runs continuously; no window was measured: the counts are divided by an assumed 24 hours, or recorded no window; a short window right after a statistics reset overstates traffic, and a fixed divisor (the server uptime or an assumed 24 hours) can bias either way (collected)",
+     "origin": "collected",
+     "setting": null
+    },
+    {
+     "basis": null,
+     "key": "rate_window_check",
+     "line": "Rate window check: not checked: the window's length (no statement's window was measured), the server's own statement rate (not collected) (collected)",
+     "origin": "collected",
+     "setting": "not_checked"
+    }
+   ],
+   "lines": [
+    "Growth: 3\u00d7 (customer), stated as a separate scenario; never applied to the design rates, the risks or the headline cost",
+    "Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days): the rates are used as measured (default)",
+    "Rate window: execution counts are divided by each statement's own observed window (0 statements), the server uptime (0), or an assumed 24 hours (0); 3 statements recorded no window (an older collector output, whose rates assumed 24 hours, or a Performance Insights rate); costs assume that rate runs continuously; no window was measured: the counts are divided by an assumed 24 hours, or recorded no window; a short window right after a statistics reset overstates traffic, and a fixed divisor (the server uptime or an assumed 24 hours) can bias either way (collected)",
+    "Rate window check: not checked: the window's length (no statement's window was measured), the server's own statement rate (not collected) (collected)"
+   ]
+  },
+  "auto_decided_by_engine": [],
+  "auto_decided_choice_count": 0,
+  "auto_decided_query_count": 0,
+  "busiest_partition_key": {
+   "distinct_key_bound": "collected",
+   "distinct_key_values": 55527,
+   "engine": "dynamodb",
+   "gsi_name": null,
+   "operation": "read",
+   "partition_limit": 3000.0,
+   "per_key_basis": "distinct_values",
+   "per_key_measure": "lower_bound",
+   "per_key_pct_of_limit": 0.0055,
+   "per_key_source": "key_values",
+   "per_key_units_per_second": 0.1637,
+   "per_key_upper_bound": null,
+   "query_ids": [
+    "r1"
+   ],
+   "table_name": "Options",
+   "total_is_upper_bound": true,
+   "total_pct_of_key_limit": 302.9317,
+   "total_units_per_second": 9087.95
+  },
+  "cache_layer": null,
+  "close_calls": {
+   "close_call_query_count": 0,
+   "engine_pairs": [],
+   "margin_points": 5.0,
+   "settled_tie_count": 0
+  },
+  "cost_assumptions": [
+   "On-demand capacity mode for all target databases",
+   "Does not include data transfer, backups, or global tables",
+   "3 source tables have no collected size, so no storage is priced for them"
+  ],
+  "cost_basis_notes": [],
+  "cost_caveat": "Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator (https://calculator.aws/).",
+  "cost_scope_label": "Full-modernization estimate: all waves done, every kept engine running.",
+  "critical_high_risk_count": 0,
+  "critical_high_risk_types": [],
+  "critical_high_risks_by_engine": {},
+  "critical_high_root_cause": null,
+  "derived_copy_sync": null,
+  "design_review_reroute_count": 0,
+  "dynamodb_merge_conflicts": null,
+  "dynamodb_merge_reviews": null,
+  "engine_cost_total_usd": 20.0,
+  "engine_count": 2,
+  "engine_scope": null,
+  "engines": [
+   {
+    "cached_call_share_percent": null,
+    "cached_queries": null,
+    "cost_sizing": null,
+    "engine": "dynamodb",
+    "engine_source_tables": 2,
+    "kept_in_sync_tables": 0,
+    "monthly_cost_usd": 10.0,
+    "moves_to_tables": {},
+    "rationale": "0% mean fit across 2 queries (2 rated tables; 1 query without table-level evidence, partly signal-based). Schema design: 2 target tables, 0 in-scope access patterns.",
+    "role": "Migration target",
+    "shared_source_tables": null,
+    "signal_overrides": [],
+    "tables_migrate": 2,
+    "target_objects": 2,
+    "workload_percent": 66.7
+   },
+   {
+    "cached_call_share_percent": null,
+    "cached_queries": null,
+    "cost_sizing": null,
+    "engine": "aurora_mysql",
+    "engine_source_tables": null,
+    "kept_in_sync_tables": null,
+    "monthly_cost_usd": 10.0,
+    "moves_to_tables": null,
+    "rationale": "0% mean fit across 1 query (signal only, no table-level evidence).",
+    "role": "Retained",
+    "shared_source_tables": null,
+    "signal_overrides": [],
+    "tables_migrate": 0,
+    "target_objects": null,
+    "workload_percent": 33.3
+   }
+  ],
+  "executive_brief": {
+   "decision_wave": 1,
+   "exposures": [
+    {
+     "engine": "dynamodb",
+     "risk_id": "RISK-001",
+     "risk_type": "PERFORMANCE_DEGRADATION",
+     "rule": "design.hot_partition",
+     "severity": "LOW",
+     "wave": 2
+    }
+   ],
+   "overall_risk_level": "LOW",
+   "projected_monthly_cost_whole_usd": 20,
+   "retired_saving_whole_usd": {},
+   "saving_counted": false,
+   "savings_percent": null,
+   "share_of_all_queries_percent": {},
+   "source_cost_known": false,
+   "source_engine": "mysql",
+   "source_monthly_cost_usd": null,
+   "source_monthly_cost_whole_usd": null,
+   "waves": [
+    {
+     "engines": [
+      "aurora_mysql"
+     ],
+     "kind": "homogeneous",
+     "wave": 1
+    },
+    {
+     "engines": [
+      "dynamodb"
+     ],
+     "kind": "migration",
+     "wave": 2
+    }
+   ]
+  },
+  "growth_scenarios": {
+   "busiest_key": {
+    "engine": "dynamodb",
+    "gsi_name": null,
+    "operation": "read",
+    "table_name": "Options"
+   },
+   "growth": 3.0,
+   "lines": [
+    "Growth scenario: 1\u00d7 $20.00/mo (the headline), 3\u00d7 $20.00/mo (the customer growth), 5\u00d7 $20.00/mo, 10\u00d7 $20.00/mo; not in the headline cost or the risks",
+    "Busiest estimated partition key value (reads), share of its limit: 1\u00d7 0.0055%, 3\u00d7 0.017%, 5\u00d7 0.028%, 10\u00d7 0.055%; that key value can take 18,182\u00d7 its design-rate load before it reaches its limit"
+   ],
+   "origin": "customer",
+   "scenarios": [
+    {
+     "busiest_key_pct_of_limit": 0.0055,
+     "growth": 1.0,
+     "monthly_cost_usd": 20.0
+    },
+    {
+     "busiest_key_pct_of_limit": 0.0165,
+     "growth": 3.0,
+     "monthly_cost_usd": 20.0
+    },
+    {
+     "busiest_key_pct_of_limit": 0.0275,
+     "growth": 5.0,
+     "monthly_cost_usd": 20.0
+    },
+    {
+     "busiest_key_pct_of_limit": 0.055,
+     "growth": 10.0,
+     "monthly_cost_usd": 20.0
+    }
+   ]
+  },
+  "hot_partitions": [
+   {
+    "distinct_key_bound": null,
+    "distinct_key_values": null,
+    "engine": "dynamodb",
+    "gsi_name": null,
+    "operation": "write",
+    "partition_limit": 1000.0,
+    "per_key_basis": "not_measured",
+    "per_key_measure": "not_measured",
+    "per_key_pct_of_limit": null,
+    "per_key_source": null,
+    "per_key_units_per_second": null,
+    "per_key_upper_bound": null,
+    "query_ids": [
+     "w1"
+    ],
+    "table_name": "Meta",
+    "total_is_upper_bound": true,
+    "total_pct_of_key_limit": 100.45,
+    "total_units_per_second": 1004.5
+   },
+   {
+    "distinct_key_bound": "collected",
+    "distinct_key_values": 55527,
+    "engine": "dynamodb",
+    "gsi_name": null,
+    "operation": "read",
+    "partition_limit": 3000.0,
+    "per_key_basis": "distinct_values",
+    "per_key_measure": "lower_bound",
+    "per_key_pct_of_limit": 0.0055,
+    "per_key_source": "key_values",
+    "per_key_units_per_second": 0.1637,
+    "per_key_upper_bound": null,
+    "query_ids": [
+     "r1"
+    ],
+    "table_name": "Options",
+    "total_is_upper_bound": true,
+    "total_pct_of_key_limit": 302.9317,
+    "total_units_per_second": 9087.95
+   }
+  ],
+  "in_scope_query_count": 3,
+  "migration_wave_count": 2,
+  "moving_query_count": 2,
+  "no_engine_in_scope_query_count": 0,
+  "no_migration": {
+   "cached_call_share_percent": 0.0,
+   "critical_high_risks": 0,
+   "engines": [
+    "aurora_mysql"
+   ],
+   "workload_percent": 33.3
+  },
+  "open_risk_count": 1,
+  "open_risks_by_severity": {
+   "LOW": 1
+  },
+  "open_risks_by_type": {
+   "performance degradation": 1
+  },
+  "pending_choice_count": 0,
+  "pending_choice_pairs": [],
+  "pending_choice_query_count": 0,
+  "post_schema_reroute_count": 0,
+  "price_list": null,
+  "projected_monthly_cost_usd": 20.0,
+  "query_group_counts": {
+   "group_count": 1,
+   "listed_group_count": 0,
+   "listed_group_indexes": [],
+   "procedure_internal_queries": 0,
+   "procedure_internal_routine_counts": {},
+   "procedure_internal_routine_queries": 0,
+   "relational_only_engines": [
+    "aurora_mysql"
+   ],
+   "relational_only_group_count": 1,
+   "relational_query_counts": {
+    "aurora_mysql": 1
+   },
+   "relational_rows": [
+    {
+     "calls_per_second": 50.0,
+     "engine": "aurora_mysql",
+     "group_index": 0,
+     "query_count": 1
+    }
+   ],
+   "ungrouped_queries": [
+    {
+     "engine": "dynamodb",
+     "query_count": 2,
+     "schema_design_available": true
+    }
+   ]
+  },
+  "query_pattern_counts": {
+   "pattern_count": 3,
+   "query_count": 3,
+   "repeated_pattern_count": 0,
+   "repeated_query_count": 0,
+   "split_pattern_count": 0
+  },
+  "query_total_count": 3,
+  "query_trace": {
+   "ever_tied_query_count": 0,
+   "full_trace_cap": 200,
+   "full_trace_count": 0,
+   "has_ledger": false,
+   "listed_queries": [],
+   "listed_query_count": 0,
+   "moved_query_count": 0,
+   "not_in_full_count": 0,
+   "open_tie_query_count": 0,
+   "overridden_query_count": 0,
+   "pinned_query_count": 0,
+   "trace_group_count": 0,
+   "trace_groups": [],
+   "traced_query_count": 3,
+   "unlisted_query_count": 3,
+   "unlisted_rules": []
+  },
+  "rate_windows": {
+   "assumed_24h_count": 0,
+   "check_statement": "not checked: the window's length (no statement's window was measured), the server's own statement rate (not collected)",
+   "flags": [],
+   "longest_window_seconds": null,
+   "measured_rate_per_second": 150.0,
+   "observed_count": 0,
+   "representative": null,
+   "sample_fallback_count": 0,
+   "sample_no_calls_count": 0,
+   "sampled_count": 0,
+   "scenario_label": null,
+   "scenario_risk_note": null,
+   "server_rate_per_second": null,
+   "server_uptime_seconds": null,
+   "shortest_window_seconds": null,
+   "statement": "execution counts are divided by each statement's own observed window (0 statements), the server uptime (0), or an assumed 24 hours (0); 3 statements recorded no window (an older collector output, whose rates assumed 24 hours, or a Performance Insights rate); costs assume that rate runs continuously",
+   "statement_count": 3,
+   "stats_reset_count": 0,
+   "typical_window_seconds": null,
+   "unrecorded_count": 3,
+   "uptime_count": 0,
+   "window_clock": null,
+   "window_end": null,
+   "window_start": null,
+   "window_statement": "no window was measured: the counts are divided by an assumed 24 hours, or recorded no window; a short window right after a statistics reset overstates traffic, and a fixed divisor (the server uptime or an assumed 24 hours) can bias either way"
+  },
+  "reality_check_decisions": [],
+  "reality_check_trade_offs": [],
+  "relational_gaps": {
+   "feature_rules_checked": 5,
+   "gaps": [
+    {
+     "docs": "Amazon Aurora MySQL release notes; Amazon Aurora PostgreSQL release calendar",
+     "feature": "Source version not collected",
+     "impact": "informational",
+     "objects": [],
+     "queries": [],
+     "reason": "The collection names no source version, so the version check did not run: confirm the source's major version against the Aurora versions before planning the move.",
+     "rule_id": "source-version-unknown",
+     "tables": []
+    }
+   ],
+   "gaps_by_impact": {
+    "behaves_differently": 0,
+    "blocks_move": 0,
+    "informational": 1,
+    "needs_rewrite": 0
+   },
+   "rules_checked": 8,
+   "source_engine": "mysql",
+   "source_line": null,
+   "source_version": null,
+   "target_engine": "aurora_mysql",
+   "target_lines": [
+    "8.0",
+    "8.4"
+   ],
+   "version_checked": true
+  },
+  "removed_engines": [],
+  "resolved_risk_count": 0,
+  "resolved_risks_by_severity": {},
+  "retired_in_use_engines": [],
+  "row_counts": {
+   "ddl_table_count": 0,
+   "estimate_count": 3,
+   "exact_count": 0,
+   "no_size_count": 0,
+   "statement": null,
+   "stats_newest_at": null,
+   "stats_oldest_at": null,
+   "table_count": 3,
+   "unknown_count": 0
+  },
+  "source_of_truth_reroute_count": 0,
+  "source_table_count": 3,
+  "source_view_count": 0,
+  "table_basis": {
+   "basis_table_count": 2,
+   "design_coverage": "complete",
+   "designed_engines": [
+    "dynamodb"
+   ],
+   "mapped_tables": 2,
+   "mapped_tables_by_move": {
+    "migrate": 2
+   },
+   "mapped_tables_by_role": {
+    "Migration target": 2
+   },
+   "mapped_tables_not_served": {},
+   "migrating_tables_not_mapped": 0,
+   "migrating_tables_not_mapped_names": [],
+   "pending_engines": []
+  },
+  "table_owner_lines": {
+   "also_read_table_count": 0,
+   "cache_engines": [],
+   "cached_table_count": 0,
+   "no_owner_table_count": 0,
+   "owned_table_counts": {
+    "dynamodb": 2
+   },
+   "table_count": 2,
+   "table_lines": [
+    {
+     "aggregate_pattern": "separate",
+     "also_read_by": [],
+     "cached_by": null,
+     "confidence_score": 0.0,
+     "owner": "dynamodb",
+     "owner_basis": "most_queries",
+     "table": "meta",
+     "target_engine": "dynamodb",
+     "target_table": "Meta"
+    },
+    {
+     "aggregate_pattern": "separate",
+     "also_read_by": [],
+     "cached_by": null,
+     "confidence_score": 80.0,
+     "owner": "dynamodb",
+     "owner_basis": "most_queries",
+     "table": "options",
+     "target_engine": "dynamodb",
+     "target_table": "Options"
+    }
+   ]
+  },
+  "table_sources": null,
+  "tables_migrate": 2,
+  "tied_query_count": 0,
+  "trade_off_count": 0,
+  "trade_off_topics": [],
+  "unreviewed_move_count": 0,
+  "unservable": {
+   "fallback_query_count": 0,
+   "flagged_query_count": 0,
+   "gated_everywhere_query_count": 0,
+   "held_query_count": 0,
+   "more_unservable_count": 0,
+   "no_engine_in_scope_closest_engines": [],
+   "no_engine_in_scope_query_count": 0,
+   "no_fit_query_count": 0,
+   "unservable_queries": [],
+   "unservable_query_count": 0
+  },
+  "waves": [
+   {
+    "critical_high_risks": 0,
+    "engines": [
+     "aurora_mysql"
+    ],
+    "heterogeneous_note": null,
+    "kept_in_sync": [],
+    "kept_in_sync_tables": null,
+    "lists_relational_gaps": false,
+    "migrating": false,
+    "moved_by_later_waves": 2,
+    "moving_by_engine": null,
+    "moving_tables": null,
+    "no_move": false,
+    "served_by_engine": null,
+    "served_tables": 3,
+    "shared_in_wave": [],
+    "tables_only": 3,
+    "views": 0,
+    "wave": 1
+   },
+   {
+    "critical_high_risks": 0,
+    "engines": [
+     "dynamodb"
+    ],
+    "heterogeneous_note": null,
+    "kept_in_sync": [],
+    "kept_in_sync_tables": 0,
+    "lists_relational_gaps": false,
+    "migrating": true,
+    "moved_by_later_waves": null,
+    "moving_by_engine": {
+     "dynamodb": 2
+    },
+    "moving_tables": 2,
+    "no_move": false,
+    "served_by_engine": {
+     "dynamodb": 2
+    },
+    "served_tables": 2,
+    "shared_in_wave": [],
+    "tables_only": null,
+    "views": null,
+    "wave": 2
+   }
+  ],
+  "workload_total_percent": 100.0
+ },
+ "flagged_unservable": [],
+ "job_id": "job-hot",
+ "migration_waves": [
+  {
+   "cutover_query_count": 3,
+   "engines": [
+    "aurora_mysql"
+   ],
+   "fronts": null,
+   "gate": "Schema and data parity validated against the source database before cutover. Once replication to Aurora MySQL has caught up, decommission the source MySQL database: later waves move from Aurora MySQL, not from it.",
+   "gate_parts": [
+    {
+     "items": [],
+     "text": "Schema and data parity validated against the source database before cutover. Once replication to Aurora MySQL has caught up, decommission the source MySQL database: later waves move from Aurora MySQL, not from it."
+    }
+   ],
+   "homogeneity": "homogeneous",
+   "moves_from": [
+    "mysql"
+   ],
+   "no_move_reason": null,
+   "owned_counts_by_engine": null,
+   "query_count": 1,
+   "rationale": "The whole source database (MySQL) moves 1:1 to Aurora MySQL: same engine family. The collector reports engine and version only; feature compatibility is not assessed here. 1 query (33.3%) remain on Aurora MySQL once later waves have moved their share; later waves move subsets of these 3 tables and views out of Aurora MySQL. 2 of these tables and views are mapped to a target engine in the migration map; later waves move 2 of the 3 off Aurora MySQL, and the other 1 stays on Aurora MySQL: 1 table or view the map does not list.",
+   "serves_from": [],
+   "share_basis": "queries",
+   "table_count": 3,
+   "table_counts_by_engine": null,
+   "table_groups": null,
+   "table_owners": null,
+   "tables": [
+    "meta",
+    "options",
+    "orders"
+   ],
+   "title": "Move to Aurora MySQL",
+   "wave": 1,
+   "workload_share_percent": 33.3
+  },
+  {
+   "cutover_query_count": null,
+   "engines": [
+    "dynamodb"
+   ],
+   "fronts": null,
+   "gate": "Dual-write/backfill validated and query parity confirmed per table group. Close RISK-001 before this gate (hot partitions).",
+   "gate_parts": [
+    {
+     "items": [],
+     "text": "Dual-write/backfill validated and query parity confirmed per table group. Close RISK-001 before this gate (hot partitions)."
+    }
+   ],
+   "homogeneity": null,
+   "moves_from": [
+    "aurora_mysql"
+   ],
+   "no_move_reason": null,
+   "owned_counts_by_engine": null,
+   "query_count": 2,
+   "rationale": "2 key-value and point-lookup queries (66.7% of queries) across 1 table group, where co-dependent tables move together: the pattern DynamoDB fits best.",
+   "serves_from": [],
+   "share_basis": "queries",
+   "table_count": 2,
+   "table_counts_by_engine": null,
+   "table_groups": [
+    {
+     "kind": "independent",
+     "query_count": 2,
+     "tables": [
+      "meta",
+      "options"
+     ]
+    }
+   ],
+   "table_owners": null,
+   "tables": [
+    "meta",
+    "options"
+   ],
+   "title": "Move key-value and point-lookup queries to DynamoDB",
+   "wave": 2,
+   "workload_share_percent": 66.7
+  }
+ ],
+ "needs_deeper_analysis": false,
+ "pending_engine_choices": [],
+ "post_schema_reroutes": [],
+ "prose_style_rejections": [],
+ "query_groups": [
+  {
+   "access_patterns": [
+    {
+     "design_rps": 50.0,
+     "engine": "aurora_mysql",
+     "in_scope": true,
+     "operation": "SELECT",
+     "pattern_id": "relational-aurora_mysql-r2",
+     "query_ids": [
+      "r2"
+     ],
+     "reason_index": 0
+    }
+   ],
+   "engines": [
+    "aurora_mysql"
+   ],
+   "group_name": "orders",
+   "reasons": [
+    ""
+   ],
+   "source_queries": [
+    {
+     "execution_time_ms_avg": null,
+     "frequency_per_hour": 0,
+     "query_id": "r2",
+     "query_text": "SELECT * FROM orders WHERE k = ?",
+     "query_type": "SELECT"
+    }
+   ],
+   "total_design_rps": 50.0
+  }
+ ],
+ "query_pattern_groups": [
+  {
+   "frequency_per_hour": 0.0,
+   "members": [
+    {
+     "engine": "dynamodb",
+     "frequency_per_hour": 0.0,
+     "query_id": "r1"
+    }
+   ],
+   "operation": "read",
+   "pattern_id": "PAT-1",
+   "returned_columns": [
+    "*"
+   ],
+   "tables": [
+    "options"
+   ]
+  },
+  {
+   "frequency_per_hour": 0.0,
+   "members": [
+    {
+     "engine": "dynamodb",
+     "frequency_per_hour": 0.0,
+     "query_id": "w1"
+    }
+   ],
+   "operation": "read",
+   "pattern_id": "PAT-2",
+   "returned_columns": [
+    "*"
+   ],
+   "tables": [
+    "meta"
+   ]
+  },
+  {
+   "frequency_per_hour": 0.0,
+   "members": [
+    {
+     "engine": "aurora_mysql",
+     "frequency_per_hour": 0.0,
+     "query_id": "r2"
+    }
+   ],
+   "operation": "read",
+   "pattern_id": "PAT-3",
+   "returned_columns": [
+    "*"
+   ],
+   "tables": [
+    "orders"
+   ]
+  }
+ ],
+ "query_traces": {
+  "close_calls": [],
+  "effective_version": 2,
+  "has_ledger": false,
+  "more_listed": [],
+  "queries": [],
+  "query_count": 3,
+  "unlisted_rules": [],
+  "unservable": []
+ },
+ "ranking": [
+  {
+   "access_patterns": 0,
+   "aggregate_count": 0,
+   "analysis_confidence": 80,
+   "anti_patterns_detected": 0,
+   "assigned_queries": 2,
+   "assigned_queries_in_scope": 2,
+   "assignment_reason_summary": [],
+   "complexity_score": null,
+   "confidence_score": 80,
+   "cost_score": null,
+   "migration_complexity_avg": "MEDIUM",
+   "monthly_cost_usd": 10,
+   "pattern_groups": 0,
+   "pattern_score": null,
+   "patterns_detected": 0,
+   "performance_score": null,
+   "rationale": "0% mean fit across 2 queries (2 rated tables; 1 query without table-level evidence, partly signal-based). Schema design: 2 target tables, 0 in-scope access patterns.",
+   "routed_confidence": 0,
+   "routed_confidence_basis": "owned_queries",
+   "routed_confidence_evidence": "partial",
+   "routed_lead": null,
+   "routed_lead_count": 0,
+   "routed_pinned_queries": 0,
+   "routed_queries": 2,
+   "routed_queries_without_table_evidence": 1,
+   "routed_tables": 2,
+   "schema_design_available": true,
+   "tables_analyzed": 1,
+   "tables_highly_suitable": 1,
+   "tables_marginal": 0,
+   "tables_not_suitable": 0,
+   "tables_suitable": 0,
+   "target": "dynamodb",
+   "target_tables": 2,
+   "weight": 0.63,
+   "workload_percent": 66.7
+  },
+  {
+   "access_patterns": 0,
+   "aggregate_count": 0,
+   "analysis_confidence": 80,
+   "anti_patterns_detected": 0,
+   "assigned_queries": 1,
+   "assigned_queries_in_scope": 1,
+   "assignment_reason_summary": [],
+   "complexity_score": null,
+   "confidence_score": 80,
+   "cost_score": null,
+   "migration_complexity_avg": "MEDIUM",
+   "monthly_cost_usd": 10,
+   "pattern_groups": 0,
+   "pattern_score": null,
+   "patterns_detected": 0,
+   "performance_score": null,
+   "rationale": "0% mean fit across 1 query (signal only, no table-level evidence).",
+   "routed_confidence": 0,
+   "routed_confidence_basis": "owned_queries",
+   "routed_confidence_evidence": "signal_only",
+   "routed_lead": null,
+   "routed_lead_count": 0,
+   "routed_pinned_queries": 0,
+   "routed_queries": 1,
+   "routed_queries_without_table_evidence": 1,
+   "routed_tables": 1,
+   "schema_design_available": false,
+   "tables_analyzed": 1,
+   "tables_highly_suitable": 1,
+   "tables_marginal": 0,
+   "tables_not_suitable": 0,
+   "tables_suitable": 0,
+   "target": "aurora_mysql",
+   "target_tables": 0,
+   "weight": 0.63,
+   "workload_percent": 33.3
+  }
+ ],
+ "recommended_architecture": {
+  "architecture_type": "MULTI_DATABASE",
+  "databases": [
+   {
+    "confidence_score": 80,
+    "rationale": "0% mean fit across 2 queries (2 rated tables; 1 query without table-level evidence, partly signal-based). Schema design: 2 target tables, 0 in-scope access patterns.",
+    "routed_confidence": 0,
+    "service": "dynamodb",
+    "table_count": 2,
+    "tables": [
+     "meta",
+     "options"
+    ]
+   }
+  ],
+  "rationale": "Multi-database architecture: Aurora MySQL retained as the relational core (33% of queries), with DynamoDB for key-value access based on workload pattern analysis."
+ },
+ "risk_assessment": {
+  "mitigation_strategies": [
+   "After wave 1 (Aurora MySQL): compare the latency of 3 queries with their source baseline and check the engine sustains the design rate of 50 requests/s before starting wave 2.",
+   "After wave 2 (DynamoDB): compare the latency of 2 queries with their source baseline."
+  ],
+  "overall_risk_level": "LOW",
+  "resolved_risks": [],
+  "risks": [
+   {
+    "affected_tables": [
+     "meta",
+     "options"
+    ],
+    "description": "[dynamodb] The DynamoDB design's busiest estimated partition key value (reads) is at 0.0055% of its limit at the design rate (spread evenly over 55,527 distinct key values; skew across values not measured), and no estimated key value is above it. 2 design tables have a table or index total above 80% of one key value's limit, an upper bound reached only if every request used the same key value (the highest at 302.9%). Per-key load not measured for 1 of these tables: the collection has no distinct-value count for its partition key.",
+    "details": [
+     "Meta writes: 1,004.5 write units/s in total, 100.5% of one key value's 1,000 limit (an upper bound); per-key load not measured.",
+     "Options reads: 9,088 read units/s in total, 302.9% of one key value's 3,000 limit (an upper bound); spread evenly over 55,527 distinct key values; skew across values not measured: about 0.16 read units/s on the busiest key value, 0.0055% of its limit."
+    ],
+    "mitigation": "Watch the busiest key values of these tables in a load test at the design rate, and check how many distinct values the keys not measured take. See the Wave 2 gate in the roadmap.",
+    "query_ids": [
+     "r1",
+     "w1"
+    ],
+    "risk_id": "RISK-001",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "rule": "design.hot_partition",
+    "severity": "LOW",
+    "wave": 2
+   }
+  ]
+ },
+ "routine_followers": [],
+ "routine_units": [],
+ "schema_designs": {
+  "aurora_mysql": {
+   "status": "not_available"
+  },
+  "dynamodb": {
+   "access_pattern_count": 0,
+   "hot_partitions_at_risk": 0,
+   "keys_only_fetch": [],
+   "migration_notes": [],
+   "status": "completed",
+   "tables": [
+    {
+     "aggregate_pattern": "separate",
+     "gsi_count": 0,
+     "item_count": 1,
+     "item_size_bytes": 100,
+     "source_tables": [
+      "options"
+     ],
+     "table_name": "Options"
+    },
+    {
+     "aggregate_pattern": "separate",
+     "gsi_count": 0,
+     "item_count": 1,
+     "item_size_bytes": 100,
+     "source_tables": [
+      "meta"
+     ],
+     "table_name": "Meta"
+    }
+   ],
+   "trade_offs": [],
+   "unsupported_patterns": [],
+   "validation_passed": true
+  }
+ },
+ "scope_unservable": [],
+ "source_table_count": 3,
+ "status": "completed",
+ "summary": "Recommendation: move the shop MySQL database to two AWS services in two waves. Wave 1 moves it to Aurora MySQL, which ends up serving 33.3% of the queries; wave 2 moves 66.7% of the queries to DynamoDB. The projected cost of the full modernization is $20 per month at on-demand list prices. No current cost was collected for the source database, so the plan claims no saving against it.\n\nRisk: overall risk is low. The main exposure is a low-severity risk of slower performance on DynamoDB: review it in the risk register before wave 2 starts.\n\nDecision: approve wave 1. It is safe to approve: it moves the database 1:1 to Aurora MySQL, the same engine family as MySQL, with its current data model, and its cutover waits until schema and data parity is validated against the source.",
+ "summary_deterministic": "Analyzed 3 source tables and 3 query patterns across 2 target database(s). Workload split: DynamoDB handles 2 queries (66.7%), Aurora MySQL handles 1 queries (33.3%). Schema design produced 2 target objects: 0 queries in 0 query groups (DynamoDB: 2 target tables). The schema design's table map lists 2 source tables (DynamoDB). Estimated monthly cost: $20.00. 1 open migration risk (overall: LOW). Top query groups by throughput: orders.",
+ "summary_input_budget": null,
+ "summary_llm": null,
+ "summary_source": "deterministic",
+ "summary_validation_warnings": [],
+ "table_mappings": [
+  {
+   "aggregate_pattern": "separate",
+   "also_read_by": [],
+   "alternatives": [],
+   "cached_by": null,
+   "confidence_score": 0,
+   "owner": "dynamodb",
+   "owner_basis": "most_queries",
+   "recommended_database": "dynamodb",
+   "source_table": "meta",
+   "target_table": "Meta"
+  },
+  {
+   "aggregate_pattern": "separate",
+   "also_read_by": [],
+   "alternatives": [],
+   "cached_by": null,
+   "confidence_score": 80,
+   "owner": "dynamodb",
+   "owner_basis": "most_queries",
+   "recommended_database": "dynamodb",
+   "source_table": "options",
+   "target_table": "Options"
+  }
+ ],
+ "table_sources": null,
+ "tco_analysis": {
+  "assumptions": [
+   "On-demand capacity mode for all target databases",
+   "Does not include data transfer, backups, or global tables",
+   "3 source tables have no collected size, so no storage is priced for them"
+  ],
+  "cost_breakdown": [
+   {
+    "collection_hit_ratio_billed_pct": null,
+    "collection_hit_ratio_pct": null,
+    "database": "dynamodb",
+    "min_billed_miss_pct": null,
+    "monthly_cost_usd": 10.0,
+    "price_list": null,
+    "pricing_mode": "on-demand",
+    "read_io_hit_ratio_basis": null,
+    "sizing": null,
+    "source_memory_gb": null,
+    "target_memory_gb": null
+   },
+   {
+    "collection_hit_ratio_billed_pct": null,
+    "collection_hit_ratio_pct": null,
+    "database": "aurora_mysql",
+    "min_billed_miss_pct": null,
+    "monthly_cost_usd": 10.0,
+    "price_list": null,
+    "pricing_mode": "on-demand",
+    "read_io_hit_ratio_basis": null,
+    "sizing": null,
+    "source_memory_gb": null,
+    "target_memory_gb": null
+   }
+  ],
+  "current_cost_known": false,
+  "current_monthly_cost": 0.0,
+  "eliminated_engine_costs": null,
+  "projected_monthly_cost": 20.0,
+  "retired_engine_savings": null,
+  "savings_percent": 0.0,
+  "unqueried_tables": null
+ },
+ "tied_queries": [],
+ "timestamp": "2026-11-08T22:07:24.742984Z",
+ "trade_offs": [],
+ "unresolved_names": {
+  "count": 0,
+  "names": []
+ }
+}

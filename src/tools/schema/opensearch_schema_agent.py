@@ -50,6 +50,7 @@ from src.tools.schema.base_schema_agent import (
     model_token_usage,
 )
 from src.tools.schema.design_metrics import (
+    DESIGN_CONTEXT_KEY,
     check_design_numbers,
     design_metrics_from_projection,
     unfiltered_pattern_count,
@@ -248,6 +249,8 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
     agent_collector, agent_analysis, agent_context = project_schema_design_input(
         collector,
         analysis,
+        # #1991: the job's design context (the customer's peak), when the handler wrote one.
+        context=raw_collector.get(DESIGN_CONTEXT_KEY) or None,
         query_pattern_groups=listed_query_patterns(raw_collector),
         # The engines the effective assignment runs (#213), added by the design input.
         effective_architecture=raw_analysis.get("effective_architecture"),

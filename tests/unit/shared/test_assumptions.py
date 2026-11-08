@@ -202,7 +202,7 @@ def test_the_gate_states_the_customers_growth(tmp_path) -> None:
     record = record_growth(store, "shop", "job-1", 3, via="cli")
     assert store.read_json("shop/job-1/decisions/assumptions.json") == record
     lines = gate_assumption_lines(_cw(3.0), record)
-    assert lines[0].startswith("Growth: 3× (customer)")
+    assert lines[0].startswith("Growth: 3× (set in the run's options)")  # #1991: a flag
     assert lines[1].startswith("Peak: not measured (the source's metrics cover 3 days")
     with pytest.raises(ValueError):
         record_growth(store, "shop", "job-1", -1, via="cli")

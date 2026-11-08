@@ -29,7 +29,7 @@ from src.contracts.assignment_models import (
     PendingEngineChoice,
     ValidationResult,
 )
-from src.shared.assumptions import ASSUMPTIONS_FILE, gate_assumption_lines
+from src.shared.assumptions import gate_assumption_lines, read_assumptions
 from src.shared.contract_versioning import load_contract
 from src.shared.gate_facts import cache_candidate_reads
 from src.storage.artifact_store import ArtifactStore
@@ -185,9 +185,7 @@ def _cache_reads(store: ArtifactStore, db: str, job_id: str, assignment: Assignm
 def _gate_assumptions(store: ArtifactStore, db: str, job_id: str) -> list[str]:
     """The assumptions block the gate states, the lines the chat gate prints (#1990)."""
     collector = read_collector_for_models(store, db, job_id, missing_ok=True)
-    key = f"{db}/{job_id}/{ASSUMPTIONS_FILE}"
-    decision = store.read_json(key) if store.exists(key) else None
-    return gate_assumption_lines(collector, decision if isinstance(decision, dict) else None)
+    return gate_assumption_lines(collector, read_assumptions(store, db, job_id))
 
 
 # ---------------------------------------------------------------------------

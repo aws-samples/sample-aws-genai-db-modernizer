@@ -814,6 +814,47 @@ def test_target_databases_is_an_optional_never_asked_argument_passed_to_the_scri
     assert '"--target-databases"' in source
 
 
+@pytest.mark.parametrize(
+    ("flag", "placeholder", "script_flag"),
+    [
+        ("--growth <n>", "{growth}", "--growth"),
+        ("--assumptions <file>", "{assumptions_file}", "--assumptions"),
+    ],
+)
+def test_growth_and_the_assumptions_file_are_never_asked_arguments_passed_through(
+    flag, placeholder, script_flag
+) -> None:
+    # #1991: a chat or headless run sets its assumptions as arguments, passed to the first
+    # run_assessment.py command only; /modernize never asks for them, and the resume and
+    # choice commands refuse them (a job keeps the assumptions it started with).
+    modernize = _modernize_text()
+    args = modernize.split("## Arguments", 1)[1].split("## Step 0", 1)[0]
+    line = next(x for x in args.splitlines() if f"`{flag}`" in x)
+    assert "Never ask the user for it, with or without `--auto`" in line
+    assert "on the first `scripts/run_assessment.py` command only" in line
+    pipeline = modernize.split("## Pipeline", 1)[1]
+    assert f"add `{script_flag} {placeholder}` to it" in pipeline
+    later = [
+        x
+        for x in pipeline.splitlines()
+        if "scripts/run_assessment.py" in x
+        and any(f in x for f in ("--resume-reality-check", "--choose", "--decide-for-me"))
+    ]
+    assert later and not any(script_flag in x for x in later), later
+    source = (COMMANDS_DIR.parents[1] / "scripts" / "run_assessment.py").read_text()
+    assert f'"{script_flag}"' in source
+    assert TOOL_USE_RULE in modernize
+
+
+def test_the_assumptions_arguments_are_stated_once_at_the_gate_never_asked() -> None:
+    """#1991: approving the gate approves the assumptions; the file is never read or
+    written by the orchestrator, only passed to the script."""
+    args = _modernize_text().split("## Arguments", 1)[1].split("## Step 0", 1)[0]
+    line = next(x for x in args.splitlines() if "`--assumptions <file>`" in x)
+    assert "never read or write the file yourself" in line
+    assert "inside the repository" in line  # the headless sandbox refuses any other path
+
+
 # Issue #1233: every UI pointer names the job's own page, quoted from
 # `start_local_ui.py --page` output, never the UI root or a hand-built URL.
 _HAND_BUILT_UI_URL = re.compile(r"https?://localhost(?!:<port>)(?::\d+)?(?:/[^\s>)`]*)?")
