@@ -256,32 +256,41 @@ def test_the_lock_is_released_when_a_run_fails(fake_run, monkeypatch) -> None:
     fake_run()
 
 
+@pytest.mark.passes_on_main  # it fails on main only on a slow runner (#2047)
 def test_schema_design_is_timed_as_wall_clock_over_its_concurrent_designers(
     tmp_path, monkeypatch
 ) -> None:
-    """Real designer threads (the phase's pool): the phase's seconds cover the slowest
-    designer and are less than the designers' summed time (wall clock, not thread time)."""
+    """Real designer threads (the phase's pool) on a hand-moved clock: each designer
+    works for 10 s at the same moment, so the phase takes 10 s of wall clock, not the
+    30 s of summed thread time. No real time is measured, so a slow runner cannot move it."""
     import threading
-    import time
 
     from tests.unit.assessment.conftest import collection
     from tests.unit.assessment.test_schema_design_synthesis import _Models
 
     for name in (ENV_MAX_RUN_TOKENS, ENV_MAX_RUN_MODEL_CALLS, ENV_MAX_RUN_SECONDS):
         monkeypatch.delenv(name, raising=False)
+    clock = _Clock()
+    monkeypatch.setattr(model_usage, "_clock", clock)
     models = _Models()
     real_designer = models.designer.side_effect
+    work_s = 10.0
+    # All three designers must be inside the pool at once to pass the barrier; a pool
+    # that ran them one after the other would time out here.
+    barrier = threading.Barrier(3, timeout=30)
     spans: list[float] = []
     threads: set[int] = set()
     lock = threading.Lock()
 
     def designer(*args: Any, **kwargs: Any) -> Any:
-        start = time.monotonic()
-        time.sleep(0.5)
+        start = clock()
+        if barrier.wait() == 0:  # exactly one designer moves the shared clock
+            clock.now += work_s
+        barrier.wait()  # nobody reads the clock until it has moved
         model_usage.record_usage(OPUS, {"inputTokens": 10})
         out = real_designer(*args, **kwargs)
         with lock:
-            spans.append(time.monotonic() - start)
+            spans.append(clock() - start)
             threads.add(threading.get_ident())
         return out
 
@@ -306,9 +315,8 @@ def test_schema_design_is_timed_as_wall_clock_over_its_concurrent_designers(
     seconds = store.read_json(f"{DB}/{JOB}/{model_usage.USAGE_KEY}")["runs"][-1]["phases"][
         "schema_design"
     ]["seconds"]
-    assert len(threads) >= 2, "the designers did not run concurrently"
-    assert seconds >= max(spans)
-    assert seconds < sum(spans), (seconds, spans)
+    assert len(threads) == 3 and spans == [work_s] * 3, (threads, spans)
+    assert seconds == work_s, (seconds, spans)  # wall clock; summed thread time is 30
 
 
 def test_a_forked_child_starts_with_no_run_in_progress() -> None:
