@@ -252,6 +252,31 @@ def model_token_usage(model: Any) -> dict[str, int] | None:
     return totals
 
 
+def revision_prompt_sections(revision_ctx: dict) -> list[str]:
+    """The REVISION CONTEXT sections a designer's prompt gets from a revision context
+    file: the excluded patterns, the customer's notes, the new patterns to design and,
+    in a held-wave redesign round (#1992), the deterministic checks the last design
+    failed. Every designer builds its prompt's revision part from this one function."""
+    keys = (
+        ("exclusion_instructions", "Excluded Patterns"),
+        ("customer_instructions", "Customer Notes"),
+        ("new_patterns_instructions", "New Patterns to Design"),
+        ("failed_checks_instructions", "Failed Checks To Fix"),
+    )
+    return [f"## {title}\n{revision_ctx[key]}" for key, title in keys if revision_ctx.get(key)]
+
+
+def _change_summary(review: Any) -> dict:
+    """``blockers`` and ``warnings`` of a review, from its structured change requests."""
+    from src.shared.wave_readiness import review_change_summary
+
+    requests = [
+        cr.model_dump(mode="json") if hasattr(cr, "model_dump") else dict(cr)
+        for cr in getattr(review, "change_requests", None) or []
+    ]
+    return review_change_summary(requests)
+
+
 class SchemaDesignTrace:
     """Collects designer iterations and PE reviews for the design_trace artifact."""
 
@@ -277,6 +302,9 @@ class SchemaDesignTrace:
                 "verdict": getattr(review.verdict, "value", str(review.verdict)),
                 "change_requests": len(getattr(review, "change_requests", [])),
                 "summary": (getattr(review, "summary", "") or "")[:200],
+                # #1992: the change requests by the contract's severity: a blocker holds
+                # the wave, a warning is one the customer accepts.
+                **_change_summary(review),
             }
         )
 

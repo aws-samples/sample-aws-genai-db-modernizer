@@ -126,11 +126,12 @@ class TestAdventureWorksSynthesisContract:
             "The source SQL Server database has no Aurora engine of its own dialect"
             in report["summary_deterministic"]
         )
-        # #1403: the executive summary states the conversion in its recommendation and
-        # in why wave 1 is safe to approve.
+        # #1403: the executive summary states the conversion in its recommendation. #1992:
+        # with no model no wave is designed, so the Decision approves none (the
+        # conversion's "why it is safe" is stated only for a suggested wave 1).
         assert "SQL Server database to" in report["summary"]
         assert "Wave 1 converts it to Aurora" in report["summary"]
-        assert "converts the SQL dialect and data types from SQL Server" in report["summary"]
+        assert "Decision: no wave is suggested yet." in report["summary"]
 
 
 class TestAdventureWorksDeliverablesRender:

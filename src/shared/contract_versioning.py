@@ -311,6 +311,17 @@ def is_model_io(path: str) -> bool:
 # ``tests/contract/test_declared_artifacts.py`` fails on a written JSON file in none
 # of the three lists, and on an entry of any of them that no write or run produces.
 INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    # Wave redesign (#1992)
+    (
+        r"wave-redesign/v\d+/rounds\.json",
+        "the bounded redesign rounds of held waves: read by the next round and copied by "
+        "synthesis into report.json's wave_redesign, which the contract types",
+    ),
+    (
+        r"schema-[^/]+/v\d+/redesign_request\.json",
+        "the failed checks one redesign round sends back to an engine's design: read only "
+        "by that round's design input, and deleted when the rounds end",
+    ),
     # Collect
     (
         r"collector/sql_shadow\.json",

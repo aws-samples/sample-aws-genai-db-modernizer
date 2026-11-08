@@ -1176,6 +1176,53 @@ def phase_synthesis(store, job_id: str, db: str, llm_mode: str) -> None:
     _output("synthesis", _synthesis_status(store, job_id, db))
 
 
+# ============================================================
+# Phase: Wave redesign (#1992)
+# ============================================================
+def _round_budget(store, db: str, job_id: str) -> str | None:
+    """Why one more redesign round does not fit the run's ceilings, or None (#1992); a
+    resumed run estimates a round from the job's saved usage."""
+    from src.agents.schema_design.wave_redesign import ledger_round_budget, saved_usage_runs
+
+    return ledger_round_budget(_LIMITS, model_usage.LEDGER, saved_usage_runs(store, db, job_id))
+
+
+def phase_wave_redesign(store, job_id: str, db: str, llm_mode: str) -> dict:
+    """Bedrock: redesign each wave held for a design-fixable reason, then synthesize and
+    check again, for at most ``MAX_REDESIGN_ROUNDS`` rounds (#1992). The engine stays.
+    Claude Code runs the same rounds from ``/modernize``; without a model there is no
+    design, so no round."""
+    from src.agents.schema_design.wave_redesign import latest_report, run_rounds
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+
+    if llm_mode != "bedrock":
+        status = {"status": "skipped", "reason": f"llm_mode={llm_mode}: no in-process design"}
+        _output("wave_redesign", status)
+        return status
+    _banner("WAVE REDESIGN")
+    from src.agents.schema_design.handler import run_schema_design_auto
+
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    status = run_rounds(
+        store,
+        db,
+        job_id,
+        version=version,
+        read_report=lambda: latest_report(store, db, job_id) or {},
+        design=lambda engine: run_schema_design_auto(
+            job_id=job_id,
+            database_name=db,
+            target_type=engine,
+            store=store,
+            assignment_version=version,
+        ),
+        synthesize=lambda: phase_synthesis(store, job_id, db, llm_mode),
+        budget=lambda: _round_budget(store, db, job_id),
+    )
+    _output("wave_redesign", status)
+    return status
+
+
 def _synthesis_status(store, job_id: str, db: str) -> dict:
     """Status line naming the report synthesis actually wrote (#283):
     ``synthesis/v<N>/report.json`` (legacy ``referee-synthesis/`` only when the
@@ -1739,6 +1786,13 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         _record_engines(_surviving_engines(store, job_id, db_name, state["selected_engines"]))
         state["phase_status"]["synthesis"] = "complete"
         _write_state(state)
+
+        # #1992: held waves go back to their design, for a bounded number of rounds.
+        # Only Bedrock designs in process; Claude Code runs the rounds from /modernize,
+        # and without a model there is no design to redo.
+        if args.llm_mode == "bedrock":
+            _start_phase("wave_redesign")
+            phase_wave_redesign(store, job_id, db_name, args.llm_mode)
 
         # The same render step /modernize runs, so a CLI or Bedrock run ends
         # with the deliverables, not only report.json.

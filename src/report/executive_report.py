@@ -71,6 +71,7 @@ from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import CACHE_LAYER
 from src.shared.risk_severity import severity_of
 from src.shared.target_databases import engine_scope_statement
+from src.shared.wave_readiness import READINESS_RULE_NOTE
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
 from .architecture import _architecture_engines
@@ -1161,6 +1162,9 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         _gap(12),
     ]
     facts_by_wave = {int(w.get("wave") or 0): w for w in report_facts(report).get("waves") or []}
+    if any(f.get("readiness_line") for f in facts_by_wave.values()):
+        # #1992: the rule each wave's readiness line applies, stated once.
+        flow += [_para(f"{READINESS_RULE_NOTE}.", st["small"]), _gap(8)]
     for w in waves:
         n = int(w.get("wave") or 0)
         engines = [str(e) for e in w.get("engines") or []]
@@ -1222,6 +1226,9 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                     "Open critical or high risks", wf.get("critical_high_risks", 0), st["small"]
                 )
             )
+            if wf.get("readiness_line"):
+                # #1992: whether the plan suggests the wave, as the facts state it.
+                content.append(_labelled("Readiness", wf["readiness_line"], st["small"]))
         flow += [_Panel(content, accent), _gap(10)]
     return flow[:-1] if waves else flow
 

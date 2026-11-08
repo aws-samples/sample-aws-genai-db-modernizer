@@ -475,7 +475,33 @@ def prepare_schema_design_input(
     full_trace = _read_decision_trace(store, database_name, job_id, target_type)
     if full_trace is not None:
         llm_input["decision_trace"] = scope_decision_trace(full_trace, collector_output)
+    # #1992: in a redesign round, the deterministic checks the last design failed.
+    redesign = _redesign_request(store, database_name, job_id, target_type, assignment_version)
+    if redesign is not None:
+        llm_input["redesign_request"] = redesign
     return llm_input
+
+
+def _redesign_request(
+    store: ArtifactStore, database_name: str, job_id: str, target_type: str, assignment_version: int
+) -> dict | None:
+    """The engine's redesign request for this round (``wave_redesign.redesign_input``),
+    or None outside a round."""
+    from src.agents.schema_design.wave_redesign import redesign_input
+
+    version = assignment_version if assignment_version > 0 else 1
+    return redesign_input(store, database_name, job_id, target_type, version)
+
+
+def _redesign_context_path(
+    store: ArtifactStore, database_name: str, job_id: str, target_type: str, assignment_version: int
+) -> str | None:
+    """A revision context file carrying the redesign request's instructions, for an
+    in-process (Bedrock) designer, or None outside a round. The caller deletes it."""
+    redesign = _redesign_request(store, database_name, job_id, target_type, assignment_version)
+    if redesign is None:
+        return None
+    return _write_trace_tmp({"failed_checks_instructions": redesign["instructions"]})
 
 
 def validate_schema_design_output(output: dict, target_type: str) -> dict:
@@ -948,21 +974,29 @@ def run_schema_design(
     # The decision trace of this call's own queries (DocumentDB, OpenSearch).
     full_trace = _read_decision_trace(store, database_name, job_id, target_type)
     trace_tmp_path: str | None = None
+    revision_tmp_path: str | None = None
     try:
         if full_trace is not None:
             trace_tmp_path = _write_trace_tmp(scope_decision_trace(full_trace, collector_output))
             say(f"[schema-design/{target_type}] Loaded decision trace")
+        # #1992: in a redesign round, the checks the last design failed.
+        revision_tmp_path = _redesign_context_path(
+            store, database_name, job_id, target_type, assignment_version
+        )
         output_json, trace_json = _dispatch_schema_agent(
             target_type,
             collector_path=collector_tmp.name,
             analysis_path=analysis_tmp.name,
             decision_trace_path=trace_tmp_path,
+            revision_context_path=revision_tmp_path,
         )
     finally:
         os.unlink(collector_tmp.name)
         os.unlink(analysis_tmp.name)
         if trace_tmp_path:
             os.unlink(trace_tmp_path)
+        if revision_tmp_path:
+            os.unlink(revision_tmp_path)
 
     # --- Write output via ArtifactStore ---
     output_data = json.loads(output_json)
@@ -1393,6 +1427,7 @@ def run_schema_design_auto(
         # The tables another group owns (#1243): the DynamoDB designer is told not to
         # redesign them, in its own temp file like every other input (#1054).
         context_tmp_path: str | None = None
+        revision_tmp_path: str | None = None
         extra: dict[str, str] = {}
         try:
             if full_trace is not None:
@@ -1401,6 +1436,12 @@ def run_schema_design_auto(
             if context and target_type == "dynamodb":
                 context_tmp_path = _write_trace_tmp(context)
                 extra["context_tables_path"] = context_tmp_path
+            # #1992: in a redesign round, the checks the last design failed.
+            revision_tmp_path = _redesign_context_path(
+                store, database_name, job_id, target_type, assignment_version
+            )
+            if revision_tmp_path:
+                extra["revision_context_path"] = revision_tmp_path
             output_json, trace_json = _dispatch_schema_agent(
                 target_type,
                 collector_path=collector_tmp.name,
@@ -1415,6 +1456,8 @@ def run_schema_design_auto(
                 os.unlink(trace_tmp_path)
             if context_tmp_path:
                 os.unlink(context_tmp_path)
+            if revision_tmp_path:
+                os.unlink(revision_tmp_path)
 
         # Write group draft (draft_key computed at the top for the resume check).
         store.write_json(draft_key, json.loads(output_json))

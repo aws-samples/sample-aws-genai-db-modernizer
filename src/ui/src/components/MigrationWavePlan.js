@@ -9,7 +9,8 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import EngineBadge from "./EngineBadge";
 import {
-  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveTitle,
+  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveReadiness,
+  waveTitle,
 } from "../utils/migrationWaves";
 
 /**
@@ -31,6 +32,9 @@ import {
  * optimized for heterogeneous migrations, and the relational gaps the check found
  * (#1120), as both reports do.
  *
+ * Each card also states whether the plan suggests the wave, with what holds it and the
+ * next step (facts.waves[].readiness_line, #1992), and the rule is stated once.
+ *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryRoutingTable.
  */
@@ -45,6 +49,10 @@ const INLINE_TOGGLE_STYLE = {
   cursor: 'pointer',
   textDecoration: 'underline dotted',
 };
+
+// #1992: a suggested wave reads as success, a held one as a warning; a wave not designed
+// or not reviewed yet is neither.
+const READINESS_COLOR = { suggested: 'text-status-success', held: 'text-status-warning' };
 
 const HIDE_TOGGLE_STYLE = { ...INLINE_TOGGLE_STYLE, textDecoration: 'none', marginLeft: '0.2em' };
 
@@ -135,6 +143,11 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
         )}
       >
         <SpaceBetween size="l">
+          {waves.some(w => waveReadiness(synthesis, w)) && (
+            <Box fontSize="body-s" color="text-body-secondary">
+              <span data-figure="wave-readiness-rule">{t('analysis-results.waves.readiness-rule')}</span>
+            </Box>
+          )}
           {waves.map((wave) => (
             <div key={wave.wave} data-wave={wave.wave}>
               <SpaceBetween size="xs">
@@ -152,6 +165,16 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                 {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
                 {wave.gate && (
                   <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
+                )}
+                {waveReadiness(synthesis, wave) && (
+                  <Box color={READINESS_COLOR[waveReadiness(synthesis, wave).readiness] || 'text-body-secondary'}>
+                    <span
+                      data-figure="wave-readiness"
+                      data-readiness={waveReadiness(synthesis, wave).readiness || ''}
+                    >
+                      {t('analysis-results.waves.readiness', { line: waveReadiness(synthesis, wave).line })}
+                    </span>
+                  </Box>
                 )}
                 {heterogeneousNote(synthesis, wave) && (
                   <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>

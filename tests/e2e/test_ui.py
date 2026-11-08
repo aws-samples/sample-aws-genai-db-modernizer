@@ -619,6 +619,22 @@ def test_results_page_shows_the_reports_wave_plan(
                     assert shown_gap.startswith(f"{gap['feature']} ("), (r.db, n, shown_gap)
             else:
                 assert note.count() == 0 and shown_gaps == [], (r.db, n)
+        # #1992: each card states the facts' readiness line, the rule once.
+        readiness = {
+            str(w["wave"]): (w.get("readiness"), w.get("readiness_line"))
+            for w in report["facts"]["waves"]
+        }
+        for c in cards:
+            n = str(c.get_attribute("data-wave"))
+            state, line = readiness[n]
+            shown_line = c.locator("[data-figure=wave-readiness]")
+            if line:
+                assert shown_line.inner_text() == f"Readiness: {line}", (r.db, n)
+                assert shown_line.get_attribute("data-readiness") == state, (r.db, n)
+            else:
+                assert shown_line.count() == 0, (r.db, n)
+        rules = section.locator("[data-figure=wave-readiness-rule]").count()
+        assert rules == (1 if any(line for _, line in readiness.values()) else 0), r.db
         count = report["facts"]["migration_wave_count"]
         assert f"Migration roadmap ({count} waves)" in section.inner_text(), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)

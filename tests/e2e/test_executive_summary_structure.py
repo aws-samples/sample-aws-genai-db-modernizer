@@ -66,7 +66,12 @@ def test_the_summary_has_the_three_parts_with_the_facts_figures(run: PipelineRes
     assert usd(facts["projected_monthly_cost_usd"]) not in report["summary"]
     assert facts["price_list"]["region"] in recommendation
     assert f"overall risk is {brief['overall_risk_level'].lower()}" in risk
-    assert decision.startswith(f"Decision: approve wave {brief['decision_wave']}.")
+    # #1992: the first suggested wave; with none (no wave designed on a run without a
+    # model), the Decision says so and approves none.
+    if brief["decision_wave"] is None:
+        assert decision.startswith("Decision: no wave is suggested yet.")
+    else:
+        assert decision.startswith(f"Decision: approve wave {brief['decision_wave']}.")
     assert word_count(report["summary"]) <= SUMMARY_WORD_BUDGET
     # Engineering detail stays out of the summary.
     for detail in ("target objects", "access pattern", "TTL", "strongly consistent"):

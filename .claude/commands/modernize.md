@@ -253,6 +253,29 @@ Unless `{experience_mode}` is `ui`, tell the user schema design is complete, wit
 Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it.
 ```
 
+### Phase 7b: Wave redesign
+
+Once the `/synthesize` subagent has reported, check the waves again:
+
+```bash
+uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name}
+```
+
+It prints one JSON line:
+
+- `"status": "complete"` (nothing a redesign can fix is held) or `"status": "exhausted"` (the rounds ran out, or the engines left are not sent back again; their waves stay held and the deliverables say so): set `phase_status.wave_redesign` = "complete" and go on to Completion.
+- `"status": "awaiting_redesign"`: a wave is held for a reason its design can fix, so round `round` of at most `max_rounds` sends it back. Design again exactly the engines in `engines`, the way 6a-6d design them: DynamoDB split → group drafts → reviews → merge, every other engine one `/design-schema-<engine>` subagent (6b task text) and then its review (6c). Their design input carries the failed checks (`redesign_request`); the engine and its queries stay, so run no post-schema reroute. Then dispatch the Phase 7 synthesis subagent again with the same task text, and run this command again once it has reported.
+- `"status": "awaiting_synthesis"`: the round's design was missing or no better, and the earlier design is back in place (`restored`). Dispatch the Phase 7 synthesis subagent again, then run this command again.
+- A redesign that fails (its phase failure, after the one retry under `--auto`): put the earlier designs back once, then dispatch the Phase 7 synthesis subagent again and run the first command again. The run goes on with the earlier design, and the wave reads held with the failure:
+
+  ```bash
+  uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name} --rollback --reason "redesign round <round> failed: schema_design_<engine>"
+  ```
+
+- `"status": "error"` or a non-zero exit is a phase failure for `wave_redesign`.
+
+A run without a model has no design, so this prints `complete` at once. Claude Code's model calls are not counted against the run ceilings, so these rounds are bounded by `max_rounds` only.
+
 ### Completion
 
 Print the final summary from the synthesis `report.json` facts, with `--mode {experience_mode}`:

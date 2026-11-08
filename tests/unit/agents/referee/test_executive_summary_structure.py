@@ -113,10 +113,6 @@ class TestTheChecksOnTheModelSummary:
                 "left out the projected cost, the overall risk level or the decision",
             ),
             (
-                lambda t: t.split("\n\nDecision:")[0],
-                "left out the projected cost, the overall risk level or the decision",
-            ),
-            (
                 lambda t: t + " Each engine costs $40.00 a month.",
                 "stated a cost that doesn't match the report's figures",
             ),
@@ -130,6 +126,7 @@ class TestTheChecksOnTheModelSummary:
             ),
         ],
     )
+    @pytest.mark.passes_on_main  # a guard: each remaining check still falls back
     def test_a_broken_summary_falls_back_with_its_reason(self, det_with_wave, edit, reason) -> None:
         det = det_with_wave
         brief = _brief(det)
@@ -146,6 +143,16 @@ class TestTheChecksOnTheModelSummary:
             )
             == reason
         )
+
+    def test_a_summary_without_a_decision_gets_the_facts_decision(self, det_with_wave) -> None:
+        """#1992: a model never states the decision; one that leaves it out is used, and
+        the Decision rendered from the facts follows its text."""
+        det = det_with_wave
+        brief = _brief(det)
+        llm = brief.split("\n\nDecision:")[0]
+        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
+        assert out["summary_source"] == "llm"
+        assert out["executive_summary"] == brief
 
     def test_the_budget_is_the_one_the_skill_states(self) -> None:
         assert SUMMARY_WORD_BUDGET == 200

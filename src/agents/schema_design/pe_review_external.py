@@ -41,6 +41,7 @@ from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.schema_design.design_trace import DesignTraceShapeError, write_design_trace
 from src.agents.schema_design.pattern_input import input_query_ids
 from src.contracts.model_flag import parse_model_flags
+from src.shared.wave_readiness import review_change_summary
 from src.storage.artifact_store import ArtifactStore
 
 #: The trace key a recorded external review sits under.
@@ -470,6 +471,8 @@ def apply_pe_review_llm_output(
             "verdict": verdict,
             "change_requests": len(dumped.get("change_requests") or []),
             "summary": (dumped.get("summary") or "")[:200],
+            # #1992: the change requests by the contract's severity (blocker or warning).
+            **review_change_summary(dumped.get("change_requests")),
         }
     )
     trace["trace"] = entries

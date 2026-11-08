@@ -326,3 +326,32 @@ test('a wave that moves nothing shows no stats line and no tables section (#1383
   expect(card.querySelector('[data-figure="wave-tables"]')).toBeNull();
   expect(card.querySelector('[data-engine]')).toBeNull();
 });
+
+// #1992: each wave's readiness, as the facts state it (facts.waves[].readiness_line),
+// with the rule once; a report written before the check shows neither.
+function withReadiness(synthesis) {
+  const out = JSON.parse(JSON.stringify(synthesis));
+  out.facts.waves = out.facts.waves.map(w => (w.wave === 3
+    ? { ...w, readiness: 'held', suggested: false, readiness_line: 'Not suggested yet: an open high risk on DynamoDB (RISK-001, performance degradation). Next step: run the DynamoDB schema design, then check the wave again.' }
+    : { ...w, readiness: 'suggested', suggested: true, readiness_line: 'Suggested: no check holds it.' }));
+  return out;
+}
+
+test('each card states the wave\'s readiness and the rule is stated once', () => {
+  render(withReadiness(fixture.synthesis));
+  const held = container.querySelector('[data-wave="3"] [data-figure="wave-readiness"]');
+  expect(held.textContent).toBe(
+    'Readiness: Not suggested yet: an open high risk on DynamoDB (RISK-001, performance '
+    + 'degradation). Next step: run the DynamoDB schema design, then check the wave again.',
+  );
+  expect(held.getAttribute('data-readiness')).toBe('held');
+  const one = container.querySelector('[data-wave="1"] [data-figure="wave-readiness"]');
+  expect(one.textContent).toBe('Readiness: Suggested: no check holds it.');
+  expect(container.querySelectorAll('[data-figure="wave-readiness-rule"]')).toHaveLength(1);
+});
+
+test('a report written before the readiness check shows no readiness', () => {
+  render(fixture.synthesis);
+  expect(container.querySelectorAll('[data-figure="wave-readiness"]')).toHaveLength(0);
+  expect(container.querySelectorAll('[data-figure="wave-readiness-rule"]')).toHaveLength(0);
+});

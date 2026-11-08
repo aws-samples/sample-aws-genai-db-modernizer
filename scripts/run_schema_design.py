@@ -173,6 +173,12 @@ def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
         "design_view": build_design_view(
             base, agent_collector, agent_analysis, raw_collector=collector_output
         ),
+        # #1992: in a redesign round, the checks the last design failed.
+        **(
+            {"redesign_request": llm_request["redesign_request"]}
+            if llm_request.get("redesign_request")
+            else {}
+        ),
     }
 
 

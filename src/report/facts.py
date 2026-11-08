@@ -232,7 +232,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #1284: wave 1's later-wave moves, from the same function.
             missing["waves"] = _moved_by_later_waves_backfill(report, rows)
         return {**facts, **missing} if missing else facts
-    return compute_report_facts(report, waves=resolve_migration_waves(report))
+    # #1992: a report with no facts block was written before the wave readiness check,
+    # and states none: its designs carry no review counts to check.
+    return compute_report_facts(report, waves=resolve_migration_waves(report), readiness=False)
 
 
 def _cross_engine_backfill(report: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:

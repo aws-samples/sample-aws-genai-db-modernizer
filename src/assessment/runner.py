@@ -194,11 +194,43 @@ def _route_after_schema_design(job: _Job) -> None:
 
 def _synthesise(job: _Job) -> None:
     """Write the report for the effective assignment and its designs (the executive
-    summary is written with a model)."""
+    summary is written with a model), then run the bounded redesign rounds of held waves
+    (#1992), synthesizing again after each."""
     from src.atx_orchestrator.core import run_synthesis_core
 
-    run_synthesis_core(
-        job.job_id, job.database_name, assignment_version=_effective_version(job), store=job.store
+    def synthesise() -> None:
+        run_synthesis_core(
+            job.job_id,
+            job.database_name,
+            assignment_version=_effective_version(job),
+            store=job.store,
+        )
+
+    synthesise()
+    # #1992: a wave held for a reason its design can fix goes back to that engine's
+    # design, for a bounded number of rounds, within the run's ceilings.
+    from src.agents.schema_design.wave_redesign import (
+        latest_report,
+        ledger_round_budget,
+        run_rounds,
+        saved_usage_runs,
+    )
+
+    version = _effective_version(job)
+    limits = RunLimits.from_env()
+    run_rounds(
+        job.store,
+        job.database_name,
+        job.job_id,
+        version=version,
+        read_report=lambda: latest_report(job.store, job.database_name, job.job_id) or {},
+        design=lambda engine: _design(job, engine, version),
+        synthesize=synthesise,
+        budget=lambda: ledger_round_budget(
+            limits,
+            model_usage.LEDGER,
+            saved_usage_runs(job.store, job.database_name, job.job_id),
+        ),
     )
     _record_kept_engines(job)
 

@@ -403,6 +403,10 @@ def render_final_summary(
             lines.append(f"- Retired by this plan: {retired_in_use_statement(row)}")
     waves = facts.get("migration_wave_count", 0)
     lines.append(f"- Migration: {waves} {plural_noun(waves, 'wave')}")
+    for note in facts.get("wave_readiness_notes") or []:
+        # #1992: each wave the plan does not suggest, as the facts state it.
+        if isinstance(note, Mapping) and note.get("line"):
+            lines.append(f"- Wave {note.get('wave')}: {prose(str(note['line']))}")
     lines += [f"- Cache layer: {prose(n)}" for n in cache_role_notes(dict(report))]
     lines += [f"- Cache layer note: {prose(n)}" for n in cache_change_notes(dict(report))]
 

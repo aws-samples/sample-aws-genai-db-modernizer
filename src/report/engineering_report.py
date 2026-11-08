@@ -16,7 +16,7 @@ from src.shared.design_text import (
     unsupported_pattern_detail,
 )
 from src.shared.engine_names import canonical_engine_id, display_engine
-from src.shared.executive_brief import executive_brief_text
+from src.shared.executive_brief import compose_summary, executive_brief_text
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import (
     CACHE_LAYER,
@@ -171,11 +171,14 @@ def summary_paragraphs(
         # A deterministic one is worded again from the facts the report holds now, so a
         # risk a report-only rule backfilled (#1148) is in its level too.
         generated = report.get("summary_source") == "llm"
-        summary = (report.get("summary") if trust and generated else None) or brief
+        # #1992: a model's summary ends with the Decision rendered from the facts, never
+        # its own (a summary stored before that is shown the same way).
+        model = report.get("summary") if trust and generated else None
+        shown: str = compose_summary(str(model), report.get("facts")) if model else brief
         note = WITHHELD_UNTRUSTED_NOTE if generated and not trust else None
         if report.get("summary_source") == "deterministic_fallback":
-            note = _withheld_note(report, True, summary)
-        return _paragraphs(summary), note
+            note = _withheld_note(report, True, shown)
+        return _paragraphs(shown), note
     summary = report.get("summary") if trust else report.get("summary_deterministic")
     summary = summary or report.get("summary_deterministic")
     if summary and summary == report.get("summary_deterministic"):
