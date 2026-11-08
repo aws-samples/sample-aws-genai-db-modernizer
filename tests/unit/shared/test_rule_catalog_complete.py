@@ -361,13 +361,30 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/shared/rate_window.py": (
         frozenset(
-            {"MIN_WINDOW_SECONDS", "MIN_SAMPLE_SECONDS", "MIN_SAMPLE_SHARE", "_AGE_SLACK_SECONDS"}
+            {
+                "MIN_WINDOW_SECONDS",
+                "MIN_SAMPLE_SECONDS",
+                "MIN_SAMPLE_SHARE",
+                "_AGE_SLACK_SECONDS",
+                "REPRESENTATIVE_MIN_SECONDS",
+                "UPTIME_SHARE",
+                "UPTIME_CHECK_MAX_SECONDS",
+                "SOURCE_RATE_MIN_SECONDS",
+                "CLUSTER_SECONDS",
+                "CLUSTER_SHARE",
+                "SOURCE_RATE_RATIO",
+                "SUGGESTED_DAYS",
+            }
         ),
         "collection facts, not routing rules: the shortest first-to-last-seen window a "
         "statement's own timestamps are trusted for as a rate (#1893, whole-second "
         "timestamps), the shortest measured interval between two snapshots taken as a "
-        "rate and the clock slack an entry's age is compared with (#1908); routing reads "
-        "only the rate they give",
+        "rate and the clock slack an entry's age is compared with (#1908); and the rate "
+        "window check's thresholds (#1991: a day, a tenth of the uptime under a week, "
+        "statements first seen within 5 minutes, 3x the server's own rate over at least 7 days "
+        "of uptime, the 7 days a longer collection "
+        "is suggested over), which only label the deliverables; routing reads only the "
+        "rate they give",
     ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),

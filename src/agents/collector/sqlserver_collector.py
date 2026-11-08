@@ -70,6 +70,7 @@ from src.contracts.collector_output import (
 from src.shared.contract_versioning import load_contract
 from src.shared.query_capture import live_query_capture, query_stage_rows, statement_query_failed
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
+from src.shared.server_counters import live_server_counters, server_counters_model
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.sqlserver_tools import SQLServerRemoteCollector, _normalize_index_type
@@ -255,6 +256,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 rds_instance_metadata=rds_meta,
             ),
             query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+            # #1991: the server's uptime or reset age, which the rate window check reads.
+            server_counters=server_counters_model(live_server_counters(db)),
             # #1652: an older checkpoint's schema stage has none.
             routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
         ),

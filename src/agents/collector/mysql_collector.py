@@ -95,6 +95,7 @@ from src.shared.row_counts import (
     read_row_count,
     read_size_mb,
 )
+from src.shared.server_counters import live_server_counters, server_counters_model
 from src.shared.source_cache import percent_or_none
 from src.shared.sql_spans import span_dialect, span_settings, use_span_settings, with_span_settings
 from src.tools.aws.credentials import AWSCredentialManager
@@ -488,6 +489,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+        # #1991: the server's uptime and own statement count (Questions).
+        server_counters=live_server_counters(db),
         **live_routine_fields(schema_raw),
     )
     attach_to_contract(output, routine_sources)
@@ -1739,6 +1742,7 @@ def _build_output(
     events: list[ScheduledEvent] | None = None,
     routine_stats_source: object = None,
     routine_capture: object = None,
+    server_counters: object = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
     already running next to the source; anything but a list of strings is ignored.
@@ -1752,7 +1756,8 @@ def _build_output(
     collection's enum types and labels (#1834), kept as :func:`source_enum_types` reads them.
     ``events``: MySQL scheduled events;
     ``routine_stats_source``: how routine execution counts were read; ``routine_capture``:
-    how routine bodies were read (#1652); each ignored when it is not one."""
+    how routine bodies were read (#1652); ``server_counters``: the server's uptime, reset
+    age and own statement count (#1991); each ignored when it is not one."""
     elapsed = time.monotonic() - start
     output = CollectorOutputContract(
         job_id=inp.job_id,
@@ -1779,6 +1784,7 @@ def _build_output(
             extensions=source_extensions(extensions),
             routine_stats_source=routine_stats_status(routine_stats_source),
             routine_capture=routine_capture_model(routine_capture),
+            server_counters=server_counters_model(server_counters),
         ),
         database_schema=Schema(
             tables=tables,

@@ -30,6 +30,7 @@ from src.shared.rate_window import (
     statement_rate_fields,
 )
 from src.shared.sample_rows import without_sample_rows
+from src.shared.server_counters import offline_server_counters
 from src.shared.sql_spans import span_dialect, span_settings_of, with_span_settings
 from src.tools.database.index_keys import add_index_key, expression_key_fields
 from src.tools.database.offline_collection_check import (
@@ -398,6 +399,8 @@ def _parse_offline_collection(
             first_counts=_collection_first_counts(data),
         ),
         "global_stats": global_stats,
+        # #1991: the server's uptime, reset age and own statement count, and when read.
+        "server_counters": offline_server_counters(data, source_engine),
         "io_stats": data.get("io_stats", {}),
         "wait_events": data.get("wait_events", []),
         "os_stats": data.get("os_stats", {}),

@@ -7211,6 +7211,90 @@
                 ]
               }
             },
+            "server_counters": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "read_at": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "statements_since_start": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "stats_reset_seconds": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "uptime_seconds": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "exclusiveMinimum": 0,
+                              "kind": "scalar",
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
             "source_database": {
               "required": true,
               "schema": {
@@ -10493,8 +10577,8 @@
         }
       }
     },
-    "schema_hash": "46a421e0f6d9fc3dbf982349a93241f7c4b4da5b28aa11c34f1dd9eeb884d024",
-    "version": "5.13"
+    "schema_hash": "e987922f7c82eb3d65aba18ed05c52e865e34d34915b2e288c9403de07539600",
+    "version": "5.14"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -29397,12 +29481,93 @@
                               "type": "integer"
                             }
                           },
+                          "check_statement": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "flags": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "enum",
+                                "values": [
+                                  "above_source_rate",
+                                  "after_reset",
+                                  "short_against_uptime",
+                                  "short_window"
+                                ]
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "longest_window_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "measured_rate_per_second": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
                           "observed_count": {
                             "required": false,
                             "schema": {
                               "kind": "scalar",
                               "minimum": 0,
                               "type": "integer"
+                            }
+                          },
+                          "representative": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "boolean"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "sample_fallback_count": {
@@ -29427,6 +29592,89 @@
                               "kind": "scalar",
                               "minimum": 0,
                               "type": "integer"
+                            }
+                          },
+                          "scenario_label": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "scenario_risk_note": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "server_rate_per_second": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "server_uptime_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "shortest_window_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "statement": {
@@ -29461,6 +29709,23 @@
                               "type": "integer"
                             }
                           },
+                          "typical_window_seconds": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
                           "unrecorded_count": {
                             "required": false,
                             "schema": {
@@ -29475,6 +29740,73 @@
                               "kind": "scalar",
                               "minimum": 0,
                               "type": "integer"
+                            }
+                          },
+                          "window_clock": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "server",
+                                    "utc"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "window_end": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "window_start": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "window_statement": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
                             }
                           }
                         }
@@ -35716,8 +36048,8 @@
         }
       }
     },
-    "schema_hash": "edb302b8995cbae1c5d8bf53dbe0fe6f44840b82ad72f0119540d9e8ca9c8325",
-    "version": "1.83"
+    "schema_hash": "32dcfd2ec6b00994fd9fe8522787b1b4ed986c17cd4152ce172d73c1dfad5b7c",
+    "version": "1.84"
   },
   "transformation_contract.StepContract": {
     "fields": {

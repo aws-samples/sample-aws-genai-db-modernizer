@@ -55,7 +55,7 @@ from src.shared.assumptions import assumption_items
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
 from src.shared.partition_load import busiest_key, hot_partition_rows
-from src.shared.rate_window import rate_window_facts
+from src.shared.rate_window import collection_rate_window_facts, rate_window_facts
 from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
 from src.shared.row_counts import row_count_facts
 from src.tools.analysis.relational_gaps import detect_relational_gaps
@@ -238,8 +238,8 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
         price_list=_price_list_from_the_job(report),
         # #1636: the row counts are read from the collection, as synthesis does.
         row_counts=row_count_facts(collector["database_schema"]["tables"]),
-        # #1893: the rate window bases too.
-        rate_windows=rate_window_facts(collector["queries"]["query_patterns"]),
+        # #1893: the rate window bases too; #1991: and its check, from the server counters.
+        rate_windows=collection_rate_window_facts(collector),
         # #1989: the hot-partition rows, from the job's designs and the collection.
         hot_partitions=hot_partition_rows(
             _schema_designs_of_the_job(run), collector["database_schema"]["tables"]
@@ -258,6 +258,7 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
             rate_window_statement=rate_window_facts(collector["queries"]["query_patterns"])[
                 "statement"
             ],
+            rate_windows=collection_rate_window_facts(collector),
         ),
         growth_scenarios=stored["growth_scenarios"],
     )

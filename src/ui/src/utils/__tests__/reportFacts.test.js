@@ -21,6 +21,8 @@ import {
   tradeOffCountOf,
   realityCheckDecisions,
   rateWindowStatementOf,
+  rateWindowScenarioOf,
+  rateWindowRiskNoteOf,
   assumptionLinesOf,
   rowCountStatementOf,
   tradeOffsByTab,
@@ -424,5 +426,29 @@ describe('rowCountStatementOf (#1636)', () => {
     expect(rowCountStatementOf({ facts: {} })).toBeNull();
     expect(rowCountStatementOf({})).toBeNull();
     expect(rowCountStatementOf(null)).toBeNull();
+  });
+});
+
+describe('rateWindowScenarioOf (#1991)', () => {
+  it('is the label the facts put on the costs and risks of a window that is not representative', () => {
+    const label = 'Scenario at the measured rate: the rate window is not representative';
+    expect(rateWindowScenarioOf({ facts: { rate_windows: { representative: false, scenario_label: label } } })).toBe(label);
+  });
+
+  it('is null for a representative window and for a report written before the check', () => {
+    expect(rateWindowScenarioOf({ facts: { rate_windows: { representative: true, scenario_label: null } } })).toBeNull();
+    expect(rateWindowScenarioOf({ facts: { rate_windows: { statement: 'x' } } })).toBeNull();
+    expect(rateWindowScenarioOf({ facts: {} })).toBeNull();
+    expect(rateWindowScenarioOf(null)).toBeNull();
+  });
+});
+
+describe('rateWindowRiskNoteOf (#1991)', () => {
+  it('is the short note the risks carry, and null without one', () => {
+    const note = 'The rate-driven risks are a scenario at the measured rate too';
+    expect(rateWindowRiskNoteOf({ facts: { rate_windows: { scenario_risk_note: note } } })).toBe(note);
+    expect(rateWindowRiskNoteOf({ facts: { rate_windows: { scenario_risk_note: null } } })).toBeNull();
+    expect(rateWindowRiskNoteOf({ facts: {} })).toBeNull();
+    expect(rateWindowRiskNoteOf(null)).toBeNull();
   });
 });

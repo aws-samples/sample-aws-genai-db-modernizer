@@ -638,6 +638,17 @@ class PostgreSQLRemoteCollector:
             return None
         return server_window(stats_reset_seconds=first_row_figure(rows, "stats_reset_seconds"))
 
+    def server_uptime(self) -> object:
+        """The server's uptime in seconds (#1991), ``pg_postmaster_start_time()``, a read.
+        Never a rate's window (see ``stats_window``): the rate window check compares the
+        window with it."""
+        return first_row_figure(
+            self._query(
+                "SELECT extract(epoch FROM now() - pg_postmaster_start_time()) AS uptime_seconds"
+            ),
+            "uptime_seconds",
+        )
+
     # -------------------------------------------------------------------
     # Global stats
     # -------------------------------------------------------------------

@@ -83,7 +83,13 @@ from .engine_choices import (
     reroute_summary,
 )
 from .engineering_report import RISK_RULE_NOTE, _engine_role_notes_md
-from .facts import assumption_block_lines, report_facts
+from .facts import (
+    RATE_WINDOW_DETAIL_KEYS,
+    assumption_block_lines,
+    rate_window_risk_note,
+    rate_window_scenario_label,
+    report_facts,
+)
 from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
@@ -1098,8 +1104,14 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     if rate_windows:
         flow += [_gap(6), _para(f"{L_RATE_WINDOWS}: {rate_windows}.", st["small"])]
     # #1990: the assumptions block and the growth scenario, as the facts state them.
-    for line in assumption_block_lines(facts):
+    # #1991 review: the rate window's detail stays in the engineering report and the UI;
+    # the executive report prints its scenario label, which carries the short reason.
+    for line in assumption_block_lines(facts, RATE_WINDOW_DETAIL_KEYS):
         flow += [_gap(4), _para(f"{line}.", st["small"])]
+    # #1991: a rate window that is not representative makes the costs a scenario.
+    scenario = rate_window_scenario_label(facts)
+    if scenario:
+        flow += [_gap(6), _para(f"{scenario}.", st["small"])]
     # #1474: the one caveat where the costs are stated.
     flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     return flow
@@ -1229,6 +1241,10 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         _tile(st, str(resolved_count), L_RESOLVED, GREEN, [resolved_sev]),
     ]
     flow: list[Flowable] = [_Section(H_RISKS), _Columns(tiles), _gap(8)]
+    # #1991: the rate-driven risks rest on a window that is not representative.
+    note = rate_window_risk_note(facts)
+    if note:
+        flow += [_para(f"{note}.", st["small"]), _gap(4)]
     if risks:
         flow.append(_para(RISK_RULE_NOTE, st["small"]))
     else:

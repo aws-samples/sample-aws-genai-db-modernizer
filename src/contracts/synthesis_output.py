@@ -621,6 +621,14 @@ Version History:
   deliverable prints) and facts.growth_scenarios (GrowthScenarioFacts: the cost and the
   busiest partition key value at 1x, 5x and 10x growth). Backward compatible: both
   default to None.
+- 1.84 (2026-11-08, #1991): Added optional facts.rate_windows fields (shortest, longest
+  and typical window seconds, window_start, window_end, window_clock,
+  server_uptime_seconds, server_rate_per_second, measured_rate_per_second,
+  representative, flags, window_statement, check_statement, scenario_label,
+  scenario_risk_note): the rate window's length and dates and its representativeness
+  check, and the scenario label and risk note a non-representative window puts on the
+  costs and the rate-driven risks. Backward
+  compatible: every new field defaults to None or empty.
 """
 
 from datetime import datetime
@@ -2156,7 +2164,9 @@ class HotPartitionFacts(BaseModel):
 class AssumptionItem(BaseModel):
     """One assumption the assessment rests on (#1990, ``src.shared.assumptions``)."""
 
-    key: str = Field(..., description="growth, peak, rate_window or pricing")
+    key: str = Field(
+        ..., description="growth, peak, rate_window, rate_window_check (#1991) or pricing"
+    )
     setting: float | str | None = Field(
         None, description="Its value (a growth or peak multiple, a region), when it has one"
     )
@@ -2270,6 +2280,91 @@ class RateWindowFacts(BaseModel):
             "used each basis, why sampled statements kept a single-snapshot rate, and that "
             "the costs assume each rate runs continuously; None for a collection with no "
             "statements"
+        ),
+    )
+    # #1991: the window's length and dates, and whether it is representative.
+    shortest_window_seconds: float | None = Field(
+        None, ge=0, description="The shortest window a statement's count was divided by (#1991)"
+    )
+    longest_window_seconds: float | None = Field(
+        None, ge=0, description="The longest window a statement's count was divided by (#1991)"
+    )
+    typical_window_seconds: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The window half the calls were counted over or less (the call-weighted median "
+            "of the statements' windows), the one the representativeness check reads (#1991)"
+        ),
+    )
+    window_start: str | None = Field(
+        None, description="The first moment the counts cover, YYYY-MM-DD HH:MM (#1991)"
+    )
+    window_end: str | None = Field(
+        None, description="The last moment the counts cover, YYYY-MM-DD HH:MM (#1991)"
+    )
+    window_clock: Literal["server", "utc"] | None = Field(
+        None,
+        description=(
+            "The clock the dates read: the server's (the statements' first and last seen) "
+            "or UTC (the time the counters were read, less each window)"
+        ),
+    )
+    server_uptime_seconds: float | None = Field(
+        None, ge=0, description="The source server's uptime when collected (#1991)"
+    )
+    server_rate_per_second: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The server's own statement rate (its count since it started over an uptime of "
+            "at least 7 days, MySQL and MariaDB Questions), None when not collected (#1991)"
+        ),
+    )
+    measured_rate_per_second: float | None = Field(
+        None, ge=0, description="The collected statements' rates, summed (#1991)"
+    )
+    representative: bool | None = Field(
+        None,
+        description=(
+            "Whether the window passed every representativeness check (#1991); None for a "
+            "collection with no statements"
+        ),
+    )
+    flags: list[
+        Literal["short_window", "short_against_uptime", "after_reset", "above_source_rate"]
+    ] = Field(
+        default_factory=list,
+        description=(
+            "The checks the window failed (#1991): under a day, short against the server's "
+            "uptime, counted from a reset (statements first seen together), or a measured "
+            "rate 3x or more the server's own"
+        ),
+    )
+    window_statement: str | None = Field(
+        None,
+        description=(
+            "The window's length and dates and the divisor reminder, as the assumptions "
+            "block prints them (#1991)"
+        ),
+    )
+    check_statement: str | None = Field(
+        None, description="The representativeness check, as the assumptions block prints it"
+    )
+    scenario_label: str | None = Field(
+        None,
+        description=(
+            "When the window is not representative, the label every deliverable prints by "
+            "the costs and the risks: a scenario at the measured rate, with a suggestion to "
+            "collect over a longer window (#1991); None otherwise"
+        ),
+    )
+    scenario_risk_note: str | None = Field(
+        None,
+        description=(
+            "When the window is not representative, the short note every deliverable "
+            "prints with the risks (the full label stands with the costs, #1991); None "
+            "otherwise"
         ),
     )
 
@@ -3140,7 +3235,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.83",
+        default="1.84",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

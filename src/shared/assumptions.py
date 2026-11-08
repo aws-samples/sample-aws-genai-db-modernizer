@@ -25,9 +25,11 @@ window and divisor, and the region and price date, each with its origin (``defau
 ``collected`` or ``customer``). The approval gate and every deliverable print its
 lines; approving the gate approves them, and nothing asks about them.
 
-Extended by #1991, which adds the rate window's length and dates and its
-representativeness check to the same block (the ``rate_window`` item), and the
-assumptions file and settings panel through which the customer changes the others.
+#1991 adds the rate window's length and dates and the divisor reminder to the
+``rate_window`` item, and its representativeness check as the ``rate_window_check``
+item (``src.shared.rate_window.window_check_facts``): a window that is short, short
+against the server's uptime, counted from a reset, or several times the server's own
+rate labels the costs and the rate-driven risks a scenario at the measured rate.
 """
 
 from __future__ import annotations
@@ -201,8 +203,15 @@ def assumption_items(
     price_basis: Mapping[str, Any] | None,
     rate_window_statement: str | None,
     context: Mapping[str, Any] | None = None,
+    rate_windows: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """The assumptions block: one item per assumption, with its value, origin and line."""
+    """The assumptions block: one item per assumption, with its value, origin and line.
+
+    ``rate_windows`` is the collection's rate window facts
+    (``src.shared.rate_window.rate_window_facts``, #1991): when given, the rate window
+    item states the divisor, the window's length and dates and the divisor reminder, and
+    a ``rate_window_check`` item states whether the window is representative.
+    ``rate_window_statement`` is the divisor sentence alone, for a caller without them."""
     peak = peak_assumption(collector, context)
     peak_origin: Origin = {
         "cloudwatch": "collected",
@@ -230,14 +239,35 @@ def assumption_items(
             "line": f"Peak: {peak['statement']} ({peak_origin})",
         },
     ]
-    if rate_window_statement:
+    windows = rate_windows or {}
+    divisor = windows.get("statement") or rate_window_statement
+    if divisor:
+        detail = windows.get("window_statement")
         items.append(
             {
                 "key": "rate_window",
-                "setting": None,
+                "setting": windows.get("typical_window_seconds"),
                 "origin": "collected",
                 "basis": None,
-                "line": f"Rate window: {rate_window_statement} (collected)",
+                "line": f"Rate window: {divisor}"
+                + (f"; {detail}" if detail else "")
+                + " (collected)",
+            }
+        )
+    if windows.get("check_statement"):
+        # #1991: whether the window is representative; a flag labels the rate-driven
+        # figures a scenario at the measured rate (facts.rate_windows.scenario_label).
+        items.append(
+            {
+                "key": "rate_window_check",
+                "setting": (
+                    "not_checked"
+                    if windows.get("representative") is None
+                    else "representative" if windows["representative"] else "not_representative"
+                ),
+                "origin": "collected",
+                "basis": ",".join(windows.get("flags") or []) or None,
+                "line": f"Rate window check: {windows['check_statement']} (collected)",
             }
         )
     if price_basis:
@@ -389,19 +419,20 @@ def gate_assumption_lines(
     """The assumptions block as the approval gate states it, before any cost exists: the
     same items synthesis states (today's price table, the collection's rate windows)."""
     from src.shared.catalog.prices import price_basis
-    from src.shared.rate_window import rate_window_facts
+    from src.shared.rate_window import collection_rate_window_facts
 
     if not collector:
         return []
     growth, origin = growth_assumption(decision)
-    patterns = _queries(collector)
+    windows = collection_rate_window_facts(collector) or {}
     return assumption_lines(
         assumption_items(
             collector,
             growth=growth,
             growth_origin=origin,
             price_basis=price_basis(),
-            rate_window_statement=rate_window_facts(list(patterns)).get("statement"),
+            rate_window_statement=windows.get("statement"),
+            rate_windows=windows,
         )
     )
 

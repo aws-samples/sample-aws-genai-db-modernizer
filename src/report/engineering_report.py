@@ -52,7 +52,12 @@ from .close_calls import close_calls_md
 from .derived_copy_sync import derived_copy_sync_md
 from .engine_choices import _reroutes_md, _tied_queries_md, auto_decided_md
 from .engine_roles import _RELATIONAL_ENGINES, SEARCH_READ_MODEL
-from .facts import assumption_block_lines, report_facts
+from .facts import (
+    assumption_block_lines,
+    rate_window_risk_note,
+    rate_window_scenario_label,
+    report_facts,
+)
 from .formatting import (
     _completed_designs,
     _cost_baseline_text,
@@ -243,6 +248,11 @@ def _risk_posture_md(report: dict[str, Any]) -> list[str]:
         "",
         f"- Overall risk: {escaping.md_text(risk.get('overall_risk_level', 'not assessed'))}",
     ]
+    # #1991: the rate-driven risks rest on a window that is not representative (the full
+    # label stands with the costs, once).
+    note = rate_window_risk_note(facts)
+    if note:
+        out.append(f"- {escaping.md_text(note)}.")
     if filtered_risks(report):
         sev = _severity_counts_text(facts.get("open_risks_by_severity") or {})
         out.append(f"- Open risks: {open_count} ({escaping.md_text(sev)})")
@@ -1316,6 +1326,10 @@ def render_engineering_report_md(
             f"- Projected monthly (target): "
             f"{escaping.md_text(_fmt_usd(tco.get('projected_monthly_cost')))}"
         )
+        # #1991: a rate window that is not representative makes the costs a scenario.
+        scenario = rate_window_scenario_label(facts)
+        if scenario:
+            out.append(f"- {escaping.md_text(scenario)}.")
         if known:
             out.append(f"- Savings: {escaping.md_text(savings_text)}")
         if cost_exclusion_text(facts):
