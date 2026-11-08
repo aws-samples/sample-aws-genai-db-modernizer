@@ -604,7 +604,10 @@ def _lob_settings_rules(inputs: Step1Inputs, first_id: int) -> list[dict[str, An
 # does not exist" and retried about 40 times a minute, reconnecting each time, while the task's
 # memory grew by 250 to 500 MB a minute until DMS stopped it out of memory. Validating the MD5 of
 # the array's text form on both sides avoids the error (the text form alone was truncated by the
-# validator's fetch of a long array in a live run; the MD5 is 32 characters).
+# validator's fetch of a long array in a live run). The MD5 is cast to a bounded VARCHAR(64), the
+# shape of DMS's own LOB hashes: a bare md5() returns text, which DMS handles as a LOB, so in a
+# live run every non-NULL array value was reported mismatched although both sides' MD5s were
+# equal (#2043).
 _CHARACTER_ARRAY = re.compile(
     r"^(?:VARCHAR|CHARACTER VARYING|TEXT|CHAR|CHARACTER|BPCHAR|CITEXT|NAME)\s*(?:\(\s*\d+\s*\))?\s*(?:\[\d*\])+$",
     re.IGNORECASE,
@@ -613,12 +616,12 @@ _CHARACTER_ARRAY = re.compile(
 
 def _array_validation_rules(inputs: Step1Inputs, first_id: int) -> list[dict[str, Any]]:
     """A ``validation`` rule per character array column of a moved table (a PostgreSQL source,
-    #1918) that validates ``md5(CAST(column AS text))`` on both sides
-    (``override-validation-function``)."""
+    #1918) that validates ``CAST(upper(md5(CAST(column AS text))) AS VARCHAR(64))`` on both
+    sides (``override-validation-function``): a bounded varchar, never a LOB to DMS (#2043)."""
     if not fails_on_lob_truncation(_source_dialect(inputs)):
         return []
     moved = {t.table_id for t in contract_tables(inputs.contract)}
-    cast = "md5(CAST(${column-name} AS text))"
+    cast = "CAST(upper(md5(CAST(${column-name} AS text))) AS VARCHAR(64))"
     rules: list[dict[str, Any]] = []
     for rule in sorted(
         (r for r in inputs.contract.rules if r.source_table in moved), key=lambda r: r.source_table

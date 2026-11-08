@@ -28,6 +28,7 @@ from src.contracts.transformation_contract import (
 )
 from src.shared.contract_versioning import load_contract
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, _Schema
+from src.tools.data_movement.validation_key import table_key
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, source_data_types
 from src.tools.schema.aurora_common.source_family import classify_source_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
@@ -300,6 +301,7 @@ def build_step1(inputs: JobInputs) -> StepContract:
                 source_table=table_id,
                 target_table=t.table_name,
                 primary_key=list(t.primary_key or []),
+                key_columns=list(key.columns) if (key := table_key(t.model_dump())) else [],
                 fields=fields,
                 status=status,
                 findings=findings,

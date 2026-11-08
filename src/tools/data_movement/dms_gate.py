@@ -11,9 +11,11 @@ On demand, as often as needed, read-only: the stack's ``ReplicationTaskArn`` out
   in the table statistics without errors, and the task carries this contract's hash tag;
 - **lag**: every ``CDCLatencySource`` and ``CDCLatencyTarget`` datapoint of the window is
   under the plan's ``max_lag_seconds``;
-- **parity**: every table with a key is ``Validated``; one still validating keeps the gate
-  ``pending``; a validation failure fails it. Keyless tables and views are named
-  exceptions, with their DMS row counts.
+- **parity**: every table with a key DMS can validate on is ``Validated``; one still
+  validating keeps the gate ``pending``; a validation failure fails it. Tables whose key DMS
+  cannot validate on (none, a unique index that allows NULLs, a LOB or unbounded key column:
+  the contract's key rule, ``validation_key``, #2042) and views are named exceptions, with
+  their DMS row counts and the reason.
 
 The result, ``pass``, ``pending`` or ``fail``, goes to ``data-movement/step-1/gate.json``
 with ``cutover_decision: "customer"`` and the fixed cutover message's id: the gate never
@@ -46,6 +48,7 @@ from src.tools.data_movement.dms_step import (
     contract_tables,
     load_step1,
 )
+from src.tools.data_movement.validation_key import gate_reason, key_type_message, key_type_problem
 
 LAG_METRICS = ("CDCLatencySource", "CDCLatencyTarget")
 DEFAULT_WINDOW_MINUTES = 15
@@ -328,18 +331,29 @@ def lag_check(
     return _check("lag", reasons, summary, evidence)
 
 
-VALIDATED = "Validated"
-# Every ValidationState value botocore's DMS model documents, apart from Validated, lands in one set.
-VALIDATION_PENDING = frozenset({"Pending records", "Pending validation", "Pending revalidation",
-                                "Preparing table"})  # fmt: skip
-# "Not enabled", "No primary key" and "Suspended records" on a table the contract says has a key
-# mean validation cannot vouch for it: never a pass.
-VALIDATION_FAILED = frozenset({"Mismatched records", "Suspended records", "Table error", "Error",
-                               "Not enabled", "No primary key"})  # fmt: skip
+VALIDATED = "validated"
+NOT_ENABLED = "not enabled"
+# Every ValidationState value botocore's DMS model documents, apart from Validated, lands in one
+# set. DMS's own spelling varies in letter case (3.6.1 reports "No primary Key"), so every state
+# is compared through validation_state(), case-folded (#2042), here and in run_dms_step.py.
+# States with records still waiting for validation; with "Preparing table", the pending set.
+PENDING_RECORDS = frozenset({"pending records", "pending validation", "pending revalidation"})
+VALIDATION_PENDING = PENDING_RECORDS | {"preparing table"}
+# "Not enabled", "No primary key" and "Suspended records" on a table the contract says DMS can
+# validate on its key mean validation cannot vouch for it: never a pass.
+VALIDATION_FAILED = frozenset({"mismatched records", "suspended records", "table error", "error",
+                               "not enabled", "no primary key"})  # fmt: skip
 KEYLESS_LOB = (
     "a table without a primary key with LOB columns: DMS supports LOB data types only on tables "
     "that include a primary key, so LOB values can be lost"
 )
+# The contract findings that say DMS cannot validate a table (validation_key.validation_problem).
+_KEY_FINDINGS = ("no_key", "key_not_validatable")
+
+
+def validation_state(stat: Mapping[str, Any]) -> str:
+    """A table statistic's ``ValidationState``, case-folded, to compare with this module's sets."""
+    return str(stat.get("ValidationState") or "").casefold()
 
 
 def _count(stat: Mapping[str, Any], key: str) -> int:
@@ -349,57 +363,43 @@ def _count(stat: Mapping[str, Any], key: str) -> int:
 def _table_verdict(s: Mapping[str, Any]) -> tuple[GateStatus, str | None]:
     """One keyed table's verdict from its DMS statistics; a pass only on a clean ``Validated``."""
     state = s.get("ValidationState")
+    folded = validation_state(s)
     failed = _count(s, "ValidationFailedRecords")
     suspended = _count(s, "ValidationSuspendedRecords")
     pending = _count(s, "ValidationPendingRecords")
-    if failed or suspended or state in VALIDATION_FAILED:
+    if failed or suspended or folded in VALIDATION_FAILED:
         return "fail", (
             f"validation {state or 'failed'}: {failed} failed and {suspended} suspended records"
         )
-    if state == VALIDATED:
+    if folded == VALIDATED:
         if pending:
             return "pending", f"validated, with {pending} records still pending validation"
         return "pass", None
-    if state in VALIDATION_PENDING:
+    if folded in VALIDATION_PENDING:
         return "pending", f"validation {state}"
     return "pending", f"DMS reports the validation state {state or 'none'}, not Validated"
 
 
-_UNVALIDATABLE_KEY_TYPES = frozenset({
-    "text", "tinytext", "mediumtext", "longtext", "clob", "blob", "tinyblob", "mediumblob",
-    "longblob", "bytea", "binary", "varbinary", "byte",
-})  # fmt: skip
-_MAX_KEY_LENGTH = 1024
-_LENGTH_BOUNDED = frozenset(
-    {"varchar", "char", "character varying", "character", "nvarchar", "nchar"}
-)
+def _not_validated(inputs: Step1Inputs, table_id: str) -> str | None:
+    """Why DMS cannot validate the table, from the contract's key rule over the collection
+    (never from DMS's reported state), or None when it can.
 
-
-def _key_type_blocks_validation(target_type: str) -> bool:
-    """DMS data validation: key columns cannot be LOB or binary types, and VARCHAR/CHAR key
-    columns must declare a length under 1024 (no unbounded types)."""
-    t = " ".join(target_type.lower().split())
-    base, _, rest = t.partition("(")
-    base = base.strip()
-    if base in _UNVALIDATABLE_KEY_TYPES:
-        return True
-    if base in _LENGTH_BOUNDED:
-        length = rest.partition(")")[0].split(",")[0].strip()
-        if not length.isdigit():
-            return base not in ("char", "character")  # a bare CHAR is CHAR(1)
-        return int(length) >= _MAX_KEY_LENGTH
-    return False
-
-
-def _validatable(inputs: Step1Inputs, table_id: str, keyed: bool) -> bool:
-    """Whether DMS can validate the table: a key, none of whose columns has a type validation refuses."""
-    if not keyed:
-        return False
+    The contract's ``no_key`` or ``key_not_validatable`` finding says why. A contract without
+    that finding (one written before #2042) is checked here with the same type rule, on its
+    key columns' target types (``key_columns``, else ``primary_key``)."""
     rule = next((r for r in inputs.contract.rules if r.source_table == table_id), None)
     if rule is None:
-        return True
+        return None
+    finding = next((f for f in rule.findings if f.code in _KEY_FINDINGS), None)
+    if finding is not None:
+        return gate_reason(finding.message)
     types = {f.source_column: f.target_type for f in rule.fields}
-    return not any(_key_type_blocks_validation(types[c]) for c in rule.primary_key if c in types)
+    dialect = inputs.plan.source.dialect
+    key = rule.key_columns or rule.primary_key
+    bad = [(c, why) for c in key if c in types
+           and (why := key_type_problem(types[c], dialect=dialect))]  # fmt: skip
+    label = "primary key" if key == rule.primary_key else "unique key"
+    return gate_reason(key_type_message(label, bad)) if bad else None
 
 
 def parity_check(
@@ -420,14 +420,15 @@ def parity_check(
     for t in contract_tables(inputs.contract):
         s = view.statistics.get(t.table_id) or {}
         rows = rows_of(t.table_id)
-        if not _validatable(inputs, t.table_id, t.keyed):
-            exceptions.append(GateException(table=t.table_id, kind="table", reason=NOT_VALIDATED,
+        not_validated = _not_validated(inputs, t.table_id) or (None if t.keyed else NOT_VALIDATED)
+        if not_validated:
+            exceptions.append(GateException(table=t.table_id, kind="table", reason=not_validated,
                                             rows_loaded=rows))  # fmt: skip
             if not t.keyed and t.table_id in lob_tables:
                 exceptions.append(GateException(table=t.table_id, kind="keyless_lob", reason=KEYLESS_LOB,
                                                 rows_loaded=rows))  # fmt: skip
             status: GateStatus | Literal["exception"] = "exception"
-            why: str | None = NOT_VALIDATED
+            why: str | None = not_validated
         else:
             keyed += 1
             status, why = (

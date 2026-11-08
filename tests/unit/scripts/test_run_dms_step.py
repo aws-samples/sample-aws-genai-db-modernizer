@@ -1600,6 +1600,44 @@ def test_tables_not_enabled_long_after_the_full_load_with_validation_on_are_a_st
     _no_pending(cred)
 
 
+_MIXED_CASE = {"Not enabled": "Not Enabled", "Validated": "VALIDATED",
+               "Pending validation": "Pending Validation", "No primary Key": "no primary key"}  # fmt: skip
+
+
+@pytest.mark.parametrize("snapshot", [SNAPSHOT, {"validated": 3, "pending": 2, "no_key": 1}])
+def test_status_classifies_a_mixed_case_state_as_the_canonical_one(tmp_path, capsys, snapshot):
+    # DMS 3.6.1 spells some states its own way ("No primary Key"): status compares states
+    # case-folded, through the gate's validation_state (#2042).
+    def status(rows):
+        cred = StubbedCredMgr()
+        _prove_poll(cred, rows)
+        _code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+        return out
+
+    _job(tmp_path)
+    canonical = status(_rows(**snapshot))
+    mixed_rows = [
+        {**r, "ValidationState": _MIXED_CASE[r["ValidationState"]]} for r in _rows(**snapshot)
+    ]
+    mixed = status(mixed_rows)
+    for out in (canonical, mixed):
+        out["validation"].pop("states")
+    assert mixed["validation"] == canonical["validation"] and mixed["phase"] == canonical["phase"]
+    assert mixed["validation"]["validated"] == snapshot["validated"]
+    assert mixed["validation"]["pending_tables"] == snapshot["pending"]
+    assert mixed["validation"]["not_enabled_tables"] == snapshot.get("not_enabled", 0)
+
+
+@pytest.mark.parametrize("state", ["Pending Records", "pending records", "PENDING RECORDS"])
+def test_status_counts_a_pending_records_table_in_any_letter_case(tmp_path, capsys, state):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    rows = [{**r, "ValidationState": state} for r in _rows(pending=2)]
+    _prove_poll(cred, rows)
+    _code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert out["validation"]["pending_tables"] == 2 and out["phase"] == "validating"
+
+
 def test_tables_not_enabled_right_after_the_full_load_are_not_yet_judged_stalled(tmp_path, capsys):
     _job(tmp_path)
     cred = StubbedCredMgr()

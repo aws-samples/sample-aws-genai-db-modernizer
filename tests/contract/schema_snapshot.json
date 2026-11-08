@@ -12612,7 +12612,7 @@
       }
     },
     "schema_hash": "e0b0662b0b2545eb8e3972f56cd407a5ffd334b9e9d9e6d3eeac325b7ec2e09b",
-    "version": "1.1"
+    "version": "1.2"
   },
   "dms_preflight.DmsPreflight": {
     "fields": {
@@ -34978,6 +34978,16 @@
                   ]
                 }
               },
+              "key_columns": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
               "moves_rows": {
                 "required": false,
                 "schema": {
@@ -35151,8 +35161,8 @@
         }
       }
     },
-    "schema_hash": "a4928e3192951fad00ee6bec18d9bb22030f0111fcbdfc134afeeb7cb10fc1a0",
-    "version": "1.1"
+    "schema_hash": "8775cc9a4d5e02d0a734d6d9538a325acb273792ca46b1ee8edc83fd2b522414",
+    "version": "1.2"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

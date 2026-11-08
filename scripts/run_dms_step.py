@@ -83,7 +83,6 @@ READS = ("preflight", "gate", "status")
 LOCAL = ("steps", "summary", "plan")
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
-PENDING_VALIDATION = {"Pending records", "Pending validation", "Pending revalidation"}
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
 TASK_IDLE = TASK_STOPPED | {"ready"}  # not running: nothing to stop, and the stack may be deleted
 TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
@@ -93,7 +92,7 @@ TASK_RUNNING = {"running", "starting"}  # stop-replication-task stops these
 VALIDATION_GRACE_SECONDS = 900
 STALL_POLLS = 3
 STALL_SECONDS = 300
-NOT_ENABLED = "Not enabled"
+NOT_ENABLED = "Not enabled"  # as DMS spells it, for messages; compared case-folded (#2042)
 VALIDATION_FIX = ("check the endpoints' secrets and that the validator can connect to both "
                   "databases (the task's CloudWatch log names the validator's errors)")  # fmt: skip
 # One "status": "progress" line per poll of status --until caught_up (#1997), these fields.
@@ -494,15 +493,18 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None) -> dic
         return {**out, "phase": phase}
     if task.get("Status") in TASK_STOPPED:
         return {**out, "phase": "task_stopped"}
+    from src.tools.data_movement import dms_gate as gate
+
     tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
-    pending_tables = [t for t in tables if t.get("ValidationState") in PENDING_VALIDATION]
+    states = [gate.validation_state(t) for t in tables]  # case-folded, as the gate reads them
+    pending_tables = [s for s in states if s in gate.PENDING_RECORDS]
     pending_records = sum(int(t.get("ValidationPendingRecords") or 0) for t in tables)
     out["validation"] = {
         "tables": len(tables),
-        "validated": sum(1 for t in tables if t.get("ValidationState") == "Validated"),
+        "validated": states.count(gate.VALIDATED),
         "pending_tables": len(pending_tables),
         "pending_records": pending_records,
-        "not_enabled_tables": sum(1 for t in tables if t.get("ValidationState") == NOT_ENABLED),
+        "not_enabled_tables": states.count(gate.NOT_ENABLED),
         "states": _count(t.get("ValidationState") or "unknown" for t in tables),
     }
     out["changes_applied"] = {kind: sum(int(t.get(f"Applied{kind.title()}") or 0) for t in tables)

@@ -219,7 +219,9 @@ def test_a_character_array_column_is_validated_as_text_on_both_sides():
         for r in table_mappings(_with_arrays(_per_table_inputs()))["rules"]
         if r["rule-type"] == "validation"
     ]
-    cast = "md5(CAST(${column-name} AS text))"
+    # The MD5 is cast to a bounded VARCHAR(64), as DMS's own LOB hashes are: a bare md5()
+    # returns text, a LOB to DMS, and every non-NULL array was reported mismatched (#2043).
+    cast = "CAST(upper(md5(CAST(${column-name} AS text))) AS VARCHAR(64))"
     assert [(r["object-locator"]["table-name"], r["object-locator"]["column-name"]) for r in rules] == [
         ("orders", "names"), ("orders", "tags")]  # fmt: skip
     assert all(r["rule-action"] == "override-validation-function" and r["rule-target"] == "column"

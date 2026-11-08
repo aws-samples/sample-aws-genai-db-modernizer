@@ -18,6 +18,11 @@ Version History:
 - 1.1 (2026-11-07, #1918): Added optional ``Rule.moves_rows`` (default true): false when
   step 1 creates the table but DMS does not move its rows (a tsvector column), with a
   ``not_moved`` warning finding.
+- 1.2 (2026-11-08, #2042): Added optional ``Rule.key_columns``: the table's key (the
+  primary key, else the smallest non-partial, expression-free unique index on NOT NULL
+  columns), and the ``key_not_validatable`` warning finding for a key on a column type
+  DMS cannot validate on; ``no_key`` now also covers a table whose only unique index
+  allows NULLs.
 """
 
 from typing import Literal
@@ -109,6 +114,17 @@ class Rule(BaseModel):
         None, description="Wave 1 table class, when known (#1129)"
     )
     primary_key: list[str] = Field(default_factory=list, description="Key columns; empty if none")
+    # Left out of the dump when empty, so a keyless rule keeps the bytes it had before (#2042).
+    key_columns: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda cols: not cols,
+        description=(
+            "The table's key (src/tools/data_movement/validation_key.py): the primary key, "
+            "else the smallest non-partial, expression-free unique index whose columns are all "
+            "NOT NULL; empty when it has none, or in a contract written before the field "
+            "existed (read primary_key then)"
+        ),
+    )
     fields: list[FieldRule] = Field(default_factory=list)
     status: RuleStatus = "valid"
     findings: list[Finding] = Field(default_factory=list)
@@ -157,7 +173,7 @@ class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(
