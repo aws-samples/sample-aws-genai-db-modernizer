@@ -174,7 +174,9 @@ def test_dynamodb_summary_counts_non_null_lists() -> None:
         }
     )
     assert summary["tables"][0]["gsi_count"] == 2
-    assert (summary["access_pattern_count"], summary["hot_partitions_at_risk"]) == (1, 1)
+    # #1993: the design's own at_risk flag no longer counts; only an estimated key value
+    # over its limit does, and these entries carry no load.
+    assert (summary["access_pattern_count"], summary["hot_partitions_at_risk"]) == (1, 0)
 
 
 def test_field_helpers_read_missing_and_null_as_empty_and_keep_values() -> None:

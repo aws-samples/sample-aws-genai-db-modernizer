@@ -51,7 +51,9 @@ STATUS = {
 }
 
 
-def _attr(name: str, table: str, column: str | None = None, **extra: Any) -> dict[str, Any]:
+def _attr(
+    name: str, table: str, column: str | list[str] | None = None, **extra: Any
+) -> dict[str, Any]:
     out: dict[str, Any] = {"name": name, "type": "S", "source_table": table, **extra}
     if column is not None:
         out["source_column"] = column
@@ -597,6 +599,7 @@ def test_a_static_entity_takes_its_own_share_when_the_patterns_give_it() -> None
     assert unknown["per_key_basis"] == "single_key"
 
 
+@pytest.mark.passes_on_main  # existing guard; only a None check added for mypy
 def test_the_busiest_key_is_taken_over_every_entry() -> None:
     from src.shared.partition_load import busiest_key
 
@@ -614,6 +617,7 @@ def test_the_busiest_key_is_taken_over_every_entry() -> None:
         ],
     }
     row = busiest_key({"dynamodb": design}, [OPTIONS, STATUS])
+    assert row is not None
     assert (row["table_name"], row["per_key_pct_of_limit"]) == ("Orders", 10.0)
 
 
@@ -688,3 +692,289 @@ def test_an_estimated_single_row_is_not_measured() -> None:
     assert key_distinct_values(estimated) == []
     exact = {**estimated, "row_count_basis": "exact"}
     assert key_distinct_values(exact)[0]["distinct_values"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #1993: each per-key figure says whether it is measured, a lower bound on the busiest
+# key value, an upper bound, or not measured; an upper bound over the limit is not
+# measured, never HIGH.
+# ---------------------------------------------------------------------------
+
+
+def _orders_by(columns: list[str], units: float, operation: str = "read") -> dict[str, Any]:
+    """The orders table keyed on ``columns`` together (one attribute spelled from them)."""
+    design = {"table_definitions": [_table("Orders", "PK", [_attr("PK", "shop.orders", columns)])]}
+    return partition_load(_entry("Orders", units, operation), design, VALUES)
+
+
+def test_each_per_key_figure_says_how_it_was_measured() -> None:
+    constant = _attr("scope", "shop.orders", calculation={"type": "constant", "value": "ALL"})
+    one_key = partition_load(
+        _entry("Orders", 1_200.0, "write"),
+        {"table_definitions": [_table("Orders", "scope", [constant])]},
+        VALUES,
+    )
+    assert one_key["per_key_measure"] == "measured"
+    # An even spread over a collected count: the busiest key value carries at least it.
+    assert _orders_by(["status"], 300.0)["per_key_measure"] == "lower_bound"
+    assert _orders_by(["id"], 300.0)["per_key_measure"] == "lower_bound"
+    # A modulo key (at most n values) is a lower bound too.
+    sharded = _sharded({"type": "number-format", "format": "hash(option_name) % 4"})
+    row = partition_load(_entry("Options", 300.0, gsi="ByShard"), sharded, VALUES)
+    assert row["per_key_measure"] == "lower_bound"
+    # Nothing collected: not measured.
+    postmeta = {
+        "table_definitions": [
+            _table("Postmeta", "post_id", [_attr("post_id", "wp.wp_postmeta", "post_id")])
+        ]
+    }
+    row = partition_load(_entry("Postmeta", 500.0, "write"), postmeta, VALUES)
+    assert row["per_key_measure"] == "not_measured"
+    assert row["per_key_upper_bound"] is None
+
+
+def test_a_count_of_part_of_the_key_is_an_upper_bound_under_the_limit() -> None:
+    """``status`` (2 values) is one part of a (status, customer_id) key: the key takes at
+    least 2 values, so the total over 2 is an upper bound on the even spread."""
+    row = _orders_by(["status", "customer_id"], 3_000.0)
+    assert row["per_key_measure"] == "upper_bound"
+    assert row["distinct_key_values"] == 2
+    assert row["per_key_pct_of_limit"] == pytest.approx(50.0)
+    assert not over_key_limit(row)
+
+
+def test_an_upper_bound_over_the_limit_is_not_measured_and_never_high() -> None:
+    """The #1987 case, on the per-key figure: a figure that is only an upper bound over
+    the limit shows nothing about the busiest key value. It is not measured, with the
+    set-aside upper bound as its evidence (was HIGH on main, 116.7%)."""
+    row = _orders_by(["status", "customer_id"], 7_000.0)
+    assert row["per_key_basis"] == "not_measured"
+    assert row["per_key_measure"] == "not_measured"
+    assert row["per_key_pct_of_limit"] is None
+    assert row["per_key_upper_bound"] == {
+        "at_least_key_values": 2,
+        "units_per_second": pytest.approx(3_500.0),
+        "pct_of_limit": pytest.approx(116.6667, abs=1e-3),
+    }
+    assert not over_key_limit(row)
+
+
+def test_a_unique_key_inside_a_wider_key_is_still_its_row_count() -> None:
+    """A key that contains a unique key has exactly the table's rows: not an upper bound."""
+    row = _orders_by(["id", "status"], 300.0)
+    assert (row["distinct_key_values"], row["per_key_measure"]) == (10_000, "lower_bound")
+
+
+def test_a_lower_bound_over_the_limit_keeps_the_risk_next_to_an_upper_bound() -> None:
+    """An access pattern on one literal key value carries 3,200 of 7,000 RCU (107% of the
+    limit, measured) next to a (status, customer_id) key's larger upper bound (3,500 per
+    value): still HIGH, and the figure is the measured one."""
+    design = {
+        "table_definitions": [
+            _table("Orders", "PK", [_attr("PK", "shop.orders", ["status", "customer_id"])])
+        ],
+        "access_patterns": [
+            {
+                "pattern_id": "P1",
+                "query_ids": ["q1"],
+                "operation": "Query",
+                "table_name": "Orders",
+                "key_condition": "PK='OPEN#acme'",
+                "design_rps": 3_200.0,
+            },
+            {
+                "pattern_id": "P2",
+                "query_ids": ["q2"],
+                "operation": "Query",
+                "table_name": "Orders",
+                "key_condition": "PK=:pk",
+                "design_rps": 3_800.0,
+            },
+        ],
+    }
+    row = partition_load(_entry("Orders", 7_000.0), design, VALUES)
+    assert (row["per_key_source"], row["per_key_measure"]) == ("access_pattern", "measured")
+    assert row["per_key_units_per_second"] == pytest.approx(3_200.0)
+    assert over_key_limit(row)
+
+
+def _collection_of(*entities: tuple[str, str, str, str]) -> dict[str, Any]:
+    """An item collection, one entity per (type, source table, pk template, column)."""
+    return {
+        "table_definitions": [
+            {
+                "table_name": "App",
+                "partition_key": {"attribute_name": "PK", "attribute_type": "S"},
+                "entities": [
+                    {
+                        "entity_type": kind,
+                        "source_table": table,
+                        "pk_template": template,
+                        "attributes": [_attr(column, table, column)],
+                    }
+                    for kind, table, template, column in entities
+                ],
+            }
+        ]
+    }
+
+
+def test_an_item_collection_over_several_counted_entities_is_a_lower_bound() -> None:
+    """Review blocker: with every entity counted, the collection takes at most the sum of
+    their counts (2 + 55,527), so the total over that sum is a lower bound on the busiest
+    value; one counted entity gives its own count."""
+    both = _collection_of(
+        ("BY_STATUS", "shop.orders", "S#{status}", "status"),
+        ("SETTING", "wp.wp_options", "O#{option_name}", "option_name"),
+    )
+    row = partition_load(_entry("App", 3_000.0), both, VALUES)
+    assert (row["distinct_key_values"], row["per_key_measure"]) == (55_529, "lower_bound")
+    assert row["distinct_key_bound"] == "at_most"
+    single = _collection_of(("BY_STATUS", "shop.orders", "S#{status}", "status"))
+    row = partition_load(_entry("App", 3_000.0), single, VALUES)
+    assert (row["distinct_key_values"], row["per_key_measure"]) == (2, "lower_bound")
+
+
+def test_an_item_collection_with_an_uncounted_entity_bounds_only_the_average() -> None:
+    """Postmeta's post_id has no count: the collection takes at least 2 values and no
+    known most, so the total over 2 is an upper bound on the average per key value."""
+    design = _collection_of(
+        ("BY_STATUS", "shop.orders", "S#{status}", "status"),
+        ("META", "wp.wp_postmeta", "P#{post_id}", "post_id"),
+    )
+    row = partition_load(_entry("App", 3_000.0), design, VALUES)
+    assert (row["distinct_key_values"], row["per_key_measure"]) == (2, "upper_bound")
+    over = partition_load(_entry("App", 7_000.0), design, VALUES)
+    assert over["per_key_measure"] == "not_measured"
+    assert over["per_key_upper_bound"]["at_least_key_values"] == 2
+
+
+REGIONS = {
+    "table_id": "shop.carts",
+    "table_name": "carts",
+    "row_count": 50_000,
+    "primary_key": ["id"],
+    "columns": [
+        {"column_name": "status", "cardinality": 2},
+        {"column_name": "region", "cardinality": 3},
+        {"column_name": "tenant_id", "cardinality": 1},
+    ],
+}
+USERS = {
+    "table_id": "app.users",
+    "table_name": "users",
+    "row_count": 10,
+    "row_count_basis": "exact",
+    "primary_key": ["id"],
+    "columns": [{"column_name": "id"}],
+}
+ITEMS = {
+    "table_id": "app.items",
+    "table_name": "items",
+    "row_count": 1_000,
+    "primary_key": ["item_id"],
+    "columns": [{"column_name": "user_id", "cardinality": 10}],
+}
+COUNTED = DistinctValues.from_collector_tables([REGIONS, USERS, ITEMS])
+
+
+def _carts_by(columns: list[str], units: float) -> dict[str, Any]:
+    design = {"table_definitions": [_table("Carts", "PK", [_attr("PK", "shop.carts", columns)])]}
+    return partition_load(_entry("Carts", units), design, COUNTED)
+
+
+@pytest.mark.passes_on_main  # main's HIGH this change keeps (review blocker)
+def test_a_key_over_two_counted_columns_over_the_limit_is_high() -> None:
+    """(status: 2 values) × (region: 3 values): at most 6 key values, so 24,000 RCU puts
+    at least 4,000 (133%) on the busiest one."""
+    row = _carts_by(["status", "region"], 24_000.0)
+    assert row["per_key_pct_of_limit"] >= 4_000 / 3_000 * 100 - 1e-3
+    assert over_key_limit(row)
+
+
+@pytest.mark.passes_on_main  # main's HIGH this change keeps (review blocker)
+def test_an_item_collection_of_counted_entities_over_the_limit_is_high() -> None:
+    """Users (10 rows) and items.user_id (10 values): at most 20 key values, so 80,000
+    RCU puts at least 4,000 (133%) on the busiest one."""
+    design = _collection_of(
+        ("USER", "app.users", "U#{id}", "id"), ("ITEM", "app.items", "U#{user_id}", "user_id")
+    )
+    row = partition_load(_entry("App", 80_000.0), design, COUNTED)
+    assert row["per_key_pct_of_limit"] >= 4_000 / 3_000 * 100 - 1e-3
+    assert over_key_limit(row)
+
+
+@pytest.mark.passes_on_main  # main never rated it below the counts' proof either
+@pytest.mark.parametrize("units", [1_000.0, 9_000.0, 17_999.0, 18_001.0, 60_000.0])
+@pytest.mark.parametrize(
+    "key",
+    [["status", "region"], ["status", "region", "tenant_id"], ["region"], ["status"]],
+)
+def test_the_busiest_value_is_never_rated_below_what_the_counts_prove(
+    key: list[str], units: float
+) -> None:
+    """Whatever the key, a counted key takes at most the product of its parts' counts, so
+    the busiest value carries at least the total over that product: the row's figure is
+    never below it, and it is HIGH whenever that proof is over the limit."""
+    counts = {"status": 2, "region": 3, "tenant_id": 1}
+    proven = units / _product_of([counts[c] for c in key])
+    row = _carts_by(key, units)
+    assert row["per_key_units_per_second"] is not None
+    assert row["per_key_units_per_second"] >= proven - 1e-3
+    assert over_key_limit(row) is (proven > 3_000)
+
+
+def _product_of(values: list[int]) -> int:
+    out = 1
+    for v in values:
+        out *= v
+    return out
+
+
+def test_a_single_value_part_next_to_an_uncounted_one_is_not_measured() -> None:
+    """(tenant_id: 1 value, kind: not counted) at 4,000 RCU: main read 133% on one key
+    value (HIGH), but kind's values are unknown, so the busiest (tenant, kind) value is
+    not measured (refined decision 1 on #1987)."""
+    row = _carts_by(["tenant_id", "kind"], 4_000.0)
+    assert row["per_key_measure"] == "not_measured"
+    assert row["per_key_upper_bound"]["at_least_key_values"] == 1
+    assert not over_key_limit(row)
+
+
+def test_a_firm_figure_under_the_limit_stays_when_an_upper_bound_is_set_aside() -> None:
+    """Review nit: an IN list of 32 literal values carries the whole entry, 7,000 / 32 per
+    value (lower bound, under the limit); the (status, customer_id) spread over 2 (3,500,
+    over the limit) is only an upper bound, kept as the evidence."""
+    design = {
+        "table_definitions": [
+            _table("Orders", "PK", [_attr("PK", "shop.orders", ["status", "customer_id"])])
+        ],
+        "access_patterns": [
+            {
+                "pattern_id": "P1",
+                "query_ids": ["q1"],
+                "operation": "Query",
+                "table_name": "Orders",
+                "key_condition": "PK IN (0..31)",
+                "design_rps": 100.0,
+            }
+        ],
+    }
+    row = partition_load(_entry("Orders", 7_000.0), design, VALUES)
+    assert (row["per_key_measure"], row["per_key_source"]) == ("lower_bound", "access_pattern")
+    assert row["per_key_units_per_second"] == pytest.approx(7_000 / 32)
+    assert row["per_key_upper_bound"]["pct_of_limit"] == pytest.approx(116.6667, abs=1e-3)
+    assert not over_key_limit(row)
+
+
+def test_a_row_saved_before_the_measure_reads_it_from_its_basis() -> None:
+    """A report written before #1993 has no per_key_measure: its basis gives it, and an
+    over-limit row stays HIGH as it was."""
+    from src.shared.partition_load import per_key_measure
+
+    legacy = {"per_key_basis": "distinct_values", "per_key_pct_of_limit": 150.0}
+    assert per_key_measure(legacy) == "lower_bound"
+    assert over_key_limit(legacy)
+    assert per_key_measure({"per_key_basis": "single_key"}) == "measured"
+    assert per_key_measure({"per_key_basis": "not_measured"}) == "not_measured"
+    assert not over_key_limit({"per_key_measure": "upper_bound", "per_key_pct_of_limit": 150.0})

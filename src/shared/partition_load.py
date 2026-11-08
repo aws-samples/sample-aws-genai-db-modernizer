@@ -24,8 +24,30 @@ own. This module estimates the load on one key value from what the collection ho
 
 A key over several attributes (a multi-attribute GSI key, or an item collection whose
 entities spell the key from different columns) has at least as many distinct values as
-its most selective known part, so that count is the estimate's divisor: a lower bound on
-the key's distinct values, which can only raise the per-key estimate.
+its most selective counted part. When every part is counted it also has at most their
+product (several attributes or columns) or their sum (the entities of an item
+collection), so the total over that ceiling is a lower bound on the busiest value, as a
+``% n`` transform's is. When some part is not counted, only the most selective counted
+part is known: a lower bound on the key's values, so the total over it bounds only the
+average per key value, from above (#1993).
+
+Each per-key figure says what it is (``per_key_measure``, #1993), so no figure passes
+through as more than its evidence shows:
+
+* ``measured``: every request on the entry (or a measured share of it) uses one key
+  value, so the figure is that value's load;
+* ``lower_bound``: the total spread evenly over a count the key's values cannot exceed
+  (a unique key's rows, a column's cardinality, a ``% n`` transform, or the product or
+  sum of every counted part). The busiest value carries at least the average, so a
+  figure over the limit shows a key value over it;
+* ``upper_bound``: the total over a count that is only a lower bound on the key's
+  values (some part of the key is not counted): an upper bound on the average per key
+  value that says nothing about the busiest value. It is the row's figure only when
+  nothing firmer is known and it is under the limit; over the limit the entry is not
+  measured, with the bound kept as its evidence (``per_key_upper_bound``). It never sets
+  a severity, so an uncounted part of a key can turn what main rated HIGH into "not
+  measured" (refined decision 1 on #1987); a counted part never lowers it;
+* ``not_measured``: no per-key figure.
 
 The percentages are never capped: 303% of one key value's limit is printed as 303%.
 
@@ -50,6 +72,13 @@ KeyBasis = Literal["single_key", "distinct_values", "not_measured"]
 SINGLE_KEY: KeyBasis = "single_key"
 DISTINCT_VALUES: KeyBasis = "distinct_values"
 NOT_MEASURED: KeyBasis = "not_measured"
+
+#: What a per-key figure is (#1993): see the module docstring.
+KeyMeasure = Literal["measured", "lower_bound", "upper_bound", "not_measured"]
+MEASURED: KeyMeasure = "measured"
+LOWER_BOUND: KeyMeasure = "lower_bound"
+UPPER_BOUND: KeyMeasure = "upper_bound"
+UNMEASURED: KeyMeasure = "not_measured"
 
 #: Whether a table whose row count reads 0 gives its unique keys one value (every request
 #: on the one row a write creates) or leaves them not measured. The maintainer decides on
@@ -152,10 +181,15 @@ class DistinctValues:
     """Look up the distinct values of a source table's columns, by table id or name."""
 
     def __init__(self, by_table: Mapping[str, Iterable[Mapping[str, Any]]] | None = None):
-        self._sets: dict[str, list[tuple[frozenset[str], int]]] = {}
+        # (columns, distinct values, a unique key: one value per row)
+        self._sets: dict[str, list[tuple[frozenset[str], int, bool]]] = {}
         for table, entries in (by_table or {}).items():
             rows = [
-                (frozenset(_lower(e.get("columns") or [])), int(e.get("distinct_values") or 0))
+                (
+                    frozenset(_lower(e.get("columns") or [])),
+                    int(e.get("distinct_values") or 0),
+                    e.get("basis") == UNIQUE_KEY,
+                )
                 for e in entries or []
                 if isinstance(e, Mapping) and e.get("columns")
             ]
@@ -188,16 +222,27 @@ class DistinctValues:
 
         Columns that contain a unique key have that key's count (the largest, when they
         contain several); otherwise the most selective single column with collected
-        statistics is a lower bound on the combination's count."""
+        statistics, a lower bound on the combination's count."""
+        found = self.count(table, columns)
+        return found.n if found else None
+
+    def count(self, table: str, columns: Iterable[str]) -> _Count | None:
+        """:meth:`of`'s count, with its bounds (#1993): exact for a unique key or one
+        column; for several columns, at least the most selective one's count and, when
+        every column is counted, at most the product of their counts."""
         wanted = frozenset(_lower(columns))
         if not wanted:
             return None
         sets = self._sets.get(normalize_table_name(table), [])
-        unique = [n for cols, n in sets if cols and cols <= wanted]
+        # Columns that contain a unique key take one value per row: the rows' count.
+        unique = [n for cols, n, is_unique in sets if is_unique and cols and cols <= wanted]
         if unique:
-            return max(unique)
-        single = [n for cols, n in sets if len(cols) == 1 and cols <= wanted]
-        return max(single) if single else None
+            return _Count(max(unique))
+        single = {next(iter(cols)): n for cols, n, _ in sets if len(cols) == 1 and cols <= wanted}
+        if not single:
+            return None
+        ceiling = _product(single.values()) if set(single) == wanted else None
+        return _bounded(max(single.values()), ceiling)
 
 
 # ---------------------------------------------------------------------------
@@ -207,15 +252,40 @@ class DistinctValues:
 
 @dataclass(frozen=True)
 class _Count:
-    """A key's distinct values: ``n`` collected (exact, or a lower bound when it is the
-    most selective known part of a wider key), or at most ``n`` (``at_most``: a ``% n``
-    transform or an ``IN`` list bounds it)."""
+    """A key's distinct values: ``n`` collected, at least ``n`` (``at_least``: the most
+    selective counted part of a wider key, with ``ceiling`` the most it can take when
+    every part is counted, #1993), or at most ``n`` (``at_most``: a ``% n`` transform or
+    an ``IN`` list bounds it)."""
 
     n: int
     at_most: bool = False
+    at_least: bool = False
+    ceiling: int | None = None
 
 
 ONE = _Count(1)
+
+
+def _product(counts: Iterable[int]) -> int:
+    out = 1
+    for c in counts:
+        out *= c
+    return out
+
+
+def _bounded(low: int, ceiling: int | None) -> _Count:
+    """At least ``low`` values, at most ``ceiling`` (None: unknown); exact when equal."""
+    if ceiling is not None and ceiling <= low:
+        return _Count(low)
+    return _Count(low, at_least=True, ceiling=ceiling)
+
+
+def _high(count: _Count | None) -> int | None:
+    """The most values ``count`` can take, or None when unknown."""
+    if count is None:
+        return None
+    return count.ceiling if count.at_least else count.n
+
 
 #: ``x % 32``, ``mod(x, 32)``, ``modulo 32``: the transform keeps at most that many values.
 #: Only a ``%`` between two operands (``id % 32``, ``hash(x) % 4``) or a ``mod()`` call:
@@ -260,8 +330,7 @@ def _attribute_count(attribute: Mapping[str, Any], values: DistinctValues) -> _C
     columns = [source] if isinstance(source, str) else list(source or [])
     if not columns:
         return None
-    n = values.of(str(attribute.get("source_table") or ""), columns)
-    return _Count(n) if n else None
+    return values.count(str(attribute.get("source_table") or ""), columns)
 
 
 def _template_count(entity: Mapping[str, Any], values: DistinctValues) -> _Count | None:
@@ -271,43 +340,47 @@ def _template_count(entity: Mapping[str, Any], values: DistinctValues) -> _Count
         return ONE  # a static template: every item of the entity has the same key value
     if _modulo(template):
         return _Count(int(_modulo(template) or 1), at_most=True)
-    n = values.of(str(entity.get("source_table") or ""), tokens)
-    return _Count(n) if n else None
+    return values.count(str(entity.get("source_table") or ""), tokens)
 
 
 def _combine(parts: list[_Count | None]) -> _Count | None:
     """A key spelled by several attributes: constants add nothing. Collected parts give
-    a lower bound (the most selective one), even next to an unknown part; bounded parts
-    (``at_most``) give an upper bound only when every part is known (their product)."""
+    at least the most selective one's count, even next to an unknown part, and at most
+    the product of the counts when every part is counted; bounded parts (``at_most``)
+    give an upper bound only when every part has one (the product)."""
     rest = [p for p in parts if p != ONE]
     if not parts:
         return None
     if not rest:
         return ONE
+    if len(rest) == 1:
+        return rest[0]
+    highs = [_high(p) for p in rest]
+    ceiling = None if any(h is None for h in highs) else _product(h for h in highs if h)
     known = [p for p in rest if p is not None]
     if any(p.at_most for p in known):
-        if len(known) < len(rest):
-            return None
-        product = 1
-        for p in known:
-            product *= p.n
-        return _Count(product, at_most=True)
-    return _Count(max(p.n for p in known)) if known else None
+        return _Count(ceiling, at_most=True) if ceiling else None
+    return _bounded(max(p.n for p in known), ceiling) if known else None
 
 
 def _union(entities: list[_Count | None]) -> _Count | None:
     """The item collection's key values over its entities (#1989 review): an entity with
     a static key carries its own load on that one key, so the collection is single-key;
-    otherwise the most selective collected entity is a lower bound, and bounded ones add
-    up to an upper bound when every entity is bounded."""
+    otherwise at least the most selective collected entity's count and, when every
+    entity is counted, at most their sum (#1993); bounded ones add up to an upper bound
+    when every entity is bounded."""
     if not entities:
         return None
     if any(e == ONE for e in entities):
         return ONE
+    if len(entities) == 1:
+        return entities[0]
+    highs = [_high(e) for e in entities]
+    ceiling = None if any(h is None for h in highs) else sum(h for h in highs if h)
     known = [e for e in entities if e is not None]
     collected = [e.n for e in known if not e.at_most]
     if collected:
-        return _Count(max(collected))
+        return _bounded(max(collected), ceiling)
     if known and len(known) == len(entities):
         return _Count(sum(e.n for e in known), at_most=True)
     return None
@@ -479,7 +552,7 @@ def _static_split(
     design: Mapping[str, Any],
     table: Mapping[str, Any] | None,
     values: DistinctValues,
-) -> list[tuple[Any, Any, str]] | None:
+) -> list[_Candidate] | None:
     """For an item collection with a static-key entity (S2 of the #2001 review): when the
     access patterns say what share of the load is the static entities' (patterns whose
     source tables are all theirs), that share on its one key and the rest spread over
@@ -502,21 +575,56 @@ def _static_split(
         return None
     share = _share(mine, on_static)
     total = _units(entry, partition_limit(entry.get("operation")))
-    out = [(total * share, 1, STATIC_ENTITY)]
+    out = [_Candidate(total * share, 1, STATIC_ENTITY, MEASURED, "at_most")]
     if share < 1:
         rest = _union([_template_count(e, values) for e in dynamic])
         if rest is None:
             # The other entities' load is not measured (#2001 review): the static share is
             # only a lower bound on the busiest key value.
-            out.append((None, None, NOT_MEASURED))  # type: ignore[arg-type]
+            out.append(_Candidate(0.0, 0, NOT_MEASURED, UNMEASURED, None))
         else:
-            out.append((total * (1 - share) / rest.n, rest.n, "key_values"))
+            out += _spread(total * (1 - share), rest)
     return out
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """One per-key figure: ``units`` on one key value over ``n`` values, what set it,
+    what it is (``measure``) and how ``n`` bounds the key (``bound``)."""
+
+    units: float
+    n: int
+    source: str
+    measure: KeyMeasure
+    bound: str | None
+
+
+def _spread(units: float, count: _Count) -> list[_Candidate]:
+    """``units`` spread evenly over ``count``'s values (#1993): one value carries it all
+    (measured); over a count the key cannot exceed, the busiest value carries at least
+    the average (lower bound); over a count that is only a lower bound, the figure bounds
+    the average from above, next to the lower bound its ceiling gives when there is one."""
+    if count.at_least:
+        out = [_Candidate(units / count.n, count.n, "key_values", UPPER_BOUND, "collected")]
+        if count.ceiling:
+            out.append(
+                _Candidate(
+                    units / count.ceiling, count.ceiling, "key_values", LOWER_BOUND, "at_most"
+                )
+            )
+        return out
+    measure = MEASURED if count == ONE else LOWER_BOUND
+    bound = "at_most" if count.at_most else "collected"
+    return [_Candidate(units / count.n, count.n, "key_values", measure, bound)]
 
 
 # ---------------------------------------------------------------------------
 # One entry's load per key value
 # ---------------------------------------------------------------------------
+
+
+def _by_units(candidate: _Candidate) -> float:
+    return candidate.units
 
 
 def _units(entry: Mapping[str, Any], limit: float) -> float:
@@ -550,26 +658,45 @@ def partition_load(
     table, names, base = _design_key(design, table_name, gsi)
     count = key_count(design, table_name, gsi, values)
     split = _static_split(entry, design, table, values) if base else None
-    unmeasured_rest = any(c[2] == NOT_MEASURED for c in split or [])
-    candidates: list[tuple[float, int, str]] = [c for c in split or [] if c[2] != NOT_MEASURED]
+    unmeasured_rest = any(c.source == NOT_MEASURED for c in split or [])
+    candidates = [c for c in split or [] if c.source != NOT_MEASURED]
     if count is not None and split is None:
-        candidates.append((total / count.n, count.n, "key_values"))
+        candidates += _spread(total, count)
     for share, k in _bounded_patterns(entry, design, names):
-        candidates.append((total * share / k, k, "access_pattern"))
-    if not candidates:
-        basis, per_key, n, source = NOT_MEASURED, None, None, None
+        measure_k: KeyMeasure = MEASURED if k == 1 else LOWER_BOUND
+        candidates.append(_Candidate(total * share / k, k, "access_pattern", measure_k, "at_most"))
+    # A measured figure or a lower bound leads; an upper bound on the average is only
+    # evidence, and the row's figure only when nothing firmer is known and it is under
+    # the limit (#1993).
+    firm = [c for c in candidates if c.measure != UPPER_BOUND]
+    upper = max((c for c in candidates if c.measure == UPPER_BOUND), key=_by_units, default=None)
+    best = max(firm, key=_by_units, default=None)
+    set_aside = None
+    if best is None and upper is not None:
+        if upper.units > limit:
+            set_aside = upper
+        else:
+            best = upper
+    elif best is not None and upper is not None and upper.units > max(limit, best.units):
+        set_aside = upper
+    if best is not None and unmeasured_rest and best.units <= limit:
+        # Only a lower bound under the limit: the rest of the load is not measured.
+        best = None
+    if best is None:
+        basis: KeyBasis = NOT_MEASURED
+        per_key, n, source, measure, bound = None, None, None, UNMEASURED, None
     else:
-        best = max(candidates, key=lambda c: c[0])
-        per_key, n, source = round(best[0], 4), best[1], best[2]
-        basis = SINGLE_KEY if n == 1 else DISTINCT_VALUES
-        if unmeasured_rest and per_key <= limit:
-            # Only a lower bound under the limit: the rest of the load is not measured.
-            basis, per_key, n, source = NOT_MEASURED, None, None, None
-    bound = (
-        "at_most"
-        if source in ("access_pattern", STATIC_ENTITY)
-        or (source == "key_values" and count and count.at_most)
-        else ("collected" if source else None)
+        per_key, n, source = round(best.units, 4), best.n, best.source
+        measure, bound = best.measure, best.bound
+        basis = SINGLE_KEY if n == 1 and measure != UPPER_BOUND else DISTINCT_VALUES
+    upper_bound = (
+        None
+        if set_aside is None
+        else {
+            "at_least_key_values": set_aside.n,
+            "units_per_second": round(set_aside.units, 4),
+            "pct_of_limit": pct_of_limit(set_aside.units, limit),
+        }
     )
     return {
         "engine": canonical_engine_id(engine),
@@ -586,13 +713,31 @@ def partition_load(
         "per_key_units_per_second": per_key,
         "per_key_pct_of_limit": None if per_key is None else pct_of_limit(per_key, limit),
         "per_key_basis": basis,
+        "per_key_measure": measure,
+        "per_key_upper_bound": upper_bound,
         "query_ids": sorted({str(q) for q in entry.get("contributing_patterns") or [] if q}),
     }
 
 
+def per_key_measure(row: Mapping[str, Any]) -> KeyMeasure:
+    """A row's ``per_key_measure``; for a row written before #1993, read from its basis
+    (a single key measured, an even spread a lower bound)."""
+    stored = row.get("per_key_measure")
+    for measure in (MEASURED, LOWER_BOUND, UPPER_BOUND, UNMEASURED):
+        if stored == measure:
+            return measure
+    basis = row.get("per_key_basis")
+    if basis == SINGLE_KEY:
+        return MEASURED
+    return LOWER_BOUND if basis == DISTINCT_VALUES else UNMEASURED
+
+
 def over_key_limit(row: Mapping[str, Any]) -> bool:
-    """The estimated busiest key value is above its limit: the one HIGH case."""
+    """The estimated busiest key value is above its limit: the one HIGH case. Only a
+    measured figure or a lower bound shows it; an upper bound never does (#1993)."""
     pct = row.get("per_key_pct_of_limit")
+    if per_key_measure(row) not in (MEASURED, LOWER_BOUND):
+        return False
     return isinstance(pct, (int, float)) and pct > 100
 
 
@@ -638,6 +783,11 @@ __all__ = [
     "UNIQUE_KEY",
     "DistinctValues",
     "KeyBasis",
+    "KeyMeasure",
+    "LOWER_BOUND",
+    "MEASURED",
+    "UNMEASURED",
+    "UPPER_BOUND",
     "hot_partition_rows",
     "key_distinct_count",
     "key_distinct_values",
@@ -645,6 +795,7 @@ __all__ = [
     "partition_limit",
     "partition_load",
     "pct_of_limit",
+    "per_key_measure",
 ]
 
 
@@ -655,7 +806,8 @@ def busiest_key(
     """The design entry whose estimated key value is the busiest share of its limit, over
     every entry of every design (not only those above the at-risk share): the one figure
     the risk register and the growth scenario both state (``facts.busiest_partition_key``,
-    #2001 review S1). None when no entry's per-key load is measured."""
+    #2001 review S1). A figure that only bounds the average per key value is skipped
+    (#1993). None when no entry's per-key load is measured."""
     values = DistinctValues.from_collector_tables(source_tables)
     best: dict[str, Any] | None = None
     seen: set[str] = set()
@@ -670,6 +822,8 @@ def busiest_key(
                 continue
             row = partition_load(entry, design, values, canonical)
             pct = row["per_key_pct_of_limit"]
+            if row["per_key_measure"] == UPPER_BOUND:
+                continue  # bounds only the average per key value, never the busiest (#1993)
             if pct is not None and (best is None or pct > best["per_key_pct_of_limit"]):
                 best = row
     return best

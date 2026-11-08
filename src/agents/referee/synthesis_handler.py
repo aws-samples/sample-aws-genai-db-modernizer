@@ -106,10 +106,10 @@ from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.design_text import said_once_trade_offs
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.executive_brief import check_summary_brief, executive_brief_text
-from src.shared.partition_load import busiest_key, hot_partition_rows
+from src.shared.partition_load import busiest_key, hot_partition_rows, over_key_limit
 from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, replace_dashes
@@ -1459,7 +1459,12 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         "tco_analysis": result["tco_analysis"],
         "risk_assessment": result["risk_assessment"],
         "schema_designs": _build_schema_summaries(
-            data, _waived_unsupported(store, data.database_name, data.job_id)
+            data,
+            _waived_unsupported(store, data.database_name, data.job_id),
+            # The rows facts.hot_partitions states, computed once (ADR-032, #1993).
+            hot_partitions=(
+                result["hot_partitions"] if "hot_partitions" in result else _hot_partitions(data)
+            ),
         ),
         "trade_offs": result["trade_offs"],
         "assignment_summary": result["assignment_summary"],
@@ -1831,10 +1836,12 @@ def run_synthesis(
     _write_synthesis_report(store, result, assignment_version)
 
 
-def _build_schema_summaries(data, waived: dict[str, set[str]] | None = None):
+def _build_schema_summaries(
+    data, waived: dict[str, set[str]] | None = None, hot_partitions: list[dict] | None = None
+):
     from src.shared.unsupported_pattern import unsupported_pattern_ids
 
-    summaries = _engine_schema_summaries(data)
+    summaries = _engine_schema_summaries(data, hot_partitions)
     if not waived:
         return summaries
     engine_of = {
@@ -1863,7 +1870,7 @@ def _build_schema_summaries(data, waived: dict[str, set[str]] | None = None):
     return summaries
 
 
-def _engine_schema_summaries(data):
+def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
     summaries = {}
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
@@ -1876,16 +1883,30 @@ def _engine_schema_summaries(data):
         elif engine in AURORA_ENGINES and schema.get("table_definitions"):
             summaries[engine] = _build_aurora_schema_summary(engine, schema)
         elif schema.get("table_definitions"):
-            summaries[engine] = _build_standard_schema_summary(schema)
+            summaries[engine] = _build_standard_schema_summary(
+                schema, engine=engine, hot_partitions=hot_partitions
+            )
         else:
             summaries[engine] = {"status": "not_available"}
     return summaries
 
 
-def _build_standard_schema_summary(schema):
+def _hot_partitions_over_limit(engine, hot_partitions) -> int:
+    """How many of ``facts.hot_partitions``' rows for ``engine`` have an estimated key
+    value over its limit: the rule that makes ``design.hot_partition`` HIGH (#1993,
+    ``over_key_limit``: a measured figure or a lower bound), never the design's own
+    total-based ``at_risk``."""
+    mine = canonical_engine_id(engine)
+    return sum(
+        1
+        for r in hot_partitions or []
+        if canonical_engine_id(str(r.get("engine") or "")) == mine and over_key_limit(r)
+    )
+
+
+def _build_standard_schema_summary(schema, engine="", hot_partitions=None):
     tables = schema["table_definitions"]
     access_patterns = schema.get("access_patterns") or []
-    hot_partition = schema.get("hot_partition_analysis") or []
     return {
         "status": "completed",
         "validation_passed": schema.get("validation_passed", False),
@@ -1901,7 +1922,7 @@ def _build_standard_schema_summary(schema):
             for t in tables
         ],
         "access_pattern_count": len(access_patterns),
-        "hot_partitions_at_risk": sum(1 for hp in hot_partition if hp.get("at_risk")),
+        "hot_partitions_at_risk": _hot_partitions_over_limit(engine, hot_partitions),
         # The base-table fetch behind GSI reads the projection does not cover, as the design
         # check priced it (#1503, #1509).
         "keys_only_fetch": keys_only_fetch_load(access_patterns, tables),

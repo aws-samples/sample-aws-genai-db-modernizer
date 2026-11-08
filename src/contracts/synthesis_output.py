@@ -629,6 +629,10 @@ Version History:
   check, and the scenario label and risk note a non-representative window puts on the
   costs and the rate-driven risks. Backward
   compatible: every new field defaults to None or empty.
+- 1.85 (2026-11-08, #1993): Added optional HotPartitionFacts.per_key_measure (measured,
+  lower_bound, upper_bound, not_measured) and per_key_upper_bound (PerKeyUpperBound):
+  what each per-key figure is, and the upper bound set aside when it was over the limit,
+  the evidence its per-key load is not measured. A report written before still loads.
 """
 
 from datetime import datetime
@@ -2082,6 +2086,19 @@ class RowCountFacts(BaseModel):
     )
 
 
+class PerKeyUpperBound(BaseModel):
+    """An upper bound on the average per key value, over the limit (#1993): the total spread
+    over the values counted for part of the key, which takes at least that many."""
+
+    at_least_key_values: int = Field(
+        ..., ge=1, description="The values counted for part of the key: a lower bound"
+    )
+    units_per_second: float = Field(..., ge=0, description="The total over them")
+    pct_of_limit: float = Field(
+        ..., ge=0, description="units_per_second / partition_limit × 100, never capped"
+    )
+
+
 class HotPartitionFacts(BaseModel):
     """One DynamoDB design entry above the at-risk share of one partition key value's
     limit, with its load per key value estimated (#1989), from
@@ -2116,8 +2133,9 @@ class HotPartitionFacts(BaseModel):
         None,
         description=(
             "collected: distinct_key_values is the collection's count (or a lower bound "
-            "on a wider key); at_most: a ``% n`` key transform or an access pattern's literal "
-            "key or IN list bounds it; None when not measured"
+            "on a wider key); at_most: a ``% n`` key transform, an access pattern's literal "
+            "key or IN list, or the product or sum of every counted part of the key bounds "
+            "it; None when not measured"
         ),
     )
     per_key_source: Literal["key_values", "access_pattern", "static_entity"] | None = Field(
@@ -2154,6 +2172,26 @@ class HotPartitionFacts(BaseModel):
             "single_key: every request uses one key value; distinct_values: the total "
             "spread evenly over the key's distinct values; not_measured: per-key load not "
             "measured"
+        ),
+    )
+    per_key_measure: Literal["measured", "lower_bound", "upper_bound", "not_measured"] | None = (
+        Field(
+            None,
+            description=(
+                "What the per-key figure is (#1993): measured (every request, or a measured "
+                "share, on one key value), lower_bound (the total over a count the key's "
+                "values cannot exceed, every part counted: the busiest value carries at "
+                "least it), upper_bound (some part of the key is not counted, so the figure "
+                "bounds only the average per key value, from above; never sets the "
+                "severity) or not_measured; None in a report written before #1993"
+            ),
+        )
+    )
+    per_key_upper_bound: PerKeyUpperBound | None = Field(
+        None,
+        description=(
+            "An upper bound on the average per key value set aside because it was over the "
+            "limit (#1993): the evidence the busiest value is not measured; None otherwise"
         ),
     )
     query_ids: list[str] = Field(
@@ -3235,7 +3273,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.84",
+        default="1.85",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

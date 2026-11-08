@@ -181,7 +181,8 @@ one wave engine serves while another engine of the same wave owns it; and
 replication lag, divergence, the write-ownership switch at cutover), close
 calls (`close_call_query_count`), cached reads the overlay
 dropped (`cache_reads_dropped`: owner load above plan), `unsupported_patterns`,
-`app_layer_notes`, `hot_partitions_at_risk`, `unservable_queries`,
+`app_layer_notes`, `hot_partitions_at_risk` (design entries with an estimated partition key
+value over its limit, the HIGH hot-partition rule), `unservable_queries`,
 `unresolved_ties`, and design trade-offs with a consequence.
 
 **An empty register.** No open risks is correct only when

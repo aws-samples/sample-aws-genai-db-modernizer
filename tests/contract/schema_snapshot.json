@@ -26862,6 +26862,27 @@
                               ]
                             }
                           },
+                          "per_key_measure": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "enum",
+                                  "values": [
+                                    "lower_bound",
+                                    "measured",
+                                    "not_measured",
+                                    "upper_bound"
+                                  ]
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
                           "per_key_pct_of_limit": {
                             "required": false,
                             "schema": {
@@ -26908,6 +26929,47 @@
                                   "kind": "scalar",
                                   "minimum": 0,
                                   "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "per_key_upper_bound": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "object",
+                                  "properties": {
+                                    "at_least_key_values": {
+                                      "required": true,
+                                      "schema": {
+                                        "kind": "scalar",
+                                        "minimum": 1,
+                                        "type": "integer"
+                                      }
+                                    },
+                                    "pct_of_limit": {
+                                      "required": true,
+                                      "schema": {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      }
+                                    },
+                                    "units_per_second": {
+                                      "required": true,
+                                      "schema": {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "number"
+                                      }
+                                    }
+                                  }
                                 },
                                 {
                                   "kind": "scalar",
@@ -28591,6 +28653,27 @@
                                 ]
                               }
                             },
+                            "per_key_measure": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "enum",
+                                    "values": [
+                                      "lower_bound",
+                                      "measured",
+                                      "not_measured",
+                                      "upper_bound"
+                                    ]
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
                             "per_key_pct_of_limit": {
                               "required": false,
                               "schema": {
@@ -28637,6 +28720,47 @@
                                     "kind": "scalar",
                                     "minimum": 0,
                                     "type": "number"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "per_key_upper_bound": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "object",
+                                    "properties": {
+                                      "at_least_key_values": {
+                                        "required": true,
+                                        "schema": {
+                                          "kind": "scalar",
+                                          "minimum": 1,
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "pct_of_limit": {
+                                        "required": true,
+                                        "schema": {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "number"
+                                        }
+                                      },
+                                      "units_per_second": {
+                                        "required": true,
+                                        "schema": {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "number"
+                                        }
+                                      }
+                                    }
                                   },
                                   {
                                     "kind": "scalar",
@@ -36048,8 +36172,8 @@
         }
       }
     },
-    "schema_hash": "32dcfd2ec6b00994fd9fe8522787b1b4ed986c17cd4152ce172d73c1dfad5b7c",
-    "version": "1.84"
+    "schema_hash": "dde181b405c390564770dacee66c009cf4bd15a67a6c2e13931f9f737028a8f8",
+    "version": "1.85"
   },
   "transformation_contract.StepContract": {
     "fields": {
