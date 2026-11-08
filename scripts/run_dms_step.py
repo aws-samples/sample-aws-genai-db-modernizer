@@ -34,6 +34,12 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   to do, act only on this job's step stack (exactly the template's six resources, and a task whose
   identifier and ``modernizer:job-id`` tag name this job), wait up to ``--wait-seconds`` (default and maximum 540) and
   print one progress line per poll on stderr.
+- ``restart-validation --approve`` (#2048): when Prove reports ``validation_stalled``, stop this
+  job's step 1 task, wait until it has stopped, start it again with ``resume-processing`` (CDC
+  resumes from its checkpoint, nothing reloads) and wait until it runs; this restarts the DMS
+  validator. The same refusals and ownership checks as ``stop``; both waits share one
+  ``--wait-seconds`` (default and maximum 540); a task that is neither running nor stopped is
+  refused, and one that has not stopped by the deadline is not resumed.
 
 The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under the artifact
 root) holds ids and ARNs only, never a secret's value: an unknown key, such as ``password``,
@@ -48,6 +54,7 @@ Usage:
     uv run python scripts/run_dms_step.py deploy --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py status --job-id <id> --db <db> --until stack --wait-seconds 540
     uv run python scripts/run_dms_step.py stop --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py restart-validation --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py teardown --job-id <id> --db <db> --approve
 """
 
@@ -78,7 +85,9 @@ from src.contracts.dms_preflight import CHECK_ORDER  # noqa: E402
 STEP_DIR = "data-movement/step-1"
 TEMPLATE = "dms-step-1.yaml"
 ENDING = ("stop", "teardown")
-WRITES = ("deploy", "execute", "test", "start", *ENDING)
+RESTART = "restart-validation"  # Prove's stop-and-resume of a stalled validator (#2048)
+WRITES = ("deploy", "execute", "test", "start", RESTART, *ENDING)
+WAITS = (*ENDING, RESTART)  # the writes that wait, by default up to MAX_WAIT_SECONDS
 READS = ("preflight", "gate", "status")
 LOCAL = ("steps", "summary", "plan")
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
@@ -237,7 +246,7 @@ def _parser() -> argparse.ArgumentParser:
         "--until", choices=["stack", "connections", "running", "caught_up", "task_stopped"]
     )
     p.add_argument("--wait-seconds", type=int, default=None,
-                   help=f"status: default 0; stop, teardown: default {MAX_WAIT_SECONDS}")  # fmt: skip
+                   help=f"status: default 0; stop, restart-validation, teardown: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
     return p
 
@@ -861,7 +870,7 @@ def _stack_tag_is_this_jobs(name: str, stack: dict[str, Any], job_id: str) -> bo
 def _not_the_step(name: str, why: str) -> MoveError:
     return MoveError(f"stack {name} is not this job's step 1 DMS stack: {why}; stop and teardown "
                      "only end the stack dms-step-1.yaml created for this job (end any other "
-                     "stack yourself)")  # fmt: skip
+                     "stack yourself; restart-validation acts on that stack's task only)")  # fmt: skip
 
 
 def _step_resources(clients: MoveClients, name: str) -> dict[str, dict[str, Any]]:
@@ -934,6 +943,69 @@ def _live_task(
     return task
 
 
+def _this_jobs_task(
+    clients: MoveClients, name: str, job_id: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """(stack, task): the step's stack and its task, both checked to be this job's; each None
+    once it is gone."""
+    stack = _step_stack(clients, name)
+    if stack is None:
+        return None, None
+    _stack_tag_is_this_jobs(name, stack, job_id)
+    return stack, _live_task(clients, name, _step_resources(clients, name), job_id)
+
+
+def _wait_task(
+    clients: MoveClients,
+    arn: str,
+    current: dict[str, Any] | None,
+    state: str | None,
+    settled: Callable[[str | None], bool],
+    command: str,
+    waited: int,
+    wait_seconds: int,
+    interval: int,
+    sleep: Callable[[float], None],
+) -> tuple[dict[str, Any] | None, str | None, int]:
+    """Poll the task until ``settled(state)``, the task is gone or ``wait_seconds`` is up, one
+    progress line per poll; ``waited`` is what an earlier wait of the same run already used."""
+    while not settled(state) and waited + interval <= wait_seconds:
+        sleep(interval)
+        waited += interval
+        current = _task(clients, arn)
+        state = "deleted" if current is None else current.get("Status")
+        _progress(command, f"task is {state}", waited, wait_seconds)
+        if current is None:
+            break
+    return current, state, waited
+
+
+def _stop_task(
+    clients: MoveClients,
+    task: dict[str, Any],
+    command: str,
+    wait_seconds: int,
+    interval: int,
+    sleep: Callable[[float], None],
+) -> dict[str, Any]:
+    """Stop this job's running task and wait until it has stopped; a task not running is left as
+    is. ``reached`` true: DMS reports it not running, or it is gone."""
+    arn = task["ReplicationTaskArn"]
+    state = task.get("Status")
+    if state in TASK_IDLE:
+        return {"task": task, "already_stopped": True, "reached": True, "waited_seconds": 0}
+    if state in TASK_RUNNING:
+        clients.dms.stop_replication_task(ReplicationTaskArn=arn)
+        state = "stopping"
+    elif state != "stopping":
+        raise MoveError(f"{dms_reports(task)}: wait until it is running or stopped, then run "
+                        f"{command} again (status shows where it stands)")  # fmt: skip
+    current, state, waited = _wait_task(clients, arn, task, state, lambda s: s in TASK_IDLE,
+                                        command, 0, wait_seconds, interval, sleep)  # fmt: skip
+    return {"task": current, "already_stopped": False,
+            "reached": current is None or state in TASK_IDLE, "waited_seconds": waited}  # fmt: skip
+
+
 def stop(
     clients: MoveClients,
     name: str,
@@ -944,37 +1016,64 @@ def stop(
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Stop the step's task and wait until it has stopped; a task not running is left as is."""
-    stack = _step_stack(clients, name)
+    stack, task = _this_jobs_task(clients, name, job_id)
     if stack is None:
         return {"status": "no_stack", "stack_name": name}
-    _stack_tag_is_this_jobs(name, stack, job_id)
-    task = _live_task(clients, name, _step_resources(clients, name), job_id)
     if task is None:
         return {"status": "no_task", "stack_name": name, **_task_report(None)}
-    arn = task["ReplicationTaskArn"]
-    state = task.get("Status")
-    out = {"stack_name": name, "task_arn": arn}
-    if state in TASK_IDLE:
+    out = {"stack_name": name, "task_arn": task["ReplicationTaskArn"]}
+    stopped = _stop_task(clients, task, "stop", wait_seconds, interval, sleep)
+    if stopped["already_stopped"]:
         return {"status": "stopped", **out, **_task_report(task), "already_stopped": True}
-    if state in TASK_RUNNING:
-        clients.dms.stop_replication_task(ReplicationTaskArn=arn)
-        state = "stopping"
-    elif state != "stopping":
-        raise MoveError(f"{dms_reports(task)}: wait until it is running or stopped, then run "
-                        "stop again (status shows where it stands)")  # fmt: skip
-    waited = 0
-    current: dict[str, Any] | None = task
-    while state not in TASK_IDLE and waited + interval <= wait_seconds:
-        sleep(interval)
-        waited += interval
-        current = _task(clients, arn)
-        state = "deleted" if current is None else current.get("Status")
-        _progress("stop", f"task is {state}", waited, wait_seconds)
-        if current is None:
-            break
-    reached = current is None or state in TASK_IDLE
-    return {"status": "stopped" if reached else "stopping", **out, **_task_report(current),
-            "already_stopped": False, "reached": reached, "waited_seconds": waited}  # fmt: skip
+    return {"status": "stopped" if stopped["reached"] else "stopping", **out,
+            **_task_report(stopped["task"]), "already_stopped": False,
+            "reached": stopped["reached"], "waited_seconds": stopped["waited_seconds"]}  # fmt: skip
+
+
+def restart_validation(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Restart DMS validation (#2048): stop this job's task, then resume it.
+
+    The task is stopped and waited on as ``stop`` does, then started with ``resume-processing``
+    (CDC resumes from its checkpoint, no table reloads) and waited on until it runs; both waits
+    share ``wait_seconds``. A task a previous run left stopped is only resumed. A task neither
+    running nor stopped (failed, never started, changing) is refused, and one that has not
+    stopped by the deadline is not resumed: ``stopping``, and the same run again finishes it."""
+    stack, task = _this_jobs_task(clients, name, job_id)
+    if stack is None or task is None:
+        what = "no stack" if stack is None else "no task"
+        raise MoveError(f"stack {name}: {what}, nothing to restart (status shows where it stands)")
+    state = task.get("Status")
+    if state not in TASK_RUNNING | {"stopping", "stopped"}:
+        raise MoveError(f"{dms_reports(task)}: {RESTART} resumes only a task that was running "
+                        "(status shows where it stands)")  # fmt: skip
+    arn = task["ReplicationTaskArn"]
+    out = {"stack_name": name, "task_arn": arn}
+    stopped = _stop_task(clients, task, RESTART, wait_seconds, interval, sleep)
+    current, waited = stopped["task"], stopped["waited_seconds"]
+    if not stopped["reached"] or current is None:
+        return {"status": "stopping" if current else "no_task", **out, **_task_report(current),
+                "resumed": False, "reached": False, "waited_seconds": waited}  # fmt: skip
+    clients.dms.start_replication_task(
+        ReplicationTaskArn=arn, StartReplicationTaskType="resume-processing"
+    )
+    # Right after the call DMS may still read stopped: wait through stopped and starting.
+    current, state, waited = _wait_task(clients, arn, current, "stopped",
+                                        lambda s: s not in ("stopped", "starting"), RESTART,
+                                        waited, wait_seconds, interval, sleep)  # fmt: skip
+    if state in ("stopped", "starting"):
+        result = "starting"
+    else:
+        result = "restarted" if state == "running" else "resume_failed"
+    return {"status": result, **out, **_task_report(current), "resumed": True,
+            "reached": state == "running", "waited_seconds": waited}  # fmt: skip
 
 
 def _resources_are_this_jobs(
@@ -1122,7 +1221,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         return emit({"status": "error", "message": f"{args.command} is an AWS write: pass --approve "
                      "only after the customer approved it"})  # fmt: skip
     if args.wait_seconds is None:
-        args.wait_seconds = MAX_WAIT_SECONDS if args.command in ENDING else 0
+        args.wait_seconds = MAX_WAIT_SECONDS if args.command in WAITS else 0
     if not 0 <= args.wait_seconds <= MAX_WAIT_SECONDS:
         return emit(
             {"status": "error", "message": f"--wait-seconds must be 0 to {MAX_WAIT_SECONDS}"}
@@ -1178,6 +1277,9 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         if args.command == "stop":
             return emit(stop(clients, name, job_id, args.wait_seconds, args.interval_seconds,
                              sleep=sleep))  # fmt: skip
+        if args.command == RESTART:
+            return emit(restart_validation(clients, name, job_id, args.wait_seconds,
+                                           args.interval_seconds, sleep=sleep))  # fmt: skip
         if args.command == "teardown":
             return emit(
                 teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,
