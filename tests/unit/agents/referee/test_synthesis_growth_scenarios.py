@@ -18,6 +18,8 @@ def test_the_facts_state_every_assumption_with_its_origin(store) -> None:
         "growth": "default",
         "peak": "default",
         "rate_window": "collected",
+        # #1991: whether the rate window is representative.
+        "rate_window_check": "collected",
     }  # no TCO row here is priced from the price table, so no region or price date
     assert facts["assumptions"]["lines"][0].startswith("Growth: 5× (default)")
     assert facts["assumptions"]["lines"][1].startswith("Peak: not measured")

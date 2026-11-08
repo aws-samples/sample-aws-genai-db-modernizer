@@ -419,6 +419,25 @@ export function rateWindowStatementOf(synthesis) {
   return typeof statement === 'string' && statement ? statement : null;
 }
 
+// #1991: the label a rate window that is not representative puts on the costs and the
+// risks (facts.rate_windows.scenario_label): a scenario at the measured rate, with a
+// suggestion to collect over a longer window. Null for a representative window and for a
+// report written before the check.
+export function rateWindowScenarioOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).rate_windows;
+  const label = fact && fact.scenario_label;
+  return typeof label === 'string' && label ? label : null;
+}
+
+// #1991: the short note the risks carry when the rate window is not representative
+// (facts.rate_windows.scenario_risk_note); the full label stands with the costs. Null
+// otherwise, and for a report written before the check.
+export function rateWindowRiskNoteOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).rate_windows;
+  const note = fact && fact.scenario_risk_note;
+  return typeof note === 'string' && note ? note : null;
+}
+
 // #1990: the assumptions block's lines (growth, peak, rate window, region and prices,
 // each with its origin), then the growth scenario's (cost and busiest partition key value
 // at 1x, 5x and 10x), as the facts state them. Empty for a report written before them.

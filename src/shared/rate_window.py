@@ -103,7 +103,7 @@ import math
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -651,7 +651,9 @@ def _counted(n: int) -> str:
     return f"{n} statement{'' if n == 1 else 's'}"
 
 
-def rate_window_facts(query_patterns: Iterable[Any]) -> dict[str, Any]:
+def rate_window_facts(
+    query_patterns: Iterable[Any], server_counters: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """How many collected statements' rates used each window basis (``RateWindowFacts``).
 
     ``unrecorded_count`` is the statements with no basis recorded (a collector output
@@ -665,6 +667,12 @@ def rate_window_facts(query_patterns: Iterable[Any]) -> dict[str, Any]:
     collection sampled), the statements that recorded none, why sampled statements kept
     a single-snapshot rate, and that the costs assume each rate holds continuously. None
     for a collection with no statements.
+
+    ``server_counters`` is the collection's ``metadata.server_counters`` (#1991): the
+    server's uptime, the time since its statement statistics were reset, when they were
+    read, and its own statement count since it started. With them the facts also state
+    the window's length and dates and check that it is representative
+    (:func:`window_check_facts`).
     """
     rows = [p for p in query_patterns if isinstance(p, Mapping)]
     counts = {basis: 0 for basis in RATE_WINDOW_BASES}
@@ -725,4 +733,363 @@ def rate_window_facts(query_patterns: Iterable[Any]) -> dict[str, Any]:
         "sample_fallback_count": sum(fallbacks.values()),
         "sample_no_calls_count": no_calls,
         "statement": statement,
+        # #1991: the window's length and dates, and whether it is representative.
+        **window_check_facts(rows, server_counters),
     }
+
+
+# ---------------------------------------------------------------------------
+# The rate window's length and dates, and whether it is representative (#1991)
+# ---------------------------------------------------------------------------
+
+#: A window shorter than a day covers no full daily cycle.
+REPRESENTATIVE_MIN_SECONDS = 86_400.0
+#: A window under this share of the server's uptime, and under a week, is short against
+#: it: the counters could have covered far longer (a reset, an eviction, a load test).
+UPTIME_SHARE = 0.1
+UPTIME_CHECK_MAX_SECONDS = 604_800.0  # 7 days
+#: Statements first seen within this many seconds of the earliest started counting
+#: together; when at least this share of them did, the counters were reset (or the
+#: server restarted) right before the window.
+CLUSTER_SECONDS = 300.0
+CLUSTER_SHARE = 0.5
+#: The server's own statement rate (its count over its uptime) is a long-window rate
+#: from this many seconds of uptime; a measured rate this many times above it is a burst.
+SOURCE_RATE_MIN_SECONDS = 604_800.0  # 7 days
+SOURCE_RATE_RATIO = 3.0
+#: The longer collection the scenario label suggests, in days.
+SUGGESTED_DAYS = 7
+
+SHORT_WINDOW = "short_window"
+SHORT_AGAINST_UPTIME = "short_against_uptime"
+AFTER_RESET = "after_reset"
+ABOVE_SOURCE_RATE = "above_source_rate"
+WINDOW_FLAGS: tuple[str, ...] = (SHORT_WINDOW, SHORT_AGAINST_UPTIME, AFTER_RESET, ABOVE_SOURCE_RATE)
+
+#: Each flag's reason in a few words, for the one-line label.
+_SHORT_REASONS = {
+    SHORT_WINDOW: "under a day",
+    SHORT_AGAINST_UPTIME: "short against the server's uptime",
+    AFTER_RESET: "counted from a reset or a restart",
+    ABOVE_SOURCE_RATE: "well above the server's own rate",
+}
+
+#: The bases whose window was measured (the counters' own window or two snapshots).
+_MEASURED_BASES = frozenset({SAMPLED, OBSERVED, UPTIME, STATS_RESET})
+
+_DIVISOR_REMINDER = (
+    "a short window right after a statistics reset overstates traffic, and a fixed "
+    "divisor (the server uptime or an assumed 24 hours) can bias either way"
+)
+
+
+def _fmt(n: float, digits: int = 1) -> str:
+    return f"{n:,.{digits}f}".rstrip("0").rstrip(".")
+
+
+def duration_text(seconds: float) -> str:
+    """ "45 seconds", "27.5 minutes", "15.2 hours", "198 days"."""
+    if seconds < 120:
+        return f"{_fmt(seconds, 0)} seconds"
+    if seconds < 2 * 3600:
+        return f"{_fmt(seconds / 60)} minutes"
+    if seconds < 2 * 86_400:
+        return f"{_fmt(seconds / 3600)} hours"
+    return f"{_fmt(seconds / 86_400)} days"
+
+
+def _when(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M")
+
+
+def _calls(row: Mapping[str, Any]) -> float:
+    """A statement's measured rate in calls a second (0 when it has none)."""
+    cps = _number(row.get("calls_per_second"))
+    if cps is None:
+        per_hour = _number(row.get("frequency_per_hour"))
+        cps = per_hour / 3600 if per_hour is not None else 0.0
+    return max(cps, 0.0) if math.isfinite(cps) else 0.0
+
+
+def _weighted_median(pairs: list[tuple[float, float]]) -> float:
+    """The window half the calls were counted over or less (unweighted with no calls)."""
+    ordered = sorted(pairs)
+    total = sum(w for _, w in ordered)
+    if total <= 0:
+        return ordered[(len(ordered) - 1) // 2][0]
+    seen = 0.0
+    for value, weight in ordered:
+        seen += weight
+        if seen >= total / 2:
+            return value
+    return ordered[-1][0]
+
+
+def _window_dates(
+    rows: list[Mapping[str, Any]], read_at: datetime | None
+) -> tuple[datetime, datetime, str] | None:
+    """The first and last moment the counts cover, and the clock they read: the observed
+    statements' first and last seen (the server's clock), else the time the counters were
+    read less each window (UTC)."""
+    seen = [
+        (parse_seen(r.get("first_seen")), parse_seen(r.get("last_seen")))
+        for r in rows
+        if r.get(BASIS_KEY) == OBSERVED
+    ]
+    spans = [(a, b) for a, b in seen if a is not None and b is not None and b >= a]
+    if spans:
+        return min(a for a, _ in spans), max(b for _, b in spans), "server"
+    if read_at is None:
+        return None
+    windows = [w for w in (_positive(r.get(WINDOW_KEY)) for r in rows) if w is not None]
+    if not windows:
+        return None
+    return read_at - timedelta(seconds=max(windows)), read_at, "utc"
+
+
+def _cluster(rows: list[Mapping[str, Any]]) -> tuple[int, int, datetime] | None:
+    """(statements first seen together, observed statements, when) when at least
+    :data:`CLUSTER_SHARE` of two or more observed statements were first seen within
+    :data:`CLUSTER_SECONDS` of the earliest."""
+    firsts = [
+        f
+        for f in (parse_seen(r.get("first_seen")) for r in rows if r.get(BASIS_KEY) == OBSERVED)
+        if f is not None
+    ]
+    if len(firsts) < 2:
+        return None
+    earliest = min(firsts)
+    together = sum(1 for f in firsts if (f - earliest).total_seconds() <= CLUSTER_SECONDS)
+    if together < CLUSTER_SHARE * len(firsts):
+        return None
+    return together, len(firsts), earliest
+
+
+def _server_uptime(rows: list[Mapping[str, Any]], counters: Mapping[str, Any]) -> float | None:
+    """The server's uptime: the collection's, else the window of a statement counted over
+    it (a collector output written before the server counters)."""
+    uptime = _positive(counters.get("uptime_seconds"))
+    if uptime is not None:
+        return uptime
+    over = [_positive(r.get(WINDOW_KEY)) for r in rows if r.get(BASIS_KEY) == UPTIME]
+    known = [w for w in over if w is not None]
+    return max(known) if known else None
+
+
+def _length_reasons(
+    rows: list[Mapping[str, Any]],
+    typical: float,
+    uptime: float | None,
+    checked: list[str],
+    unchecked: list[str],
+    stats_reset: float | None = None,
+) -> dict[str, str]:
+    """The length checks over the counters' own windows: under a day, short against the
+    server's uptime, and counts that started together (a reset or a restart): the
+    statements first seen together, or PostgreSQL's statistics reset under a day ago.
+    ``after_reset`` needs a window under a day, so it adds a reason to ``short_window``
+    and never changes the verdict on its own."""
+    reasons: dict[str, str] = {}
+    checked.append("its length")
+    if typical < REPRESENTATIVE_MIN_SECONDS:
+        reasons[SHORT_WINDOW] = (
+            f"half the calls were counted over {duration_text(typical)} or less, under "
+            "a day, so the window covers no full daily cycle"
+        )
+    if uptime is None:
+        unchecked.append("the window against the server's uptime (not collected)")
+    else:
+        checked.append("the server's uptime")
+        if typical < UPTIME_CHECK_MAX_SECONDS and typical < UPTIME_SHARE * uptime:
+            reasons[SHORT_AGAINST_UPTIME] = (
+                f"that window is {duration_text(typical)} on a server up "
+                f"{duration_text(uptime)}"
+            )
+    checked.append("when the statements were first seen")
+    cluster = _cluster(rows)
+    if cluster is not None and typical < REPRESENTATIVE_MIN_SECONDS:
+        together, total, when_at = cluster
+        reasons[AFTER_RESET] = (
+            f"{together} of {total} statements were first seen within "
+            f"{duration_text(CLUSTER_SECONDS)} of {_when(when_at)}: their counts "
+            "started together, after a statistics reset or a restart"
+        )
+    elif (
+        stats_reset is not None
+        and stats_reset < REPRESENTATIVE_MIN_SECONDS
+        and typical < REPRESENTATIVE_MIN_SECONDS
+    ):
+        reasons[AFTER_RESET] = (
+            f"the statement statistics were reset {duration_text(stats_reset)} before "
+            "the collection read them"
+        )
+    return reasons
+
+
+def _server_rate_unchecked(started: float | None, uptime: float | None) -> str:
+    """Why the server's own statement rate was not compared, as the check states it."""
+    if started is None:
+        return "the server's own statement rate (not collected)"
+    if uptime is None:
+        return "the server's own statement rate (its uptime was not collected)"
+    return (
+        f"the server's own statement rate (its uptime, {duration_text(uptime)}, is under "
+        f"{_fmt(SOURCE_RATE_MIN_SECONDS / 86_400, 0)} days, too short for a long-window rate)"
+    )
+
+
+def window_check_facts(
+    rows: list[Mapping[str, Any]], server_counters: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """The rate window's length, dates and divisor reminder, and its representativeness
+    check (#1991): every flag of :data:`WINDOW_FLAGS` it raises, the one sentence each
+    deliverable and the gate print for each, and, when any is raised, the label the costs
+    and the rate-driven risks carry (a scenario at the measured rate).
+
+    The length checks read the counters' own measured windows (observed, uptime, stats
+    reset); an assumed 24 hours is no window and is not checked. A sampled interval (#1908) is short on purpose, a measurement of the load
+    while the collection ran, so it is checked against the server's own rate only."""
+    counters = server_counters if isinstance(server_counters, Mapping) else {}
+    read_at = parse_seen(counters.get("read_at"))
+    measured_rows = [r for r in rows if r.get(BASIS_KEY) in _MEASURED_BASES]
+    windows = [
+        (w, _calls(r) * w)
+        for r in measured_rows
+        if (w := _positive(r.get(WINDOW_KEY))) is not None and math.isfinite(w)
+    ]
+    counted = [
+        (w, _calls(r) * w)
+        for r in measured_rows
+        if r.get(BASIS_KEY) != SAMPLED
+        and (w := _positive(r.get(WINDOW_KEY))) is not None
+        and math.isfinite(w)
+    ]
+    uptime = _server_uptime(rows, counters)
+    measured = round(sum(_calls(r) for r in rows), 4)
+    started = _number(counters.get("statements_since_start"))
+    server_rate = (
+        round(started / uptime, 4)
+        if started is not None and started >= 0 and uptime and uptime >= SOURCE_RATE_MIN_SECONDS
+        else None
+    )
+    out: dict[str, Any] = {
+        "shortest_window_seconds": None,
+        "longest_window_seconds": None,
+        "typical_window_seconds": None,
+        "window_start": None,
+        "window_end": None,
+        "window_clock": None,
+        "server_uptime_seconds": uptime,
+        "server_rate_per_second": server_rate,
+        "measured_rate_per_second": measured if rows else None,
+        "representative": None,
+        "flags": [],
+        "window_statement": None,
+        "check_statement": None,
+        "scenario_label": None,
+        "scenario_risk_note": None,
+    }
+    if not rows:
+        return out
+    dates = _window_dates(measured_rows, read_at)
+    if dates is not None:
+        out["window_start"], out["window_end"] = _when(dates[0]), _when(dates[1])
+        out["window_clock"] = dates[2]
+    reasons: dict[str, str] = {}
+    checked: list[str] = []
+    unchecked: list[str] = []
+    if windows:
+        shortest = min(w for w, _ in windows)
+        longest = max(w for w, _ in windows)
+        typical = _weighted_median(windows)
+        out["shortest_window_seconds"] = round(shortest, 3)
+        out["longest_window_seconds"] = round(longest, 3)
+        out["typical_window_seconds"] = round(typical, 3)
+        length = (
+            f"each window is {duration_text(shortest)}"
+            if duration_text(shortest) == duration_text(longest)
+            else (
+                f"the windows run from {duration_text(shortest)} to {duration_text(longest)} "
+                f"(half the calls counted over {duration_text(typical)} or less)"
+            )
+        )
+        clock = {"server": "the server's clock", "utc": "UTC"}
+        when = (
+            f", between {out['window_start']} and {out['window_end']} "
+            f"({clock[out['window_clock']]})"
+            if dates is not None
+            else ""
+        )
+        out["window_statement"] = f"{length}{when}; {_DIVISOR_REMINDER}"
+    if counted:
+        reasons.update(
+            _length_reasons(
+                rows,
+                _weighted_median(counted),
+                uptime,
+                checked,
+                unchecked,
+                _positive(counters.get("stats_reset_seconds")),
+            )
+        )
+    elif windows:
+        unchecked.append("the window's length (a sampled interval, short on purpose)")
+    else:
+        out["window_statement"] = (
+            "no window was measured: the counts are divided by an assumed 24 hours, or "
+            f"recorded no window; {_DIVISOR_REMINDER}"
+        )
+        unchecked.append("the window's length (no statement's window was measured)")
+    if server_rate is None:
+        unchecked.append(_server_rate_unchecked(started, uptime))
+    else:
+        checked.append("the server's own statement rate")
+        if server_rate > 0 and measured >= SOURCE_RATE_RATIO * server_rate:
+            reasons[ABOVE_SOURCE_RATE] = (
+                f"the measured rate, {_fmt(measured, 2)} calls/s, is "
+                f"{_fmt(measured / server_rate)}× the server's own "
+                f"{_fmt(server_rate, 2)} statements/s over its uptime of "
+                f"{duration_text(uptime or 0)} (the server counts a procedure call once, "
+                "its statements each, so a workload of stored routines can reach this "
+                "without a burst)"
+            )
+    flags = [f for f in WINDOW_FLAGS if f in reasons]
+    out["flags"] = flags
+    out["representative"] = not flags
+    not_checked = f"; not checked: {', '.join(unchecked)}" if unchecked else ""
+    if flags:
+        out["check_statement"] = (
+            "not representative: " + "; ".join(reasons[f] for f in flags) + not_checked
+        )
+        out["scenario_label"] = (
+            "Scenario at the measured rate: the rate window is not representative ("
+            + "; ".join(_SHORT_REASONS[f] for f in flags)
+            + "), so the "
+            "costs and the rate-driven risks assume that window's load runs all day, every "
+            f"day. Collect again over a longer window (at least {SUGGESTED_DAYS} days of usual "
+            "load, without resetting the statement statistics first) for figures that "
+            "represent normal traffic"
+        )
+        out["scenario_risk_note"] = (
+            "The rate-driven risks are a scenario at the measured rate too: the rate window "
+            "is not representative (" + "; ".join(_SHORT_REASONS[f] for f in flags) + ")"
+        )
+    elif not checked:
+        # Nothing to check against: neither representative nor not.
+        out["representative"] = None
+        out["check_statement"] = f"not checked: {', '.join(unchecked)}"
+    else:
+        out["check_statement"] = (
+            f"no sign of an unrepresentative window (checked: {', '.join(checked)})" + not_checked
+        )
+    return out
+
+
+def collection_rate_window_facts(collector: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """:func:`rate_window_facts` for a collector output: its statements and its
+    ``metadata.server_counters``. None with no collection."""
+    if not collector:
+        return None
+    patterns = ((collector.get("queries") or {}).get("query_patterns")) or []
+    counters = (collector.get("metadata") or {}).get("server_counters")
+    return rate_window_facts(list(patterns), counters if isinstance(counters, Mapping) else None)

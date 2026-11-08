@@ -35,7 +35,12 @@ from .cache_layer import cache_change_notes, cache_layer_text, cache_role_notes
 from .deliverables import FOLDER_ENTRIES, FolderEntry
 from .engineering_report import summary_paragraphs
 from .executive_report import _names_pattern, table_names, without_table_names
-from .facts import report_facts
+from .facts import (
+    rate_window_risk_note,
+    rate_window_scenario_label,
+    rate_window_summary,
+    report_facts,
+)
 from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
@@ -300,6 +305,9 @@ def _risk_lines(report: Mapping[str, Any], facts: Mapping[str, Any]) -> list[str
     lines: list[str] = []
     if level:
         lines.append(f"Overall risk: {prose(level)}")
+    note = rate_window_risk_note(dict(facts))
+    if note:
+        lines.append(f"{prose(note)}.")
     if not risks:
         lines.append(f"Open risks: none. {NO_OPEN_RISKS_CAVEAT}")
     else:
@@ -379,6 +387,14 @@ def render_final_summary(
     lines += _no_engine_lines(facts)
     lines.append(f"- Projected monthly cost: {_fmt_usd(facts.get('projected_monthly_cost_usd'))}")
     lines.append(f"- {cost_note_text(facts)}")
+    # #1991: the rate window and its check; a window that is not representative makes the
+    # costs and the rate-driven risks a scenario at the measured rate.
+    window = rate_window_summary(dict(facts))
+    if window:
+        lines.append(f"- Rate window: {prose(window)}")
+    scenario = rate_window_scenario_label(dict(facts))
+    if scenario:
+        lines.append(f"- {prose(scenario)}.")
     if cost_baseline_known(tco):
         current, savings = _cost_baseline_text(tco)
         lines += [f"- Current monthly cost (source): {current}", f"- Savings: {savings}"]

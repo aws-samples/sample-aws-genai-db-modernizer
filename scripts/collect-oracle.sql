@@ -50,6 +50,13 @@
 -- A value that is not a whole number of seconds, 0 or more, stops the script. Both
 -- reads are SELECTs: nothing is changed or reset.
 --
+-- Do not reset the statement statistics before collecting (#1991), for example
+-- with ALTER SYSTEM FLUSH SHARED_POOL, and do not collect right after a
+-- restart: the counters then cover only the minutes since, often a load test,
+-- and every rate is that short window's load. The assessment states the window
+-- and labels its costs and risks a scenario when the window is short, starts at
+-- a reset, or runs well above the server's own rate.
+--
 -- Output: Single JSON object matching offline_parser expectations.
 -- ==========================================================================
 

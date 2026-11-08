@@ -44,6 +44,7 @@ from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import CollectorOutputContract
 from src.shared.contract_versioning import load_contract
 from src.shared.query_capture import live_query_capture, query_stage_rows
+from src.shared.server_counters import live_server_counters
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.mariadb_tools import MariaDBRemoteCollector
@@ -167,6 +168,8 @@ def _collect_live_mariadb_stages(inp: CollectorInput, ckpt) -> CollectorOutputCo
         triggers=schema_triggers,
         settings=meta_raw.get("settings"),
         query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+        # #1991: the server's uptime and own statement count (Questions).
+        server_counters=live_server_counters(db),
         **live_routine_fields(schema_raw),
     )
     attach_to_contract(output, routine_sources)

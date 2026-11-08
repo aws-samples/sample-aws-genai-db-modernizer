@@ -48,6 +48,13 @@
 -- metadata.rate_sample. A value that is not a whole number of seconds from 0 to 86399
 -- (WAITFOR DELAY waits under a day) stops the script with an error. The first read is
 -- kept in a table variable of this session: nothing on the server is changed or reset.
+--
+-- Do not reset the statement statistics before collecting (#1991), for example
+-- with DBCC FREEPROCCACHE, and do not collect right after a restart: the
+-- counters then cover only the minutes since, often a load test, and every rate
+-- is that short window's load. The assessment states the window and labels its
+-- costs and risks a scenario when the window is short, starts at a reset, or
+-- runs well above the server's own rate.
 -- ==========================================================================
 
 SET NOCOUNT ON;

@@ -1535,7 +1535,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     # #615 (ADR-032): every customer-facing figure, computed once from the
     # fields above; the deliverables only format it. The collected views let
     # wave 1 state its tables and views apart (#578).
-    from src.shared.rate_window import rate_window_facts
+    from src.shared.rate_window import collection_rate_window_facts
     from src.shared.report_facts import compute_report_facts
     from src.shared.row_counts import row_count_facts
 
@@ -1590,12 +1590,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         }
     )
     # #1893: the window each statement's call rate used, and the one statement of the
-    # 24-hour assumption when any rate rests on it.
-    rate_windows = (
-        rate_window_facts(((data.collector or {}).get("queries") or {}).get("query_patterns") or [])
-        if data.collector
-        else None
-    )
+    # 24-hour assumption when any rate rests on it. #1991: the window's length and dates,
+    # and whether it is representative, from the collection's server counters.
+    rate_windows = collection_rate_window_facts(data.collector)
     # #1990: the growth synthesis priced its scenarios at (an older caller's result
     # without it reads the decision here).
     growth, growth_origin = result.get("growth") or growth_assumption(
@@ -1630,6 +1627,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
                 growth_origin=growth_origin,
                 price_basis=price_list,
                 rate_window_statement=(rate_windows or {}).get("statement"),
+                rate_windows=rate_windows,
             )
             if data.collector
             else None

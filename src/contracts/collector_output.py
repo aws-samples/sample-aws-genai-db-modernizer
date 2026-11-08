@@ -112,6 +112,11 @@ Version History:
   window asked for, how many periods each metric's figures cover and the busiest
   period's Average, so a peak-to-average ratio and the days it is observed over are
   known. Backward compatible: all default to None.
+- 5.14 (2026-11-08, #1991): Added optional ``Metadata.server_counters``
+  (``ServerCounters``: uptime_seconds, stats_reset_seconds, read_at,
+  statements_since_start): the server's uptime, statistics reset age and own statement
+  count, which the rate window's representativeness check reads. Backward compatible:
+  defaults to None (not read).
 """
 
 import re
@@ -487,6 +492,34 @@ class SourceExtension(BaseModel):
     )
 
 
+class ServerCounters(BaseModel):
+    """What the source server reported about its own counters (#1991): how long they can
+    cover and its own statement count, so the rate window can be checked against them."""
+
+    uptime_seconds: float | None = Field(
+        None, gt=0, description="The server's uptime when the collection read its counters"
+    )
+    stats_reset_seconds: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "The time since the statement statistics were reset (PostgreSQL's "
+            "pg_stat_statements_info.stats_reset), when the server reports it"
+        ),
+    )
+    read_at: datetime | None = Field(
+        None, description="When the collection read the counters (the script's collected_at)"
+    )
+    statements_since_start: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The server's own count of client statements since it started (MySQL and "
+            "MariaDB Questions), independent of the statement digests; None when not read"
+        ),
+    )
+
+
 class Metadata(BaseModel):
     collection_timestamp: datetime = Field(
         ..., description="ISO 8601 timestamp when collection completed"
@@ -532,6 +565,13 @@ class Metadata(BaseModel):
         description=(
             "How the collection read routine bodies (#1652); None for a collection that "
             "predates the field"
+        ),
+    )
+    server_counters: ServerCounters | None = Field(
+        None,
+        description=(
+            "The server's uptime, statistics reset age and own statement count (#1991); "
+            "None for a collection that did not read them"
         ),
     )
 
@@ -1603,7 +1643,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.13",
+        default="5.14",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

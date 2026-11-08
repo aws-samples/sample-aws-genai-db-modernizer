@@ -45,6 +45,13 @@
 -- too short, and the rates come from one read. A first read that fails (no
 -- pg_stat_statements) also gives one read.
 --
+-- Do not reset the statement statistics before collecting (#1991), for example
+-- with SELECT pg_stat_statements_reset(), and do not collect right after a
+-- restart: the counters then cover only the minutes since, often a load test,
+-- and every rate is that short window's load. The assessment states the window
+-- and labels its costs and risks a scenario when the window is short, starts at
+-- a reset, or runs well above the server's own rate.
+--
 -- Procedure, function and trigger code (#1652), as a psql variable:
 --   -v include_routine_bodies=0  (or false) list functions, procedures and triggers by name and
 --                                size only, without their code (default: 1, kept)
@@ -567,7 +574,8 @@ enum_types_data AS (
 -- ===================== 14. Assemble Final JSON =====================
 SELECT json_build_object(
   'collection_version', '1.0',
-  'collected_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+  -- #1991: UTC, as the Z says (now() prints in the session's TimeZone).
+  'collected_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'metadata', (SELECT data FROM metadata),
   'tables', (SELECT data FROM tables_data),
   'columns', (SELECT data FROM columns_data),

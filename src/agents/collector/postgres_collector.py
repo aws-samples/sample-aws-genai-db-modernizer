@@ -79,6 +79,7 @@ from src.contracts.routine_sources import RoutineSource
 from src.shared.contract_versioning import load_contract
 from src.shared.query_capture import live_query_capture, query_stage_rows, statement_query_failed
 from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
+from src.shared.server_counters import live_server_counters, server_counters_model
 from src.shared.sql_spans import span_settings, use_span_settings, with_span_settings
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
@@ -266,6 +267,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 settings=source_settings(meta_raw.get("settings")),
             ),
             query_capture=live_query_capture(len(queries_raw), inp.collection_options, query_error),
+            # #1991: the server's uptime or reset age, which the rate window check reads.
+            server_counters=server_counters_model(live_server_counters(db)),
             # #1078: an older checkpoint's schema stage has none.
             extensions=source_extensions(schema_raw.get("extensions")),
             # #1652: how routine counts and bodies were read (none in an older checkpoint).

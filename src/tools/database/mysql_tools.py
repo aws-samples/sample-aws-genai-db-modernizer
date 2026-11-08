@@ -484,6 +484,11 @@ class MySQLRemoteCollector:
             return None
         return server_window(uptime_seconds=first_row_figure(rows, "Value"))
 
+    def statements_since_start(self) -> object:
+        """The server's own count of client statements since it started (#1991):
+        ``Questions``, which no digest reset touches. A read, like ``stats_window``."""
+        return first_row_figure(self._query("SHOW GLOBAL STATUS LIKE 'Questions'"), "Value")
+
     # -------------------------------------------------------------------
     # Global status metrics (cache, temp tables)
     # -------------------------------------------------------------------

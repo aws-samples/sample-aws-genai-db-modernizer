@@ -197,6 +197,8 @@ def build_offline_contract(
         query_capture=offline_query_capture(
             offline_meta, int(parsed.get("script_query_rows") or 0)
         ),
+        # #1991: the server's own counters, which the rate window check reads.
+        server_counters=parsed.get("server_counters"),
     )
 
 

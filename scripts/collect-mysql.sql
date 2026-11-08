@@ -46,6 +46,14 @@
 -- first read's counts go into metadata.rate_sample.first_counts, keyed as each
 -- statement row's sample_key, and the ingest pairs them.
 --
+-- Do not reset the statement statistics before collecting (#1991), for example
+-- with TRUNCATE performance_schema.events_statements_summary_by_digest, and do
+-- not collect right after a restart: the counters then cover only the minutes
+-- since, often a load test, and every rate is that short window's load. The
+-- assessment states the window and labels its costs and risks a scenario when
+-- the window is short, starts at a reset, or runs well above the server's own
+-- rate.
+--
 -- Procedure, function, trigger and event code (#1652), as a session variable:
 --   mysql --init-command="SET @include_routine_bodies=0" ...
 --   @include_routine_bodies  0: list routines, triggers and events by name and size
@@ -425,7 +433,8 @@ SELECT JSON_OBJECTAGG(name, val) INTO @global_stats FROM (
 -- ===================== 12. Assemble Final JSON =====================
 SELECT JSON_OBJECT(
   'collection_version', '1.0',
-  'collected_at', DATE_FORMAT(NOW(), '%Y-%m-%dT%H:%i:%sZ'),
+  -- #1991: UTC, as the Z says (NOW() is the session's time zone).
+  'collected_at', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'),
   'metadata', JSON_SET(@metadata, '$.query_capture.statements', @query_rows,
     -- #1908: the wait used and the seconds the server's clock measured between the reads.
     '$.rate_sample', JSON_OBJECT('seconds', @rate_sample_seconds, 'elapsed_seconds', @rate_sample_elapsed,

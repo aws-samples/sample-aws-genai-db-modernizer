@@ -282,9 +282,44 @@ def wave_facts_by_number(report: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return {int(w.get("wave") or 0): w for w in report_facts(report).get("waves") or []}
 
 
-def assumption_block_lines(facts: dict[str, Any]) -> list[str]:
+#: The assumption items the executive report leaves to the engineering report and the
+#: gate (#1991 review): the rate window's detail; it prints the scenario label instead.
+RATE_WINDOW_DETAIL_KEYS = ("rate_window", "rate_window_check")
+
+
+def assumption_block_lines(facts: dict[str, Any], leave_out: tuple[str, ...] = ()) -> list[str]:
     """The assumptions block's lines, then the growth scenario's (#1990), as the facts
-    state them; empty for a report written before them."""
+    state them; empty for a report written before them. ``leave_out`` names item keys
+    whose lines are not wanted (the executive report's ``RATE_WINDOW_DETAIL_KEYS``)."""
     block = facts.get("assumptions") or {}
     scenarios = facts.get("growth_scenarios") or {}
-    return [*(block.get("lines") or []), *(scenarios.get("lines") or [])]
+    items = [i for i in block.get("assumptions") or [] if isinstance(i, dict)]
+    lines = (
+        [str(i["line"]) for i in items if i.get("line") and i.get("key") not in leave_out]
+        if leave_out and items
+        else list(block.get("lines") or [])
+    )
+    return [*lines, *(scenarios.get("lines") or [])]
+
+
+def rate_window_scenario_label(facts: dict[str, Any]) -> str | None:
+    """The label a rate window that is not representative puts on the costs and the
+    risks (#1991), as the facts state it; None for a representative window and for a
+    report written before the check."""
+    label = (facts.get("rate_windows") or {}).get("scenario_label")
+    return str(label) if isinstance(label, str) and label else None
+
+
+def rate_window_summary(facts: dict[str, Any]) -> str | None:
+    """The rate window's length and dates, then its check (#1991), as the facts state
+    them, for a summary that prints one line about it; None before the check."""
+    windows = facts.get("rate_windows") or {}
+    parts = [str(windows[k]) for k in ("window_statement", "check_statement") if windows.get(k)]
+    return "; ".join(parts) if parts else None
+
+
+def rate_window_risk_note(facts: dict[str, Any]) -> str | None:
+    """The short note the risks carry when the rate window is not representative (#1991):
+    the full label stands with the costs, once. None otherwise, and before the check."""
+    note = (facts.get("rate_windows") or {}).get("scenario_risk_note")
+    return str(note) if isinstance(note, str) and note else None

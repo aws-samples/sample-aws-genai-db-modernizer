@@ -79,7 +79,7 @@ import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { displayTables } from "../utils/tableNames";
-import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
+import { accessPatternTotals, assumptionLinesOf, cacheLayerFactsOf, costAssumptionsOf, rateWindowRiskNoteOf, rateWindowScenarioOf, rateWindowStatementOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, procedureInternalQueryCountOf, procedureInternalRoutineCountOn, procedureInternalRoutineCountsOf, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel, tradeOffTopicGroupsOf } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2086,6 +2086,12 @@ const AnalysisResultsPage = memo(() => {
                       <span data-figure="rate-windows">{t('analysis-results.cost-breakdown.rate-windows')}: {rateWindowStatementOf(synthesis)}.</span>
                     </Box>
                   )}
+                  {/* #1991: a rate window that is not representative makes the costs a scenario */}
+                  {rateWindowScenarioOf(synthesis) && (
+                    <Box fontSize="body-s" color="text-status-warning">
+                      <span data-figure="rate-window-scenario">{rateWindowScenarioOf(synthesis)}.</span>
+                    </Box>
+                  )}
                   {/* #1990: the assumptions block and the growth scenario (report facts) */}
                   {assumptionLinesOf(synthesis).length > 0 && (
                     <Box fontSize="body-s" color="text-body-secondary" data-figure="assumptions">
@@ -2508,6 +2514,12 @@ const AnalysisResultsPage = memo(() => {
                     <StatusIndicator type={riskSeverityStatus(overallRiskLevel)}>
                       {t('analysis-results.risk-assessment.overall-risk')}: {overallRiskLevel}
                     </StatusIndicator>
+                  )}
+                  {/* #1991: the rate-driven risks rest on a window that is not representative */}
+                  {rateWindowRiskNoteOf(synthesis) && (
+                    <Box fontSize="body-s" color="text-status-warning">
+                      <span data-figure="rate-window-scenario-risks">{rateWindowRiskNoteOf(synthesis)}.</span>
+                    </Box>
                   )}
                   <NoOpenRisksNote
                     synthesis={resultsData?.synthesis}
