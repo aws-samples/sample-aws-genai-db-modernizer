@@ -48,6 +48,7 @@ from src.tools.schema.base_schema_agent import (
     AgentInputPaths,
     enforce_design_numbers,
     model_token_usage,
+    revision_prompt_sections,
 )
 from src.tools.schema.design_metrics import (
     DESIGN_CONTEXT_KEY,
@@ -427,17 +428,7 @@ def run_opensearch_schema_agent(
     # Inject revision context if this is a revision-triggered redesign
     if paths.revision_context:
         revision_ctx = json.loads(Path(paths.revision_context).read_text(encoding="utf-8"))
-        revision_sections = []
-        if revision_ctx.get("exclusion_instructions"):
-            revision_sections.append(
-                f"## Excluded Patterns\n{revision_ctx['exclusion_instructions']}"
-            )
-        if revision_ctx.get("customer_instructions"):
-            revision_sections.append(f"## Customer Notes\n{revision_ctx['customer_instructions']}")
-        if revision_ctx.get("new_patterns_instructions"):
-            revision_sections.append(
-                f"## New Patterns to Design\n{revision_ctx['new_patterns_instructions']}"
-            )
+        revision_sections = revision_prompt_sections(revision_ctx)
         if revision_sections:
             # R1: customer revision free-text framed as requested design changes
             # (data), not as instructions to execute verbatim.

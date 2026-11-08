@@ -630,6 +630,8 @@
   "analysis-results.waves.suggested-path": "This is one suggested adoption path. To modernize in one step instead, adopt the target architecture in {{section}} above directly.",
   "analysis-results.waves.wave-title": "Wave {{wave}}: {{title}}",
   "analysis-results.waves.gate": "Gate before the next wave: {{gate}}",
+  "analysis-results.waves.readiness": "Readiness: {{line}}",
+  "analysis-results.waves.readiness-rule": "A wave is suggested only when its design exists, was reviewed, and no check holds it: an open critical or high risk on it, an access pattern its design leaves unserved, a design review that did not approve its design, a plan that costs more than the source while the wave carries an open performance risk, or a wave 1 that is not suggested yet.",
   "analysis-results.waves.tables": "Tables",
   "analysis-results.waves.gaps": "Relational gaps",
   "analysis-results.waves.gap": "{{feature}} ({{impact}}): {{reason}}",

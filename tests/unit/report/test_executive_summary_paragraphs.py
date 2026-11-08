@@ -46,7 +46,11 @@ def test_it_is_worded_from_the_facts_the_report_holds_now() -> None:
 
 def test_a_generated_summary_with_a_schema_design_is_shown() -> None:
     report = _report("llm", designed=True, summary="Recommendation: generated.\nRisk: x.")
-    assert summary_paragraphs(report) == (["Recommendation: generated.", "Risk: x."], None)
+    paragraphs, note = summary_paragraphs(report)
+    # #1992: the model's own text, then the Decision rendered from the facts.
+    assert paragraphs[:2] == ["Recommendation: generated.", "Risk: x."]
+    assert paragraphs[2].startswith("Decision: ") and len(paragraphs) == 3
+    assert note is None
 
 
 def test_a_generated_summary_with_no_schema_design_is_withheld_for_the_brief() -> None:

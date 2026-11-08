@@ -998,24 +998,29 @@ def split_schema_input(
         database_name,
         resolver,
     )
+    # #1992: in a redesign round, every part is told the checks the last design failed.
+    from src.agents.schema_design.wave_redesign import redesign_input
+
+    redesign = redesign_input(store, database_name, job_id, engine, schema_version)
     for idx, group in enumerate(fitted):
         group_queries = expand(group["queries"]) if by_pattern else group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables, resolver)
-        text = render_group_input(
-            _group_input(
-                job_id,
-                database_name,
-                engine,
-                idx,
-                group,
-                group_tables,
-                collector_output,
-                analysis_output,
-                len(design_queries),
-                decision_trace,
-                design_context=peak,
-            )
+        data = _group_input(
+            job_id,
+            database_name,
+            engine,
+            idx,
+            group,
+            group_tables,
+            collector_output,
+            analysis_output,
+            len(design_queries),
+            decision_trace,
+            design_context=peak,
         )
+        if redesign is not None:
+            data = {**data, "redesign_request": redesign}
+        text = render_group_input(data)
         input_file = f"input_group_{idx}.json"
         store.write_bytes(f"{base_key}/{input_file}", text.encode())
 

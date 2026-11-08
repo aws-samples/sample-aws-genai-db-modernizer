@@ -115,3 +115,12 @@ export function waveGaps(synthesis, wave) {
   const gaps = synthesis.facts.relational_gaps && synthesis.facts.relational_gaps.gaps;
   return (Array.isArray(gaps) ? gaps : []).filter(g => g && typeof g === 'object');
 }
+
+// #1992: the wave's readiness (facts.waves[].readiness: suggested, held, not_designed
+// or not_reviewed) and its line, read as stored. Null for a report written before the
+// check.
+export function waveReadiness(synthesis, wave) {
+  const wf = waveFacts(synthesis, wave);
+  if (!wf || typeof wf.readiness_line !== 'string' || !wf.readiness_line) return null;
+  return { readiness: wf.readiness || null, line: wf.readiness_line };
+}

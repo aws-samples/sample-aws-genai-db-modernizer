@@ -346,6 +346,11 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/shared/wave_readiness.py": (
+        frozenset({"_WARNING_CHARS"}),
+        "a wording length, not a routing rule: how many characters of a design review "
+        "warning's requested change a wave's readiness line states (#1992); routing reads none",
+    ),
     "src/agents/referee/query_pattern.py": (
         frozenset({"SCORE_DIMENSIONS_SCHEMA_VERSION"}),
         "a file format version, not a routing rule: the access-pattern record's schema "

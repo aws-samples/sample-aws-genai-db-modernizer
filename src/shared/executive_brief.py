@@ -39,18 +39,6 @@ from src.shared.report_facts import whole_dollars
 SUMMARY_WORD_BUDGET = 200
 
 _NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
-_ORDINALS = (
-    "zeroth",
-    "first",
-    "second",
-    "third",
-    "fourth",
-    "fifth",
-    "sixth",
-    "seventh",
-    "eighth",
-    "ninth",
-)
 # A risk type as the summary names it, in plain words.
 _RISK_KINDS = {
     "PERFORMANCE_DEGRADATION": "risk of slower performance",
@@ -307,12 +295,134 @@ def _risk(brief: Mapping[str, Any], open_risk_count: int) -> str:
     return f"{out} The main {noun} {verb} {whats}: {_actions(exposures)}."
 
 
+_SUMMARY_STEPS = {
+    "design": "run its schema design",
+    "revise_design": "revise its design",
+    "collect_longer": "collect over a longer window",
+}
+
+
+def _hold_phrase(hold: Mapping[str, Any]) -> str:
+    """A hold in the summary's few words (the roadmap states it in full)."""
+    engine = display_engine(str(hold.get("engine") or ""))
+    rid = f" ({hold['risk_id']})" if hold.get("risk_id") else ""
+    if hold.get("flagged_by"):
+        # A re-attributed flag: name the engine whose analysis raised it.
+        engine += f", flagged by the {display_engine(str(hold['flagged_by']))} analysis"
+    check = hold.get("check")
+    if check == "open_high_risk":
+        on = f" on {engine}" if hold.get("engine") else ""
+        return f"an open {str(hold.get('severity') or 'high').lower()} risk{on}{rid}"
+    if check == "slower_and_pricier":
+        return f"a plan costlier than the source with an open performance risk on {engine}{rid}"
+    if check == "unserved_patterns":
+        return f"access patterns the {engine} design leaves unserved"
+    if check == "open_review":
+        return f"an open {engine} design review"
+    if check == "unsupported_queries":
+        return f"assigned queries the {engine} design marks unsupported"
+    return str(hold.get("line") or "")
+
+
+def _unsuggested_wave_sentences(facts: Mapping[str, Any]) -> list[str]:
+    """Each wave the plan does not suggest, in the summary's few words from the facts'
+    readiness, hold and step codes (#1992): a held wave with what holds it and the next
+    step, the waves not designed or not reviewed said once each, and the waves held only
+    because wave 1 is said once."""
+    rows = [w for w in facts.get("waves") or [] if isinstance(w, dict)]
+    out: list[str] = []
+    builds_on: list[int] = []
+    for row in rows:
+        if row.get("readiness") != "held":
+            continue
+        n = int(row.get("wave") or 0)
+        holds = [h for h in row.get("holds") or [] if isinstance(h, dict)]
+        own = [h for h in holds if h.get("check") != "earlier_wave"]
+        if not own:
+            builds_on.append(n)
+            continue
+        phrases = list(dict.fromkeys(_hold_phrase(h) for h in own))
+        steps = list(
+            dict.fromkeys(
+                _SUMMARY_STEPS[str(s.get("step"))]
+                for s in row.get("next_steps") or []
+                if isinstance(s, dict) and str(s.get("step")) in _SUMMARY_STEPS
+            )
+        )
+        rounds = int(row.get("redesign_rounds") or 0)
+        after = {1: " after one redesign round", 2: " after two redesign rounds"}.get(
+            rounds, f" after {rounds} redesign rounds" if rounds else ""
+        )
+        if row.get("redesign_note"):
+            after += f" ({row['redesign_note']})"
+        text = f"Wave {n} is not suggested yet{after}: {_join(phrases)}."
+        if steps:
+            text += f" Next, {_join(steps)}."
+        out.append(text)
+    if len(builds_on) == 1:  # facts: presentation (verb agreement)
+        out.append(f"Wave {builds_on[0]} is not suggested yet: it builds on wave 1.")
+    elif builds_on:
+        out.append(
+            f"Waves {_join([str(n) for n in builds_on])} are not suggested yet: they build "
+            "on wave 1."
+        )
+    for state, said in (
+        ("not_designed", "not designed yet: run {pron} schema design"),
+        ("not_reviewed", "not reviewed (the review failed): review {pron} design again"),
+    ):
+        waves = [str(int(r.get("wave") or 0)) for r in rows if r.get("readiness") == state]
+        if len(waves) == 1:  # facts: presentation (verb agreement)
+            out.append(f"Wave {waves[0]} is {said.format(pron='its')}.")
+        elif waves:
+            out.append(f"Waves {_join(waves)} are {said.format(pron='their')}.")
+    return out
+
+
+def decision_paragraph(facts: Mapping[str, Any] | None) -> str | None:
+    """The executive summary's Decision, rendered from the facts only (#1992): the wave
+    to approve, why it is safe, and every wave the plan does not suggest. Every summary
+    ends with it, a model's included (:func:`compose_summary`). None when ``facts`` has
+    no ``executive_brief``."""
+    if not isinstance(facts, Mapping):
+        return None
+    brief = facts.get("executive_brief")
+    if not isinstance(brief, Mapping):
+        return None
+    return _decision(facts, brief)
+
+
+def _warning_sentences(facts: Mapping[str, Any]) -> list[str]:
+    """Each suggested wave's design review warnings, as the customer accepts them by
+    approving it (#1992); the roadmap lists each one."""
+    out = []
+    for row in facts.get("waves") or []:
+        if not isinstance(row, dict) or row.get("readiness") != "suggested":
+            continue
+        n = int(row.get("review_warning_count") or 0)
+        if n:
+            noun = "design review warning" if n == 1 else "design review warnings"
+            out.append(
+                f"Approving wave {int(row.get('wave') or 0)} accepts its {n} {noun}, listed "
+                "in the roadmap."
+            )
+    return out
+
+
 def _decision(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
+    rest = [*_warning_sentences(facts), *_unsuggested_wave_sentences(facts)]
+    text = _decision_head(facts, brief)
+    return " ".join([text, *rest]) if rest else text
+
+
+def _decision_head(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
     wave_n = brief.get("decision_wave")
     waves = [w for w in brief.get("waves") or [] if isinstance(w, dict)]
+    if wave_n is None and any(isinstance(w.get("readiness"), str) for w in waves):
+        return "Decision: no wave is suggested yet."
     if wave_n is None or not waves:
         return "Decision: approve the plan's first step."
-    first = waves[0]
+    # The decision wave's own facts say why it is safe (#1992: not always wave 1).
+    first = next((w for w in waves if int(w.get("wave") or 0) == int(wave_n)), waves[0])
     names = [display_engine(str(e)) for e in first.get("engines") or []]
     source = _source_name(brief.get("source_engine"))
     kind = first.get("kind")
@@ -324,8 +434,10 @@ def _decision(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
             "schema and data parity is validated against the source."
         )
     elif kind == "cross_engine" and names:
-        fact_rows = [w for w in facts.get("waves") or [] if isinstance(w, dict)]
-        gaps = bool(fact_rows and fact_rows[0].get("lists_relational_gaps"))
+        fact_rows = {
+            int(w.get("wave") or 0): w for w in facts.get("waves") or [] if isinstance(w, dict)
+        }
+        gaps = bool((fact_rows.get(int(wave_n)) or {}).get("lists_relational_gaps"))
         why = (
             f"It is safe to approve: it converts the SQL dialect and data types from {source} "
             f"to {names[0]} and keeps the current data model, and its cutover waits until the "
@@ -333,12 +445,60 @@ def _decision(facts: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
             + ("; the SQL compatibility check lists what to rewrite first." if gaps else ".")
         )
     elif kind == "cache" and names:
-        why = (
-            f"It is safe to approve: {_join(names)} moves no data and can be switched off " "again."
-        )
+        why = f"It is safe to approve: {_join(names)} moves no data and can be switched off again."
     else:
         why = "Each wave cuts over only once its validation gate passes."
     return f"{head} {why}"
+
+
+# #1992: a sentence that puts a wave, a step or the plan up for approval or for starting.
+# A model's summary never states the decision: any sentence with one of these is
+# stripped, whatever wave it names, and the Decision is rendered from the facts.
+_DECISION_WORDING = re.compile(
+    r"\bapprov\w*|\bproceed\w*|\bgo[- ]ahead\b|\bgreen[- ]?light\w*|\bsign[- ]?off\b"
+    r"|\bsign (?:it )?off\b|\bauthori[sz]\w*|\bcommit to\b"
+    r"|\bready to (?:start|begin|go|proceed|run|launch|move)\b"
+    r"|\b(?:start|begin|launch|kick(?:s|ed)? off|move on to|moving on to|continue with)\s+"
+    r"(?:with\s+)?(?:the\s+)?(?:wave|waves|plan|migration|modernization|first|next|full)\b"
+    r"|\bnext wave\b",
+    re.IGNORECASE,
+)
+
+
+def strip_decision_wording(text: str) -> tuple[str, list[str]]:
+    """``text`` without a ``Decision:`` paragraph and without any sentence that states an
+    approval, a go-ahead or a next wave (:data:`_DECISION_WORDING`), and the sentences
+    taken out. Paragraph breaks are kept."""
+    stripped: list[str] = []
+    kept_paragraphs: list[str] = []
+    # Each line is a paragraph, as the deliverables split the summary.
+    for paragraph in re.split(r"\n+", text or ""):
+        if not paragraph.strip():
+            continue
+        if re.match(r"\s*decision\s*:", paragraph, re.IGNORECASE):
+            stripped.append(paragraph.strip())
+            continue
+        kept: list[str] = []
+        for sentence in _sentences(paragraph):
+            if _DECISION_WORDING.search(sentence):
+                stripped.append(sentence)
+            else:
+                kept.append(sentence)
+        if kept:
+            kept_paragraphs.append(" ".join(kept))
+    return "\n\n".join(kept_paragraphs), stripped
+
+
+def compose_summary(text: str, facts: Mapping[str, Any] | None) -> str:
+    """A model's summary as the customer sees it (#1992): its own text without any
+    decision wording (:func:`strip_decision_wording`), then the Decision rendered from
+    the facts. ``text`` as it is when the facts have no ``executive_brief``. Running it
+    again on its own output gives the same text."""
+    decision = decision_paragraph(facts)
+    if decision is None:
+        return text
+    body, _ = strip_decision_wording(text)
+    return f"{body}\n\n{decision}" if body else decision
 
 
 def executive_brief_text(facts: Mapping[str, Any] | None, database_name: str = "") -> str | None:
@@ -365,8 +525,6 @@ def word_count(text: str) -> int:
     return len(re.findall(r"\S+", text or ""))
 
 
-_APPROVE = re.compile(r"\bapprov\w*", re.IGNORECASE)
-_NOT_APPROVE = re.compile(r"\b(?:not|never|n't)\s+(?:\w+\s+){0,2}approv", re.IGNORECASE)
 _NEGATION = re.compile(r"\b(no|not|none|without|never|cannot)\b|n't\b", re.IGNORECASE)
 # A money claim: a saving (the noun), saving with a money cue, a lower or reduced bill, a
 # cheaper plan. "ElastiCache saves round trips" is not one.
@@ -434,14 +592,6 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
 
 
-def _wave_forms(n: int) -> re.Pattern[str]:
-    """ "wave 1", "wave one", "first wave" (number words and ordinals up to nine)."""
-    forms = [rf"\bwave {n}\b"]
-    if 0 < n < len(_NUMBER_WORDS):
-        forms += [rf"\bwave {_NUMBER_WORDS[n]}\b", rf"\b{_ORDINALS[n]} wave\b"]
-    return re.compile("|".join(forms), re.IGNORECASE)
-
-
 def _level_with_risk(level: str) -> re.Pattern[str]:
     """The level within two words of "risk": "overall risk is medium", "Overall risk:
     medium", "the risk level is medium", "medium overall risk", "medium-risk"; not "risk
@@ -479,8 +629,9 @@ def check_summary_brief(summary: str, facts: Mapping[str, Any] | None) -> list[d
     - a dollar amount rounds to no cost the facts state (``$510`` for ``$505.02``);
     - the sentence that states that cost does not say "full modernization" (#1474);
     - no sentence names the overall risk level within two words of "risk";
-    - no sentence asks the reader to approve the decision wave ("approve wave 1",
-      "approve wave one", "approval of the first wave"), or the only one says not to;
+    - (#1992) no decision is checked here: a model's summary never states one. Its
+      decision wording is stripped and the Decision is rendered from the facts
+      (:func:`compose_summary`), so the summary is checked without it;
     - a saving is claimed (a "saving", "saves" with a money word, a lower or reduced
       bill or cost, "cheaper"; never in a negated sentence) when no deliverable states
       one (``executive_brief.saving_counted`` false);
@@ -532,18 +683,6 @@ def check_summary_brief(summary: str, facts: Mapping[str, Any] | None) -> list[d
                 f"executive structure: the summary leaves out the overall risk level ({level})"
             )
         )
-    wave = brief.get("decision_wave")
-    if wave is not None:
-        forms = _wave_forms(int(wave))
-        if not any(
-            _APPROVE.search(s) and forms.search(s) and not _NOT_APPROVE.search(s) for s in sentences
-        ):
-            findings.append(
-                _finding(
-                    f"executive structure: the summary leaves out the decision (approve "
-                    f"wave {wave})"
-                )
-            )
     if not brief.get("saving_counted"):
         claims = [s for s in sentences if _claims_saving(s)]
         if claims:

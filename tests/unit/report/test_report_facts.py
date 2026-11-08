@@ -146,9 +146,13 @@ def test_facts_validate_against_the_contract() -> None:
 
 
 def test_a_report_without_facts_gets_the_same_block_synthesis_writes() -> None:
-    """A report synthesized before ``facts`` existed: one answer per figure."""
+    """A report synthesized before ``facts`` existed: one answer per figure, from the same
+    function. It was written before the wave readiness check too, so it states none
+    (#1992: its designs carry no review counts to check)."""
     legacy = _merged_report()
-    assert report_facts(legacy) == _with_facts(legacy)["facts"]
+    out = copy.deepcopy(legacy)
+    out["facts"] = compute_report_facts(out, readiness=False)
+    assert report_facts(legacy) == out["facts"]
 
 
 def test_renderers_read_the_stored_facts_not_their_own_copy() -> None:

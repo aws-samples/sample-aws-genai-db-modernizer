@@ -10,6 +10,7 @@ from typing import Any
 from src.shared.engine_names import display_engine, display_source_database
 from src.shared.gate_facts import GATE_TABLES_SHOWN
 from src.shared.report_facts import wave_facts
+from src.shared.wave_readiness import READINESS_RULE_NOTE
 
 from . import escaping
 from .engine_roles import _RELATIONAL_ENGINES
@@ -298,6 +299,9 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         )
         out.append("")
     facts = _facts_by_wave(report)
+    if any(f.get("readiness_line") for f in facts.values()):
+        # #1992: the rule each wave's readiness line applies, stated once.
+        out += [f"*{escaping.md_text(READINESS_RULE_NOTE)}.*", ""]
     replicated = _replicated_by_source(report)
     owner_lines = (report_facts(report).get("table_owner_lines") or {}).get("table_lines") or []
     mapped = {str(r.get("table")) for r in owner_lines if isinstance(r, dict) and r.get("table")}
@@ -370,6 +374,9 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
         gate = _gate_text(w, wf, replicated, mapped)
         out.append(f"- Gate before the next wave: {escaping.md_text(gate or '-')}")
+        if wf.get("readiness_line"):
+            # #1992: whether the plan suggests the wave, as the facts state it.
+            out.append(f"- Readiness: {escaping.md_text(wf['readiness_line'])}")
         out += _heterogeneous_lines_md(report, wf)
         out.append("")
     return out

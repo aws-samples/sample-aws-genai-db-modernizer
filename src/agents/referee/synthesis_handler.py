@@ -110,7 +110,12 @@ from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.design_text import said_once_trade_offs
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.engines_in_use import engines_in_use
-from src.shared.executive_brief import check_summary_brief, executive_brief_text
+from src.shared.executive_brief import (
+    check_summary_brief,
+    compose_summary,
+    executive_brief_text,
+    strip_decision_wording,
+)
 from src.shared.partition_load import busiest_key, hot_partition_rows, over_key_limit
 from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
@@ -877,6 +882,9 @@ def _executive_brief_input(facts: dict) -> dict:
         "no_engine_in_scope_query_count": int(facts.get("no_engine_in_scope_query_count") or 0),
         "query_total_count": facts.get("query_total_count"),
         **(facts.get("executive_brief") or {}),
+        # #1992: each wave the plan does not suggest, with its reason and next step (the
+        # Decision is rendered from facts after the model's text; this is context only).
+        "wave_readiness_notes": facts.get("wave_readiness_notes") or [],
     }
 
 
@@ -1001,6 +1009,10 @@ def apply_synthesis_llm_output(
         getattr(deterministic_result.get("data"), "collector", None)
     ) | set(deterministic_result.get("known_tables") or [])
     summary_text = replace_dashes(str(llm_summary or ""), identifiers)
+    # #1992: a model's summary never states the decision. Every check below reads the
+    # whole text; the customer sees it without its Decision paragraph and any sentence
+    # with approval or go-ahead wording, then the Decision rendered from the facts.
+    _, stripped_decision = strip_decision_wording(summary_text)
     engine_tables = deterministic_result.get("engine_tables")
     if engine_tables is None:
         engine_tables = engine_table_scope(
@@ -1043,6 +1055,9 @@ def apply_synthesis_llm_output(
     # cost, and the word budget.
     facts = deterministic_result.get("facts")
     findings = findings + check_summary_brief(summary_text, facts)
+    for sentence in stripped_decision:
+        # ``summary_llm`` keeps the text as received.
+        say(f"[synthesis] decision wording left out (the facts state it): {sentence[:160]}")
     deterministic_result["summary_llm"] = raw_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:
@@ -1059,7 +1074,7 @@ def apply_synthesis_llm_output(
         )
         deterministic_result["summary_source"] = "deterministic_fallback"
     else:
-        deterministic_result["executive_summary"] = summary_text
+        deterministic_result["executive_summary"] = compose_summary(summary_text, facts)
         deterministic_result["summary_source"] = "llm"
     return deterministic_result
 
@@ -1427,6 +1442,15 @@ def _write_prose_style_rejections(
     )
 
 
+def _wave_redesign_log(store: ArtifactStore, db: str, job_id: str, version: int) -> dict | None:
+    """``wave-redesign/v<N>/rounds.json`` for this assignment version when a redesign
+    round ran on it (#1992), else None."""
+    from src.agents.schema_design.wave_redesign import read_log
+
+    log = read_log(store, db, job_id, version)
+    return log if log.get("rounds") else None
+
+
 def _report_output_data(store: ArtifactStore, result: dict, assignment_version: int) -> dict:
     """The ``report.json`` fields synthesis writes for ``result``, ``facts`` included
     (ADR-032); the summary fields are the ones ``result`` holds now."""
@@ -1490,6 +1514,10 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
             for r in (data.assignment or {}).get("post_schema_reroutes") or []
             if _engine_of(data.assignment).get(r.get("query_id")) == r.get("to_engine")
         ],
+        # #1992: the bounded redesign rounds of held waves, when any ran.
+        "wave_redesign": _wave_redesign_log(
+            store, result["database_name"], result["job_id"], assignment_version
+        ),
         # #762: the summary request's budget status, only when it cut a list.
         "summary_input_budget": result.get("summary_input_budget"),
         # #1891: the statements on temporary objects that follow their routine.
@@ -1841,8 +1869,30 @@ def _build_schema_summaries(
     from src.shared.unsupported_pattern import unsupported_pattern_ids
 
     summaries = _engine_schema_summaries(data, hot_partitions)
-    if not waived:
-        return summaries
+    if waived:
+        _move_waived_to_served(data, summaries, waived)
+    # #1992: the assigned queries each design still marks unsupported (after any waiver):
+    # a wave whose design leaves one is not suggested (``wave_readiness``).
+    assigned: dict[str, set[str]] = {}
+    for qa in (getattr(data, "assignment", None) or {}).get("query_assignments") or []:
+        if qa.get("in_scope", True) and qa.get("assigned_engine"):
+            assigned.setdefault(str(qa["assigned_engine"]), set()).add(str(qa.get("query_id")))
+    for engine, summary in summaries.items():
+        if summary.get("status") != "completed":
+            continue
+        ids = {
+            str(q)
+            for e in summary.get("unsupported_patterns") or []
+            if isinstance(e, dict)
+            for q in unsupported_pattern_ids(e)
+        }
+        summary["unsupported_query_count"] = len(ids & assigned.get(engine, set()))
+    return summaries
+
+
+def _move_waived_to_served(data, summaries, waived) -> None:
+    from src.shared.unsupported_pattern import unsupported_pattern_ids
+
     engine_of = {
         qa.get("query_id"): qa.get("assigned_engine")
         for qa in (data.assignment or {}).get("query_assignments") or []
@@ -1866,10 +1916,16 @@ def _build_schema_summaries(
         if served:
             summary["unsupported_patterns"] = [e for e in entries if e not in served]
             summary["served_by_waiver"] = served
-    return summaries
 
 
 def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
+    from src.shared.wave_readiness import (
+        failed_review_count,
+        open_review_count,
+        review_warnings,
+        reviewed_count,
+    )
+
     summaries = {}
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
@@ -1887,6 +1943,17 @@ def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
             )
         else:
             summaries[engine] = {"status": "not_available"}
+        if summaries[engine].get("status") == "completed":
+            # #1992: the designs whose last review did not approve them hold the wave.
+            trace = getattr(artifacts, "design_trace", None)
+            dumped = trace.model_dump(mode="json") if trace is not None else None
+            summaries[engine]["open_review_count"] = open_review_count(dumped)
+            # A review that failed to run: the design is not reviewed, not passed.
+            summaries[engine]["failed_review_count"] = failed_review_count(dumped)
+            # Designs (or design groups) with a recorded review verdict.
+            summaries[engine]["reviewed_count"] = reviewed_count(dumped)
+            # The warnings of reviews with no blocker: accepted by approving the wave.
+            summaries[engine]["review_warnings"] = review_warnings(dumped)
     return summaries
 
 

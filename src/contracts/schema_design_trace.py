@@ -32,6 +32,11 @@ Version History:
   (``trace``, ``routing_flags``, ``token_usage``, ``delta_merge``, ``pe_review``;
   ``total_groups``, ``groups`` and ``merge_reconciliation`` on the merged trace)
   plus ``contract_version``.
+- 1.1 (2026-11-09, #1992): Added optional blockers and warnings on each pe_review trace
+  entry: the review's change requests by the contract's severity (how many are blockers,
+  and each warning briefly), so a review with only warnings holds no wave; the same on
+  a design group's trace (``DesignTraceGroup``). Backward compatible: absent in a trace
+  written before.
 """
 
 from __future__ import annotations
@@ -59,6 +64,11 @@ class DesignTraceEntry(BaseModel):
     # A PE review: its verdict, how many changes it asked for, and a clipped summary.
     verdict: str | None = Field(default=None, exclude_if=is_none)
     change_requests: Any = Field(default=None, exclude_if=is_none)
+    # #1992: the review's change requests by the contract's severity: how many are
+    # blockers (they hold the wave), and the warnings, each briefly (the customer
+    # accepts them by approving the wave). Absent in a trace written before.
+    blockers: Any = Field(default=None, exclude_if=is_none)
+    warnings: Any = Field(default=None, exclude_if=is_none)
     summary: str | None = Field(default=None, exclude_if=is_none)
     # A PE review that failed.
     error: str | None = Field(default=None, exclude_if=is_none)
@@ -111,7 +121,7 @@ class DesignTraceGroup(DesignTraceRun):
     """``schema-dynamodb/v<N>/design_trace_group_<G>.json``: one group's design trace."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
 
@@ -119,7 +129,7 @@ class DesignTrace(DesignTraceRun):
     """``schema-<engine>/[v<N>/]design_trace.json``: how the schema was designed."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     # The merged trace of a grouped design (DynamoDB).
     total_groups: int | None = Field(default=None, exclude_if=is_none)

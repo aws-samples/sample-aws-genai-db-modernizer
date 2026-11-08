@@ -192,6 +192,11 @@ ID_FIELD_PATHS = frozenset(
         ("hot_partitions", "engine"),  # HotPartitionFacts.engine (#1989): the design's engine
         ("busiest_partition_key", "engine"),  # the same row shape (#1989)
         ("busiest_key", "engine"),  # GrowthScenarioFacts.busiest_key.engine (#1990)
+        ("holds", "engine"),  # WaveHold.engine (#1992): the held wave's engine id
+        ("next_steps", "engine"),  # WaveNextStep.engine (#1992): the same engine id
+        ("holds", "flagged_by"),  # WaveHold.flagged_by (#1992): the raising engine's id
+        ("requests", "engine"),  # WaveRedesignRequest.engine (#1992): the engine sent back
+        ("review_warnings", "engine"),  # ReviewWarning.engine (#1992): the design's engine
         ("aurora_engine_choice", "engine"),  # AuroraEngineChoice.engine (assignment_models.py:276)
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
@@ -243,6 +248,7 @@ ID_FIELD_PATHS = frozenset(
         ("tables", "primary_key"),  # Aurora's table def: list of column names
         ("trade_offs", "target_tables"),  # TradeOff.target_tables (schema_design_output.py)
         ("optimizations", "target"),  # Aurora Optimization.target: table/column/cluster name(s)
+        ("review_warnings", "target"),  # ReviewWarning.target: the reviewed table/index name
         ("app_layer_notes", "feature"),  # Aurora AppLayerNote.feature: a short code, not prose
         ("migration_notes", "object_name"),  # MigrationNote.object_name: a stored-object name
         # RealityCheckOutputContract.flag_decisions (FlagDecision, #647): the

@@ -78,6 +78,7 @@ from src.shared.trade_off_topics import (
     predates_topics,
     trade_off_group,
 )
+from src.shared.wave_readiness import redesign_facts, risk_wave, wave_readiness
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -1056,6 +1057,17 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
             {**w, "critical_high_risks": high(w.get("engines"))} if isinstance(w, dict) else w
             for w in facts["waves"]
         ]
+        rows = [w for w in out["waves"] if isinstance(w, dict)]
+        if rows and all("readiness" in w for w in rows):
+            # #1992: whether each wave is suggested, from the same risks (a block written
+            # before the check keeps none).
+            apply_wave_readiness(
+                report,
+                [w for w in report.get("migration_waves") or [] if isinstance(w, dict)],
+                rows,
+                facts.get("rate_windows"),
+            )
+            out["wave_readiness_notes"] = wave_readiness_notes(rows)
     no_migration = facts.get("no_migration")
     if isinstance(no_migration, dict):
         out["no_migration"] = {
@@ -1069,6 +1081,7 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
             [w for w in report.get("migration_waves") or [] if isinstance(w, dict)],
             [r for r in facts.get("retired_in_use_engines") or [] if isinstance(r, dict)],
             facts.get("query_total_count"),
+            wave_rows=[w for w in out.get("waves") or [] if isinstance(w, dict)],
         )
     return out
 
@@ -3363,15 +3376,9 @@ def _source_engine(report: Mapping[str, Any], waves: list[dict[str, Any]]) -> st
 def _exposure_wave(
     risk: Mapping[str, Any], engine: str | None, waves: list[dict[str, Any]]
 ) -> int | None:
-    """The wave a risk belongs to: its own ``wave``, else the first wave of its engine."""
-    wave = risk.get("wave")
-    if isinstance(wave, int) and not isinstance(wave, bool):
-        return wave
-    if engine:
-        for w in waves:
-            if engine in (w.get("engines") or []):
-                return int(w.get("wave") or 0) or None
-    return None
+    """The wave a risk belongs to: its own ``wave``, else the first wave of its engine
+    (``wave_readiness.risk_wave``, the placement the wave holds use too)."""
+    return risk_wave(risk, engine, waves)
 
 
 def _share_of_all_queries(report: dict[str, Any], query_total: int | None) -> dict[str, float]:
@@ -3394,6 +3401,7 @@ def executive_brief_facts(
     waves: list[dict[str, Any]],
     retired_in_use: list[dict[str, Any]],
     query_total: int | None = None,
+    wave_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """What the executive summary states beyond the headline figures (#1403).
 
@@ -3408,6 +3416,10 @@ def executive_brief_facts(
     ``saving_counted`` is true only when a deliverable states a saving: a known
     current cost, or an engine the customer runs today that the plan retires with a
     counted saving (#1076). With neither, the summary claims no saving.
+
+    ``wave_rows`` are the facts' wave rows (#1992): a held wave is in ``held_waves``, and
+    the decision is the first suggested wave (None when no wave is). Without readiness
+    (a report written before it), no wave is held and the decision is wave 1.
     """
     tco = report.get("tco_analysis") or {}
     known = cost_baseline_known(tco)
@@ -3433,14 +3445,30 @@ def executive_brief_facts(
                 "wave": _exposure_wave(r, eng, waves),
             }
         )
+    readiness = {
+        int(r.get("wave") or 0): r.get("readiness")
+        for r in wave_rows or []
+        if isinstance(r.get("readiness"), str)
+    }
     brief_waves = [
         {
             "wave": int(w.get("wave") or 0),
             "engines": [str(e) for e in w.get("engines") or [] if e],
             "kind": _brief_wave_kind(w),
+            "suggested": {"suggested": True, "held": False}.get(
+                str(readiness.get(int(w.get("wave") or 0)))
+            ),
+            "readiness": readiness.get(int(w.get("wave") or 0)),
         }
         for w in waves
     ]
+    held = [w["wave"] for w in brief_waves if w["readiness"] == "held"]
+    if readiness:
+        # #1992: only a suggested wave is put up for approval, never one held, not
+        # designed or not reviewed.
+        decision = next((w["wave"] for w in brief_waves if w["readiness"] == "suggested"), None)
+    else:
+        decision = brief_waves[0]["wave"] if brief_waves else None
     return {
         # The executive summary states the projected cost in whole dollars (maintainer
         # decision on #1403); cost tables and the engineering report keep the cents.
@@ -3478,8 +3506,25 @@ def executive_brief_facts(
         "share_of_all_queries_percent": _share_of_all_queries(report, query_total),
         "overall_risk_level": level,
         "exposures": exposures,
-        "decision_wave": brief_waves[0]["wave"] if brief_waves else None,
+        # #1992: the first suggested wave; None when no wave is.
+        "decision_wave": decision,
+        "held_waves": held,
     }
+
+
+def wave_readiness_notes(wave_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each wave the plan does not suggest (held, not designed or not reviewed), and each
+    suggested one with design review warnings to accept, with its readiness line (#1992):
+    the list the chat summary prints."""
+    return [
+        {"wave": int(r.get("wave") or 0), "readiness": r["readiness"], "line": r["readiness_line"]}
+        for r in wave_rows
+        if r.get("readiness_line")
+        and (
+            r.get("readiness") in ("held", "not_designed", "not_reviewed")
+            or (r.get("readiness") == "suggested" and r.get("review_warnings"))
+        )
+    ]
 
 
 def cost_basis_notes(report: dict[str, Any], engines: list[dict[str, Any]]) -> list[str]:
@@ -3533,6 +3578,126 @@ def assumptions_block(items: Iterable[Mapping[str, Any]] | None) -> dict[str, An
     return {"assumptions": rows, "lines": [str(i["line"]) for i in rows if i.get("line")]}
 
 
+def _designs(report: Mapping[str, Any]) -> Mapping[str, Any]:
+    designs = report.get("schema_designs")
+    return designs if isinstance(designs, Mapping) else {}
+
+
+def wave_readiness_rows(
+    report: dict[str, Any],
+    waves: list[dict[str, Any]],
+    rate_windows: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Whether the plan suggests each wave (#1992, ``src.shared.wave_readiness``), from
+    the report's open risks, its designs' unserved access patterns and open reviews, the
+    rate window's check and the costs."""
+    opened = open_risks(report)
+    engine_of: list[str | None] = []
+    for r in opened:
+        tag, _ = risk_engine_and_body(r.get("description"))
+        engine_of.append(None if tag == "(general)" else tag)
+    # The queries each engine's own analysis or design flags: an open risk raised on the
+    # engine itself (no rule, not re-attributed, not a coverage gap).
+    own_flagged: dict[str, set[str]] = {}
+    for r, engine in zip(opened, engine_of, strict=True):
+        if engine and not (r.get("rule") or r.get("reattributed_from") or r.get("coverage_gap")):
+            own_flagged.setdefault(engine, set()).update(str(q) for q in r.get("query_ids") or [])
+    risks = [
+        {
+            "risk_id": r.get("risk_id"),
+            "severity": r.get("severity"),
+            "risk_type": r.get("risk_type"),
+            "rule": r.get("rule"),
+            "engine": engine,
+            "wave": r.get("wave"),
+            "reattributed_from": r.get("reattributed_from"),
+            "receiving_engine_flags": bool(
+                engine
+                and {str(q) for q in r.get("query_ids") or []} & own_flagged.get(engine, set())
+            ),
+        }
+        for r, engine in zip(opened, engine_of, strict=True)
+    ]
+    designs = _designs(report)
+    designed = {
+        str(e)
+        for e, d in designs.items()
+        if isinstance(d, Mapping) and d.get("status") == "completed"
+    }
+    # Each design's own unresolved merge conflicts (only a grouped design records them).
+    unserved = {
+        str(e): int(
+            (dynamodb_merge_conflict_facts({"schema_designs": {e: d}}) or {}).get(
+                "unserved_pattern_count"
+            )
+            or 0
+        )
+        for e, d in designs.items()
+        if isinstance(d, Mapping)
+    }
+    reviews = {
+        str(e): int(d.get("open_review_count") or 0)
+        for e, d in designs.items()
+        if isinstance(d, Mapping)
+    }
+    failed = {
+        str(e): int(d.get("failed_review_count") or 0)
+        for e, d in designs.items()
+        if isinstance(d, Mapping)
+    }
+    unsupported = {
+        str(e): int(d.get("unsupported_query_count") or 0)
+        for e, d in designs.items()
+        if isinstance(d, Mapping)
+    }
+    warnings = {
+        str(e): [w for w in d.get("review_warnings") or [] if isinstance(w, Mapping)]
+        for e, d in designs.items()
+        if isinstance(d, Mapping)
+    }
+    tco = report.get("tco_analysis") or {}
+    current = tco.get("current_monthly_cost") if cost_baseline_known(tco) else None
+    source_cost = (
+        float(current)
+        if isinstance(current, (int, float)) and not isinstance(current, bool)
+        else None
+    )
+    return wave_readiness(
+        waves,
+        risks=risks,
+        designed_engines=designed,
+        unserved_by_engine=unserved,
+        open_reviews_by_engine=reviews,
+        failed_reviews_by_engine=failed,
+        # #1992: the rounds each engine was redesigned in, from the redesign log.
+        redesign_by_engine=redesign_facts(
+            report.get("wave_redesign")
+            if isinstance(report.get("wave_redesign"), Mapping)
+            else None
+        ),
+        unsupported_by_engine=unsupported,
+        review_warnings_by_engine=warnings,
+        window_representative=(rate_windows or {}).get("representative"),
+        projected_cost=projected_monthly_cost(report) if source_cost is not None else None,
+        source_cost=source_cost,
+    )
+
+
+def apply_wave_readiness(
+    report: dict[str, Any],
+    waves: list[dict[str, Any]],
+    wave_rows: list[dict[str, Any]],
+    rate_windows: Mapping[str, Any] | None = None,
+) -> None:
+    """Set each wave row's ``readiness``, ``suggested``, ``holds``, ``next_steps`` and
+    ``readiness_line`` (#1992), matched by wave number."""
+    by_wave = {r["wave"]: r for r in wave_readiness_rows(report, waves, rate_windows)}
+    for row in wave_rows:
+        found = by_wave.get(int(row.get("wave") or 0))
+        if found is not None:
+            row.update({k: v for k, v in found.items() if k != "wave"})
+
+
 def compute_report_facts(
     report: dict[str, Any],
     waves: list[dict[str, Any]] | None = None,
@@ -3548,6 +3713,7 @@ def compute_report_facts(
     busiest_partition_key: Mapping[str, Any] | None = None,
     assumptions: Iterable[Mapping[str, Any]] | None = None,
     growth_scenarios: Mapping[str, Any] | None = None,
+    readiness: bool = True,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3631,6 +3797,10 @@ def compute_report_facts(
     by_engine = risks["critical_high_risks_by_engine"]
     for row in wave_rows:
         row["critical_high_risks"] = sum(by_engine.get(e, 0) for e in row["engines"])
+    # #1992: whether the plan suggests each wave, and what holds it. A report rebuilt
+    # without a facts block (written before the check) states none.
+    if readiness:
+        apply_wave_readiness(report, waves, wave_rows, rate_windows)
     # The engines that need no data migration (the retained relational core and
     # the cache layer): the deck's "no-migration step" card and summary footer.
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
@@ -3730,7 +3900,10 @@ def compute_report_facts(
             waves,
             retired,
             query_total_facts(report, moves["in_scope_query_count"])["query_total_count"],
+            wave_rows=wave_rows,
         ),
+        # #1992: each wave the plan does not suggest, with its line (the chat summary's).
+        "wave_readiness_notes": wave_readiness_notes(wave_rows) if readiness else None,
         # #1252: the cache layer's candidate and designed read figures.
         "cache_layer": cache_layer_facts(report),
         # #1527: the DynamoDB derived copies' stream sync, listed and priced.

@@ -315,30 +315,11 @@ class TestTheChecks:
         heading = "Full modernization cost: $505 per month\nOverall risk: medium\nDecision needed: approve wave 1"
         assert self._reasons(heading) == []
 
-    def test_missing_decision_is_rejected(self) -> None:
+    def test_the_check_reads_no_decision(self) -> None:
+        """#1992: a model's summary states no decision (finalize strips its decision
+        wording and renders the Decision from the facts), so none is checked."""
         text = _text().split("\n\nDecision:")[0]
-        (msg,) = self._reasons(text)
-        assert "leaves out the decision (approve wave 1)" in msg
-
-    @pytest.mark.parametrize(
-        "decision",
-        [
-            "approve the first wave.",
-            "approve wave one.",
-            "Approve Wave 1.",
-            "we ask for your approval of wave 1.",
-        ],
-    )
-    def test_a_decision_in_other_words_passes(self, decision: str) -> None:
-        text = _text().replace("approve wave 1.", decision)
         assert self._reasons(text) == []
-
-    @pytest.mark.parametrize(
-        "decision", ["approve wave 2.", "do not approve wave 1 yet.", "approve the second wave."]
-    )
-    def test_the_wrong_or_a_negated_decision_fails(self, decision: str) -> None:
-        text = _text().replace("approve wave 1.", decision)
-        assert any("leaves out the decision" in r for r in self._reasons(text))
 
     def test_over_budget_is_rejected(self) -> None:
         padding = " The team has done this before." * 10
@@ -379,8 +360,9 @@ class TestTheChecks:
         assert self._reasons(_text() + " The plan saves 40%.", facts) == []
 
     def test_every_failure_is_reported(self) -> None:
+        # The cost and the risk level (#1992: the decision is the facts', never checked).
         reasons = self._reasons("DynamoDB is the clear fit for this workload.")
-        assert len(reasons) == 3
+        assert len(reasons) == 2
 
     def test_no_brief_means_nothing_to_check(self) -> None:
         facts = copy.deepcopy(FACTS)

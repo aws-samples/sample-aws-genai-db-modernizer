@@ -564,12 +564,10 @@ dontAsk` runs. JSON has no comment syntax, so the rationale for its less
 obvious entries lives here instead:
 
 - `Bash(uv run python scripts/start_local_ui.py)` and `...py *)` (both forms):
-  this is the only command `/modernize --mode ui|both` runs to start the local
-  API + UI — see `scripts/start_local_ui.py`'s module docstring for why the
-  multi-command shell pipeline it replaced couldn't be allowlisted at all.
-  Both the bare and `*`-suffixed forms are listed because it's untested
-  whether a headless run ever invokes the script with zero arguments (it
-  always does, today) — keeping both avoids relying on that. The `*` form
+  the only command `/modernize --mode ui|both` runs to start the local API +
+  UI (its module docstring says why the shell pipeline it replaced could not
+  be allowlisted). Both forms are listed so a run never relies on whether the
+  script is called with zero arguments (it always is, today). The `*` form
   also covers `--page summary|results --job-id <id>`, which starts nothing
   and prints the job page's `ui_url` the command quotes (#1233).
 - `Bash(uv run python scripts/print_summary.py *)`: prints the approval-gate
@@ -601,11 +599,10 @@ obvious entries lives here instead:
   `...render_dms_step.py *)`, `...run_dms_step.py *)` (#1886): `/move`; the sandbox refuses
   AWS writes (`tests/unit/scripts/test_run_dms_step.py`).
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
-  in the pipeline needs any of these. They're explicit denies, not just
-  absent from `allow`, as defense in depth against a prompt-injected or
-  hallucinated command slipping through — an explicit deny always wins over
-  an allow rule, so even a future overly broad `Bash(* )`-style allow
-  addition couldn't reopen this door by accident.
+  in the pipeline needs them. Explicit denies (not just absent from `allow`)
+  are defense in depth against a prompt-injected or hallucinated command: a
+  deny always wins over an allow, so a future broad `Bash(* )`-style allow
+  can't reopen them by accident.
 - No `Read`/`Glob`/`Grep` allow rule at all: per the permissions docs,
   `dontAsk` still runs "file reads in your working directories" without a
   rule, and a bare `Read` allow would extend that to the whole filesystem.
@@ -631,6 +628,9 @@ obvious entries lives here instead:
   `run_post_schema_routing.py` runs the shared router one pass per call
   (`--rollback` after a failed redesign). Both only read and write the job's
   own artifacts and print one JSON line.
+- `Bash(uv run python scripts/run_wave_redesign.py *)` (#1992): Phase 7b. It
+  moves the job's design files to `wave-redesign/` and back (`--rollback`),
+  writes the round's checks and log, and prints one JSON line.
 - `Skill(review-schema)`: the PE review subagent `/modernize` Phase 6c
   dispatches, one per design (#1059), allowed by exact name like the others
   below.

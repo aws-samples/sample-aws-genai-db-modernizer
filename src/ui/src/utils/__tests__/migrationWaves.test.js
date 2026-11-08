@@ -12,7 +12,7 @@
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import fixture from './fixtures/waveHeadlines.json';
-import { formatShare, migrationWaves, waveCount, waveHeadline, waveMovesNothing } from '../migrationWaves';
+import { formatShare, migrationWaves, waveCount, waveHeadline, waveMovesNothing, waveReadiness } from '../migrationWaves';
 
 let t;
 
@@ -90,4 +90,19 @@ test('a wave without the no_move fact keeps its headline (#1383)', () => {
   const synthesis = { migration_waves: [wave], facts: { waves: [{ wave: 9, served_tables: 2 }] } };
   expect(waveMovesNothing(synthesis, wave)).toBe(false);
   expect(waveHeadline(t, synthesis, wave)).toBe('3 queries (5% of queries), 2 source tables');
+});
+
+// #1992: a wave's readiness, read as stored; null before the check.
+test('waveReadiness reads facts.waves[].readiness and readiness_line as stored', () => {
+  const synthesis = { facts: { waves: [
+    { wave: 1, readiness: 'suggested', readiness_line: 'Suggested: no check holds it.' },
+    { wave: 2, readiness: 'held', readiness_line: 'Not suggested yet: x. Next step: y.' },
+    { wave: 3, readiness: 'not_designed', readiness_line: 'Not designed yet: run the DynamoDB schema design, then check the wave again.' },
+    { wave: 4 },
+  ] } };
+  expect(waveReadiness(synthesis, { wave: 1 })).toEqual({ readiness: 'suggested', line: 'Suggested: no check holds it.' });
+  expect(waveReadiness(synthesis, { wave: 2 })).toEqual({ readiness: 'held', line: 'Not suggested yet: x. Next step: y.' });
+  expect(waveReadiness(synthesis, { wave: 3 }).readiness).toBe('not_designed');
+  expect(waveReadiness(synthesis, { wave: 4 })).toBeNull();
+  expect(waveReadiness({}, { wave: 1 })).toBeNull();
 });

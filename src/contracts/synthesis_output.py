@@ -638,6 +638,18 @@ Version History:
   writers and older reports
 - 1.87 (2026-11-09, #1991): facts.assumptions items and facts.growth_scenarios take
   origin ui (the results page's assumptions panel); a report written before still loads
+- 1.88 (2026-11-09, #1992): Added optional facts.waves[] readiness fields (readiness:
+  suggested, held, not_designed or not_reviewed; suggested; holds as WaveHold, with
+  flagged_by for a re-attributed flag and the unsupported_queries check; next_steps as
+  WaveNextStep; readiness_line; redesign_rounds and redesign_note),
+  facts.wave_readiness_notes (WaveReadinessNote), ExecutiveBriefFacts.held_waves,
+  BriefWave.suggested and readiness, and SynthesisOutputContract.wave_redesign
+  (WaveRedesignLog: the assignment version's bounded redesign rounds, each with its
+  failed checks, the engines' scores before it, the parts it redesigned and its outcome:
+  fixed, improved, did_not_improve, failed or stopped), and ReviewWarning with
+  WaveFacts.review_warnings and review_warning_count: a suggested wave's design review warnings, which hold
+  nothing and which approving the wave accepts. decision_wave is now the first
+  suggested wave. Backward compatible: every new field defaults to None, 0 or empty.
 """
 
 from datetime import datetime
@@ -1363,6 +1375,127 @@ class EngineFacts(BaseModel):
     )
 
 
+class WaveHold(BaseModel):
+    """One deterministic check that holds a wave (#1992, ``src.shared.wave_readiness``)."""
+
+    check: Literal[
+        "open_high_risk",
+        "slower_and_pricier",
+        "unserved_patterns",
+        "unsupported_queries",
+        "open_review",
+        "earlier_wave",
+    ] = Field(..., description="The check that holds the wave")
+    engine: str | None = Field(None, description="The engine it is about; None for a wave 1 hold")
+    risk_id: str | None = Field(None, description="The risk register entry it reads, if any")
+    severity: str | None = Field(None, description="That risk's severity")
+    risk_type: str | None = Field(None, description="That risk's type")
+    flagged_by: str | None = Field(
+        None,
+        description=(
+            "The engine whose analysis raised that risk, when another than the wave's "
+            "(a re-attributed flag, which holds only when the wave's engine flags one of "
+            "the same queries too)"
+        ),
+    )
+    line: str = Field(..., description="The hold as every deliverable states it")
+
+
+class WaveNextStep(BaseModel):
+    """What to do next for a held wave (#1992)."""
+
+    step: Literal["design", "revise_design", "review_again", "collect_longer", "earlier_wave"] = (
+        Field(
+            ...,
+            description=(
+                "Run the engine's schema design (it has none), revise its design and review "
+                "it again, review it again (the review failed), collect over a longer window "
+                "(a rate-driven risk on a window that failed its check), or wait for wave 1"
+            ),
+        )
+    )
+    engine: str | None = Field(None)
+    line: str = Field(..., description="The step as every deliverable states it")
+
+
+class WaveRedesignCheck(BaseModel):
+    """One failed check a redesign round sent back to the engine's design (#1992)."""
+
+    check: str
+    risk_id: str | None = None
+    severity: str | None = None
+    line: str | None = None
+    detail: str | None = Field(None, description="The risk's own text, as the register states it")
+    mitigation: str | None = None
+    query_ids: list[str] = Field(default_factory=list)
+
+
+class WaveRedesignRequest(BaseModel):
+    """What one round sent back to one engine's design (#1992)."""
+
+    engine: str
+    waves: list[int] = Field(default_factory=list)
+    checks: list[WaveRedesignCheck] = Field(default_factory=list)
+
+
+class WaveRedesignRound(BaseModel):
+    """One bounded redesign round (#1992): the engines sent back, what each was sent
+    back with, and each one's outcome once the checks ran again."""
+
+    round: int = Field(..., ge=1)
+    assignment_version: int = Field(0, ge=0)
+    engines: list[str] = Field(default_factory=list)
+    requests: list[WaveRedesignRequest] = Field(default_factory=list)
+    outcome: (
+        dict[str, Literal["fixed", "improved", "did_not_improve", "failed", "stopped"]] | None
+    ) = Field(None, description="Per engine; None while the round is running")
+    before: dict[str, list[int]] | None = Field(
+        None,
+        description=(
+            "Per engine, its score before the round: [holds on its waves, assigned queries "
+            "its design marks unsupported]; a round's design is kept only when strictly lower"
+        ),
+    )
+    parts: dict[str, list[int] | None] | None = Field(
+        None,
+        description=(
+            "Per engine, the design parts (DynamoDB groups) the round redesigned; None "
+            "for the whole engine"
+        ),
+    )
+    failed: dict[str, str] | None = Field(
+        None, description="Per engine, why its redesign failed (a failed round)"
+    )
+    stopped: str | None = Field(
+        None, description="Why the round did not run (a run ceiling); None when it ran"
+    )
+
+
+class WaveRedesignLog(BaseModel):
+    """The redesign rounds of a run (#1992, ``wave-redesign/rounds.json``)."""
+
+    max_rounds: int = Field(..., ge=0)
+    rounds: list[WaveRedesignRound] = Field(default_factory=list)
+
+
+class ReviewWarning(BaseModel):
+    """One design review change request below blocker severity (#1992)."""
+
+    engine: str
+    category: str = ""
+    target: str = ""
+    change: str = ""
+
+
+class WaveReadinessNote(BaseModel):
+    """A wave the plan does not suggest, or a suggested one with design review warnings
+    to accept, with its readiness line (#1992)."""
+
+    wave: int = Field(..., ge=0)
+    readiness: Literal["held", "not_designed", "not_reviewed", "suggested"]
+    line: str
+
+
 class WaveFacts(BaseModel):
     """The table figures one migration wave states (#615)."""
 
@@ -1455,6 +1588,60 @@ class WaveFacts(BaseModel):
             "this wave's engine, so the deliverables list its gaps under this wave and the "
             "note states their counts. False when the gap check targets another engine, "
             "when there is none, and for every other wave"
+        ),
+    )
+    readiness: Literal["suggested", "held", "not_designed", "not_reviewed"] | None = Field(
+        None,
+        description=(
+            "The wave's readiness (#1992): suggested; held by a deterministic check "
+            "(holds); not designed (an engine has no schema design) or not reviewed (its "
+            "review failed), neither suggested nor held. None for a report written before "
+            "the check"
+        ),
+    )
+    suggested: bool | None = Field(
+        None,
+        description=(
+            "True when readiness is suggested, False when held; None when not designed, "
+            "not reviewed, or for a report written before the check"
+        ),
+    )
+    holds: list[WaveHold] = Field(
+        default_factory=list, description="The checks that hold the wave; empty when suggested"
+    )
+    next_steps: list[WaveNextStep] = Field(
+        default_factory=list, description="What to do next for a held wave"
+    )
+    review_warnings: list[ReviewWarning] = Field(
+        default_factory=list,
+        description=(
+            "A suggested wave's design review warnings (#1992): change requests below "
+            "blocker severity, which hold nothing; approving the wave accepts them"
+        ),
+    )
+    review_warning_count: int = Field(
+        0, ge=0, description="How many review_warnings the wave lists (#1992)"
+    )
+    redesign_rounds: int = Field(
+        0,
+        ge=0,
+        description=(
+            "How many bounded redesign rounds the wave's engines went through (#1992); 0 "
+            "with none, and for a report written before them"
+        ),
+    )
+    redesign_note: str | None = Field(
+        None,
+        description=(
+            "Why the last redesign round kept no new design (#1992): it failed, did not "
+            "improve the design, or a run ceiling stopped it; None otherwise"
+        ),
+    )
+    readiness_line: str | None = Field(
+        None,
+        description=(
+            "The wave's readiness as every deliverable prints it: suggested, or not "
+            "suggested yet with its holds and next steps. None before the check"
         ),
     )
 
@@ -2847,6 +3034,13 @@ class BriefWave(BaseModel):
             "a migration wave (moves tables off Aurora) or a read-model wave"
         ),
     )
+    suggested: bool | None = Field(
+        None,
+        description="The wave's facts.waves[].suggested (#1992); None before the check",
+    )
+    readiness: Literal["suggested", "held", "not_designed", "not_reviewed"] | None = Field(
+        None, description="The wave's facts.waves[].readiness (#1992); None before the check"
+    )
 
 
 class ExecutiveBriefFacts(BaseModel):
@@ -2910,7 +3104,19 @@ class ExecutiveBriefFacts(BaseModel):
         default_factory=list, description="The one or two open risks driving the level"
     )
     decision_wave: int | None = Field(
-        None, ge=0, description="The wave the reader is asked to approve next"
+        None,
+        ge=0,
+        description=(
+            "The wave the reader is asked to approve next: the first suggested wave (#1992), "
+            "never one held, not designed or not reviewed; None when no wave is suggested"
+        ),
+    )
+    held_waves: list[int] = Field(
+        default_factory=list,
+        description=(
+            "The waves a check holds (#1992): the Decision, rendered from the facts, says "
+            "so with each one's reason and next step"
+        ),
     )
 
 
@@ -3239,6 +3445,14 @@ class ReportFacts(BaseModel):
             "written before it"
         ),
     )
+    wave_readiness_notes: list[WaveReadinessNote] | None = Field(
+        None,
+        description=(
+            "Each wave the plan does not suggest (held, not designed or not reviewed), with "
+            "its readiness line, as the chat summary lists them (#1992); None for a report "
+            "written before the check"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -3283,7 +3497,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.87",
+        default="1.88",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -3488,6 +3702,14 @@ class SynthesisOutputContract(BaseModel):
             "design.carried_writes risk counts them; the detailed engineering report lists "
             "them under their write group (#1364). Empty list when none; None for a report "
             "synthesized before this field existed."
+        ),
+    )
+    wave_redesign: WaveRedesignLog | None = Field(
+        None,
+        description=(
+            "The bounded redesign rounds of held waves (#1992): each round's engines, the "
+            "failed checks sent back and each outcome; None with no round, and for a "
+            "report written before them"
         ),
     )
     post_schema_reroutes: list[PostSchemaReroute] | None = Field(

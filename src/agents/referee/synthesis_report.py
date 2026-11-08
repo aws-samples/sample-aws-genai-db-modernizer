@@ -147,6 +147,15 @@ _RELATIONAL_REASON_MAX_CHARS = 180
 _UNKNOWN_WORD_RE = re.compile(r"\bunknown\b", re.IGNORECASE)
 
 
+def design_resolves_analysis_flags(engine: str) -> bool:
+    """Whether a schema design of ``engine`` can resolve an analysis flag on its queries
+    (its access patterns cover them): every engine but Aurora, whose access patterns are
+    a projection of every query it owns, never a design decision (#157 review). The one
+    rule synthesis resolves risks by, and the redesign loop's test of what a redesign can
+    fix (#1992)."""
+    return engine not in AURORA_ENGINES
+
+
 def _dedupe_reason_clauses(reason: str) -> str:
     """Drop redundant clauses from an assignment reason (#478).
 
@@ -1507,7 +1516,9 @@ def build_risk_assessment(
                     # which is a real decision rather than an artifact of
                     # derivation.
                     covered = (
-                        covered_by.get(engine, set()) if engine not in AURORA_ENGINES else set()
+                        covered_by.get(engine, set())
+                        if design_resolves_analysis_flags(engine)
+                        else set()
                     )
                     # If all flagged queries are covered by the schema design, it's resolved
                     if ids and ids.issubset(covered):

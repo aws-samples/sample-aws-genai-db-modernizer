@@ -39,7 +39,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     3. Make sure your IAM policy allows the global inference profiles the defaults use (see **IAM for the global profiles** below).
     4. Re-run the command above.
 
-    With `--all` the run ends by rendering every deliverable (see [Where the deliverables land](#where-the-deliverables-land)).
+    With `--all` the run ends by rendering every deliverable (see [Where the deliverables land](#where-the-deliverables-land)). After synthesis, a wave held for a reason a redesign can fix goes back to that engine's schema design for at most two rounds, within the run's ceilings, before it is reported held (#1992); each round can cost up to one more schema design phase and one synthesis. <!-- claim: tests/unit/agents/schema_design/test_wave_redesign.py::test_run_assessment_drives_the_rounds_in_bedrock_only, tests/unit/agents/schema_design/test_wave_redesign.py::test_the_ceiling_estimate_is_one_schema_design_phase_and_synthesis -->
 
     Each model call has a named role in `src/shared/models.py`, which also builds request settings valid for the model's family. Override a role's model with an environment variable (the first one set wins):
 
