@@ -1486,3 +1486,122 @@ def test_the_risk_description_names_no_design_table() -> None:
     risk = _hot_risk(303.0, _keyed("id"))
     assert "Orders" not in risk["description"]
     assert any(d.startswith("Orders writes:") for d in risk["details"])
+
+
+def _composite_keyed() -> list[dict[str, Any]]:
+    """``DESIGN_TABLES`` keyed on (status, customer_id): the collection counts status (4
+    values) and not customer_id, so the key takes at least 4 values."""
+    tables = _keyed("status")
+    tables[0]["attributes"][0]["source_column"] = ["status", "customer_id"]
+    return tables
+
+
+def test_an_upper_bound_per_key_figure_over_the_limit_is_not_measured() -> None:
+    """#1993: customer_id has no count, so the key takes at least status's 4 values and no
+    known most. 6,000 write units/s over 4 is 150% of the limit, but only an upper bound
+    on the average per key value: LOW, per-key load not measured, with the figure as its
+    evidence (HIGH on main)."""
+    risk = _hot_risk(600.0, _composite_keyed())
+    assert risk["severity"] == "LOW"
+    assert risk["description"] == (
+        "[dynamodb] 1 design table has a table or index total above 80% of one partition key "
+        "value's throughput limit at the design rate (the highest at 600%: an upper bound, "
+        "reached only if every request used the same key value). Per-key load not measured: "
+        "the collection counts distinct values for only part of its partition key, so the "
+        "load spread over them (the highest at 150% of the limit) is an upper bound on the "
+        "average per key value, not on the busiest one, and never sets the severity."
+    )
+    assert "Orders" not in risk["description"]
+    assert risk["details"] == [
+        "Orders writes: 6,000 write units/s in total, 600% of one key value's 1,000 limit (an "
+        "upper bound); per-key load not measured: spread evenly over at least 4 distinct key "
+        "values (the values collected for part of the key), the average per key value is at "
+        "most about 1,500 write units/s, 150% of its limit; the busiest value is not measured."
+    ]
+    assert "check how many distinct values the keys not measured take" in risk["mitigation"]
+
+
+def test_an_upper_bound_under_the_limit_never_states_the_busiest_value() -> None:
+    """Review: under the limit the figure still bounds only the average per key value, so
+    neither the description nor the details call it the busiest value."""
+    risk = _hot_risk(200.0, _composite_keyed())
+    assert risk["severity"] == "LOW"
+    assert "busiest estimated partition key value" not in risk["description"]
+    assert "an upper bound on the average per key value, not on the busiest one" in (
+        risk["description"]
+    )
+    assert "on the busiest key value" not in risk["details"][0]
+    assert risk["details"][0].endswith("50% of its limit; the busiest value is not measured.")
+
+
+def test_one_counted_value_reads_as_one_value() -> None:
+    """Review plural: a (tenant_id: 1 value, kind: not counted) key reads "at least 1
+    distinct key value", never "1 distinct values"."""
+    tables = _keyed("tenant_id")
+    tables[0]["attributes"][0]["source_column"] = ["tenant_id", "kind"]
+    source = [
+        {
+            **ORDERS_SOURCE[0],
+            "columns": [
+                *list(ORDERS_SOURCE[0]["columns"]),  # type: ignore[call-overload]
+                {"column_name": "tenant_id", "cardinality": 1},
+            ],
+        }
+    ]
+    from src.shared.partition_load import hot_partition_rows
+
+    designs = {DDB: {"hot_partition_analysis": [_hot(400.0)], "table_definitions": tables}}
+    rows = hot_partition_rows(designs, source)
+    risk = _one(
+        _build(migration_waves=WAVES, schema_designs=designs, hot_partitions=rows),
+        "design.hot_partition",
+    )
+    assert risk["severity"] == "LOW"
+    assert "at least 1 distinct key value (" in risk["details"][0]
+    assert "1 distinct values" not in risk["details"][0]
+
+
+@pytest.mark.passes_on_main  # main's HIGH this change keeps (review blocker)
+def test_a_counted_composite_key_over_the_limit_stays_high() -> None:
+    """Review blocker: with every part counted (status 4 values, a ``% 2`` shard) the key
+    takes at most 8 values, so 12,000 write units/s puts at least 1,500 (150%) on the
+    busiest one: HIGH."""
+    tables = _keyed("status")
+    shard = {
+        "name": "SHARD",
+        "type": "N",
+        "source_table": "db.b",
+        "source_column": "id",
+        "transformation": {"type": "number-format", "format": "id % 2"},
+    }
+    tables[0]["attributes"].append(shard)
+    tables[0]["partition_key"] = [
+        {"attribute_name": "PK", "attribute_type": "S"},
+        {"attribute_name": "SHARD", "attribute_type": "N"},
+    ]
+    risk = _hot_risk(1_200.0, tables)
+    assert risk["severity"] == "HIGH"
+
+
+def test_the_two_reasons_a_key_is_not_measured_are_stated_apart() -> None:
+    """One entry with no count, one with only an upper bound over the limit: each reason
+    names its own count of tables."""
+    from src.shared.partition_load import hot_partition_rows
+
+    composite = _composite_keyed()[0]
+    other = {**_keyed("customer_id")[0], "table_name": "Carts"}
+    designs = {
+        DDB: {
+            "hot_partition_analysis": [_hot(600.0), _hot(150.0, table="Carts")],
+            "table_definitions": [composite, other],
+        }
+    }
+    rows = hot_partition_rows(designs, ORDERS_SOURCE)
+    risk = _one(
+        _build(migration_waves=WAVES, schema_designs=designs, hot_partitions=rows),
+        "design.hot_partition",
+    )
+    assert risk["severity"] == "LOW"
+    text = risk["description"]
+    assert "Per-key load not measured for 1 of these tables: the collection has no " in text
+    assert "Per-key load not measured for 1 of these tables: the collection counts " in text

@@ -347,6 +347,7 @@ def _per_key(entry: dict, draft: dict, values: DistinctValues) -> dict:
     row = partition_load(entry, draft, values)
     return {
         "per_key_basis": row["per_key_basis"],
+        "per_key_measure": row["per_key_measure"],
         "distinct_key_values": row["distinct_key_values"],
         "per_key_utilization_pct": row["per_key_pct_of_limit"],
     }
@@ -365,8 +366,8 @@ def check_draft_costs(draft: dict, design_metrics: dict | None = None) -> dict:
     "keys_only_fetch", "hot_partition_findings", "errors"}`` where ``results`` are the validated
     entries with the computed figures, ``per_table`` the capacity figures per table/GSI/operation,
     ``hot_partition_findings`` the at-risk entries with their mitigation and their load per
-    partition key value (``per_key_basis``, ``distinct_key_values``,
-    ``per_key_utilization_pct``: from ``design_metrics``' distinct values, #1989), and
+    partition key value (``per_key_basis``, ``per_key_measure``, ``distinct_key_values``,
+    ``per_key_utilization_pct``: from ``design_metrics``' distinct values, #1989, #1993), and
     ``errors`` one ``{"index", "error"}`` per rejected entry (``index`` is
     ``None`` when ``hot_partition_analysis`` itself is missing or not a list,
     or for an access pattern whose ``design_rps`` disagrees with

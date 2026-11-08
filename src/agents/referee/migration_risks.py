@@ -73,7 +73,10 @@ rule                       severity  raised when
                                      limit, but no estimated key value is above it, or the
                                      key's distinct values are not collected ("per-key load
                                      not measured"): the total is an upper bound and never sets
-                                     the severity; one risk per engine
+                                     the severity; one risk per engine. A per-key figure that
+                                     bounds only the average per key value (some part of the
+                                     key is not counted) never sets it: the busiest value is
+                                     not measured (#1993, ``per_key_measure``)
 ``design.trade_offs``      MEDIUM    an engine's schema design records trade-offs to review;
                                      one risk per engine
 ``design.redesign``        MEDIUM    queries sit on an engine whose score for them is the
@@ -154,7 +157,12 @@ from src.shared.migration_risk_rules import (
     wave_gate_strategies,
     wave_of_engine,
 )
-from src.shared.partition_load import busiest_key, hot_partition_rows, over_key_limit
+from src.shared.partition_load import (
+    busiest_key,
+    hot_partition_rows,
+    over_key_limit,
+    per_key_measure,
+)
 from src.shared.report_facts import (
     CLOSE_CALL_MARGIN,
     RELATIONAL_ENGINES,
@@ -977,12 +985,56 @@ def _hot_partition_detail(row: Mapping[str, Any]) -> str:
         f"{_pct(row['total_pct_of_key_limit'])} of one key value's "
         f"{row['partition_limit']:,.0f} limit (an upper bound)"
     )
-    if row["per_key_basis"] == "not_measured":
+    average = _average_bound(row)
+    if row["per_key_basis"] == "not_measured" or per_key_measure(row) == "upper_bound":
+        if average:
+            # Only an upper bound on the average per key value (#1993): the evidence the
+            # busiest value is not measured.
+            n, units, pct = average
+            return (
+                f"{head}; per-key load not measured: spread evenly over at least "
+                f"{_key_values(n)} (the values collected for part of the key), the average "
+                f"per key value is at most about {_units(units)} {kind} units/s, {_pct(pct)} of "
+                "its limit; the busiest value is not measured."
+            )
         return f"{head}; per-key load not measured."
-    return (
+    line = (
         f"{head}; {_spread(row)}: about {_units(row['per_key_units_per_second'])} {kind} "
         f"units/s on the busiest key value, {_pct(row['per_key_pct_of_limit'])} of its limit."
     )
+    if average:
+        n, units, pct = average
+        line += (
+            f" Spread over only the {_key_values(n)} collected for part of the key, the "
+            f"average per key value is at most about {_units(units)} {kind} units/s "
+            f"({_pct(pct)} of its limit): an upper bound on the average, not on the busiest "
+            "value."
+        )
+    return line
+
+
+def _key_values(n: int) -> str:
+    return f"{n:,} distinct key value" + ("" if n == 1 else "s")
+
+
+def _average_bound(row: Mapping[str, Any]) -> tuple[int, float, float] | None:
+    """The row's upper bound on the average per key value (#1993), as (at least n values,
+    units, % of the limit): its own figure when that is the bound, else the bound it set
+    aside; None when it has none."""
+    if per_key_measure(row) == "upper_bound" and row.get("per_key_pct_of_limit") is not None:
+        return (
+            int(row.get("distinct_key_values") or 1),
+            float(row["per_key_units_per_second"]),
+            float(row["per_key_pct_of_limit"]),
+        )
+    bound = row.get("per_key_upper_bound")
+    if bound:
+        return (
+            int(bound["at_least_key_values"]),
+            float(bound["units_per_second"]),
+            float(bound["pct_of_limit"]),
+        )
+    return None
 
 
 def _spread(row: Mapping[str, Any]) -> str:
@@ -995,6 +1047,11 @@ def _spread(row: Mapping[str, Any]) -> str:
             "an access pattern's calls use one literal key value"
             if n == 1
             else f"an access pattern's calls reach at most {n:,} key values"
+        )
+    if per_key_measure(row) == "upper_bound":
+        return (
+            f"spread evenly over at least {_key_values(n)}, an upper bound on the average per "
+            "key value; the busiest value is not measured"
         )
     if row["per_key_basis"] == "single_key":
         return "every request uses the same key value"
@@ -1055,10 +1112,22 @@ def _hot_partition_risks(
             )
             severity = "HIGH"
         else:
-            unmeasured = sorted(
-                {r["table_name"] for r in mine if r["per_key_basis"] == "not_measured"}
+            # Firm figures (measured, or a lower bound on the busiest value) can state the
+            # busiest key value; a row whose figure only bounds the average (#1993), or
+            # that has none, is not measured.
+            firm = [
+                r
+                for r in mine
+                if r["per_key_basis"] != "not_measured"
+                and per_key_measure(r) in ("measured", "lower_bound")
+            ]
+            averaged = [r for r in mine if r not in firm and _average_bound(r)]
+            only_average = sorted({r["table_name"] for r in averaged})
+            uncounted = sorted(
+                {r["table_name"] for r in mine if r not in firm and not _average_bound(r)}
             )
-            measured = [r for r in mine if r["per_key_basis"] != "not_measured"]
+            unmeasured = sorted(set(only_average) | set(uncounted))
+            measured = firm
             if busiest and busiest.get("engine") == engine:
                 measured = [dict(busiest)]
             n = len(tables)
@@ -1092,12 +1161,23 @@ def _hot_partition_risks(
                 ]
             else:
                 sentences = [s for s in (total_sentence, per_key_sentence) if s]
-            if unmeasured:
-                which = "" if len(unmeasured) == n else f" for {len(unmeasured)} of these tables"
+            if uncounted:
+                which = "" if len(uncounted) == n else f" for {len(uncounted)} of these tables"
                 sentences.append(
                     f"Per-key load not measured{which}: the collection has no distinct-value "
-                    f"count for {'its' if len(unmeasured) == 1 else 'their'} partition "
-                    f"{'key' if len(unmeasured) == 1 else 'keys'}."
+                    f"count for {'its' if len(uncounted) == 1 else 'their'} partition "
+                    f"{'key' if len(uncounted) == 1 else 'keys'}."
+                )
+            if only_average:
+                k = len(only_average)
+                which = "" if k == n else f" for {k} of these tables"
+                top = max(_average_bound(r)[2] for r in averaged)  # type: ignore[index]
+                sentences.append(
+                    f"Per-key load not measured{which}: the collection counts distinct values "
+                    f"for only part of {'its' if k == 1 else 'their'} partition "
+                    f"{'key' if k == 1 else 'keys'}, so the load spread over them (the highest "
+                    f"at {_pct(top)} of the limit) is an upper bound on the average per key "
+                    "value, not on the busiest one, and never sets the severity."
                 )
             description = " ".join(sentences)
             step = "Watch the busiest key values of these tables in a load test at the design rate"

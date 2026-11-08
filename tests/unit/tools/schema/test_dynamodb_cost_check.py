@@ -79,6 +79,7 @@ def test_check_draft_passes_and_reports_at_risk_findings() -> None:
             "contributing_patterns": ["q2"],
             # #1989: no design_metrics, so the key's distinct values are not known.
             "per_key_basis": "not_measured",
+            "per_key_measure": "not_measured",  # #1993
             "distinct_key_values": None,
             "per_key_utilization_pct": None,
         }
