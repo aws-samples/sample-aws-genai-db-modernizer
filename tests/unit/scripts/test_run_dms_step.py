@@ -749,6 +749,8 @@ STEP_RESOURCES = {"SecretsAccessRole": "AWS::IAM::Role", "SubnetGroup": "AWS::DM
                   "ReplicationInstance": "AWS::DMS::ReplicationInstance",
                   "SourceEndpoint": "AWS::DMS::Endpoint", "TargetEndpoint": "AWS::DMS::Endpoint",
                   "ReplicationTask": "AWS::DMS::ReplicationTask"}  # fmt: skip
+# The writes that act only on this job's step stack, each refused for any other stack (#2048).
+OWNED = ("stop", "restart-validation", "teardown")
 
 
 def _summary(logical, kind, status="CREATE_COMPLETE"):
@@ -897,6 +899,155 @@ def test_stop_refuses_a_task_that_is_changing(tmp_path, capsys):
     _task_by_arn(cred, "modifying")
     code, out = _run(tmp_path, "stop", "--approve", clients=_clients(cred), capsys=capsys)
     assert code == 1 and "DMS reports the task modifying" in out["message"]
+    _no_pending(cred)
+
+
+# --- restart-validation: a stalled validator restarted by a stop and a resume (#2048) ------
+
+
+def _resume(cred):
+    cred.stub("dms").add_response(
+        "start_replication_task", {},
+        {"ReplicationTaskArn": TASK, "StartReplicationTaskType": "resume-processing"},
+    )  # fmt: skip
+
+
+def _restart(tmp_path, capsys, cred, *extra):
+    code = script.main(["restart-validation", "--job-id", "job1", "--db", "shop", "--artifact-root",
+                        str(tmp_path), "--approve", "--interval-seconds", "30", *extra],
+                       clients=_clients(cred), sleep=lambda _s: None)  # fmt: skip
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert len(lines) == 1, lines  # one compact JSON status line; progress goes to stderr
+    return code, json.loads(lines[0]), captured.err.splitlines()
+
+
+def test_restart_validation_stops_the_task_then_resumes_it_and_waits_until_it_runs(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "running")
+    cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
+    _poll_task(cred, "stopping")
+    _poll_task(cred, "stopped")
+    _resume(cred)
+    _poll_task(cred, "starting")
+    _poll_task(cred, "running")
+    code, out, progress = _restart(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "restarted" and out["reached"] is True
+    assert out["resumed"] is True and out["task_status"] == "running" and out["task_arn"] == TASK
+    assert out["stack_name"] == STACK and out["waited_seconds"] == 120
+    assert progress == [f"restart-validation: the task is {s} (waited {w} s of 540 s)"
+                        for s, w in (("stopping", 30), ("stopped", 60), ("starting", 90),
+                                     ("running", 120))]  # fmt: skip
+    _no_pending(cred)  # stop, then resume-processing (never start-replication), in that order
+
+
+def test_restart_validation_resumes_a_task_a_previous_run_left_stopped(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "stopped")
+    _resume(cred)
+    _poll_task(cred, "running")
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "restarted" and out["waited_seconds"] == 30
+    _no_pending(cred)  # no stop_replication_task for a task already stopped
+
+
+def test_restart_validation_does_not_resume_a_task_that_has_not_stopped_by_the_deadline(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "running")
+    cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
+    for _ in range(2):
+        _poll_task(cred, "stopping")
+    code, out, _ = _restart(tmp_path, capsys, cred, "--wait-seconds", "60")
+    assert code == 0 and out["status"] == "stopping" and out["reached"] is False
+    assert out["resumed"] is False and out["waited_seconds"] == 60
+    _no_pending(cred)  # and no start_replication_task was queued or made
+
+
+def test_restart_validation_reports_a_task_that_is_not_running_by_the_deadline(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "running")
+    cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
+    _poll_task(cred, "stopped")
+    _resume(cred)
+    for _ in range(2):
+        _poll_task(cred, "starting")
+    code, out, _ = _restart(tmp_path, capsys, cred, "--wait-seconds", "90")
+    assert code == 0 and out["status"] == "starting" and out["reached"] is False
+    assert out["resumed"] is True and out["waited_seconds"] == 90  # one budget for both waits
+    assert out["task_status"] == "starting"
+    _no_pending(cred)
+
+
+def test_restart_validation_reports_a_task_that_failed_to_resume(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "stopped")
+    _resume(cred)
+    _poll_task(cred, "failed", LastFailureMessage="validator could not connect")
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "resume_failed" and out["reached"] is False
+    assert "validator could not connect" in out["dms_reports"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", ["failed", "ready", "modifying"])
+def test_restart_validation_refuses_a_task_that_is_not_running_or_stopped(tmp_path, capsys, status):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, status)
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 1 and out["message"].startswith(
+        script.dms_reports({"Status": status, "StopReason": "Stop Reason NORMAL"})
+    )
+    assert "restart-validation resumes only a task that was running" in out["message"]
+    _no_pending(cred)  # no stop and no start
+
+
+def test_restart_validation_without_a_stack_is_an_error(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _no_stack(cred)
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert (
+        code == 1 and f"stack {STACK}" in out["message"] and "nothing to restart" in out["message"]
+    )
+    _no_pending(cred)
+
+
+def test_restart_validation_is_refused_without_approve_and_under_the_sandbox(
+    tmp_path, capsys, monkeypatch
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    code, out = _run(tmp_path, "restart-validation", clients=_clients(cred), capsys=capsys)
+    assert code == 1 and out["message"].startswith(
+        "restart-validation is an AWS write: pass --approve"
+    )
+    monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+    code = script.main(["restart-validation", "--job-id", "job1", "--db", "shop", "--artifact-root",
+                        str(REPO_ROOT / "artifacts"), "--approve"], clients=_clients(cred))  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1 and "refused under MODERNIZER_CI_SANDBOX=1" in out["message"]
     _no_pending(cred)
 
 
@@ -1077,7 +1228,7 @@ def test_once_the_task_is_gone_the_stacks_own_tag_proves_it(tmp_path, capsys):
     _no_pending(cred)
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_stack_tagged_for_another_job_is_refused(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1261,7 +1412,7 @@ def test_a_stack_whose_dms_resources_dms_no_longer_has_and_with_no_tag_is_refuse
     cred.stub("dms").assert_no_pending_responses()
 
 
-# Each stack below is refused by stop and by teardown, before any write.
+# Each stack below is refused by stop, restart-validation and teardown, before any write.
 
 
 def _refused(tmp_path, capsys, cred, command, *needles):
@@ -1272,7 +1423,7 @@ def _refused(tmp_path, capsys, cred, command, *needles):
     _no_pending(cred)  # no stop_replication_task or delete_stack was queued or made
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_an_empty_stack_is_refused(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1281,7 +1432,7 @@ def test_an_empty_stack_is_refused(tmp_path, capsys, command):
     _refused(tmp_path, capsys, cred, command, "missing: ReplicationInstance")
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_stack_holding_only_an_iam_role_is_refused(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1290,7 +1441,7 @@ def test_a_stack_holding_only_an_iam_role_is_refused(tmp_path, capsys, command):
     _refused(tmp_path, capsys, cred, command, "missing: ReplicationInstance")
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_another_jobs_stopped_step_stack_is_refused(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1301,7 +1452,7 @@ def test_another_jobs_stopped_step_stack_is_refused(tmp_path, capsys, command):
 
 
 @pytest.mark.parametrize("job_tag", ["otherjob", None])
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_task_whose_job_tag_does_not_name_this_job_is_refused(tmp_path, capsys, command, job_tag):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1311,7 +1462,7 @@ def test_a_task_whose_job_tag_does_not_name_this_job_is_refused(tmp_path, capsys
     _refused(tmp_path, capsys, cred, command, "modernizer:job-id")
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_the_customers_aurora_stack_is_refused(tmp_path, capsys, command):
     _job(tmp_path, stack_name="my-aurora")
     cred = StubbedCredMgr()
@@ -1322,7 +1473,7 @@ def test_the_customers_aurora_stack_is_refused(tmp_path, capsys, command):
     _refused(tmp_path, capsys, cred, command, "Cluster (AWS::RDS::DBCluster)")
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_resource_on_a_later_page_is_still_checked(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1342,7 +1493,7 @@ def test_the_six_resources_across_pages_are_this_jobs_stack(tmp_path, capsys):
     _no_pending(cred)
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_resource_list_that_cannot_be_read_is_an_error_and_nothing_is_written(
     tmp_path, capsys, command
 ):
@@ -1355,7 +1506,7 @@ def test_a_resource_list_that_cannot_be_read_is_an_error_and_nothing_is_written(
     _no_pending(cred)
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_ending_refuses_a_stack_that_is_still_changing(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1396,7 +1547,7 @@ def test_ending_uses_the_write_profile(tmp_path, capsys):
     assert code == 0 and os.environ["AWS_PROFILE"] == "deployer"
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_task_resource_without_a_physical_id_is_refused(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()
@@ -1411,7 +1562,7 @@ def test_a_task_resource_without_a_physical_id_is_refused(tmp_path, capsys, comm
     _refused(tmp_path, capsys, cred, command, "no physical id")
 
 
-@pytest.mark.parametrize("command", ["stop", "teardown"])
+@pytest.mark.parametrize("command", OWNED)
 def test_a_task_that_cannot_be_read_is_an_error_and_nothing_is_written(tmp_path, capsys, command):
     _job(tmp_path)
     cred = StubbedCredMgr()

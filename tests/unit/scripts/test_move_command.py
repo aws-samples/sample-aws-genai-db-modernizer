@@ -84,6 +84,7 @@ def test_every_helper_example_parses_with_the_helpers_own_parser() -> None:
 
 def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
     move, ending = _section("Stage 3: Move"), _section("Ending the step")
+    prove = _section("Stage 4: Prove")
     for command in _bash_commands():
         if "run_dms_step.py" not in command:
             continue
@@ -91,6 +92,9 @@ def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
         if args.command in run_dms_step.ENDING:
             assert args.approve, command
             assert command in ending, f"stop or teardown outside Ending the step: {command}"
+        elif args.command == run_dms_step.RESTART:
+            assert args.approve, command
+            assert command in prove, f"restart-validation outside Prove: {command}"
         elif args.command in run_dms_step.WRITES:
             assert args.approve, command
             assert command in move, f"an AWS write outside Move: {command}"
@@ -188,7 +192,7 @@ def test_auto_never_writes_without_inputs_and_approve_deploy() -> None:
 
 def test_every_stage_that_asks_says_what_auto_does_instead() -> None:
     for heading in ("Step 0: The job and the step", "Stage 1: Prepare", "Stage 2: Check",
-                    "Stage 3: Move", "Ending the step"):  # fmt: skip
+                    "Stage 3: Move", "Stage 4: Prove", "Ending the step"):  # fmt: skip
         section = _section(heading)
         if re.search(r"\b[Aa]sk\b", section):
             assert "Under `--auto`" in section, heading
@@ -465,3 +469,36 @@ def test_prove_relays_each_progress_line_and_reads_the_result_line_last() -> Non
         "Prove's poll prints a progress line per poll first: its result line is the last"
         in tool_use
     )
+
+
+def test_a_stalled_validation_is_offered_one_restart_explained_and_asked_for() -> None:
+    """#2048: the restart is explained in plain words, asked for, run once, then Prove again."""
+    prove = _flat(_section("Stage 4: Prove"))
+    command = (
+        "uv run python scripts/run_dms_step.py restart-validation --job-id {job_id} --db {db} "
+        "--approve"
+    )
+    assert command in _bash_commands(_section("Stage 4: Prove"))
+    stalled = prove[prove.index("**Validation stalled.**") :]
+    for words in ("replication pauses for a minute or two", "resumes from its checkpoint",
+                  "nothing reloads", "nothing is deleted"):  # fmt: skip
+        assert words in stalled, words
+    question = "Restart the replication task of stack {stack_name} to restart DMS validation now?"
+    assert f'"{question}" Only on a yes' in stalled
+    order = [stalled.index(x) for x in ("nothing is deleted", question, "restart-validation --job-id",
+                                        "run the Poll again")]  # fmt: skip
+    assert order == sorted(order)  # explained, asked, run, then Prove again
+    assert "at most once per run" in stalled
+    assert "stalls again" in stalled
+    stalled_line = (
+        "`MOVE_RESULT: stopped stage=prove reason=validation not running: <validation_check>`"
+    )
+    assert stalled.count(stalled_line) >= 2  # on a no, and when it stalls again: today's line
+
+
+def test_auto_never_restarts_a_stalled_validation() -> None:
+    prove = _flat(_section("Stage 4: Prove"))
+    assert "Under `--auto`, never run `restart-validation`" in prove
+    assert "`--approve-deploy` does not cover it" in prove
+    headless = _flat(_section("Headless (`--auto`)"))
+    assert "never restarts the task" in headless
