@@ -16,6 +16,7 @@ from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.contract_versioning import load_contract
 from src.tools.data_movement.dms_sizing import not_moved_columns
 from src.tools.data_movement.plan import JobInputs, _aurora_wave, dialect_of
+from src.tools.data_movement.validation_key import validation_problem
 from src.tools.transformation_contract.pg_enums import enum_columns
 from src.tools.transformation_contract.step1 import (
     TargetTable,
@@ -24,10 +25,6 @@ from src.tools.transformation_contract.step1 import (
     target_tables,
 )
 
-NO_KEY_MESSAGE = (
-    "No primary or unique key: DMS cannot validate this table, "
-    "and Debezium needs declared key columns."
-)
 # Findings the builder or this validator wrote about a rule that cannot be re-checked.
 _KEPT = {"ambiguous_target", "missing_table"}
 
@@ -36,12 +33,6 @@ def _f(
     code: str, severity: Severity, message: str, table: str | None = None, column: str | None = None
 ) -> Finding:
     return Finding(code=code, severity=severity, message=message, table_id=table, column=column)
-
-
-def _has_key(table: Table) -> bool:
-    if table.primary_key:
-        return True
-    return any(i.is_unique and not i.predicate for i in table.indexes or [])
 
 
 def _rule_findings(
@@ -111,8 +102,8 @@ def _rule_findings(
                 name,
             )
         )
-    if not _has_key(t):
-        out.append(_f("no_key", "warning", NO_KEY_MESSAGE, tid))
+    if problem := validation_problem(t.model_dump(), source_dialect):
+        out.append(_f(problem.code, "warning", problem.message, tid))
     out.extend(_not_moved(t, source_dialect))
     return out
 

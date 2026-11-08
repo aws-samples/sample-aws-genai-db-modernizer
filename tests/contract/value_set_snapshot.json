@@ -323,7 +323,7 @@
       "pass",
       "pending"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dms_preflight.CheckId": {
     "module": "dms_preflight",
@@ -1041,7 +1041,7 @@
       "collector",
       "step-1"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "transformation_contract.RuleStatus": {
     "module": "transformation_contract",
@@ -1049,7 +1049,7 @@
       "blocked",
       "valid"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "transformation_contract.Severity": {
     "module": "transformation_contract",
@@ -1057,7 +1057,7 @@
       "error",
       "warning"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "transformation_contract.StepStatus": {
     "module": "transformation_contract",
@@ -1067,7 +1067,7 @@
       "staged_move_pending",
       "valid"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "transformation_contract.TableClass": {
     "module": "transformation_contract",
@@ -1077,6 +1077,6 @@
       "stays",
       "unread"
     ],
-    "version": "1.1"
+    "version": "1.2"
   }
 }

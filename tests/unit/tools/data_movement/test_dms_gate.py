@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import pytest
 
-from src.contracts.dms_gate import NOT_VALIDATED
+from src.contracts.dms_gate import NOT_VALIDATED, GateException
 from src.contracts.transformation_contract import Finding
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.cutover_message import CUTOVER_MESSAGES
@@ -257,8 +257,10 @@ def test_a_table_still_validating_keeps_the_gate_pending(validation):
 
 
 @pytest.mark.parametrize("validation", ["Mismatched records", "Suspended records", "Table error", "Error",
-                                        "Not enabled", "No primary key"])  # fmt: skip
+                                        "Not enabled", "No primary key", "No primary Key",
+                                        "NO PRIMARY KEY", "mismatched Records"])  # fmt: skip
 def test_every_failure_state_on_a_keyed_table_fails_the_gate(validation):
+    # DMS 3.6.1 reports "No primary Key": a state compares case-insensitively (#2042).
     gate = _gate(stats=_cust(validation=validation))
     assert gate.status == "fail" and any("shop.customers" in r for r in gate.checks[2].reasons)
 
@@ -266,6 +268,102 @@ def test_every_failure_state_on_a_keyed_table_fails_the_gate(validation):
 @pytest.mark.parametrize("validation", ["Brand new state", ""])
 def test_an_unknown_or_missing_state_never_passes(validation):
     assert _gate(stats=_cust(validation=validation)).checks[2].status == "pending"
+
+
+@pytest.mark.parametrize("validation", ["validated", "VALIDATED"])
+def test_validated_in_any_letter_case_passes(validation):
+    assert _gate(stats=_cust(validation=validation)).checks[2].status == "pass"
+
+
+@pytest.mark.parametrize("validation", ["pending Records", "PREPARING TABLE"])
+def test_a_pending_state_in_any_letter_case_is_pending_validation(validation):
+    check = _gate(stats=_cust(validation=validation)).checks[2]
+    assert check.status == "pending" and any(f"validation {validation}" in r for r in check.reasons)
+
+
+def _unvalidatable_orders(code: str, message: str, inputs=INPUTS):
+    """shop.orders with the key finding the contract writes for a key DMS cannot validate on."""
+    contract = inputs.contract.model_copy(deep=True)
+    rule = next(r for r in contract.rules if r.source_table == "shop.orders")
+    rule.findings.append(
+        Finding(code=code, severity="warning", message=message, table_id="shop.orders")
+    )
+    return replace(inputs, contract=contract)
+
+
+NULLABLE = ("No primary key, and its unique index ux_orders allows NULLs in ref, "
+            "which DMS cannot validate on.")  # fmt: skip
+UNBOUNDED = ("Its unique index ux_orders has a column type DMS cannot validate on: "
+             "ref is an unbounded varchar.")  # fmt: skip
+
+
+@pytest.mark.parametrize(("code", "message", "reason"), [
+    ("no_key", NULLABLE,
+     "not validated: no primary key, and its unique index ux_orders allows NULLs in ref, which DMS cannot validate on"),
+    ("key_not_validatable", UNBOUNDED,
+     "not validated: its unique index ux_orders has a column type DMS cannot validate on: ref is an unbounded varchar"),
+])  # fmt: skip
+def test_a_table_whose_key_dms_cannot_validate_on_is_a_named_exception_with_the_reason(
+    code, message, reason
+):
+    stats = _cust()
+    stats[2] = g.stat("shop.orders", validation="No primary Key")
+    gate = _gate(_unvalidatable_orders(code, message), stats=stats)
+    assert [
+        (e.table, e.reason)
+        for e in gate.exceptions
+        if e.kind == "table" and e.table == "shop.orders"
+    ] == [("shop.orders", reason)]
+    # Without a key, its LOB column (note) is named too; with a key DMS can't validate on, not.
+    lob = [e for e in gate.exceptions if e.kind == "keyless_lob" and e.table == "shop.orders"]
+    assert bool(lob) == (code == "no_key")
+    assert next(t for t in gate.tables if t.table == "shop.orders").status == "exception"
+    assert gate.checks[2].status == "pass"
+
+
+def test_the_exception_comes_from_the_contract_never_from_the_dms_state():
+    # DMS calls a keyed table keyless: the gate fails, it does not name an exception.
+    stats = _cust()
+    stats[2] = g.stat("shop.orders", validation="No primary Key")
+    gate = _gate(stats=stats)
+    assert gate.checks[2].status == "fail" and not [
+        e for e in gate.exceptions if e.table == "shop.orders"
+    ]
+    assert any(
+        r.startswith("shop.orders: validation No primary Key") for r in gate.checks[2].reasons
+    )
+
+
+def test_the_gate_type_checks_a_unique_index_key_through_key_columns():
+    # A contract with no key finding (written before #2042): the gate reads key_columns.
+    contract = INPUTS.contract.model_copy(deep=True)
+    rule = next(r for r in contract.rules if r.source_table == "shop.orders")
+    rule.primary_key = []
+    rule.key_columns = ["note"]  # TEXT
+    check, tables, exceptions = parity_check(replace(INPUTS, contract=contract), _view())
+    got = [e.reason for e in exceptions if e.table == "shop.orders"]
+    assert got == ["not validated: its unique key has a column type DMS cannot validate on: "
+                   "note is TEXT, a LOB or binary type to DMS"]  # fmt: skip
+    assert next(t for t in tables if t.table == "shop.orders").status == "exception"
+
+
+def test_a_keyed_unique_index_on_bounded_types_must_reach_validated():
+    contract = INPUTS.contract.model_copy(deep=True)
+    rule = next(r for r in contract.rules if r.source_table == "shop.orders")
+    rule.primary_key = []
+    rule.key_columns = ["id"]  # BIGINT
+    inputs = replace(INPUTS, contract=contract)
+    stats = _cust()
+    stats[2] = g.stat("shop.orders", validation="No primary Key")
+    assert _gate(inputs, stats=stats).checks[2].status == "fail"
+
+
+def test_an_old_gate_file_with_the_fixed_reason_still_loads():
+    assert GateException(table="shop.t", kind="table", reason=NOT_VALIDATED).reason == NOT_VALIDATED
+    with pytest.raises(ValueError, match="must start with"):
+        GateException(table="shop.t", kind="table", reason="no key")
+    with pytest.raises(ValueError, match="reason for a view"):
+        GateException(table="shop.v", kind="view", reason="not validated: something else")
 
 
 def test_failed_records_fail_even_when_the_state_reads_validated():
@@ -416,9 +514,11 @@ def test_a_key_column_validation_refuses_makes_the_table_an_exception(engine, sc
     inputs = make_step1_inputs(engine)
     for type_ in bad:
         check, tables, exceptions = _parity(_with_key_type(inputs, f"{schema}.orders", "id", type_))
-        assert [
-            (e.table, e.kind, e.reason) for e in exceptions if e.table == f"{schema}.orders"
-        ] == [(f"{schema}.orders", "table", NOT_VALIDATED)], type_
+        got = [(e.table, e.kind, e.reason) for e in exceptions if e.table == f"{schema}.orders"]
+        assert len(got) == 1 and got[0][:2] == (f"{schema}.orders", "table"), type_
+        # The reason names the key column and why DMS cannot validate on it (#2042).
+        assert got[0][2].startswith("not validated: its primary key has a column type DMS "
+                                    "cannot validate on: id is "), (type_, got)  # fmt: skip
         assert next(t for t in tables if t.table == f"{schema}.orders").status == "exception"
         assert check.evidence["keyed_tables"] == "1"
 

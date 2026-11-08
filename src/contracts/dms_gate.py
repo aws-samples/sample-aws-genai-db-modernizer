@@ -18,6 +18,9 @@ Version History:
 - 1.1 (2026-11-07, #1918): Added the ``not_moved`` exception kind: a table step 1
   creates but its DMS task does not move, with the reason and what to rebuild after
   cutover.
+- 1.2 (2026-11-08, #2042): A ``table`` exception's reason starts ``not validated: `` and
+  says which key limit applies (no primary or unique key, a unique index that allows
+  NULLs, a key column type DMS cannot validate on); a view keeps the fixed reason.
 """
 
 from datetime import datetime
@@ -26,7 +29,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 GateStatus = Literal["pass", "pending", "fail"]
-NOT_VALIDATED = "not validated: no primary or unique key"
+NOT_VALIDATED_PREFIX = "not validated: "
+NOT_VALIDATED = f"{NOT_VALIDATED_PREFIX}no primary or unique key"
 _ORDER = ("load", "lag", "parity")
 _STATUS_ORDER = ("pass", "pending", "fail")  # best to worst
 
@@ -64,14 +68,14 @@ class GateTable(BaseModel):
     reason: str | None = Field(None, description="Why the table is not pass")
 
 
-_FIXED_REASON_KINDS = ("table", "view")
-
-
 class GateException(BaseModel):
     """A table, view, field or rule the gate names because it cannot vouch for it.
 
-    ``table`` and ``view`` are tables and views DMS does not validate, with the fixed
-    ``NOT_VALIDATED`` reason. ``keyless_lob`` is a keyless table with LOB columns (DMS
+    ``table`` and ``view`` are tables and views DMS does not validate. A view has the fixed
+    ``NOT_VALIDATED`` reason; a table's reason starts ``not validated: `` and says which key
+    limit applies (#2042): ``NOT_VALIDATED`` for a table with no primary or unique key, or the
+    contract's words for a unique index that allows NULLs or a key on a type DMS cannot
+    validate on. ``keyless_lob`` is a keyless table with LOB columns (DMS
     supports LOB data types only on tables with a primary key, so values can be lost).
     ``unsupported_field`` is a moved column no operation can express; ``skipped_rule`` is
     a contract table the step does not move because an error finding blocks it;
@@ -85,7 +89,9 @@ class GateException(BaseModel):
     ] = Field(..., description="What is being named")
     column: str | None = Field(None, description="The column, for unsupported_field only")
     reason: str = Field(
-        NOT_VALIDATED, min_length=1, description="Plain reason; fixed for table and view"
+        NOT_VALIDATED,
+        min_length=1,
+        description="Plain reason; fixed for a view, 'not validated: ...' for a table",
     )
     rows_loaded: int | None = Field(
         None, ge=0, description="DMS FullLoadRows; None for a view or when not reported"
@@ -93,8 +99,10 @@ class GateException(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "GateException":
-        if self.kind in _FIXED_REASON_KINDS and self.reason != NOT_VALIDATED:
-            raise ValueError(f"reason for a {self.kind} must be {NOT_VALIDATED!r}")
+        if self.kind == "view" and self.reason != NOT_VALIDATED:
+            raise ValueError(f"reason for a view must be {NOT_VALIDATED!r}")
+        if self.kind == "table" and not self.reason.startswith(NOT_VALIDATED_PREFIX):
+            raise ValueError(f"reason for a table must start with {NOT_VALIDATED_PREFIX!r}")
         if (self.kind == "unsupported_field") != (self.column is not None):
             raise ValueError("column is set for unsupported_field and only for it")
         return self
@@ -104,7 +112,7 @@ class DmsGate(BaseModel):
     """Step 1's gate result (#1800)."""
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(..., description="The assessment job")
     database_name: str = Field(..., description="The source database")

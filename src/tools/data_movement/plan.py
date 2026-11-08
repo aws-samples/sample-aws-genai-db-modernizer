@@ -93,6 +93,7 @@ from src.tools.data_movement.dms_sizing import (
     unbounded_varchar,
     unmeasured_lob_tables,
 )
+from src.tools.data_movement.validation_key import table_key
 
 # The cost model's components (#1424); each is stated in the plan's cost_assumptions.
 DMS_PRICE_SECTION = "dms.replication"
@@ -308,24 +309,10 @@ def _sorted_unique(items: Iterable[str]) -> list[str]:
 
 
 def _hub_key(table: Mapping[str, Any]) -> tuple[list[str], str] | None:
-    """(key columns, key source) for a table's topic, or None when it has no key."""
-    pk = [str(c) for c in table.get("primary_key") or []]
-    if pk:
-        return pk, "primary_key"
-    not_null = {str(c["column_name"]) for c in table.get("columns") or [] if not c.get("nullable")}
-    candidates = sorted(
-        (
-            (len(ix.get("columns") or []), str(ix.get("index_name") or ""), list(ix["columns"]))
-            for ix in table.get("indexes") or []
-            if ix.get("is_unique")
-            and not ix.get("predicate")
-            and ix.get("columns")
-            and all(str(c) in not_null for c in ix["columns"])
-        ),
-    )
-    if not candidates:
-        return None
-    return [str(c) for c in candidates[0][2]], "unique_index"
+    """(key columns, key source) for a table's topic, or None when it has no key: the shared
+    key rule (``validation_key.table_key``, #2042)."""
+    key = table_key(table)
+    return (list(key.columns), key.source) if key else None
 
 
 def topic_prefix(job_id: str, wave: int | None = None) -> str:
