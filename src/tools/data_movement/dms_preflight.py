@@ -19,7 +19,8 @@ after it are ``not_run``). A ``confirm`` row (checks 3 and 6) becomes ``pass`` w
    only: a secret's value is never read.
 4. ``instance_class_offered``: the replication instance class is orderable in the region.
 5. ``dms_service_roles``: ``dms-vpc-role`` and ``dms-cloudwatch-logs-role`` exist, trust DMS and have their managed policies attached.
-6. ``source_cdc``: the source's CDC settings, read through RDS where the API can; the rest is a checklist.
+6. ``source_cdc``: the source's CDC settings, read through RDS where the API can (on PostgreSQL also
+   the slot and WAL sender limits and ``max_slot_wal_keep_size``, #2060); the rest is a checklist.
 7. ``dms_certificates``: the MySQL-family endpoints' certificates exist and have not expired.
 8. ``secrets_manager_reachable``: the replication subnets reach Secrets Manager (VPC endpoint or NAT).
 
@@ -488,7 +489,8 @@ SOURCE_PARAMETERS: dict[str, dict[str, str]] = {
 # What the AWS API cannot read on an RDS or Aurora source.
 UNREADABLE: dict[str, list[str]] = {
     "mysql": ["Binary log retention covers the full load plus an outage: CALL mysql.rds_set_configuration("
-              "'binlog retention hours', 24); (binlog retention hours is not readable through the AWS API)"],
+              "'binlog retention hours', 24); (binlog retention hours is not readable through the AWS API; read "
+              "it on the source with CALL mysql.rds_show_configuration;)"],
     "postgresql": [],
 }  # fmt: skip
 _TLS_ITEM = (
@@ -498,6 +500,13 @@ _TLS_ITEM = (
 _GRANTS_ITEM = (
     "The DMS user has the grants step-1.ddl.sql names for the source: %s, and SELECT on every "
     "step 1 table"
+)
+# The PostgreSQL settings that bound what the DMS slot may keep (#2060): read with the CDC settings.
+SLOT_PARAMETERS = ("max_replication_slots", "max_wal_senders", "max_slot_wal_keep_size")
+_SLOT_LIMIT_ITEM = (
+    "max_slot_wal_keep_size (PostgreSQL 13 and later) covers the longest pause of the task you expect: "
+    "past it, PostgreSQL invalidates the DMS slot and the task needs a full reload; at -1 (no limit) the "
+    "slot keeps WAL until the source's storage fills, so watch pg_replication_slots while the step runs"
 )
 _REPLICA_IDENTITY_ITEM = "Every table without a primary key has REPLICA IDENTITY FULL, or DMS cannot replicate its updates and deletes"
 # The task turns the DMS heartbeat on (HeartbeatEnable), which creates its heartbeat table in the
@@ -518,6 +527,7 @@ SELF_MANAGED: dict[str, list[str]] = {
     "postgresql": [
         "wal_level = logical",
         "max_replication_slots and max_wal_senders leave room for the DMS slot",
+        _SLOT_LIMIT_ITEM,
         _REPLICA_IDENTITY_ITEM,
         _GRANTS_ITEM % "the REPLICATION attribute",
         _HEARTBEAT_ITEM,
@@ -709,7 +719,11 @@ def check_source_cdc(inputs: Step1Inputs, req: PreflightRequest, clients: Prefli
         group = str(group_row.get("DBParameterGroupName") or "")
         pending = str(group_row.get("ParameterApplyStatus") or "unknown")
         values = _read_parameters(
-            clients, "describe_db_parameters", "DBParameterGroupName", group, required
+            clients,
+            "describe_db_parameters",
+            "DBParameterGroupName",
+            group,
+            _names(required, family),
         )
         retention = inst.get("BackupRetentionPeriod")
         evidence |= {
@@ -733,7 +747,7 @@ def check_source_cdc(inputs: Step1Inputs, req: PreflightRequest, clients: Prefli
         writer = _writer(cluster) or {}
         pending = str(writer.get("DBClusterParameterGroupStatus") or "unknown")
         values = _read_parameters(clients, "describe_db_cluster_parameters", "DBClusterParameterGroupName",
-                                  group, required)  # fmt: skip
+                                  group, _names(required, family))  # fmt: skip
         evidence |= {"source": source_id, "parameter_group": group}
         reboot = f"Reboot the source writer instance {writer.get('DBInstanceIdentifier')} so the values apply."
     # An unset binlog_row_image is the engine default, FULL; an unset binlog_format is not ROW.
@@ -748,12 +762,56 @@ def check_source_cdc(inputs: Step1Inputs, req: PreflightRequest, clients: Prefli
         return _row("source_cdc", "fail", f"The source's {group} has {_settings(wrong, values, required)}",
                     evidence, f"Set {', '.join(f'{n}={required[n]}' for n in wrong)} in {group}, then reboot "
                     "the source.")  # fmt: skip
+    slots: list[str] = []
+    if family == "postgresql":
+        evidence |= _slot_evidence(values)
+        no_room = [n for n in SLOT_PARAMETERS[:2] if _integer(values.get(n)) == 0]
+        if no_room:
+            return _row("source_cdc", "fail", f"The source's {group} has "
+                        + ", ".join(f"{n}={values.get(n)}" for n in no_room), evidence,
+                        f"Set {' and '.join(no_room)} to at least 1 (DMS needs one replication slot and one WAL "
+                        f"sender) in {group}, then reboot the source.")  # fmt: skip
+        slots = [_slot_limit_item(values.get("max_slot_wal_keep_size"))]
     if pending != _IN_SYNC:
         return _not_in_sync(group, pending, reboot, evidence)
     shown = ", ".join(f"{n}={v}" + (" (engine default FULL)" if n == "binlog_row_image" and defaulted else "")
                       for n, v in required.items())  # fmt: skip
     extra = [_SESSION_ROLE_ITEM] if inputs.contract.target.engine == "aurora_postgresql" else []
-    return _checklist_row(f"The source has {shown}", evidence, [*MANAGED[family], *extra])
+    return _checklist_row(f"The source has {shown}", evidence, [*MANAGED[family], *slots, *extra])
+
+
+def _names(required: Mapping[str, str], family: str) -> set[str]:
+    return set(required) | (set(SLOT_PARAMETERS) if family == "postgresql" else set())
+
+
+def _integer(value: str | None) -> int | None:
+    """A parameter's value as an integer; None when unset or an RDS formula ({DBInstanceClassMemory...})."""
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _slot_evidence(values: Mapping[str, str | None]) -> dict[str, str]:
+    out = {n: str(values.get(n) or "engine default") for n in SLOT_PARAMETERS}
+    if not values.get("max_slot_wal_keep_size"):
+        out["max_slot_wal_keep_size"] = "engine default (-1, no limit)"
+    return out
+
+
+def _slot_limit_item(value: str | None) -> str:
+    """What the source's max_slot_wal_keep_size means for this move (#2060)."""
+    limit = _integer(value)
+    if limit is None or limit < 0:
+        shown = "the engine default, -1" if not value else value
+        return (f"max_slot_wal_keep_size (PostgreSQL 13 and later) is {shown} (no limit; on PostgreSQL 12 "
+                "and earlier the setting does not exist and a slot keeps WAL the same way): while the task is "
+                "stopped or behind, its "
+                "replication slot keeps WAL until an RDS source's storage fills (Aurora's volume grows and bills it); /move's status warns on the "
+                "source's slot lag and free storage, and ending the step names the slot to drop")  # fmt: skip
+    return (f"max_slot_wal_keep_size is {limit} MB: past that much retained WAL, PostgreSQL invalidates the "
+            "DMS slot and the task needs a full reload, so it must cover the longest pause of the task you "
+            "expect")  # fmt: skip
 
 
 @_guarded("dms_certificates")
