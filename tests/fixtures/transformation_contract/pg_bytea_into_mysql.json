@@ -1,0 +1,108 @@
+{
+  "dialect": "postgresql",
+  "engine": "aurora_mysql",
+  "seed": 1,
+  "tables": [
+    {
+      "table_id": "public.blobs",
+      "table_name": "blobs",
+      "schema_name": "public",
+      "row_count": 4,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "integer",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "data",
+          "ordinal_position": 2,
+          "data_type": "bytea",
+          "normalized_data_type": "blob",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "public.blobs",
+      "target_table": "blobs",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "int",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "public.blobs",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "data",
+          "target_column": "data",
+          "target_type": "varbinary(1)",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "public.blobs",
+              "column": "data"
+            },
+            "function": "cast",
+            "from_type": "bytea",
+            "to_type": "varbinary(1)"
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "88d072015ab803202eb74183e41de01b82961bfed7550676ebf90edd31dde3d6",
+  "expected": {
+    "public.blobs": {
+      "rows": [
+        {
+          "id": "1",
+          "data": "\\x86"
+        },
+        {
+          "id": "2",
+          "data": "\\x1f"
+        },
+        {
+          "id": "3",
+          "data": "\\x64"
+        },
+        {
+          "id": "4",
+          "data": null
+        }
+      ],
+      "cast_failures": [],
+      "unchecked": []
+    }
+  }
+}

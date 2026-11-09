@@ -238,7 +238,7 @@ def test_every_type_ddl_generation_emits_is_mapped_or_deliberately_unchecked():
     assert _mapped("timestamp with time zone", "aurora_postgresql")
     assert _mapped("time without time zone", "aurora_postgresql")
     assert _mapped("bigint unsigned", "aurora_mysql")
-    assert _mapped("decimal(10,2) unsigned zerofill", "aurora_mysql") is False
+    assert _mapped("decimal(10,2) unsigned zerofill", "aurora_mysql")  # unsigned: #1830
     # Bare PostgreSQL numeric is arbitrary precision: unchecked. MySQL's bare DECIMAL is (10,0).
     assert not _mapped("numeric", "aurora_postgresql") and _mapped("decimal", "aurora_mysql")
 

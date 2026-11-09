@@ -668,7 +668,7 @@ def _shape_default(column: Mapping[str, Any], dialect: Dialect) -> object:
         return None
     value_kind = column_kind(column)
     if dialect == "mysql" and (values := enum_values(column)):
-        return values[0] if value_kind == "other" else None  # a placeholder, never text
+        return values[0] if value_kind == "enum" else None  # a placeholder, never text
     if value_kind == "bool":
         return False
     if is_bytes(column):
@@ -765,7 +765,7 @@ def _match_columns(table: Mapping[str, Any], row: Mapping[str, Any]) -> list[str
         c["column_name"]
         for c in table.get("columns") or []
         if row.get(c["column_name"]) is not None
-        and column_kind(c) not in ("float", "json", "other")
+        and column_kind(c) not in ("float", "json", "other", "bytes", "enum")
     ]
 
 
@@ -791,7 +791,7 @@ def _update_column(
         if match is not None:
             return match, match not in fixed
     for c in table.get("columns") or []:
-        if c["column_name"] not in fixed and column_kind(c) != "other":
+        if c["column_name"] not in fixed and column_kind(c) not in ("other", "bytes", "enum"):
             return c["column_name"], True
     return (names[0], False) if names else None
 

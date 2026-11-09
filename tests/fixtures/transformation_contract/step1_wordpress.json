@@ -451,7 +451,8 @@
           "18446744073709551615",
           "bigint"
         ]
-      ]
+      ],
+      "unchecked": []
     },
     "wordpress.wp_options": {
       "rows": [
@@ -498,7 +499,8 @@
           "18446744073709551615",
           "bigint"
         ]
-      ]
+      ],
+      "unchecked": []
     },
     "wordpress.wp_users": {
       "rows": [
@@ -551,7 +553,8 @@
           "0000-00-00 00:00:00",
           "date"
         ]
-      ]
+      ],
+      "unchecked": []
     }
   }
 }

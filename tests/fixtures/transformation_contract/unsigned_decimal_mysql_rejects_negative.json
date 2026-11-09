@@ -1,0 +1,124 @@
+{
+  "dialect": "mysql",
+  "engine": "aurora_mysql",
+  "seed": 3,
+  "tables": [
+    {
+      "table_id": "shop.prices",
+      "table_name": "prices",
+      "schema_name": "shop",
+      "row_count": 6,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "price",
+          "ordinal_position": 2,
+          "data_type": "decimal(6,2)",
+          "normalized_data_type": "decimal",
+          "max_length": null,
+          "numeric_precision": 6,
+          "numeric_scale": 2,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null,
+          "min_value": "-1.50",
+          "max_value": "12.00"
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "shop.prices",
+      "target_table": "prices",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "int",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.prices",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "price",
+          "target_column": "price",
+          "target_type": "decimal(6,2) unsigned",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "shop.prices",
+              "column": "price"
+            },
+            "function": "cast",
+            "from_type": "decimal(6,2)",
+            "to_type": "decimal(6,2) unsigned"
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "9451f1eb48001fd02d65273d35d4d53bc0b92e894cdc9febb913e03750980343",
+  "expected": {
+    "shop.prices": {
+      "rows": [
+        {
+          "id": "1",
+          "price": "9999.99"
+        },
+        {
+          "id": "2",
+          "price": null
+        },
+        {
+          "id": "3",
+          "price": "12.00"
+        },
+        {
+          "id": "4",
+          "price": "4.01"
+        },
+        {
+          "id": "5",
+          "price": null
+        },
+        {
+          "id": "6",
+          "price": "10.50"
+        }
+      ],
+      "cast_failures": [
+        [
+          "price",
+          "-1.50",
+          "decimal(6,2) unsigned"
+        ]
+      ],
+      "unchecked": []
+    }
+  }
+}

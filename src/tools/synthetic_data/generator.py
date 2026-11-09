@@ -59,6 +59,12 @@ class SyntheticTable:
     edge_rows: int
     row_count_basis: Literal["collector", "default"]
     unchecked_source_columns: tuple[str, ...] = ()
+    # Boolean source columns (``true``/``false`` text): a backend feeds them to Aurora
+    # MySQL as 1/0, the way a boolean reaches a MySQL TINYINT (#1830).
+    boolean_source_columns: tuple[str, ...] = ()
+    # Byte-string source columns given as PostgreSQL hex text (``\x0a``): a backend
+    # decodes them to bytes before it checks or loads a byte target (#1830).
+    hex_source_columns: tuple[str, ...] = ()
 
 
 _TEXT_WORDS = ("varchar", "char", "text", "tinytext", "mediumtext", "longtext")
@@ -94,6 +100,12 @@ def _kind(column: Mapping[str, Any]) -> str:
         return "bit"
     if norm in ("string", "text") or first in _TEXT_WORDS or t.startswith("character"):
         return "string"
+    # Checked after the string kinds, so an ENUM a collector normalizes as a string keeps
+    # the string values generate_rows_golden.json recorded (#1942).
+    if first in ("enum", "set") and enum_values(column):
+        return "enum"
+    if first in _BYTE_TYPES:
+        return "bytes"
     return "other"
 
 
@@ -120,12 +132,31 @@ def is_bytes(column: Mapping[str, Any]) -> bool:
     return _int_word(column) in _BYTE_TYPES
 
 
+def _byte_width(column: Mapping[str, Any], dialect: str) -> int | None:
+    """A MySQL ``BINARY(n)`` or ``VARBINARY(n)`` column's length in bytes, else None."""
+    word = _int_word(column)
+    if dialect != "mysql" or word not in ("binary", "varbinary"):
+        return None
+    if column.get("max_length"):
+        return int(column["max_length"])
+    m = re.search(r"\(\s*(\d+)\s*\)", str(column.get("data_type") or ""))
+    return int(m.group(1)) if m else (1 if word == "binary" else None)
+
+
+def _as_stored(column: Mapping[str, Any], value: object, dialect: str) -> object:
+    """A MySQL ``BINARY(n)`` value as the engine stores it: padded with zero bytes to n."""
+    width = _byte_width(column, dialect)
+    if _int_word(column) != "binary" or width is None or not isinstance(value, str):
+        return value
+    return value + "\x00" * max(0, width - len(value.encode("utf-8")))
+
+
 def _bytes_value(column: Mapping[str, Any], dialect: str, rng: random.Random) -> str:
     """A short byte string, never longer than the column: PostgreSQL's hex input form,
     or MySQL text bytes."""
     if dialect == "postgresql":
         return f"\\x{rng.randint(0, 255):02x}"
-    n = int(column.get("max_length") or 2)
+    n = _byte_width(column, dialect) or int(column.get("max_length") or 2)
     return "ab"[: max(1, min(2, n))]
 
 
@@ -133,7 +164,8 @@ def column_kind(column: Mapping[str, Any]) -> str:
     """The value kind the generator models a column (or parameter) type as: ``int``,
     ``uint``, ``bool1`` (MySQL ``tinyint(1)``), ``decimal``, ``float``, ``date``,
     ``datetime``, ``bool``, ``time``, ``uuid``, ``json``, ``year``, ``bit``, ``string``,
-    or ``other`` for a type it does not model."""
+    ``enum`` (a MySQL ``ENUM`` or ``SET`` that lists its values), ``bytes`` (``bytea``,
+    ``BLOB``, ``BINARY``, ...), or ``other`` for a type it does not model."""
     return _kind(column)
 
 
@@ -179,6 +211,9 @@ def _type_edges(column: Mapping[str, Any], *, dialect: str, loadable: bool) -> l
     if kind == "string" and column.get("max_length"):
         char = "z" if loadable else _FOUR_BYTE
         return [char * min(int(column["max_length"]), MAX_EDGE_TEXT)]
+    if kind == "bytes" and not loadable and _byte_width(column, dialect) is not None:
+        width = _byte_width(column, dialect) or 0  # the full length, in bytes
+        return ["z" * min(width, MAX_EDGE_TEXT)]
     return []
 
 
@@ -242,7 +277,9 @@ def decimal_precision(column: Mapping[str, Any]) -> tuple[int, int]:
     return _precision(column)
 
 
-def _random_value(kind: str, column: Mapping[str, Any], rng: random.Random, i: int) -> object:
+def _random_value(
+    kind: str, column: Mapping[str, Any], rng: random.Random, i: int, dialect: str
+) -> object:
     bounds = _range(column)
     if len(bounds) == 2 and kind in ("int", "uint", "decimal", "float"):
         low, high = sorted(Decimal(str(b)) for b in bounds)
@@ -280,6 +317,10 @@ def _random_value(kind: str, column: Mapping[str, Any], rng: random.Random, i: i
         return str(rng.randint(1970, 2030))
     if kind == "bit":
         return rng.choice(["0", "1"])
+    if kind == "enum":
+        return rng.choice(enum_values(column))
+    if kind == "bytes":
+        return _bytes_value(column, dialect, rng)
     return f"v{i}"  # an unmodelled kind: the column is listed as unchecked
 
 
@@ -293,7 +334,7 @@ def _base36(n: int) -> str:
 
 
 def _key_value(
-    kind: str, column: Mapping[str, Any], i: int, total: int, edges: list[object]
+    kind: str, column: Mapping[str, Any], i: int, total: int, edges: list[object], dialect: str
 ) -> object:
     """A unique key of the column's own kind, distinct from its edge values."""
     if kind in ("int", "uint", "bool1"):
@@ -322,6 +363,13 @@ def _key_value(
         return json.dumps({"k": i})
     if kind == "year":
         return str(1901 + i)
+    if kind == "enum":
+        return enum_values(column)[i]
+    if kind == "bytes":
+        if dialect == "postgresql":
+            digits = f"{i:x}"
+            return "\\x" + "0" * (len(digits) % 2) + digits
+        return _base36(i)
     return f"k{i}"
 
 
@@ -345,7 +393,8 @@ def generate_rows(table: Mapping[str, Any], *, dialect: str, seed: int = 0,
     total = max(n, len(edges))
     capacity = min(
         [36 ** int(c["max_length"]) for c in columns
-         if c["column_name"] in pk and _kind(c) == "string" and c.get("max_length")]
+         if c["column_name"] in pk and _kind(c) in ("string", "bytes") and c.get("max_length")]
+        + [len(enum_values(c)) for c in columns if c["column_name"] in pk and _kind(c) == "enum"]
         + [2 for c in columns if c["column_name"] in pk and _kind(c) in ("bool", "bit")]
         + [255 for c in columns if c["column_name"] in pk and _kind(c) == "year"]
         + [86400 for c in columns if c["column_name"] in pk and _kind(c) == "time"],
@@ -363,19 +412,17 @@ def generate_rows(table: Mapping[str, Any], *, dialect: str, seed: int = 0,
             if i < len(edges) and edges[i][0] == name:
                 row[name] = edges[i][1]
             elif name in pk:
-                row[name] = _key_value(kind, c, i, total, col_edges[name])
+                row[name] = _key_value(kind, c, i, total, col_edges[name], dialect)
             elif c.get("nullable") and _null_at(c, i):
                 row[name] = None
-            elif loadable and kind == "other" and (choices := enum_values(c)):
-                row[name] = rng.choice(choices)
-            elif loadable and kind == "other" and is_bytes(c):
-                row[name] = _bytes_value(c, dialect, rng)
             elif loadable and kind == "other" and c.get("nullable"):
                 row[name] = None  # a placeholder would not load into an unmodelled type
             elif loadable and kind in ("bit", "bool") and dialect == "mysql":
                 row[name] = rng.choice([0, 1])
             else:
-                row[name] = _random_value(kind, c, rng, i)
+                row[name] = _random_value(kind, c, rng, i, dialect)
+            if kind == "bytes" and not loadable:  # loadable rows: the engine pads them
+                row[name] = _as_stored(c, row[name], dialect)
         return row
 
     rows = [build(i) for i in range(total)]
@@ -392,8 +439,13 @@ def generate_rows(table: Mapping[str, Any], *, dialect: str, seed: int = 0,
         if spare:
             rows[spare[-1]][name] = None
     unchecked = tuple(c["column_name"] for c in columns if _kind(c) == "other")
+    booleans = tuple(c["column_name"] for c in columns if _kind(c) == "bool")
+    hexes = tuple(
+        c["column_name"] for c in columns if _kind(c) == "bytes" and dialect == "postgresql"
+    )
     return SyntheticTable(str(table.get("table_id")), rows, len(edges),
-                          "default" if row_count is None else "collector", unchecked)  # fmt: skip
+                          "default" if row_count is None else "collector", unchecked,
+                          booleans, hexes)  # fmt: skip
 
 
 # --------------------------------------------------------------------------- related tables

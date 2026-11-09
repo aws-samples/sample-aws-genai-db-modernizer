@@ -1,0 +1,201 @@
+{
+  "dialect": "mysql",
+  "engine": "aurora_mysql",
+  "seed": 4,
+  "tables": [
+    {
+      "table_id": "shop.files",
+      "table_name": "files",
+      "schema_name": "shop",
+      "row_count": 4,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "kind",
+          "ordinal_position": 2,
+          "data_type": "enum('doc','img')",
+          "normalized_data_type": null,
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "digest",
+          "ordinal_position": 3,
+          "data_type": "binary(4)",
+          "normalized_data_type": "binary",
+          "max_length": 4,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "tag",
+          "ordinal_position": 4,
+          "data_type": "varbinary(4)",
+          "normalized_data_type": "binary",
+          "max_length": 4,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "body",
+          "ordinal_position": 5,
+          "data_type": "blob",
+          "normalized_data_type": "blob",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "shop.files",
+      "target_table": "files",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "int",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.files",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "kind",
+          "target_column": "kind",
+          "target_type": "enum('doc','img')",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.files",
+              "column": "kind"
+            }
+          }
+        },
+        {
+          "source_column": "digest",
+          "target_column": "digest",
+          "target_type": "binary(4)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.files",
+              "column": "digest"
+            }
+          }
+        },
+        {
+          "source_column": "tag",
+          "target_column": "tag",
+          "target_type": "binary(3)",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "shop.files",
+              "column": "tag"
+            },
+            "function": "cast",
+            "from_type": "varbinary(4)",
+            "to_type": "binary(3)"
+          }
+        },
+        {
+          "source_column": "body",
+          "target_column": "body",
+          "target_type": "blob",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.files",
+              "column": "body"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "3f4151f4416f124057f4e1357311eec94601c8c6c6875e845659639dce7061a7",
+  "expected": {
+    "shop.files": {
+      "rows": [
+        {
+          "id": "1",
+          "kind": "img",
+          "digest": "\\x7a7a7a7a",
+          "tag": "\\x616200",
+          "body": "\\x6162"
+        },
+        {
+          "id": "2",
+          "kind": "doc",
+          "digest": "\\x61620000",
+          "tag": null,
+          "body": "\\x6162"
+        },
+        {
+          "id": "3",
+          "kind": "doc",
+          "digest": "\\x61620000",
+          "tag": "\\x616200",
+          "body": "\\x6162"
+        },
+        {
+          "id": "4",
+          "kind": "doc",
+          "digest": "\\x61620000",
+          "tag": "\\x616200",
+          "body": null
+        }
+      ],
+      "cast_failures": [
+        [
+          "tag",
+          "zzzz",
+          "binary(3)"
+        ]
+      ],
+      "unchecked": []
+    }
+  }
+}
