@@ -165,6 +165,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import json
 import os
 import re
@@ -173,6 +174,7 @@ import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrust
 import sys
 import tarfile
 import tomllib
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -2283,6 +2285,13 @@ def _copy_tail(src: Path, dest: Path, max_bytes: int) -> dict:
         if size > max_bytes:
             f.seek(size - max_bytes)
         data = f.read()
+    if size > max_bytes:
+        # Start on a character boundary (#2053): a cut inside a multi-byte character
+        # leaves a file that is not UTF-8, and the private scan withholds those.
+        skip = 0
+        while skip < min(len(data), 3) and 0x80 <= data[skip] <= 0xBF:
+            skip += 1
+        data = data[skip:]
     dest.parent.mkdir(parents=True, exist_ok=True)
     if size > max_bytes:
         note = f"[truncated: last {max_bytes} of {size} bytes of {src}]\n".encode()
@@ -2368,14 +2377,89 @@ JOB_ALLOW_RES = tuple(
 JOB_MAX_FILE_BYTES = 5_000_000
 
 
-def _job_files(job_dir: Path) -> tuple[list[Path], list[str], list[str]]:
-    """The allowlisted files of ``job_dir``, the ones left out because they are too
-    large, and the findings of the secret scan over the allowlisted files."""
-    from ci.llm.private_scan import secret_findings
+#: Next to the archive when the scan found anything: each finding's file, line and
+#: kind, never its value (#2053).
+JOB_FINDINGS = "job.findings.json"
+#: collect-job's own JSON, written by the EXIT trap.
+COLLECT_LOG = "job-logs/collect-job.json"
+_OWN_UPLOADS = frozenset({JOB_ARCHIVE, JOB_FINDINGS, COLLECT_LOG})
+#: A larger uploaded text file is not read; it is withheld.
+UPLOAD_MAX_BYTES = 64_000_000
+#: Uploads the scan cannot read: a PDF deliverable, Playwright's trace.zip, screenshots
+#: and videos. Kept on a clean run, withheld on a run with any finding, since they can
+#: render the same values.
+BINARY_SUFFIXES = frozenset(
+    {".pdf", ".zip", ".gz", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".webm", ".mp4", ".pptx"}
+)
 
-    keep: list[Path] = []
+
+@dataclass
+class _Scanned:
+    """One file's scan: the bytes to upload (``None``: withhold it), its findings as
+    ``(kind, line)``, and whether it holds key material or a cloud credential."""
+
+    raw: bytes | None
+    findings: list[tuple[str, int | None]]
+    key: bool = False
+    #: The key names of the key-value findings, by ``(kind, line)``.
+    keys: dict[tuple[str, int], list[str]] = field(default_factory=dict)
+
+
+def _still_valid(before: str, after: str, suffix: str) -> bool:
+    """A redaction kept a JSON file (or every line of a JSON Lines file) parsable."""
+    pairs = list(zip(before.splitlines(), after.splitlines(), strict=False))
+    texts = pairs if suffix == ".jsonl" else [(before, after)] if suffix == ".json" else []
+    for old, new in texts:
+        try:
+            json.loads(old)
+        except ValueError:
+            continue
+        try:
+            json.loads(new)
+        except ValueError:
+            return False
+    return True
+
+
+#: The session transcripts: their thinking items' signatures are no key material.
+SESSION_TRANSCRIPTS = frozenset({"transcript.jsonl", "explore-transcript.jsonl"})
+
+
+def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
+    """Scan one uploaded or archived text file with every check (``redact``).
+
+    It is withheld when it is not UTF-8 (a JSON Lines transcript cut off mid-character
+    is first trimmed to its last whole line), when it holds a private key, key
+    material, a cloud credential or a value the redaction cannot place, and when the
+    redaction would leave it invalid JSON."""
+    from ci.llm.private_scan import REDACTABLE_KINDS, redact
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        cut = raw.rfind(b"\n") + 1
+        try:
+            if suffix != ".jsonl" or not cut:
+                raise
+            raw = raw[:cut]
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return _Scanned(None, [("not valid UTF-8", None)])
+    result = redact(text, key_names=True, emails=True, session=session)
+    if not result.findings:
+        return _Scanned(raw, [])
+    findings: list[tuple[str, int | None]] = list(result.findings)
+    key = any(kind not in REDACTABLE_KINDS for kind, _ in result.findings)
+    if not result.redactable or not _still_valid(text, result.text, suffix):
+        return _Scanned(None, findings, key, result.keys)
+    return _Scanned(result.text.encode("utf-8"), findings, key, result.keys)
+
+
+def _job_files(job_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]]:
+    """The allowlisted files of ``job_dir``, each with its scan, by relative path, and
+    the ones left out because they are too large."""
+    scanned: dict[str, tuple[Path, _Scanned]] = {}
     too_large: list[str] = []
-    findings: list[str] = []
     for path in sorted(job_dir.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
@@ -2385,10 +2469,80 @@ def _job_files(job_dir: Path) -> tuple[list[Path], list[str], list[str]]:
         if path.stat().st_size > JOB_MAX_FILE_BYTES:
             too_large.append(rel)
             continue
-        text = path.read_bytes().decode("utf-8", errors="replace")
-        findings += [f"{rel}: {hit}" for hit in secret_findings(text)]
-        keep.append(path)
-    return keep, too_large, findings
+        scanned[rel] = (path, _scan_file(path.read_bytes(), path.suffix))
+    return scanned, too_large
+
+
+def _uploads(out_dir: Path) -> tuple[dict[str, tuple[Path, _Scanned]], list[str]]:
+    """Every other file under ``out_dir`` (the CI job uploads the whole folder): the
+    text files, each with its scan, and the binary ones (``BINARY_SUFFIXES``)."""
+    scanned: dict[str, tuple[Path, _Scanned]] = {}
+    binary: list[str] = []
+    if not out_dir.is_dir():
+        return scanned, binary
+    paths: list[Path] = []
+    # os.walk never follows a link; a link itself is deleted, so an upload step that
+    # follows links cannot upload its target unscanned.
+    for top, dirs, files in os.walk(out_dir, followlinks=False):
+        for name in [*dirs, *files]:
+            path = Path(top) / name
+            if path.is_symlink():
+                path.unlink()
+            elif name in files:
+                paths.append(path)
+    for path in sorted(paths):
+        rel = path.relative_to(out_dir).as_posix()
+        if not path.is_file() or rel in _OWN_UPLOADS:
+            continue
+        if path.suffix.lower() in BINARY_SUFFIXES:
+            binary.append(rel)
+        elif path.stat().st_size > UPLOAD_MAX_BYTES:
+            scanned[rel] = (path, _Scanned(None, [("too large to scan", None)]))
+        else:
+            session = rel in SESSION_TRANSCRIPTS
+            scanned[rel] = (path, _scan_file(path.read_bytes(), path.suffix, session))
+    return scanned, binary
+
+
+def _manifest_entry(name: str, kind: str, line: int | None, scan: _Scanned) -> dict[str, Any]:
+    """One ``job.findings.json`` entry: file, line and kind, plus the key name(s) of a
+    key-value finding (``"key"``, or ``"keys"`` for several). Never the value."""
+    entry: dict[str, Any] = {"file": name, "line": line, "type": kind}
+    names = scan.keys.get((kind, line), []) if line is not None else []
+    if len(names) == 1:
+        entry["key"] = names[0]
+    elif names:
+        entry["keys"] = names
+    return entry
+
+
+def _mark_results(out_dir: Path, scan: dict) -> None:
+    """Fail the run in ``results.json`` and record the scan, so a human reviews it."""
+    results = out_dir / "results.json"
+    try:
+        row = json.loads(results.read_text())
+    except (OSError, ValueError):
+        row = {"schema_version": 2, "error": "no results.json after the private scan"}
+    if not isinstance(row, dict):
+        row = {"schema_version": 2, "error": "results.json was not an object"}
+    # The run's own verdict, before the scan failed it: replay.py save --allow-redacted
+    # keeps a run that passed everything else.
+    row["private_scan"] = {**scan, "pass_before_scan": row.get("pass") is True}
+    row["pass"] = False
+    tmp = results.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(row, indent=2) + "\n")
+    tmp.replace(results)
+
+
+def _write_archive(archive: Path, db: str, job: str, job_dir: Path, files: dict) -> None:
+    with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:
+        for rel, (path, scan) in files.items():
+            info = tar.gettarinfo(str(path), arcname=f"{db}/{job}/{rel}")
+            # No owner, group or machine detail in the archive.
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.size = len(scan.raw)
+            tar.addfile(info, io.BytesIO(scan.raw))
 
 
 def collect_job(
@@ -2398,14 +2552,26 @@ def collect_job(
     job: str = "",
     state_file: Path | None = None,
 ) -> dict:
-    """Write the job's replay artifacts as ``out_dir/job.tar.gz`` (#1463).
+    """Write the job's replay artifacts as ``out_dir/job.tar.gz`` (#1463) and scrub
+    every other upload in ``out_dir`` (#2053). It fails closed.
 
-    ``db``/``job`` default to ``.modernizer-state.json``. Returns ``{}`` when there is
-    no job folder. The allowlisted files are scanned for secrets (detect-secrets, see
-    ``ci/llm/private_scan.py``); on any finding NO archive is written and the result
-    is ``{"refused": [...]}`` (kind and line, never the value), so a secret is never
-    dropped silently into a half-empty upload. Otherwise the result has ``archive``,
-    ``files``, ``bytes`` and ``too_large`` (files left out for their size).
+    ``db``/``job`` default to ``.modernizer-state.json``; with no job folder there is no
+    archive. The allowlisted job files and every other text file under ``out_dir``
+    (``results.json`` included) get every check of ``ci/llm/private_scan.py``, the
+    designer's allowed example values aside. A flagged value on one line (an IP, an
+    email, a token or credential value) is replaced by ``[REDACTED:<kind>]``. Withheld
+    instead (deleted, or left out of the archive): a file that holds a private key, key
+    material or a cloud credential, one the redaction cannot fully clean or would leave
+    invalid JSON, one that is not UTF-8, and, on a run with any finding, every binary
+    upload (``BINARY_SUFFIXES``). The archive is written only when no archived file is
+    withheld and no file anywhere holds a key or a cloud credential.
+
+    Any finding writes ``out_dir/job.findings.json`` (file, line and kind, never the
+    value) and sets ``pass: false`` and ``private_scan`` in ``results.json``;
+    ``ci/llm/replay.py save`` refuses such a run as a fixture. The result has ``archive``,
+    ``files``, ``bytes`` and ``too_large`` when an archive was written, ``refused`` when
+    the job's archive was withheld, and, on any finding, ``findings`` (a count),
+    ``withheld`` and ``manifest``.
     """
     if (not db or not job) and state_file is not None and state_file.is_file():
         try:
@@ -2414,44 +2580,114 @@ def collect_job(
             job = job or str(state.get("job_id") or "")
         except (OSError, ValueError):
             pass
-    if not (db and job and _is_safe_name(db) and _is_safe_name(job)):
-        return {}
+    archive = out_dir / JOB_ARCHIVE
+    manifest = out_dir / JOB_FINDINGS
+    for stale in (archive, manifest):
+        stale.unlink(missing_ok=True)
     root = artifact_root.resolve()
     job_dir = (artifact_root / db / job).resolve()
-    if not (job_dir.is_relative_to(root) and job_dir.is_dir()):
-        return {}
-    files, too_large, findings = _job_files(job_dir)
+    job_files: dict[str, tuple[Path, _Scanned]] = {}
+    too_large: list[str] = []
+    has_job = bool(
+        db
+        and job
+        and _is_safe_name(db)
+        and _is_safe_name(job)
+        and job_dir.is_relative_to(root)
+        and job_dir.is_dir()
+    )
+    if has_job:
+        job_files, too_large = _job_files(job_dir)
+    uploads, binary = _uploads(out_dir)
+    every = [(f"{JOB_ARCHIVE}:{rel}", scan) for rel, (_, scan) in job_files.items()]
+    every += [(rel, scan) for rel, (_, scan) in uploads.items()]
+    findings: list[dict[str, Any]] = [
+        _manifest_entry(name, kind, line, scan)
+        for name, scan in every
+        for kind, line in scan.findings
+    ]
+    withheld = [rel for rel, (_, scan) in uploads.items() if scan.raw is None]
+    archive_ok = has_job and not any(scan.raw is None for _, scan in job_files.values())
+    archive_ok = archive_ok and not any(scan.key for _, scan in every)
+    for path, scan in uploads.values():
+        if scan.raw is None:
+            path.unlink()
+        elif scan.findings or scan.raw != path.read_bytes():
+            tmp = path.with_name(path.name + ".scrubbing")
+            tmp.write_bytes(scan.raw)
+            tmp.replace(path)
     if findings:
-        return {"refused": findings, "too_large": too_large}
+        for rel in binary:
+            (out_dir / rel).unlink()
+        withheld += binary
+    result: dict = {}
+    if archive_ok:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _write_archive(archive, db, job, job_dir, job_files)
+        result = {
+            "archive": str(archive),
+            "files": len(job_files),
+            "bytes": archive.stat().st_size,
+            "too_large": too_large,
+        }
+    elif has_job:
+        result = {
+            "refused": sum(1 for f in findings if str(f["file"]).startswith(JOB_ARCHIVE)),
+            "too_large": too_large,
+        }
+    if findings:
+        manifest.write_text(
+            json.dumps(
+                {"archive_kept": archive_ok, "findings": findings, "withheld": sorted(withheld)},
+                indent=2,
+            )
+            + "\n"
+        )
+        _mark_results(
+            out_dir,
+            {
+                "findings": len(findings),
+                "archive_kept": archive_ok,
+                "withheld": sorted(withheld),
+                "manifest": JOB_FINDINGS,
+            },
+        )
+        result.update(findings=len(findings), withheld=sorted(withheld), manifest=str(manifest))
+    return result
+
+
+def _withhold_everything(out_dir: Path, reason: str) -> None:
+    """The scan could not finish: no file of ``out_dir`` is uploaded but a
+    ``results.json`` that fails the run (fail closed, #2053)."""
+    if out_dir.is_dir():
+        for path in sorted(out_dir.rglob("*"), reverse=True):
+            if (path.is_file() or path.is_symlink()) and path.relative_to(
+                out_dir
+            ).as_posix() != COLLECT_LOG:
+                path.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
-    archive = out_dir / JOB_ARCHIVE
-    with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as tar:
-        for path in files:
-            arcname = f"{db}/{job}/{path.relative_to(job_dir).as_posix()}"
-            info = tar.gettarinfo(str(path), arcname=arcname)
-            # No owner, group or machine detail in the archive.
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            with path.open("rb") as f:
-                tar.addfile(info, f)
-    return {
-        "archive": str(archive),
-        "files": len(files),
-        "bytes": archive.stat().st_size,
-        "too_large": too_large,
-    }
+    row = {"schema_version": 2, "error": f"{reason}; every upload was withheld"}
+    row["pass"] = False
+    (out_dir / "results.json").write_text(json.dumps(row) + "\n")
 
 
 def cmd_collect_job(args: argparse.Namespace) -> None:
-    result = collect_job(
-        Path(args.artifact_root),
-        Path(args.out),
-        db=args.db or "",
-        job=args.job or "",
-        state_file=(
-            Path(args.state_file) if args.state_file else REPO_ROOT / ".modernizer-state.json"
-        ),
-    )
+    out_dir = Path(args.out)
+    try:
+        result = collect_job(
+            Path(args.artifact_root),
+            out_dir,
+            db=args.db or "",
+            job=args.job or "",
+            state_file=(
+                Path(args.state_file) if args.state_file else REPO_ROOT / ".modernizer-state.json"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 -- any failure must withhold, never upload
+        # Only the exception's type: its message could repeat a scanned value.
+        _withhold_everything(out_dir, f"the private scan failed ({type(exc).__name__})")
+        print(json.dumps({"error": type(exc).__name__, "withheld": "everything"}))
+        sys.exit(1)
     print(json.dumps(result))
 
 
@@ -2539,7 +2775,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p3b = sub.add_parser(
         "collect-job",
-        help="Write the job folder, without secrets, as job.tar.gz in the output dir (#1463).",
+        help="Write job.tar.gz and scrub the output dir of private values (#1463, #2053).",
     )
     p3b.add_argument("--artifact-root", required=True)
     p3b.add_argument("--out", required=True)

@@ -56,6 +56,7 @@ For each classified pattern:
 3. Define a **TTL policy** for every key (the cache is never the system of record; the eviction reason is in Target Rules, rule 3)
 4. Estimate **key count** and **average value size** for capacity planning, as whole numbers (`estimated_key_count`, `estimated_avg_value_bytes` in bytes); keep values under 1 MB, ideally under 100 KB
 5. Provide a **concrete example** key and value. `example_value` is a string: for a hash, set or JSON value, write it as a JSON string
+   Example values are obvious placeholders, never real-looking data: `<token>`, `<email>` or `user@example.com` for a secret or personal value, and IP addresses only from the documentation ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and 2001:db8::/32. A column that holds a credential (a `*_token`, `token_hash`, `*_password`, `*_secret` or `*_key` column) gets a placeholder such as `<token>`, `<password>` or `<secret>`, never a made-up value; a number, a date or a flag keeps its own type.
 
 ### Phase 3: Map Access Patterns
 

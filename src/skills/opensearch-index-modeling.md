@@ -120,6 +120,8 @@ Validation recomputes every `number_of_shards` from these figures and rejects on
 
 Translate every source SQL query from the collector into an OpenSearch DSL JSON string. Store the result in `AccessPattern.opensearch_dsl`.
 
+A value that stands in for a query parameter, or a field of a `bulk_index` sample document, is an example value. Example values are obvious placeholders, never real-looking data: `<token>`, `<email>` or `user@example.com` for a secret or personal value, and IP addresses only from the documentation ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and 2001:db8::/32. A column that holds a credential (a `*_token`, `token_hash`, `*_password`, `*_secret` or `*_key` column) gets a placeholder such as `<token>`, `<password>` or `<secret>`, never a made-up value; a number, a date or a flag keeps its own type.
+
 ### Common translations
 
 | SQL pattern | OpenSearch DSL | `operation` value |

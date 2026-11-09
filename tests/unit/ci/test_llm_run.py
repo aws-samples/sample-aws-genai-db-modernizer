@@ -1588,20 +1588,341 @@ def test_collect_job_archives_only_the_files_the_replay_reads(tmp_path: Path) ->
     assert result["files"] == 7 and result["too_large"] == []
 
 
-def test_collect_job_refuses_the_whole_archive_on_a_secret(tmp_path: Path) -> None:
+def _archive_text(archive: str, name: str) -> str:
+    import tarfile
+
+    with tarfile.open(archive) as tar:
+        member = tar.extractfile(name)
+        assert member is not None
+        return member.read().decode()
+
+
+def _every_upload(out: Path) -> str:
+    """Every byte under ``out``, the archive's members included, as text."""
+    import tarfile
+
+    texts = [p.read_bytes().decode("utf-8", "replace") for p in out.rglob("*") if p.is_file()]
+    for archive in out.glob("job.tar.gz"):
+        with tarfile.open(archive) as tar:
+            for member in tar:
+                data = tar.extractfile(member)
+                texts.append(data.read().decode() if data else "")
+    return "\n".join(texts)
+
+
+_PW = "hunter2" + "pw"  # pragma: allowlist secret
+_KEY = "\n".join(
+    [
+        "-----BEGIN RSA PRIVATE" + " KEY-----",  # pragma: allowlist secret
+        "MIIEow" + "IBAAKCAQEA" + "Zk3vLmP0aB7c" * 4,
+        "W2rT8nE5q9Zk" * 5,
+        "-----END RSA PRIVATE" + " KEY-----",  # pragma: allowlist secret
+    ]
+)
+
+
+def _out_with_results(tmp_path: Path) -> Path:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "results.json").write_text('{"schema_version": 2, "pass": true}')
+    return out
+
+
+def test_collect_job_redacts_a_secret_and_keeps_the_archive(tmp_path: Path) -> None:
     job = _job_tree(tmp_path / "artifacts")
-    secret = "postgres://admin:" + "hunter2pw" + "@db.internal/wp"  # pragma: allowlist secret
+    secret = "postgres://admin:" + _PW + "@db.internal/wp"  # pragma: allowlist secret
     (job / "collector" / "output.json").write_text(json.dumps({"dsn": secret}))
     (job / "assignment" / "v1" / "assignment.json").write_text(
-        '{"password": "hunter2pw"}'  # pragma: allowlist secret
-    )  # pragma: allowlist secret
-    result = run.collect_job(tmp_path / "artifacts", tmp_path / "out", db="wordpress", job="job1")
+        json.dumps({"ok": 1, "password": _PW, "ip": "8.8.8.8", "doc": "192.0.2.4"}, indent=2)
+    )
+    out = _out_with_results(tmp_path)
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    # The archive is kept, whole, with each flagged value replaced by a marker.
+    assert result["files"] == 7 and result["findings"] == 4 and result["withheld"] == []
+    assignment = _archive_text(result["archive"], "wordpress/job1/assignment/v1/assignment.json")
+    assert json.loads(assignment) == {
+        "ok": 1,
+        "password": "[REDACTED:password-value]",
+        "ip": "[REDACTED:public-ip-ipv4]",
+        "doc": "192.0.2.4",
+    }
+    # The manifest lists file, line and kind; no value anywhere in what is uploaded.
+    manifest = json.loads((out / "job.findings.json").read_text())
+    assert manifest["archive_kept"] is True
+    assert {(f["file"], f["line"], f["type"]) for f in manifest["findings"]} == {
+        ("job.tar.gz:assignment/v1/assignment.json", 3, "password value"),
+        ("job.tar.gz:assignment/v1/assignment.json", 4, "Public IP (ipv4)"),
+        ("job.tar.gz:collector/output.json", 1, "Basic Auth Credentials"),
+        ("job.tar.gz:collector/output.json", 1, "email"),
+    }
+    uploaded = _every_upload(out) + json.dumps(result)
+    assert _PW not in uploaded and "8.8.8.8" not in uploaded
+    # results.json fails the run, so a human reviews it.
+    marked = json.loads((out / "results.json").read_text())
+    assert marked["pass"] is False
+    assert marked["private_scan"] == {
+        "findings": 4,
+        "archive_kept": True,
+        "withheld": [],
+        "manifest": "job.findings.json",
+        "pass_before_scan": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"tls": {"key": _KEY, "n": 1}}, indent=2),
+        "notes\n" + _KEY + "\nend\n",
+    ],
+    ids=["one-json-line", "raw-block"],
+)
+def test_collect_job_withholds_the_archive_on_a_private_key(tmp_path: Path, text: str) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "collector" / "output.json").write_text(text)
+    out = _out_with_results(tmp_path)
+    (out / "transcript.jsonl").write_text(json.dumps({"tool_input": {"content": _KEY}}) + "\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "archive" not in result and result["refused"] >= 1
+    assert not (out / "job.tar.gz").exists()
+    uploaded = _every_upload(out)
+    for part in _KEY.splitlines():
+        assert part not in uploaded
+    assert json.loads((out / "results.json").read_text())["pass"] is False
+    assert json.loads((out / "job.findings.json").read_text())["archive_kept"] is False
+
+
+@pytest.mark.passes_on_main  # main withheld the archive on any finding
+def test_collect_job_withholds_the_archive_on_a_cloud_credential(tmp_path: Path) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    key = "AKIA" + "QWERTYUIOPASDFGH"  # pragma: allowlist secret
+    (job / "collector" / "output.json").write_text(json.dumps({"k": key}))
+    result = run.collect_job(
+        tmp_path / "artifacts", _out_with_results(tmp_path), "wordpress", "job1"
+    )
+    assert "archive" not in result and not (tmp_path / "out" / "job.tar.gz").exists()
+
+
+def test_collect_job_redacts_the_transcripts_and_every_other_uploaded_text_file(
+    tmp_path: Path,
+) -> None:
+    _job_tree(tmp_path / "artifacts")
+    out = _out_with_results(tmp_path)
+    event = {"tool_input": {"content": json.dumps({"ip": "8.8.4.4", "e": "jane@gmail.com"})}}
+    (out / "transcript.jsonl").write_text(json.dumps(event) + "\n" + '{"ok": 1}\n')
+    (out / "explore-transcript.jsonl").write_text("answer from 2606:4700::1111\n")
+    (out / "job-logs").mkdir()
+    (out / "job-logs" / "run.log").write_text("connected to 8.8.8.8:5432\n")
+    (out / "deliverables").mkdir()
+    (out / "deliverables" / "report.pdf").write_bytes(b"%PDF\xff\xfe binary")
+    (out / "summary.json").write_text('{"ip": "203.0.113.5", "token": "<token>"}')
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    # A run with a finding withholds its binary uploads: they can render the same values.
+    assert result["archive"] and result["withheld"] == ["deliverables/report.pdf"]
+    assert not (out / "deliverables" / "report.pdf").exists()
+    files = {f["file"] for f in json.loads((out / "job.findings.json").read_text())["findings"]}
+    assert files == {"transcript.jsonl", "explore-transcript.jsonl", "job-logs/run.log"}
+    # The transcript is still one JSON event per line.
+    lines = (out / "transcript.jsonl").read_text().splitlines()
+    assert [json.loads(line) for line in lines][1] == {"ok": 1}
+    uploaded = _every_upload(out)
+    for value in ("8.8.4.4", "gmail", "2606:4700", "8.8.8.8"):
+        assert value not in uploaded
+    assert (out / "summary.json").read_text() == '{"ip": "203.0.113.5", "token": "<token>"}'
+    assert json.loads((out / "results.json").read_text())["pass"] is False
+
+
+def test_collect_job_deletes_an_upload_it_cannot_fully_redact(tmp_path: Path, monkeypatch) -> None:
+    from ci.llm import private_scan
+
+    out = _out_with_results(tmp_path)
+    (out / "transcript.jsonl").write_text("x unplaceable-value-here\n")
+    monkeypatch.setattr(
+        private_scan,
+        "_line_hits",
+        lambda body, emails: [("JSON Web Token", None)] if "unplaceable" in body else [],
+    )
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert result["withheld"] == ["transcript.jsonl"] and not (out / "transcript.jsonl").exists()
+    assert json.loads((out / "results.json").read_text())["private_scan"]["withheld"] == [
+        "transcript.jsonl"
+    ]
+
+
+# A six-line key body, built at run time: each line mixed-case base64 with digits.
+_BODY6 = ["".join(f"Ab{i}Zk3vLmP0" for _ in range(6)) + f"x{i}Q" for i in range(6)]
+_HEAD = "-----BEGIN RSA PRIVATE" + " KEY-----"  # pragma: allowlist secret
+_TAIL = "-----END RSA PRIVATE" + " KEY-----"  # pragma: allowlist secret
+_FIRST = "\n".join([_HEAD, *_BODY6[:3]])
+_SECOND = "\n".join([*_BODY6[3:], _TAIL])
+
+
+def _no_key_line_uploaded(out: Path) -> None:
+    uploaded = _every_upload(out)
+    for part in [_HEAD, *_BODY6, _TAIL]:
+        assert part not in uploaded
+    assert json.loads((out / "results.json").read_text())["pass"] is False
+
+
+def test_a_key_split_across_two_files_is_withheld_whole(tmp_path: Path) -> None:
+    _job_tree(tmp_path / "artifacts")
+    out = _out_with_results(tmp_path)
+    (out / "job-logs").mkdir()
+    (out / "job-logs" / "api.log").write_text("start\n" + _FIRST + "\n")
+    (out / "job-logs" / "serve.log").write_text(_SECOND + "\nend\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert {"job-logs/api.log", "job-logs/serve.log"} <= set(result["withheld"])
     assert "archive" not in result
-    assert not (tmp_path / "out" / "job.tar.gz").exists()
-    refused = " ".join(result["refused"])
-    assert "collector/output.json: Basic Auth Credentials at line 1" in refused
-    assert "assignment/v1/assignment.json: Secret Keyword at line 1" in refused
-    assert "hunter2pw" not in refused  # a finding never repeats the value
+    _no_key_line_uploaded(out)
+
+
+def test_a_key_split_across_two_transcript_lines_is_withheld(tmp_path: Path) -> None:
+    _job_tree(tmp_path / "artifacts")
+    out = _out_with_results(tmp_path)
+    chunks = [{"tool_result": {"content": _FIRST + "\n"}}, {"tool_result": {"content": _SECOND}}]
+    (out / "transcript.jsonl").write_text("".join(json.dumps(c) + "\n" for c in chunks))
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "transcript.jsonl" in result["withheld"] and "archive" not in result
+    _no_key_line_uploaded(out)
+
+
+def test_a_key_split_between_the_archive_and_the_transcript_is_withheld(tmp_path: Path) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        json.dumps({"tls": {"key": _FIRST}}, indent=2)
+    )
+    out = _out_with_results(tmp_path)
+    (out / "transcript.jsonl").write_text(json.dumps({"content": _SECOND}) + "\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "archive" not in result and "transcript.jsonl" in result["withheld"]
+    _no_key_line_uploaded(out)
+
+
+def test_a_file_that_is_not_utf8_is_withheld(tmp_path: Path) -> None:
+    out = _out_with_results(tmp_path)
+    (out / "job-logs").mkdir()
+    (out / "job-logs" / "api.log").write_bytes(b"ok\n\xe2\x86 8.8.8.8\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert result["withheld"] == ["job-logs/api.log"] and not (out / "job-logs/api.log").exists()
+    manifest = json.loads((out / "job.findings.json").read_text())
+    assert manifest["findings"] == [
+        {"file": "job-logs/api.log", "line": None, "type": "not valid UTF-8"}
+    ]
+
+
+def test_a_transcript_cut_mid_character_is_trimmed_to_its_last_whole_line(tmp_path: Path) -> None:
+    out = _out_with_results(tmp_path)
+    whole = json.dumps({"text": "from 8.8.4.4 → ok"}) + "\n"
+    (out / "transcript.jsonl").write_bytes(whole.encode() + '{"text": "→'.encode()[:-1])
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    lines = (out / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line) for line in lines] == [{"text": "from [REDACTED:public-ip-ipv4] → ok"}]
+
+
+def test_copy_tail_starts_on_a_character_boundary(tmp_path: Path) -> None:
+    src = tmp_path / "big.log"
+    src.write_bytes(("→" * 50).encode())  # 150 bytes, 3 per character
+    dest = tmp_path / "out.log"
+    run._copy_tail(src, dest, max_bytes=100)  # 100 is not a multiple of 3
+    text = dest.read_bytes().decode("utf-8")
+    assert text.endswith("→" * 33)
+
+
+def test_every_text_file_gets_the_key_value_checks(tmp_path: Path) -> None:
+    out = _out_with_results(tmp_path)
+    fake = "Zk3vLmP0aB7c" + "W2rT8nE5q9"
+    write = {"password": _PW + "x", "session" + "_token": fake}
+    (out / "transcript.jsonl").write_text(json.dumps({"tool_input": write}) + "\n")
+    (out / "notes.md").write_text("| password | " + _PW + "x |\n")
+    (out / "results.json").write_text(json.dumps({"pass": True, "error": "host 8.8.8.8"}))
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    uploaded = _every_upload(out)
+    assert _PW not in uploaded and "W2rT8nE5q9" not in uploaded and "8.8.8.8" not in uploaded
+    kinds = {
+        (f["file"], f["type"])
+        for f in json.loads((out / "job.findings.json").read_text())["findings"]
+    }
+    assert {("notes.md", "password value"), ("results.json", "Public IP (ipv4)")} <= kinds
+    assert ("transcript.jsonl", "token value") in kinds
+
+
+def test_a_redaction_that_would_break_json_withholds_the_file(tmp_path: Path, monkeypatch) -> None:
+    from ci.llm import private_scan
+
+    out = _out_with_results(tmp_path)
+    (out / "summary.json").write_text('{"ip": "8.8.8.8"}')
+    monkeypatch.setattr(private_scan, "redaction_marker", lambda kind: '"broken')
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "summary.json" in result["withheld"] and not (out / "summary.json").exists()
+
+
+@pytest.mark.passes_on_main
+def test_a_clean_run_keeps_its_binary_uploads(tmp_path: Path) -> None:
+    _job_tree(tmp_path / "artifacts")
+    out = _out_with_results(tmp_path)
+    (out / "pw-ui").mkdir()
+    (out / "pw-ui" / "trace.zip").write_bytes(b"PK\x03\x04 binary")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "findings" not in result and (out / "pw-ui" / "trace.zip").exists()
+
+
+def test_a_scan_crash_withholds_every_upload_and_fails_the_run(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out = _out_with_results(tmp_path)
+    (out / "transcript.jsonl").write_text('{"ip": "8.8.8.8"}\n')
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("would repeat a value")
+
+    monkeypatch.setattr(run, "collect_job", boom)
+    with pytest.raises(SystemExit) as exit_info:
+        run.main(["collect-job", "--artifact-root", str(tmp_path / "a"), "--out", str(out)])
+    assert exit_info.value.code == 1
+    assert sorted(p.name for p in out.rglob("*") if p.is_file()) == ["results.json"]
+    row = json.loads((out / "results.json").read_text())
+    assert row["pass"] is False and "RuntimeError" in row["error"]
+    printed = capsys.readouterr().out
+    assert "would repeat" not in printed and "RuntimeError" in printed
+
+
+def test_e2e_llm_withholds_every_upload_when_the_scan_fails() -> None:
+    text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    trap = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]
+    call = trap[trap.index("if ! uv run python ci/llm/run.py collect-job") :]
+    branch = call[: call.index("fi\n")]
+    assert 'find "$OUT" \\( -type f -o -type l \\)' in branch
+    assert "-delete" in branch and "rc=1" in branch
+    assert "|| true" not in call[: call.index("job-logs/collect-job.json")]
+
+
+@pytest.mark.passes_on_main
+def test_collect_job_with_no_finding_writes_no_manifest_and_leaves_results_alone(
+    tmp_path: Path,
+) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    (job / "collector" / "output.json").write_text(
+        '{"ip": "203.0.113.4", "token": "<token>", "email": "user@example.com"}'
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "results.json").write_text('{"pass": true}')
+    (out / "transcript.jsonl").write_text('{"ok": "198.51.100.7"}\n')
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "findings" not in result and "manifest" not in result
+    assert not (out / "job.findings.json").exists()
+    assert json.loads((out / "results.json").read_text()) == {"pass": True}
+
+
+def test_e2e_llm_writes_the_fallback_results_before_it_collects_and_fails_on_a_finding() -> None:
+    text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    trap = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]
+    collect = trap.index("run.py collect-job")
+    assert trap.index('if [ ! -s "$OUT/results.json" ]') < collect
+    assert '"$OUT/job.findings.json"' in text[: text.index("on_exit() {")]
+    after = trap[collect:]
+    found = after.index('if [ -s "$OUT/job.findings.json" ]')
+    assert "rc=1" in after[found : found + 200]
 
 
 def test_collect_job_lists_a_file_left_out_for_its_size(tmp_path: Path, monkeypatch) -> None:
@@ -2953,3 +3274,79 @@ def test_check_model_matches_the_same_model_under_another_id(
 def test_check_model_fails_on_a_different_model(tmp_path: Path, used: str, expected: str) -> None:
     path = _model_transcript(tmp_path, used, {})
     assert run.check_model(run.iter_jsonl(path), expected) == (False, used)
+
+
+def test_collect_job_deletes_a_symlink_in_the_output_folder(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("8.8.8.8\n")
+    out = _out_with_results(tmp_path)
+    (out / "link.txt").symlink_to(outside / "secret.txt")
+    (out / "linked-dir").symlink_to(outside, target_is_directory=True)
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert not (out / "link.txt").is_symlink() and not (out / "linked-dir").is_symlink()
+    assert (outside / "secret.txt").read_text() == "8.8.8.8\n"  # the target is untouched
+
+
+def test_a_signature_field_is_scanned_everywhere_but_a_transcripts_thinking_items(
+    tmp_path: Path,
+) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    blob = "".join(f"Ab{i}Zk3vLmP0" for i in range(30))
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(
+        json.dumps({"signature": blob})
+    )
+    out = _out_with_results(tmp_path)
+    thinking = {"message": {"content": [{"type": "thinking", "thinking": "", "signature": blob}]}}
+    (out / "transcript.jsonl").write_text(json.dumps(thinking) + "\n")
+    (out / "notes.md").write_text(json.dumps({"signature": blob}) + "\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "archive" not in result and "notes.md" in result["withheld"]
+    assert (out / "transcript.jsonl").exists() and "transcript.jsonl" not in result["withheld"]
+
+
+def test_the_manifest_names_the_key_of_a_key_value_finding_never_its_value(tmp_path: Path) -> None:
+    job = _job_tree(tmp_path / "artifacts")
+    real = "Zk3vLmP0aB7c" + "W2rT8nE5q9"
+    (job / "assignment" / "v1" / "assignment.json").write_text(
+        json.dumps({"doc": {"reset_token": real, "n": 1}}, indent=2)
+    )
+    out = _out_with_results(tmp_path)
+    run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    manifest = (out / "job.findings.json").read_text()
+    entry = json.loads(manifest)["findings"][0]
+    assert entry == {
+        "file": "job.tar.gz:assignment/v1/assignment.json",
+        "line": 3,
+        "type": "token value",
+        "key": "reset_token",
+    }
+    assert real not in manifest and real not in _every_upload(out)
+
+
+@pytest.mark.passes_on_main  # main never flagged it; 76a4cc79 withheld it
+def test_the_mirror_runs_documentdb_shape_is_no_finding_and_keeps_the_archive(
+    tmp_path: Path,
+) -> None:
+    """#2053's discourse e2e-llm run: a sample document with a per-token rate (a
+    number) under ``credits_per_token``. The pushed scanner flagged it, then its own
+    unquoted marker broke the JSON, withholding the archive and the transcript."""
+    job = _job_tree(tmp_path / "artifacts")
+    design = {
+        "collections": [
+            {
+                "collection_name": "ai_credit_rates",
+                "document_examples": [
+                    {"_id": "<id>", "credits_per_token": 0.5, "reset_token": "<token>"}
+                ],
+            }
+        ]
+    }
+    text = json.dumps(design, indent=2)
+    (job / "schema-aurora_mysql" / "v2" / "schema_output.json").write_text(text)
+    out = _out_with_results(tmp_path)
+    write = {"type": "tool_use", "name": "Write", "input": {"content": text}}
+    (out / "transcript.jsonl").write_text(json.dumps({"message": {"content": [write]}}) + "\n")
+    result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
+    assert "findings" not in result and result["archive"]
+    assert (out / "transcript.jsonl").exists()
