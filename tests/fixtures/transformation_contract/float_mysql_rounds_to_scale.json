@@ -1,0 +1,155 @@
+{
+  "dialect": "mysql",
+  "engine": "aurora_mysql",
+  "seed": 5,
+  "tables": [
+    {
+      "table_id": "shop.readings",
+      "table_name": "readings",
+      "schema_name": "shop",
+      "row_count": 6,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "int",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "temp",
+          "ordinal_position": 2,
+          "data_type": "double",
+          "normalized_data_type": "floating_point",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null,
+          "min_value": "-0.006",
+          "max_value": "99999.996"
+        },
+        {
+          "column_name": "ratio",
+          "ordinal_position": 3,
+          "data_type": "double",
+          "normalized_data_type": "floating_point",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "shop.readings",
+      "target_table": "readings",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "int",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.readings",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "temp",
+          "target_column": "temp",
+          "target_type": "float(7,2)",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "shop.readings",
+              "column": "temp"
+            },
+            "function": "cast",
+            "from_type": "double",
+            "to_type": "float(7,2)"
+          }
+        },
+        {
+          "source_column": "ratio",
+          "target_column": "ratio",
+          "target_type": "double",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "shop.readings",
+              "column": "ratio"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "8e48b9ea5c47c7d1e3ce20c34adff0ad1b17999a7b547280fa8559eca11b10e1",
+  "expected": {
+    "shop.readings": {
+      "rows": [
+        {
+          "id": "1",
+          "temp": "-0.01",
+          "ratio": "715.996"
+        },
+        {
+          "id": "2",
+          "temp": null,
+          "ratio": "200.491"
+        },
+        {
+          "id": "3",
+          "temp": "36699.99",
+          "ratio": "183.675"
+        },
+        {
+          "id": "4",
+          "temp": "6499.99",
+          "ratio": "194.093"
+        },
+        {
+          "id": "5",
+          "temp": null,
+          "ratio": "981.135"
+        },
+        {
+          "id": "6",
+          "temp": "44999.99",
+          "ratio": "708.889"
+        }
+      ],
+      "cast_failures": [
+        [
+          "temp",
+          "99999.996",
+          "float(7,2)"
+        ]
+      ],
+      "unchecked": []
+    }
+  }
+}

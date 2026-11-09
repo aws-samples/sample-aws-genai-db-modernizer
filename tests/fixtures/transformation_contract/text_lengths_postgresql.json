@@ -1,0 +1,180 @@
+{
+  "dialect": "postgresql",
+  "engine": "aurora_postgresql",
+  "seed": 2,
+  "tables": [
+    {
+      "table_id": "public.users",
+      "table_name": "users",
+      "schema_name": "public",
+      "row_count": 5,
+      "primary_key": [
+        "id"
+      ],
+      "columns": [
+        {
+          "column_name": "id",
+          "ordinal_position": 1,
+          "data_type": "integer",
+          "normalized_data_type": "integer",
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "code",
+          "ordinal_position": 2,
+          "data_type": "character varying(4)",
+          "normalized_data_type": "string",
+          "max_length": 4,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": false,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "name",
+          "ordinal_position": 3,
+          "data_type": "character varying(8)",
+          "normalized_data_type": "string",
+          "max_length": 8,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        },
+        {
+          "column_name": "span",
+          "ordinal_position": 4,
+          "data_type": "interval",
+          "normalized_data_type": null,
+          "max_length": null,
+          "numeric_precision": null,
+          "numeric_scale": null,
+          "nullable": true,
+          "default_value": null,
+          "is_auto_increment": false,
+          "cardinality": null
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "input_schema": "collector",
+      "source_table": "public.users",
+      "target_table": "users",
+      "primary_key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "source_column": "id",
+          "target_column": "id",
+          "target_type": "integer",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "public.users",
+              "column": "id"
+            }
+          }
+        },
+        {
+          "source_column": "code",
+          "target_column": "code",
+          "target_type": "character(6)",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "public.users",
+              "column": "code"
+            }
+          }
+        },
+        {
+          "source_column": "name",
+          "target_column": "name",
+          "target_type": "character varying(7)",
+          "op": {
+            "op": "transform",
+            "column": {
+              "table_id": "public.users",
+              "column": "name"
+            },
+            "function": "cast",
+            "from_type": "character varying(8)",
+            "to_type": "character varying(7)"
+          }
+        },
+        {
+          "source_column": "span",
+          "target_column": "span",
+          "target_type": "interval",
+          "op": {
+            "op": "copy",
+            "column": {
+              "table_id": "public.users",
+              "column": "span"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "input_sha256": "4d45980876598a95dd819c20809b51a7fabedf00c05ebfda61864bf6592b43d0",
+  "expected": {
+    "public.users": {
+      "rows": [
+        {
+          "id": "1",
+          "code": "𝄞𝄞𝄞𝄞  ",
+          "name": "s0-2612",
+          "span": "v0"
+        },
+        {
+          "id": "2",
+          "code": "s1-7  ",
+          "name": null,
+          "span": "v1"
+        },
+        {
+          "id": "3",
+          "code": "s2-7  ",
+          "name": "s2-7579",
+          "span": "v2"
+        },
+        {
+          "id": "4",
+          "code": "s3-3  ",
+          "name": "s3-5438",
+          "span": "v3"
+        },
+        {
+          "id": "5",
+          "code": "s4-6  ",
+          "name": null,
+          "span": null
+        }
+      ],
+      "cast_failures": [
+        [
+          "name",
+          "𝄞𝄞𝄞𝄞𝄞𝄞𝄞𝄞",
+          "character varying(7)"
+        ]
+      ],
+      "unchecked": [
+        "span"
+      ]
+    }
+  }
+}
