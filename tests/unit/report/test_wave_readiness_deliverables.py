@@ -163,7 +163,14 @@ def _old(report: dict[str, Any]) -> dict[str, Any]:
     """The same report as synthesis wrote it before the check."""
     old = copy.deepcopy(report)
     for w in old["facts"]["waves"]:
-        for key in ("readiness", "suggested", "holds", "next_steps", "readiness_line"):
+        for key in (
+            "readiness",
+            "suggested",
+            "holds",
+            "next_steps",
+            "readiness_line",
+            "readiness_line_short",
+        ):
             w.pop(key, None)
     brief = old["facts"]["executive_brief"]
     brief.pop("held_waves", None)

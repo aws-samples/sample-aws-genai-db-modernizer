@@ -107,7 +107,10 @@ def test_every_deliverable_states_the_warnings_to_accept() -> None:
     report = _designed(SMOKE_TRACE)
     line = report["facts"]["waves"][0]["readiness_line"]
     assert f"- Readiness: {line}" in md_plain(render_engineering_report_md(report))
-    assert f"Readiness: {line}" in " ".join(executive_text(report).split())
+    # The executive report counts them and points to the engineering report (#2075).
+    short = report["facts"]["waves"][0]["readiness_line_short"]
+    assert short.startswith("Suggested, with 2 design review warnings to accept (listed in")
+    assert f"Readiness: {short}" in " ".join(executive_text(report).split())
     chat = md_plain(
         render_final_summary(
             report, database_name="shop", job_id="j", deliverables_dir="d/", deliverables=[]
@@ -202,3 +205,136 @@ def test_an_older_trace_with_no_severities_still_holds_when_not_approved() -> No
     for w in report["facts"]["waves"]:
         w.pop("review_warnings", None)
     assert all(w.review_warnings == [] for w in ReportFacts.model_validate(report["facts"]).waves)
+
+
+# -- the executive report names no collected table (#2075) ---------------------------
+
+# The WordPress shape the mirror e2e-llm run on PR #2070 printed: each warning names a
+# collected table and its columns.
+WP_WARNINGS = [
+    {
+        "category": "schema",
+        "target": "wordpress.wp_posts",
+        "change": "Drop the unused columns comment_count, comment_status, guid",
+    },
+    {
+        "category": "indexing",
+        "target": "wordpress.wp_postmeta",
+        "change": "Add a composite index on (post_id, meta_key)",
+    },
+]
+WP_COLLECTOR = {
+    "database_schema": {
+        "tables": [
+            {
+                "table_id": "wordpress.wp_posts",
+                "table_name": "wp_posts",
+                "schema_name": "wordpress",
+                "columns": [
+                    {"column_name": c} for c in ("comment_count", "comment_status", "guid")
+                ],
+            },
+            {
+                "table_id": "wordpress.wp_postmeta",
+                "table_name": "wp_postmeta",
+                "schema_name": "wordpress",
+                "columns": [{"column_name": c} for c in ("post_id", "meta_key")],
+            },
+        ]
+    }
+}
+WP_NAMES = {"wp_posts", "wordpress.wp_posts", "comment_count", "comment_status", "guid"}
+WP_NAMES |= {"wp_postmeta", "wordpress.wp_postmeta", "post_id", "meta_key"}
+
+
+def _executive_text(report: dict[str, Any]) -> str:
+    from src.report.executive_report import collected_identifiers, render_executive_report_pdf
+    from tests.executive_pdf import body_text
+
+    pdf = render_executive_report_pdf(report, collected_identifiers(WP_COLLECTOR))
+    return " ".join(body_text(pdf, "shop").split())
+
+
+def test_the_executive_report_counts_the_warnings_and_names_no_table() -> None:
+    from tests.executive_pdf import collected_table_names, table_name_hits
+
+    report = _designed(_review(0, WP_WARNINGS))
+    text = _executive_text(report)
+    assert collected_table_names(WP_COLLECTOR) == WP_NAMES
+    assert table_name_hits(text, WP_NAMES) == []
+    one = report["facts"]["waves"][0]
+    ReportFacts.model_validate(report["facts"])
+    assert one["readiness_line_short"] == (
+        "Suggested, with 2 design review warnings to accept (listed in the engineering "
+        "report). If you do not accept them: revise the Aurora MySQL schema design in your "
+        "modernization session and review it again."
+    )
+    assert f"Readiness: {one['readiness_line_short']}" in text
+    # The engineering report, the chat summary and the facts keep the full list.
+    assert "wordpress.wp_posts" in one["readiness_line"] and "guid" in one["readiness_line"]
+    engineering = md_plain(render_engineering_report_md(report))
+    assert f"- Readiness: {one['readiness_line']}" in engineering
+    assert {"wordpress.wp_posts", "comment_count", "wordpress.wp_postmeta", "meta_key"} <= {
+        n for n in WP_NAMES if n in engineering
+    }
+    chat = md_plain(
+        render_final_summary(
+            report, database_name="shop", job_id="j", deliverables_dir="d/", deliverables=[]
+        )
+    )
+    assert f"- Wave 1: {one['readiness_line']}" in chat
+
+
+def test_a_failed_redesign_reason_stays_out_of_the_executive_report() -> None:
+    """A held wave's note quotes a failed round's reason, free text that can name a
+    table: the executive report states only that the round failed."""
+    report = _report("HIGH")
+    report["wave_redesign"] = {
+        "rounds": [
+            {
+                "round": 1,
+                "engines": ["dynamodb"],
+                "outcome": {"dynamodb": "failed"},
+                "failed": {
+                    "dynamodb": "redesign round 1 failed: the designer stopped on "
+                    "wordpress.wp_posts.guid"
+                },
+            }
+        ]
+    }
+    report["facts"] = compute_report_facts(report)
+    text = _executive_text(report)
+    assert table_name_hits_none(text)
+    two = report["facts"]["waves"][1]
+    assert two["readiness"] == "held"
+    assert "wordpress.wp_posts.guid" in two["readiness_line"]
+    assert two["readiness_line_short"].startswith(
+        "Not suggested yet (redesigned once, still held) (redesign round 1 failed; the "
+        "earlier design is kept): an open high risk on DynamoDB"
+    )
+    assert f"Readiness: {two['readiness_line_short']}" in text
+
+
+def table_name_hits_none(text: str) -> bool:
+    from tests.executive_pdf import table_name_hits
+
+    return table_name_hits(text, WP_NAMES) == []
+
+
+def test_a_wave_with_nothing_to_shorten_reads_the_same_in_both_lines() -> None:
+    report = _designed(_review(0, []))
+    for w in report["facts"]["waves"]:
+        assert w["readiness_line_short"] == w["readiness_line"]
+
+
+def test_a_stored_block_from_before_the_short_line_gets_it_from_the_same_function() -> None:
+    """A report.json written between #2051 and #2075 has no short line: the renderer
+    reads it computed again from the same report, never the full warning text."""
+    from src.report.facts import report_facts
+
+    report = _designed(_review(0, WP_WARNINGS))
+    expected = [w["readiness_line_short"] for w in report["facts"]["waves"]]
+    for w in report["facts"]["waves"]:
+        w.pop("readiness_line_short")
+    assert [w["readiness_line_short"] for w in report_facts(report)["waves"]] == expected
+    assert table_name_hits_none(_executive_text(report))
