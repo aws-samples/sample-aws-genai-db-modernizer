@@ -21,6 +21,8 @@ Version History:
 - 1.2 (2026-11-08, #2042): A ``table`` exception's reason starts ``not validated: `` and
   says which key limit applies (no primary or unique key, a unique index that allows
   NULLs, a key column type DMS cannot validate on); a view keeps the fixed reason.
+- 1.3 (2026-11-09, #1947): Added the ``routines`` check id, after load, lag and parity
+  for a contract with a routines section.
 """
 
 from datetime import datetime
@@ -32,14 +34,17 @@ GateStatus = Literal["pass", "pending", "fail"]
 NOT_VALIDATED_PREFIX = "not validated: "
 NOT_VALIDATED = f"{NOT_VALIDATED_PREFIX}no primary or unique key"
 _ORDER = ("load", "lag", "parity")
+# A contract with a routines section (#1947) adds the routines check after the three.
+_ORDER_WITH_ROUTINES = (*_ORDER, "routines")
 _STATUS_ORDER = ("pass", "pending", "fail")  # best to worst
 
 
 class GateCheck(BaseModel):
-    """One of the three checks the gate runs."""
+    """One of the checks the gate runs: load, lag, parity and, for a contract with a
+    routines section, routines (#1947)."""
 
-    id: Literal["load", "lag", "parity"] = Field(
-        ..., description="Which check: load, lag or parity"
+    id: Literal["load", "lag", "parity", "routines"] = Field(
+        ..., description="Which check: load, lag, parity or routines"
     )
     status: GateStatus = Field(..., description="pass, pending (not yet decidable) or fail")
     summary: str = Field(..., min_length=1, description="One plain line a customer can read")
@@ -112,7 +117,7 @@ class DmsGate(BaseModel):
     """Step 1's gate result (#1800)."""
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(..., description="The assessment job")
     database_name: str = Field(..., description="The source database")
@@ -130,21 +135,24 @@ class DmsGate(BaseModel):
     contract_sha256: str = Field(
         ..., pattern=r"^[0-9a-f]{64}$", description="SHA-256 of the contract file the stack runs"
     )
-    status: GateStatus = Field(..., description="The worst of the three checks")
+    status: GateStatus = Field(..., description="The worst of the checks")
     cutover_decision: Literal["customer"] = Field(
         "customer", description="Who decides the cutover: always the customer"
     )
     cutover_message_id: str = Field(
         ..., min_length=1, description="Id of the fixed cutover message"
     )
-    checks: list[GateCheck] = Field(..., description="load, lag and parity, in that order")
+    checks: list[GateCheck] = Field(
+        ...,
+        description="load, lag and parity, in that order, then routines when the contract has them",
+    )
     tables: list[GateTable] = Field(default_factory=list, description="Sorted by table")
     exceptions: list[GateException] = Field(default_factory=list, description="Sorted by table")
 
     @model_validator(mode="after")
     def _consistent(self) -> "DmsGate":
-        if tuple(c.id for c in self.checks) != _ORDER:
-            raise ValueError(f"checks must be {_ORDER}, in order")
+        if tuple(c.id for c in self.checks) not in (_ORDER, _ORDER_WITH_ROUTINES):
+            raise ValueError(f"checks must be {_ORDER}, in order, then optionally routines")
         worst = max((c.status for c in self.checks), key=_STATUS_ORDER.index)
         if self.status != worst:
             raise ValueError(f"status {self.status} disagrees with the checks ({worst})")

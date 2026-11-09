@@ -5,7 +5,7 @@
 
 On demand, as often as needed, read-only: the stack's ``ReplicationTaskArn`` output
 (CloudFormation), the task, its tags and table statistics (DMS), and its CDC latency
-(CloudWatch). Three checks:
+(CloudWatch). Three checks, and a fourth for a contract with a routines section:
 
 - **load**: the task runs in CDC (``running``, full load at 100%), every contract table is
   in the table statistics without errors, and the task carries this contract's hash tag;
@@ -15,7 +15,10 @@ On demand, as often as needed, read-only: the stack's ``ReplicationTaskArn`` out
   validating keeps the gate ``pending``; a validation failure fails it. Tables whose key DMS
   cannot validate on (none, a unique index that allows NULLs, a LOB or unbounded key column:
   the contract's key rule, ``validation_key``, #2042) and views are named exceptions, with
-  their DMS row counts and the reason.
+  their DMS row counts and the reason;
+- **routines** (#1947): every routine step 1 carries is confirmed by the customer's run of
+  the read-only check script (``routines-check.json``, read locally, never from the
+  databases); a routine step 1 does not carry fails it, named, as a mismatch does.
 
 The result, ``pass``, ``pending`` or ``fail``, goes to ``data-movement/step-1/gate.json``
 with ``cutover_decision: "customer"`` and the fixed cutover message's id: the gate never
@@ -39,6 +42,8 @@ from src.contracts.dms_gate import (
     GateStatus,
     GateTable,
 )
+from src.contracts.routine_check import STATIC_LABEL, RoutineCheckResult
+from src.shared.contract_versioning import load_contract
 from src.shared.cutover_message import CUTOVER_MESSAGE_ID
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.data_movement.dms_step import (
@@ -110,7 +115,7 @@ def _worst(statuses: list[GateStatus]) -> GateStatus:
 
 
 def _check(
-    check_id: Literal["load", "lag", "parity"],
+    check_id: Literal["load", "lag", "parity", "routines"],
     reasons: list[tuple[GateStatus, str]],
     summary: str,
     evidence: Mapping[str, Any],
@@ -474,8 +479,59 @@ def parity_check(
     return check, tables, exceptions
 
 
+ROUTINES_NAMED = 50  # the routines check names this many, then counts the rest
+ROUTINES_CHECK_FILE = "routines-check.json"
+
+
+def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> GateCheck | None:
+    """The routines check (#1947), for a contract with a routines section (None without
+    one: a contract written before it): ``fail`` for a routine step 1 does not carry or
+    one the customer's check output does not confirm, each named; ``pending`` until that
+    output was read for this contract; ``pass`` when every carried routine is confirmed,
+    or the collection has none. Checked, not load-tested (no load-and-run proof yet)."""
+    section = inputs.contract.routines
+    if section is None:
+        return None
+    reasons: list[tuple[GateStatus, str]] = [
+        ("fail", f"routines: {r.kind} {r.routine_id}: not carried: {', '.join(r.reasons)}")
+        for r in section.routines
+        if r.carry == "not_carried"
+    ]
+    to_check = section.carried + section.deferred
+    confirmed = 0
+    if to_check and result is None:
+        reasons.append(("pending", "routines: the check output has not been read yet: run "
+                        "routines-check.sql on Aurora, then run_dms_step.py routines-check"))  # fmt: skip
+    elif to_check and result is not None and result.contract_sha256 != inputs.contract_sha256:
+        reasons.append(("pending", "routines: the check output was read for another step "
+                        "contract: run run_dms_step.py routines and the new scripts again"))  # fmt: skip
+    elif result is not None:
+        confirmed = result.confirmed
+        reasons += [("fail", f"routines: {m.kind} {m.routine_id}: {m.problem.replace('_', ' ')}")
+                    for m in result.mismatches]  # fmt: skip
+    if len(reasons) > ROUTINES_NAMED:
+        worst = _worst([s for s, _ in reasons])
+        rest = len(reasons) - ROUTINES_NAMED
+        reasons = [*reasons[:ROUTINES_NAMED],
+                   (worst, f"routines: and {rest} more (the step contract and "
+                    f"{ROUTINES_CHECK_FILE} name each one)")]  # fmt: skip
+    summary = (
+        "routines: none in the collection" if section.total == 0
+        else f"routines: {confirmed} of {section.carried} carried routines confirmed, "
+        f"{section.not_carried} not carried, {section.deferred} left to cutover; {STATIC_LABEL}"
+    )  # fmt: skip
+    return _check("routines", reasons, summary, {
+        "carried": section.carried, "confirmed": confirmed, "not_carried": section.not_carried,
+        "deferred": section.deferred, "proof": "static", "label": STATIC_LABEL})  # fmt: skip
+
+
 def run_gate(
-    inputs: Step1Inputs, request: GateRequest, clients: GateClients, *, now: datetime
+    inputs: Step1Inputs,
+    request: GateRequest,
+    clients: GateClients,
+    *,
+    now: datetime,
+    routines: RoutineCheckResult | None = None,
 ) -> DmsGate:
     view = read_task(clients, request, now=now)
     max_lag = inputs.plan.gates.max_lag_seconds
@@ -485,6 +541,9 @@ def run_gate(
         lag_check(view, max_lag, request.window_minutes, request.stale_seconds),
         parity,
     ]
+    routine_check = routines_check(inputs, routines)
+    if routine_check is not None:
+        checks.append(routine_check)
     status = _worst([c.status for c in checks])
     return DmsGate(
         job_id=inputs.plan.job_id, database_name=inputs.plan.database_name, region=request.region,
@@ -498,7 +557,11 @@ def run_gate(
 def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: GateClients, *,
                now: datetime | None = None) -> tuple[str, DmsGate]:  # fmt: skip
     inputs = load_step1(store, db, job_id, with_ddl=False)
-    gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC))
+    routines = None
+    check_key = f"{db}/{job_id}/data-movement/step-1/routines-check.json"
+    if inputs.contract.routines is not None and store.exists(check_key):
+        routines = load_contract(RoutineCheckResult, store.read_json(check_key), artifact=check_key)
+    gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines)
     path = f"{db}/{job_id}/data-movement/step-1/gate.json"
     store.write_json(path, gate.model_dump(mode="json"))
     return path, gate

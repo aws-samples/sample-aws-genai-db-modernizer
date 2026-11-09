@@ -1428,6 +1428,10 @@ def not_moved(inputs: Step1Inputs) -> list[NotMoved]:
         count = None if objects is None else int(getattr(objects, kind))
         note = ("not known: the collection was not read" if count is None
                 else "recreate them on Aurora yourself" if count else "none in the collection")  # fmt: skip
+        section = inputs.contract.routines
+        if count and kind != "views" and section is not None and section.carried:
+            note = ("after the full load, /move writes routines-deploy.sql for the routines step 1 "
+                    "carries (its routines section names the rest); you run it")  # fmt: skip
         out.append(NotMoved(kind, count, note))
     if inputs.plan.source.engine in ("mysql", "mariadb"):
         out.append(NotMoved("events", None, "not in the collection: list them on the source with "
