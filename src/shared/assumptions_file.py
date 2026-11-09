@@ -30,7 +30,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.shared.assumptions import SETTABLE, check_value
+from src.shared.assumptions import SETTABLE, check_value, range_text
 
 #: The file's keys, by the key each is recorded under.
 FILE_KEYS: dict[str, str] = {name: key for key, (name, *_) in SETTABLE.items()}
@@ -80,45 +80,61 @@ def read_assumptions_file(path: str | Path) -> AssumptionsFile:
         raise AssumptionsFileError(
             f"the file cannot be read ({exc.strerror or type(exc).__name__})"
         ) from None
+    return parse_assumptions(raw)
+
+
+def parse_assumptions(
+    raw: bytes, *, subject: str = "the file", echo: bool = True
+) -> AssumptionsFile:
+    """The assumptions ``raw`` (an assumptions file's bytes) sets, checked, by the file's
+    rules: the one check the file and the UI's settings panel (``subject`` "the request",
+    #1991) share. AssumptionsFileError saying why if not; it never carries ``raw``.
+    With ``echo`` False (the API, #1991 review) a refusal names only the field, never a
+    key or a value the caller sent."""
     if len(raw) > MAX_FILE_BYTES:
-        raise AssumptionsFileError(f"the file is larger than {MAX_FILE_BYTES // 1024} KiB")
+        raise AssumptionsFileError(f"{subject} is larger than {MAX_FILE_BYTES // 1024} KiB")
     try:
         # utf-8-sig: an editor's byte order mark (Notepad, PowerShell) is no character.
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        raise AssumptionsFileError("the file is not UTF-8 text") from None
+        raise AssumptionsFileError(f"{subject} is not UTF-8 text") from None
     try:
         data = json.loads(
             text, object_pairs_hook=_no_duplicates, parse_constant=lambda _: _NotFinite()
         )
     except AssumptionsFileError:
+        if not echo:
+            raise AssumptionsFileError(f"{subject} sets a key more than once") from None
         raise
     except ValueError as exc:
         raise AssumptionsFileError(
-            f"the file is not valid JSON (line {getattr(exc, 'lineno', '?')})"
+            f"{subject} is not valid JSON (line {getattr(exc, 'lineno', '?')})"
         ) from None
     if not isinstance(data, dict):
-        raise AssumptionsFileError('the file must hold a JSON object, such as {"growth": 3}')
+        raise AssumptionsFileError(f'{subject} must hold a JSON object, such as {{"growth": 3}}')
     if not data:
         raise AssumptionsFileError(
-            f"the file sets no assumption (it may set: {', '.join(FILE_KEYS)})"
+            f"{subject} sets no assumption (it may set: {', '.join(FILE_KEYS)})"
         )
     values: dict[str, float] = {}
     for name, value in data.items():
         if name in COLLECTED_KEYS:
             raise AssumptionsFileError(
-                f"{name} is collected from the source or the price table, not set by a file "
-                f"(it may set: {', '.join(FILE_KEYS)})"
+                f"{name} is collected from the source or the price table, not set by "
+                f"{subject} (it may set: {', '.join(FILE_KEYS)})"
             )
         if name not in FILE_KEYS:
-            raise AssumptionsFileError(
-                f"unknown key {_shown(name)} (it may set: {', '.join(FILE_KEYS)})"
-            )
+            what = f"unknown key {_shown(name)}" if echo else f"{subject} has an unknown key"
+            raise AssumptionsFileError(f"{what} (it may set: {', '.join(FILE_KEYS)})")
         if isinstance(value, _NotFinite):
             value = float("nan")
         try:
             values[FILE_KEYS[name]] = check_value(FILE_KEYS[name], value)
         except ValueError as exc:
+            if not echo:
+                raise AssumptionsFileError(
+                    f"{name} must be a number {range_text(FILE_KEYS[name])}"
+                ) from None
             raise AssumptionsFileError(str(exc)) from None
     return AssumptionsFile(values=values, sha256=hashlib.sha256(raw).hexdigest())
 
@@ -129,5 +145,6 @@ __all__ = [
     "MAX_FILE_BYTES",
     "AssumptionsFile",
     "AssumptionsFileError",
+    "parse_assumptions",
     "read_assumptions_file",
 ]

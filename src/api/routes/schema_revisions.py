@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from src.api.dependencies import database_name_param, job_id_param
+from src.api.dependencies import database_name_param, job_id_param, require_json_content_type
 from src.api.services.local_execution import LocalExecutionService
 from src.contracts.schema_revision_models import (
     SchemaConfirmation,
@@ -24,6 +24,7 @@ from src.contracts.schema_revision_models import (
     SchemaVersionMeta,
     VerificationResult,
 )
+from src.orchestrator.job_lock import JobBusyError, job_lock
 from src.shared.contract_versioning import load_contract
 from src.storage.artifact_store import ArtifactStore
 
@@ -292,7 +293,15 @@ async def put_schema_revision(
     return SchemaResponse(schema_output=new_schema, meta=meta)
 
 
-@router.post("/{job_id}/schema/{engine}/confirm", response_model=ConfirmResponse)
+# Both confirm routes take no body, so a cross-site form post could reach them: they
+# need a JSON content type, which a browser sends cross-origin only after a CORS
+# preflight the API grants to its own UI alone (#1991 review). They hold the job's lock
+# (``src.orchestrator.job_lock``) while they write, as ``/resume`` does.
+@router.post(
+    "/{job_id}/schema/{engine}/confirm",
+    response_model=ConfirmResponse,
+    dependencies=[Depends(require_json_content_type)],
+)
 async def confirm_schema(
     engine: str,
     job_id: str = Depends(job_id_param),
@@ -308,12 +317,20 @@ async def confirm_schema(
             detail=f"No schema found for engine '{engine}' — cannot confirm",
         )
 
-    _write_confirmed_json(store, database_name, job_id, engine, latest)
+    try:
+        with job_lock(job_id):
+            _write_confirmed_json(store, database_name, job_id, engine, latest)
+    except JobBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
     return ConfirmResponse(confirmed_version=latest, engine=engine)
 
 
-@router.post("/{job_id}/schema/confirm-all", response_model=ConfirmAllResponse)
+@router.post(
+    "/{job_id}/schema/confirm-all",
+    response_model=ConfirmAllResponse,
+    dependencies=[Depends(require_json_content_type)],
+)
 async def confirm_all_schemas(
     job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
@@ -341,16 +358,20 @@ async def confirm_all_schemas(
         )
 
     confirmed: dict[str, int] = {}
-    for engine in engines:
-        latest = _latest_schema_version(store, database_name, job_id, engine)
-        if latest == 0:
-            # Engine was selected by triage but has no schema yet — skip silently
-            continue
-        _write_confirmed_json(store, database_name, job_id, engine, latest)
-        confirmed[engine] = latest
+    try:
+        with job_lock(job_id):
+            for engine in engines:
+                latest = _latest_schema_version(store, database_name, job_id, engine)
+                if latest == 0:
+                    # Engine was selected by triage but has no schema yet — skip silently
+                    continue
+                _write_confirmed_json(store, database_name, job_id, engine, latest)
+                confirmed[engine] = latest
 
-    # Transition SCHEMA_DESIGN phase to COMPLETED
-    if orchestrator and hasattr(orchestrator, "confirm_schema_design"):
-        orchestrator.confirm_schema_design(job_id)
+            # Transition SCHEMA_DESIGN phase to COMPLETED
+            if orchestrator and hasattr(orchestrator, "confirm_schema_design"):
+                orchestrator.confirm_schema_design(job_id)
+    except JobBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
     return ConfirmAllResponse(confirmed=confirmed)

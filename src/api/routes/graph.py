@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.api.dependencies import job_id_param
+from src.api.dependencies import job_id_param, require_json_content_type
 from src.api.models.graph_responses import (
     CatalogListResponse,
     CatalogRunResponse,
@@ -488,17 +488,6 @@ def require_raw_query_enabled() -> None:
     if os.environ.get(RAW_QUERY_ENV_FLAG) != "1":
         logger.warning("graph endpoint refused: %s is not set to 1", RAW_QUERY_ENV_FLAG)
         raise HTTPException(status_code=403, detail=DISABLED_DETAIL)
-
-
-def require_json_content_type(request: Request) -> None:
-    """Dependency: only accept requests that declare a JSON body.
-
-    Browsers cannot send this content type cross-origin without a CORS
-    preflight, which the API only grants to its own UI origin.
-    """
-    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if media_type != "application/json":
-        raise HTTPException(status_code=415, detail="Content-Type must be application/json.")
 
 
 def raw_query_slot() -> Iterator[None]:

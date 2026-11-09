@@ -30,6 +30,7 @@ from src.contracts.phase_models import (
     PhaseStatus,
 )
 from src.orchestrator.base import Orchestrator, PhasePrerequisiteError, PhaseScope
+from src.orchestrator.job_lock import job_lock
 from src.shared.contract_versioning import load_contract
 from src.shared.progress import in_context
 from src.storage.artifact_store import ArtifactStore
@@ -637,8 +638,13 @@ class LocalOrchestrator(Orchestrator):
 
         Raises PhasePrerequisiteError if any prerequisite is not met. A phase
         this run skips (``_skip_reason``) is recorded SKIPPED with its reason
-        instead of COMPLETED / AWAITING_REVIEW.
+        instead of COMPLETED / AWAITING_REVIEW. Holds the job's lock
+        (``src.orchestrator.job_lock``): JobBusyError when another change runs.
         """
+        with job_lock(job_id):
+            self._resume(job_id, phase, scope)
+
+    def _resume(self, job_id: str, phase: Phase, scope: PhaseScope | None) -> None:
         self._validate_prerequisites(job_id, phase)
 
         # An API-driven resume of this exact phase starting is itself
@@ -688,12 +694,17 @@ class LocalOrchestrator(Orchestrator):
         Used by the local API to allow the UI to trigger phases without
         manually running every intermediate step first.
         """
-        self._auto_complete_prerequisites(job_id, phase)
-        # Delegate to standard resume (prerequisites now satisfied)
-        self.resume(job_id, phase, scope=scope)
+        with job_lock(job_id):
+            self._auto_complete_prerequisites(job_id, phase)
+            # Delegate to standard resume (prerequisites now satisfied)
+            self.resume(job_id, phase, scope=scope)
 
     def confirm_schema_design(self, job_id: str) -> None:
         """Transition SCHEMA_DESIGN to COMPLETED after user confirms all engines."""
+        with job_lock(job_id):
+            self._confirm_schema_design(job_id)
+
+    def _confirm_schema_design(self, job_id: str) -> None:
         progression = self._load_progression(job_id)
         schema_record = progression.phases[Phase.SCHEMA_DESIGN]
 
@@ -705,6 +716,50 @@ class LocalOrchestrator(Orchestrator):
 
         self._set_phase_status(progression, Phase.SCHEMA_DESIGN, PhaseStatus.COMPLETED)
         self._save_progression(progression)
+
+    def prerequisites_met(self, job_id: str, phase: Phase) -> bool:
+        """Whether :meth:`resume` would run ``phase`` now (its prerequisites are met)."""
+        try:
+            self._validate_prerequisites(job_id, phase)
+        except PhasePrerequisiteError:
+            return False
+        return True
+
+    def adopt_finished_job(self, job_id: str, database_name: str) -> list[Phase]:
+        """Record what a finished job made outside this orchestrator already shows
+        (#1991 review): a job the scripts ran (``run_assessment.py``, ``/modernize``) has
+        a synthesis report but no progression past the reality check, so a re-run of
+        synthesis would otherwise re-run the assignment review and schema design first.
+        The report shows those phases ran: the assignment review and synthesis are
+        recorded COMPLETED, schema design COMPLETED when the job has a design, else
+        SKIPPED with the no-model reason, as its own run left it. Runs nothing; returns
+        the phases it recorded (none when the progression already shows them)."""
+        from src.report.deliverables import synthesis_report_key
+
+        try:
+            synthesis_report_key(self.store, database_name, job_id, 0)
+        except FileNotFoundError:
+            return []
+        progression = self._load_progression(job_id)
+        recorded: list[Phase] = []
+        prefix = f"{database_name}/{job_id}/"
+        designed = any(
+            key.startswith(f"{prefix}schema-") and key.endswith("/schema_output.json")
+            for key in self.store.list_prefix(prefix)
+        )
+        for phase in (Phase.ASSIGNMENT_REVIEW, Phase.SCHEMA_DESIGN, Phase.SYNTHESIS):
+            record = progression.phases[phase]
+            if record.status in (PhaseStatus.COMPLETED, PhaseStatus.SKIPPED):
+                continue
+            if phase == Phase.SCHEMA_DESIGN and not designed:
+                record.status = PhaseStatus.SKIPPED
+                record.skip_reason = SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+            else:
+                record.status = PhaseStatus.COMPLETED
+            recorded.append(phase)
+        if recorded:
+            self._save_progression(progression)
+        return recorded
 
     def get_progression(self, job_id: str) -> PhaseProgression:
         """Read progression from the local artifact store."""

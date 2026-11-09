@@ -636,6 +636,8 @@ Version History:
 - 1.86 (2026-11-08, #1991): facts.assumptions items and facts.growth_scenarios take
   origin flag (--growth) or file (the assumptions file); customer stays for other
   writers and older reports
+- 1.87 (2026-11-09, #1991): facts.assumptions items and facts.growth_scenarios take
+  origin ui (the results page's assumptions panel); a report written before still loads
 """
 
 from datetime import datetime
@@ -2211,11 +2213,12 @@ class AssumptionItem(BaseModel):
     setting: float | str | None = Field(
         None, description="Its value (a growth or peak multiple, a region), when it has one"
     )
-    origin: Literal["default", "collected", "customer", "flag", "file"] = Field(
+    origin: Literal["default", "collected", "customer", "flag", "file", "ui"] = Field(
         ...,
         description=(
-            "Where the value comes from: flag (--growth) or file (the assumptions file, "
-            "#1991); customer for any other writer and every report written before #1991"
+            "Where the value comes from: flag (--growth), file (the assumptions file) or "
+            "ui (the results page's assumptions panel, #1991); customer for any other "
+            "writer and every report written before #1991"
         ),
     )
     basis: str | None = Field(
@@ -2252,7 +2255,7 @@ class GrowthScenarioFacts(BaseModel):
     """Growth as a separate scenario (#1990): never in the headline cost or the risks."""
 
     growth: float = Field(..., gt=0, description="The job's growth: 5× unless the customer set it")
-    origin: Literal["default", "customer", "flag", "file"]
+    origin: Literal["default", "customer", "flag", "file", "ui"]
     scenarios: list[GrowthScenarioRow] = Field(default_factory=list)
     busiest_key: dict[str, Any] | None = Field(
         None, description="engine, table_name, gsi_name and operation of the busiest key value"
@@ -3280,7 +3283,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.86",
+        default="1.87",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

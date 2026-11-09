@@ -10,7 +10,12 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import database_name_param, job_id_param, validated_filename
+from src.api.dependencies import (
+    database_name_param,
+    job_id_param,
+    require_json_content_type,
+    validated_filename,
+)
 from src.api.models.requests import (
     DETECT_FROM_FILE,
     AssessmentRequest,
@@ -112,7 +117,9 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
     )
 
 
-@router.post("/{job_id}/uploads/confirm")
+# No body, so a cross-site form post could reach it: it needs a JSON content type, which
+# a browser sends cross-origin only after the CORS preflight (#1991 review).
+@router.post("/{job_id}/uploads/confirm", dependencies=[Depends(require_json_content_type)])
 async def confirm_upload(
     job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),

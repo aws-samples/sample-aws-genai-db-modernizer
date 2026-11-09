@@ -21,6 +21,7 @@ from src.orchestrator.base import (
     PhaseScope,
     TaskTokenNotFoundError,
 )
+from src.orchestrator.job_lock import JobBusyError
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["phases"])
 
@@ -100,6 +101,10 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
     except PhasePrerequisiteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except TaskTokenNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except JobBusyError as exc:
+        # #1991 review: another API-driven change to the job (an assumptions change, a
+        # schema confirm) holds its lock.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except OutOfScopeAssignment as exc:
         # #1328: a pass placed a query outside the customer's engine scope. Since #1329

@@ -271,19 +271,26 @@ class TestPrepareAssessment:
 
 
 class TestConfirmUpload:
+    @pytest.mark.passes_on_main
     def test_confirms_existing_upload(self, mock_services):
         mock_services["s3"].client.head_object.return_value = {"ContentLength": 12345}
         mock_services["s3"].bucket = "test-bucket"
-        data = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db").json()
+        data = client.post(
+            "/api/v1/assessments/job-1/uploads/confirm?database_name=test_db", json={}
+        ).json()
         assert data["status"] == "confirmed"
         assert data["size_bytes"] == 12345
 
+    @pytest.mark.passes_on_main
     def test_404_when_upload_missing(self, mock_services):
         mock_services["s3"].client.head_object.side_effect = Exception("Not found")
         mock_services["s3"].bucket = "test-bucket"
-        resp = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db")
+        resp = client.post(
+            "/api/v1/assessments/job-1/uploads/confirm?database_name=test_db", json={}
+        )
         assert resp.status_code == 404
 
+    @pytest.mark.passes_on_main
     def test_an_upload_over_100_mb_is_confirmed(self, mock_services, monkeypatch):
         """No upload size limit (#384, "it takes what it takes"): a 2 GB upload is
         confirmed and kept; the old variable refuses nothing. The table and query
@@ -293,7 +300,9 @@ class TestConfirmUpload:
         mock_services["s3"].client.head_object.return_value = {"ContentLength": size}
         mock_services["s3"].bucket = "test-bucket"
 
-        resp = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db")
+        resp = client.post(
+            "/api/v1/assessments/job-1/uploads/confirm?database_name=test_db", json={}
+        )
 
         assert resp.status_code == 200
         assert resp.json()["size_bytes"] == size
