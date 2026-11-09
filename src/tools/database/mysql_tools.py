@@ -140,20 +140,54 @@ _GRANTEE = (
     "CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', "
     "SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''')"
 )
-_PRIVILEGES_NOT_SEEN_SQL = f"""
+
+
+def privileges_not_seen_sql(grantee: str, db: str, mariadb: str) -> str:
+    """The visibility privileges the collection user lacks as a direct grant (#1652,
+    #1933), one row each: ``SHOW_ROUTINE`` (reading another definer's routine bodies),
+    ``TRIGGER`` and ``EVENT`` on the database. ``grantee``, ``db`` and ``mariadb`` are
+    SQL expressions for the account, the database and whether the server is MariaDB;
+    the live read and the script (``scripts/collect-mysql.sql``) render the same text.
+
+    What reads routine bodies, per the vendors' documentation:
+
+    - MySQL 8.0: ``SHOW_ROUTINE`` (8.0.20+) or a global ``SELECT`` (every 8.0 release;
+      8.0.0 to 8.0.19 have nothing else). MySQL 8.0 has no ``mysql.proc``, so ``SELECT``
+      on the ``mysql`` schema does not count there.
+    - MariaDB: a global ``SELECT``, ``SELECT`` on ``mysql.*`` or on the ``mysql.proc``
+      table, and from 11.3 its routine-reading privilege (``privilege_type`` with its
+      spaces read as underscores, ``SHOW_CREATE_ROUTINE``), global or on the database.
+    """
+    return f"""
     SELECT p.privilege FROM (
       SELECT 'SHOW_ROUTINE' AS privilege UNION ALL SELECT 'TRIGGER' UNION ALL SELECT 'EVENT'
     ) AS p
     WHERE NOT EXISTS (
             SELECT 1 FROM information_schema.user_privileges u
-             WHERE u.grantee = {_GRANTEE}
+             WHERE u.grantee = {grantee}
                AND (u.privilege_type = p.privilege
-                    OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')))
+                    OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')
+                    OR (p.privilege = 'SHOW_ROUTINE' AND {mariadb}
+                        AND REPLACE(u.privilege_type, ' ', '_') = 'SHOW_CREATE_ROUTINE')))
       AND NOT EXISTS (
             SELECT 1 FROM information_schema.schema_privileges s
-             WHERE s.grantee = {_GRANTEE} AND s.table_schema = DATABASE()
-               AND s.privilege_type = p.privilege)
-"""  # nosec B608 -- fixed text, no input
+             WHERE s.grantee = {grantee}
+               AND ((s.table_schema = {db} AND s.privilege_type = p.privilege)
+                    OR (p.privilege = 'SHOW_ROUTINE' AND {mariadb}
+                        AND ((s.table_schema = 'mysql' AND s.privilege_type = 'SELECT')
+                             OR (s.table_schema = {db}
+                                 AND REPLACE(s.privilege_type, ' ', '_')
+                                     = 'SHOW_CREATE_ROUTINE')))))
+      AND NOT EXISTS (
+            SELECT 1 FROM information_schema.table_privileges t
+             WHERE p.privilege = 'SHOW_ROUTINE' AND {mariadb}
+               AND t.grantee = {grantee} AND t.table_schema = 'mysql'
+               AND t.table_name = 'proc' AND t.privilege_type = 'SELECT')
+"""  # nosec B608 -- fixed SQL expressions, no input
+
+
+_IS_MARIADB = "(VERSION() LIKE '%MariaDB%')"
+_PRIVILEGES_NOT_SEEN_SQL = privileges_not_seen_sql(_GRANTEE, "DATABASE()", _IS_MARIADB)
 
 _PROGRAM_STATS_SQL = """
     SELECT OBJECT_NAME AS routine_name, OBJECT_SCHEMA AS schema_name,

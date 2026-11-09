@@ -1733,12 +1733,13 @@ def test_collect_job_redacts_the_transcripts_and_every_other_uploaded_text_file(
 
 
 def test_collect_job_deletes_an_upload_it_cannot_fully_redact(tmp_path: Path, monkeypatch) -> None:
-    from ci.llm import private_scan
+    from src.shared import secret_scan
 
     out = _out_with_results(tmp_path)
     (out / "transcript.jsonl").write_text("x unplaceable-value-here\n")
+    # The scan's lines are read by the shared definition (#1933).
     monkeypatch.setattr(
-        private_scan,
+        secret_scan,
         "_line_hits",
         lambda body, emails: [("JSON Web Token", None)] if "unplaceable" in body else [],
     )

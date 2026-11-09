@@ -42,7 +42,13 @@ from src.agents.collector.routine_rows import (
     log_skipped_triggers,
     routine_stats_status,
 )
-from src.agents.collector.routine_sources import body_fields, non_dml_triggers
+from src.agents.collector.routine_sources import (
+    body_fields,
+    mark_body_readability,
+    non_dml_triggers,
+    routine_capture,
+    routine_capture_model,
+)
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -260,6 +266,14 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             server_counters=server_counters_model(live_server_counters(db)),
             # #1652: an older checkpoint's schema stage has none.
             routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
+            # #1933: how routine code was read (none in an older checkpoint).
+            routine_capture=routine_capture_model(
+                routine_capture(
+                    schema_raw.get("routine_capture"),
+                    listed=len(schema_raw.get("procedures") or [])
+                    + len(schema_raw.get("triggers") or []),
+                )
+            ),
         ),
         database_schema=Schema(
             tables=tables,
@@ -379,6 +393,13 @@ def _collect_schema_raw(db: SQLServerRemoteCollector, include_bodies: bool = Tru
     except Exception:
         logger.warning("Failed to collect triggers")
     # #1652: the execution counts the engine keeps, and how they were read.
+    # #1933: a body the user cannot read is not_readable, with the reason; never fails.
+    mark_body_readability("sqlserver", procedures, triggers)
+    capture: dict | None = None
+    try:
+        capture = db.collect_routine_capture(include_bodies=include_bodies)
+    except Exception:
+        logger.warning("Failed to read which routine privileges the user holds")
     routine_status: dict | None = None
     try:
         routine_stats, routine_status = db.collect_routine_stats()
@@ -404,6 +425,7 @@ def _collect_schema_raw(db: SQLServerRemoteCollector, include_bodies: bool = Tru
         "procedures": procedures,
         "triggers": triggers,
         "routine_stats_status": routine_status,
+        "routine_capture": capture,
         "global_stats": global_stats,
         "os_stats": os_stats,
     }

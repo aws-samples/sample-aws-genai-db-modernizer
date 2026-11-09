@@ -455,7 +455,10 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
     )
     from src.agents.collector.routine_sources import (
         apply_body_statuses,
+        collection_includes_bodies,
+        drop_raw_bodies,
         iter_routine_sources,
+        mark_body_readability,
         routine_capture,
     )
 
@@ -482,6 +485,20 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
     ] if isinstance(raw_event_triggers, list) else []  # fmt: skip
     attach_routine_sources(procedures, triggers, data.get("routine_sources"))
     attach_routine_stats(procedures, triggers, data.get("routine_stats"))
+    if not collection_includes_bodies(data):
+        # #1933: the file says it ran with the opt-out; whatever bodies it still holds
+        # (an edited script) are dropped, sizes kept.
+        held = drop_raw_bodies(procedures, triggers, events)
+        if held:
+            logger.warning(
+                "offline_parser: the collection says include_routine_bodies = 0 but holds "
+                "%d routine body(ies); they are dropped",
+                held,
+            )
+    if isinstance(metadata, dict) and isinstance(metadata.get("routine_capture"), dict):
+        # #1933: a SQL Server or Oracle body the user could not read is not_readable,
+        # with its reason; a collection that records no capture predates it.
+        mark_body_readability(source_engine, procedures, triggers)
     from src.agents.collector.routine_sources import RoutineSourcesBuild
 
     notes = RoutineSourcesBuild()
