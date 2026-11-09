@@ -885,3 +885,89 @@ def test_no_such_entity_and_malformed_ids_are_lookup_errors(code):
     )
     row = _network(cred)
     assert row.status == "fail" and "check the ids and region" in (row.message or "")
+
+
+# --- the source's change-log retention settings (#2060) ---------------------------------------
+
+
+def _pg_rds_source_row(**values):
+    cred = StubbedCredMgr()
+    s.queue_aurora(cred, engine="aurora-postgresql", version="16.4", reads_instance_params=False)
+    s.queue_secrets(cred)
+    s.queue_instance_class(cred)
+    s.queue_roles(cred)
+    rds = cred.stub("rds")
+    rds.add_response("describe_db_instances", {"DBInstances": [{
+        "DBInstanceIdentifier": "pg", "Engine": "postgres", "BackupRetentionPeriod": 0,
+        "DBParameterGroups": [{"DBParameterGroupName": "pg-params", "ParameterApplyStatus": "in-sync"}]}]})  # fmt: skip
+    rds.add_response(
+        "describe_db_parameters", s.parameters(**{"rds.logical_replication": "1", **values})
+    )
+    return _row(
+        _run(cred, "aurora_postgresql", source_kind="rds_instance", source_id="pg"), "source_cdc"
+    )
+
+
+def test_a_postgresql_source_with_no_slot_limit_says_wal_grows_until_storage_fills():
+    row = _pg_rds_source_row()
+    assert row.status == "confirm"
+    assert row.evidence["max_slot_wal_keep_size"] == "engine default (-1, no limit)"
+    assert row.evidence["max_replication_slots"] == "engine default"
+    item = next(i for i in row.checklist if "max_slot_wal_keep_size" in i)
+    assert "no limit" in item and "storage fills" in item and "status" in item
+
+
+def test_a_postgresql_source_slot_limit_says_past_it_the_task_needs_a_full_reload():
+    row = _pg_rds_source_row(max_slot_wal_keep_size="4096", max_replication_slots="10",
+                             max_wal_senders="10")  # fmt: skip
+    assert row.status == "confirm"
+    assert (row.evidence["max_slot_wal_keep_size"], row.evidence["max_replication_slots"]) == (
+        "4096", "10")  # fmt: skip
+    item = next(i for i in row.checklist if "max_slot_wal_keep_size" in i)
+    assert "4096 MB" in item and "invalidates" in item and "full reload" in item
+
+
+@pytest.mark.parametrize("name", ["max_replication_slots", "max_wal_senders"])
+def test_a_postgresql_source_that_allows_no_slot_or_wal_sender_fails(name):
+    row = _pg_rds_source_row(**{name: "0"})
+    assert row.status == "fail" and f"{name}=0" in row.summary
+    assert name in (row.message or "") and "reboot" in (row.message or "")
+
+
+@pytest.mark.passes_on_main  # the negative case: a formula is never read as 0
+def test_a_slot_setting_rds_computes_from_a_formula_is_not_judged():
+    row = _pg_rds_source_row(max_wal_senders="{DBInstanceClassMemory/1000000}")
+    assert row.status == "confirm"
+
+
+def test_an_aurora_postgresql_source_reads_the_slot_settings_from_its_cluster_group():
+    cred = StubbedCredMgr()
+    s.queue_aurora(cred, engine="aurora-postgresql", version="16.4", reads_instance_params=False)
+    s.queue_secrets(cred)
+    s.queue_instance_class(cred)
+    s.queue_roles(cred)
+    rds = cred.stub("rds")
+    rds.add_response("describe_db_clusters", {"DBClusters": [{
+        "DBClusterIdentifier": "src-cluster", "Engine": "aurora-postgresql", "DBClusterParameterGroup": "src-params",
+        "DBClusterMembers": [{"DBInstanceIdentifier": "src-1", "IsClusterWriter": True,
+                              "DBClusterParameterGroupStatus": "in-sync"}]}]})  # fmt: skip
+    rds.add_response("describe_db_cluster_parameters",
+                     s.parameters(**{"rds.logical_replication": "1", "max_replication_slots": "0"}),
+                     {"DBClusterParameterGroupName": "src-params"})  # fmt: skip
+    row = _row(_run(cred, "aurora_postgresql", source_kind="aurora_cluster", source_id="src-cluster"),
+               "source_cdc")  # fmt: skip
+    assert row.status == "fail" and "max_replication_slots=0" in row.summary
+
+
+def test_a_self_managed_postgresql_source_checklist_names_the_slot_limit():
+    row = _pg_source_row("self_managed")
+    assert any("max_slot_wal_keep_size" in i and "full reload" in i for i in row.checklist)
+
+
+def test_a_managed_mysql_source_checklist_says_how_to_read_the_binlog_retention():
+    cred = StubbedCredMgr()
+    _up_to_source(cred)
+    _rds_source(cred)
+    row = _row(_run(cred, source_kind="rds_instance", source_id="shop-db"), "source_cdc")
+    assert any("CALL mysql.rds_show_configuration" in i for i in row.checklist)
+    assert "max_slot_wal_keep_size" not in row.evidence

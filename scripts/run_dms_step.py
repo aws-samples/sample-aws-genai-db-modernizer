@@ -22,7 +22,13 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   load is done but DMS validation is not running (#1995); while it waits it prints one
   ``"status": "progress"`` line per poll before its result line (#1997). The lag comes from
   CloudWatch's ``ListMetrics`` and ``GetMetricData``, the gate's own read calls; a profile that
-  may not make them leaves the lag null.
+  may not make them leaves the lag null. Once the task has run, ``source_retention`` (#2060)
+  judges the source's change log and free storage from its RDS metrics (``GetMetricData``
+  again; thresholds in ``src/tools/data_movement/source_retention.py``), "not measured" for a
+  self-managed source or a metric with no datapoint; ``caught_up`` also stops when it reads
+  ``critical``, and its result line carries ``stopped_for`` whenever the last reading is
+  critical, ``reached`` or not; and a ``task_stopped`` line names what the stopped task costs
+  the source (``source_retention.stopped_task``).
 - ``deploy --approve`` (create and show a change set), ``execute --change-set <name> --approve``,
   ``test --approve`` (test both endpoints), ``start --approve`` (start the task): AWS writes,
   refused without ``--approve`` and under ``MODERNIZER_CI_SANDBOX=1``. A template over
@@ -33,7 +39,9 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   that end the step (#1896), with the same refusals. Both are no-ops when there is nothing left
   to do, act only on this job's step stack (exactly the template's six resources, and a task whose
   identifier and ``modernizer:job-id`` tag name this job), wait up to ``--wait-seconds`` (default and maximum 540) and
-  print one progress line per poll on stderr.
+  print one progress line per poll on stderr. ``teardown``'s line carries ``source_reminder``
+  and ``source_followups``: what is left on the source (on PostgreSQL, the replication slot DMS
+  leaves behind, with the read-only query to find it and the statement that drops it; #2060).
 - ``restart-validation --approve`` (#2048): when Prove reports ``validation_stalled``, stop this
   job's step 1 task, wait until it has stopped, start it again with ``resume-processing`` (CDC
   resumes from its checkpoint, nothing reloads) and wait until it runs; this restarts the DMS
@@ -45,8 +53,8 @@ The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under t
 root) holds ids and ARNs only, never a secret's value: an unknown key, such as ``password``,
 is refused. Calls use the ambient credentials, or ``read_profile`` (preflight, gate, status)
 and ``write_profile`` (deploy, execute, test, start) from the file. The only clients are
-CloudFormation, DMS, S3 (that one upload) and STS (the caller's account, so the upload
-names the bucket's expected owner). No secret is ever read.
+CloudFormation, DMS, S3 (that one upload), STS (the caller's account, so the upload
+names the bucket's expected owner) and, for status's reads only, CloudWatch. No secret is ever read.
 
 Usage:
     uv run python scripts/run_dms_step.py summary --job-id <id> --db <db>
@@ -107,7 +115,8 @@ VALIDATION_FIX = ("check the endpoints' secrets and that the validator can conne
 # One "status": "progress" line per poll of status --until caught_up (#1997), these fields.
 PROGRESS_FIELDS = ("time", "phase", "full_load_percent", "tables_loaded", "inserts_applied",
                    "updates_applied", "capture_lag_seconds", "apply_lag_seconds",
-                   "validated_tables", "pending_tables", "not_enabled_tables")  # fmt: skip
+                   "validated_tables", "pending_tables", "not_enabled_tables",
+                   "source_retention", "source_warning")  # fmt: skip
 LAG_WINDOW_MINUTES = 5
 # What DMS's own task status means, in the words the customer sees (``dms_reports``).
 _DMS_WORDS = {"stopped": "stopped (not running)", "failed": "failed (not running)",
@@ -227,6 +236,17 @@ class LagReader:
     metrics: dict[str, list[dict[str, str]]] | None = None
 
 
+@dataclass
+class RetentionReader:
+    """status's source retention (#2060): the source's RDS metrics in CloudWatch, read-only,
+    for the inputs file's source and the step plan's engine family."""
+
+    cloudwatch: Any
+    source_kind: str
+    source_id: str | None
+    family: str | None
+
+
 class MoveError(Exception):
     """A refusal: printed as ``{"status": "error", "message": ...}``."""
 
@@ -296,6 +316,21 @@ def steps(root: str, db: str, job_id: str) -> dict[str, Any]:
     if not found:
         raise MoveError(f"no step plans under {base}: run scripts/run_data_movement_plan.py first")
     return {"status": "complete", "steps": sorted(found, key=lambda s: s["step"])}
+
+
+def source_family(root: str, db: str, job_id: str) -> str | None:
+    """The step plan's source engine family (``mysql`` or ``postgresql``), or None when the plan
+    cannot be read: the source retention rules follow it (#2060)."""
+    from src.contracts.data_movement_plan import DataMovementPlan
+    from src.shared.contract_versioning import load_contract
+    from src.tools.data_movement.source_retention import family_of
+
+    path = _step_dir(root, db, job_id) / "plan.json"
+    try:
+        plan = load_contract(DataMovementPlan, json.loads(path.read_text()), artifact="step plan")
+    except (OSError, ValueError):
+        return None
+    return family_of(plan.source.engine)
 
 
 def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
@@ -447,9 +482,11 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
         kwargs["Marker"] = page["Marker"]
 
 
-def status(clients: MoveClients, name: str, lag: LagReader | None = None) -> dict[str, Any]:
+def status(clients: MoveClients, name: str, lag: LagReader | None = None,
+           retention: RetentionReader | None = None) -> dict[str, Any]:  # fmt: skip
     """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
-    with a ``lag`` reader, its capture lag."""
+    with a ``lag`` reader, its capture lag; with a ``retention`` reader, once the task has run,
+    the source's change-log retention (#2060)."""
     stack = _stack(clients, name)
     if stack is None:
         return {"status": "complete", "phase": "no_stack", "stack_name": name}
@@ -501,7 +538,7 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None) -> dic
                  else "ready_to_start" if statuses == {"successful"} else "connections_not_tested")  # fmt: skip
         return {**out, "phase": phase}
     if task.get("Status") in TASK_STOPPED:
-        return {**out, "phase": "task_stopped"}
+        return _source_retention({**out, "phase": "task_stopped"}, retention)
     from src.tools.data_movement import dms_gate as gate
 
     tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
@@ -522,7 +559,23 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None) -> dic
     loaded = task_stats.get("FullLoadProgressPercent") == 100
     phase = "caught_up" if loaded and not pending_tables and not pending_records else (
         "validating" if loaded else "loading")  # fmt: skip
-    return _judge_validation({**out, "phase": phase}, task, loaded)
+    return _source_retention(_judge_validation({**out, "phase": phase}, task, loaded), retention)
+
+
+def _source_retention(out: dict[str, Any], reader: RetentionReader | None) -> dict[str, Any]:
+    """``source_retention`` (#2060): the source's change log and free storage, judged; a stopped
+    task's line also says what the stop costs the source."""
+    if reader is None:
+        return out
+    from src.tools.data_movement import source_retention as sr
+
+    found = sr.read_source_retention(reader.cloudwatch, source_kind=reader.source_kind,
+                                     source_id=reader.source_id, family=reader.family,
+                                     now=datetime.now(UTC))  # fmt: skip
+    if out["phase"] == "task_stopped":
+        found["stopped_task"] = sr.STOPPED_TASK_RISK.get(reader.family or "", " / ".join(
+            sr.STOPPED_TASK_RISK.values()))  # fmt: skip
+    return {**out, "source_retention": found}
 
 
 def validation_enabled(task: dict[str, Any]) -> bool | None:
@@ -599,6 +652,7 @@ def progress_line(current: dict[str, Any]) -> dict[str, Any]:
     """One compact line per poll of status --until caught_up (#1997)."""
     validation = current.get("validation") or {}
     applied = current.get("changes_applied") or {}
+    retention = current.get("source_retention") or {}
     return {"status": "progress", "time": datetime.now(UTC).isoformat(timespec="seconds"),
             "phase": current.get("phase"), "full_load_percent": current.get("full_load_percent"),
             "tables_loaded": current.get("tables_loaded"),
@@ -607,7 +661,9 @@ def progress_line(current: dict[str, Any]) -> dict[str, Any]:
             "apply_lag_seconds": current.get("apply_lag_seconds"),
             "validated_tables": validation.get("validated"),
             "pending_tables": validation.get("pending_tables"),
-            "not_enabled_tables": validation.get("not_enabled_tables")}  # fmt: skip
+            "not_enabled_tables": validation.get("not_enabled_tables"),
+            "source_retention": retention.get("level"),
+            "source_warning": retention.get("message")}  # fmt: skip
 
 
 class _StallWatch:
@@ -671,11 +727,15 @@ def wait_status(
     clock: Callable[[], float] = time.monotonic,
     on_poll: Callable[[dict[str, Any]], None] | None = None,
     lag: LagReader | None = None,
+    retention: RetentionReader | None = None,
 ) -> dict[str, Any]:
     """Poll until ``until`` holds or the time is up. Under ``caught_up``, ``on_poll`` gets each
-    poll's progress line but the last one (the result line carries it), and a validation with
-    no progress over the window ends the wait as ``validation_stalled``."""
-    read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(status, lag=lag)
+    poll's progress line but the last one (the result line carries it), a validation with
+    no progress over the window ends the wait as ``validation_stalled``, and a ``critical``
+    source retention ends it with ``stopped_for`` ``source_retention`` (#2060)."""
+    read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(
+        status, lag=lag, retention=retention
+    )
     done = UNTIL.get(until or "")
     if until == "task_stopped":
         read, done = task_state, lambda s: s["task_stopped"]
@@ -687,14 +747,27 @@ def wait_status(
     deadline = now + wait_seconds
     if until == "caught_up":
         current = watch.judge(current, now)
-    while not done(current) and (now := clock()) + interval <= deadline:
+    while (
+        not done(current)
+        and not _source_critical(current, until)
+        and (now := clock()) + interval <= deadline
+    ):
         if on_poll is not None and until == "caught_up":
             on_poll(progress_line(current))
         sleep(interval)
         current = read(clients, name)
         if until == "caught_up":
             current = watch.judge(current, now + interval)  # read one interval after the check
-    return {**current, "until": until, "reached": done(current)}
+    out = {**current, "until": until, "reached": done(current)}
+    if _source_critical(current, until):  # also when reached: a critical reading is never lost
+        out["stopped_for"] = "source_retention"
+    return out
+
+
+def _source_critical(current: dict[str, Any], until: str | None) -> bool:
+    """Under ``caught_up``, a source retention that reads critical ends the wait (#2060)."""
+    level = (current.get("source_retention") or {}).get("level")
+    return until == "caught_up" and level == "critical"
 
 
 def task_state(clients: MoveClients, name: str) -> dict[str, Any]:
@@ -1112,6 +1185,24 @@ def teardown(
     interval: int,
     *,
     sleep: Callable[[float], None] = time.sleep,
+    family: str | None = None,
+) -> dict[str, Any]:
+    """``_delete_step_stack``'s line, with what is left on the source (#2060): the stack never
+    held the PostgreSQL replication slot DMS made, so deleting it leaves the slot behind."""
+    from src.tools.data_movement.source_retention import source_followups
+
+    result = _delete_step_stack(clients, name, job_id, wait_seconds, interval, sleep=sleep)
+    return {**result, **source_followups(family)}
+
+
+def _delete_step_stack(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Delete the step's stack once its task is not running, and wait until it is gone.
 
@@ -1265,9 +1356,13 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                 cloudwatch = cred.client("cloudwatch")
         name = stack_name(inputs, job_id)
         if args.command == "status":
+            retention = None if cloudwatch is None else RetentionReader(
+                cloudwatch, inputs.source_kind, inputs.source_id,
+                source_family(args.artifact_root, db, job_id))  # fmt: skip
             return emit(wait_status(clients, name, args.until, args.wait_seconds,
                                     args.interval_seconds, sleep=sleep, on_poll=_print_progress,
-                                    lag=None if cloudwatch is None else LagReader(cloudwatch)))  # fmt: skip
+                                    lag=None if cloudwatch is None else LagReader(cloudwatch),
+                                    retention=retention))  # fmt: skip
         if args.command == "deploy":
             return emit(deploy(clients, args.artifact_root, db, job_id, inputs, sleep=sleep))
         if args.command == "execute":
@@ -1283,7 +1378,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         if args.command == "teardown":
             return emit(
                 teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,
-                         sleep=sleep)  # fmt: skip
+                         sleep=sleep, family=source_family(args.artifact_root, db, job_id))  # fmt: skip
             )
         return emit(start(clients, name))
     except (MoveError, ValueError) as exc:

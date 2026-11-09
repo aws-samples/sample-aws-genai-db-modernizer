@@ -502,3 +502,41 @@ def test_auto_never_restarts_a_stalled_validation() -> None:
     assert "`--approve-deploy` does not cover it" in prove
     headless = _flat(_section("Headless (`--auto`)"))
     assert "never restarts the task" in headless
+
+
+def test_prove_warns_on_the_sources_retention_and_stops_when_it_turns_critical() -> None:
+    """#2060: a warning reaches the customer on the progress line; critical ends Prove."""
+    prove = _flat(_section("Stage 4: Prove"))
+    assert "when the level is `warning`, add `source_warning` verbatim" in prove
+    assert (
+        "a result line with `stopped_for` `source_retention`" in prove
+        and '"stopped_for"' in (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
+    )
+    assert (
+        "end with `MOVE_RESULT: stopped stage=prove reason=source retention critical: "
+        "<source_retention message>`" in prove
+    )
+    # Read before the rerun rule, and whatever `reached` says (a caught-up line can be critical).
+    assert prove.index("Read every result line for `stopped_for` first") < prove.index(
+        "Unless the line has `stopped_for`: after a result line with `reached` false"
+    )
+    assert "(whatever its `reached`)" in prove
+    critical = prove.split("a result line with `stopped_for` `source_retention`", 1)[1]
+    assert critical.index("show its `source_retention` `message` first") < critical.index(
+        "when its `phase` is `caught_up`, go on to the Gate"
+    )
+    assert "its `check_on_source` when it has one" in prove
+    assert "a `task_stopped` line with `stopped_for` ends with this line only" in prove
+    stopped = prove.split("A `phase` of `task_stopped`", 1)[1]
+    assert stopped.index("`stopped_task` verbatim") < stopped.index("reason=task <task_status>")
+
+
+def test_ending_the_step_shows_what_is_left_on_the_source() -> None:
+    """#2060: the replication slot outlives the stack; the end line says so."""
+    ending = _flat(_section("Ending the step"))
+    assert "show every entry of the line's `source_followups`" in ending
+    assert (
+        "reason=step 1 ended: stack <stack_name> deleted ({dms_reports}); on the source: "
+        "<source_reminder>`" in ending
+    )
+    assert "the customer runs them, never you" in ending

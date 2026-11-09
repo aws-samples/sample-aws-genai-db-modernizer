@@ -1098,7 +1098,14 @@ def test_teardown_of_a_stack_that_is_already_gone_is_a_no_op(tmp_path, capsys):
     cred = StubbedCredMgr()
     _no_stack(cred)
     code, out = _run(tmp_path, "teardown", "--approve", clients=_clients(cred), capsys=capsys)
-    assert code == 0 and out == {"status": "deleted", "stack_name": STACK, "already_deleted": True}
+    ended = {k: v for k, v in out.items() if k not in ("source_reminder", "source_followups")}
+    assert code == 0 and ended == {
+        "status": "deleted",
+        "stack_name": STACK,
+        "already_deleted": True,
+    }
+    # A step ended earlier still leaves the source's change-log follow-ups to do (#2060).
+    assert "binary log retention" in out["source_reminder"] and out["source_followups"]
     _no_pending(cred)
 
 
@@ -2077,3 +2084,203 @@ def test_no_lag_is_read_before_the_task_runs():
     out = script.status(_clients(cred), STACK, _reader(cred))
     assert out["phase"] == "ready_to_start" and "capture_lag_seconds" not in out
     _no_pending(cred)  # no CloudWatch call was stubbed, and none was made
+
+
+# --- source change-log retention while proving, and what ending the step leaves (#2060) -------
+
+GIB = 1024**3
+
+
+def _pg_plan(tmp_path: Path) -> None:
+    """Make the job's step plan a PostgreSQL source's (``_job`` writes a MySQL one)."""
+    path = tmp_path / "shop" / "job1" / "data-movement" / "step-1" / "plan.json"
+    path.write_text(json.dumps(make_bundle("aurora_postgresql").plan.model_dump(mode="json")))
+
+
+def _source_metrics(cred, values: dict[str, list[float]], source_id="shop-source"):
+    now = datetime.now(UTC)
+    results = [{"Id": f"m{i}", "Label": key, "StatusCode": "Complete",
+                "Timestamps": [now - timedelta(minutes=len(v) - n) for n in range(len(v))],
+                "Values": v} for i, (key, v) in enumerate(values.items())]  # fmt: skip
+    cred.stub("cloudwatch").add_response("get_metric_data", {"MetricDataResults": results})
+
+
+HEALTHY_PG = {"slot_lag_bytes": [5e6], "transaction_logs_bytes": [2e8],
+              "free_storage_bytes": [80.0 * GIB]}  # fmt: skip
+CRITICAL_PG = {"slot_lag_bytes": [30.0 * GIB], "slot_disk_bytes": [30.0 * GIB],
+               "transaction_logs_bytes": [30.0 * GIB],
+               "free_storage_bytes": [40.0 * GIB]}  # fmt: skip
+
+
+def _retention(cred, kind="rds_instance", family="postgresql", source_id="shop-source"):
+    return script.RetentionReader(cred.client("cloudwatch"), kind, source_id, family)
+
+
+def test_status_reports_the_sources_retention_once_the_task_runs():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(pending=2))
+    _source_metrics(cred, HEALTHY_PG)
+    out = script.status(_clients(cred), STACK, retention=_retention(cred))
+    retention = out["source_retention"]
+    assert retention["level"] == "ok" and retention["source"] == "shop-source"
+    assert retention["slot_lag_bytes"] == 5e6 and retention["free_storage_bytes"] == 80.0 * GIB
+    _no_pending(cred)
+
+
+def test_a_stopped_task_names_what_the_stop_costs_a_postgresql_source():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="stopped")
+    _source_metrics(cred, {"slot_lag_bytes": [2.0 * GIB], "transaction_logs_bytes": [2.0 * GIB],
+                           "free_storage_bytes": [100.0 * GIB]})  # fmt: skip
+    out = script.status(_clients(cred), STACK, retention=_retention(cred))
+    assert out["phase"] == "task_stopped"
+    retention = out["source_retention"]
+    assert retention["level"] == "warning" and "2.0 GiB behind" in retention["message"]
+    assert "keeps WAL" in retention["stopped_task"] and "drop the slot" in retention["stopped_task"]
+    _no_pending(cred)
+
+
+def test_a_stopped_task_on_a_mysql_source_names_the_binlog_retention():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="failed")
+    _source_metrics(cred, {"binlog_bytes": [1e9], "free_storage_bytes": [100.0 * GIB]})
+    out = script.status(_clients(cred), STACK, retention=_retention(cred, family="mysql"))
+    assert "binlog retention" in out["source_retention"]["stopped_task"]
+    assert "slot" not in out["source_retention"]["stopped_task"]
+
+
+def test_a_self_managed_source_reads_not_measured_and_still_names_the_stop_risk():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="stopped")
+    out = script.status(_clients(cred), STACK,
+                        retention=_retention(cred, kind="self_managed", source_id=None))  # fmt: skip
+    retention = out["source_retention"]
+    assert retention["level"] == "not_measured" and "self-managed" in retention["reason"]
+    assert "pg_replication_slots" in retention["check_on_source"]
+    assert "keeps WAL" in retention["stopped_task"]
+    _no_pending(cred)  # no CloudWatch call for a self-managed source
+
+
+def test_no_source_retention_is_read_before_the_task_runs():
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _connections(cred)
+    _task(cred, status="ready")
+    out = script.status(_clients(cred), STACK, retention=_retention(cred))
+    assert out["phase"] == "ready_to_start" and "source_retention" not in out
+    _no_pending(cred)
+
+
+def test_a_critical_source_retention_ends_the_caught_up_wait_before_it_is_caught_up():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(pending=2))
+    _source_metrics(cred, HEALTHY_PG)
+    _prove_poll(cred, _rows(pending=2))
+    _source_metrics(cred, CRITICAL_PG)
+    seen: list[dict] = []
+    clock = iter([0, *(i * 60 for i in range(12))])
+    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+                             clock=lambda: next(clock), on_poll=seen.append,
+                             retention=_retention(cred))  # fmt: skip
+    assert out["reached"] is False and out["stopped_for"] == "source_retention"
+    assert out["phase"] == "validating" and out["source_retention"]["level"] == "critical"
+    assert [p["source_retention"] for p in seen] == ["ok"]
+    _no_pending(cred)  # the wait stopped at once: no third poll
+
+
+def test_a_warning_source_retention_keeps_polling_and_each_progress_line_carries_it():
+    cred = StubbedCredMgr()
+    warning = {"slot_lag_bytes": [3.0 * GIB], "transaction_logs_bytes": [3.0 * GIB],
+               "free_storage_bytes": [100.0 * GIB]}  # fmt: skip
+    _prove_poll(cred, _rows(pending=2))
+    _source_metrics(cred, warning)
+    _prove_poll(cred, _rows(validated=2))
+    _source_metrics(cred, warning)
+    seen: list[dict] = []
+    clock = iter([0, *(i * 60 for i in range(12))])
+    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+                             clock=lambda: next(clock), on_poll=seen.append,
+                             retention=_retention(cred))  # fmt: skip
+    assert out["reached"] is True and "stopped_for" not in out
+    assert (
+        seen[0]["source_retention"] == "warning" and "3.0 GiB behind" in seen[0]["source_warning"]
+    )
+
+
+def test_a_critical_reading_on_a_caught_up_poll_is_never_lost():
+    """Caught up and critical in the same poll: reached, and stopped_for still says why."""
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    _source_metrics(cred, CRITICAL_PG)
+    clock = iter([0, *(i * 60 for i in range(12))])
+    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+                             clock=lambda: next(clock), retention=_retention(cred))  # fmt: skip
+    assert out["phase"] == "caught_up" and out["reached"] is True
+    assert out["stopped_for"] == "source_retention"
+    assert out["source_retention"]["level"] == "critical"
+
+
+@pytest.mark.parametrize("until", ["stack", "running"])
+def test_a_critical_source_retention_ends_only_the_caught_up_wait(until):
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [], status="starting", percent=0)
+    _source_metrics(cred, CRITICAL_PG)
+    out = script.wait_status(_clients(cred), STACK, until, 0, 60, sleep=lambda _s: None,
+                             clock=lambda: 0, retention=_retention(cred))  # fmt: skip
+    assert "stopped_for" not in out
+
+
+def test_the_cli_status_reads_the_inputs_source_with_the_plans_engine_family(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, _rows(validated=2))
+    cred.stub("cloudwatch").add_client_error("list_metrics", "AccessDenied", "no lag here")
+    cred.stub("cloudwatch").add_response("get_metric_data", {"MetricDataResults": []}, {
+        "MetricDataQueries": script_queries("shop-source"), "StartTime": ANY, "EndTime": ANY})  # fmt: skip
+    _status_cli(tmp_path, cred, cloudwatch=cred.client("cloudwatch"))
+    retention = _lines(capsys)[-1]["source_retention"]
+    assert retention["engine_family"] == "postgresql" and retention["source"] == "shop-source"
+    assert retention["level"] == "not_measured"  # no datapoint yet: never guessed
+    _no_pending(cred)
+
+
+def script_queries(source_id):
+    from src.tools.data_movement.source_retention import _queries
+
+    return _queries("rds_instance", source_id, "postgresql")
+
+
+def test_the_source_family_is_none_without_a_readable_step_plan(tmp_path):
+    assert script.source_family(str(tmp_path), "shop", "job1") is None
+    _job(tmp_path)
+    assert script.source_family(str(tmp_path), "shop", "job1") == "mysql"
+    _pg_plan(tmp_path)
+    assert script.source_family(str(tmp_path), "shop", "job1") == "postgresql"
+
+
+def test_teardown_reminds_to_drop_the_replication_slot_on_a_postgresql_source(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _no_stack(cred)
+    code, out = _run(tmp_path, "teardown", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["status"] == "deleted"
+    assert "replication slot" in out["source_reminder"]
+    assert any("pg_drop_replication_slot" in i for i in out["source_followups"])
+    assert any("FROM pg_replication_slots WHERE NOT active" in i for i in out["source_followups"])
+
+
+def test_teardown_names_the_binlog_retention_on_a_mysql_source(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, "stopped")
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+    code, out = _run(tmp_path, "teardown", "--approve", "--wait-seconds", "30",
+                     "--interval-seconds", "30", clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["status"] == "deleted", out
+    assert "binary log retention" in out["source_reminder"]
+    assert not any("slot" in i for i in out["source_followups"])
