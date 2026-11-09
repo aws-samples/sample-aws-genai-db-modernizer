@@ -500,6 +500,11 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     ),
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),
+    # #1934: how each routine migrates, keyed on the assignment version it read.
+    (
+        r"routines/v\d+/routine_migration\.json",
+        "src.contracts.routine_migration:RoutineMigrationContract",
+    ),
     (r"reality-check/awaiting_llm\.json", "src.contracts.reality_check_marker:RealityCheckMarker"),
     # The recorded approvals, any name but the engine scope (#1328), which is a customer
     # input with its own contract below: each decisions/ file maps to one contract.

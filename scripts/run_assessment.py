@@ -1046,6 +1046,36 @@ def phase_engine_choices(
     _output("engine_choices", data)
 
 
+def phase_routine_migration(store, job_id: str, db: str) -> dict:
+    """How each collected routine migrates (#1934, ADR-034): writes
+    ``routines/v<N>/routine_migration.json`` for the effective assignment version, with
+    no model call, in every --llm-mode. Runs once per assignment version (a version that
+    has its artifact is left as it is), and writes nothing for a collection with no
+    routines. Its result goes to the run log only, so stdout keeps the status lines the
+    commands read; a failure is an error line for this phase."""
+    from src.tools.routines.migration import ensure_routine_migration, error_message
+
+    _start_phase("routine_migration")
+    try:
+        version, written, artifact, fresh = ensure_routine_migration(store, db, job_id)
+    except Exception as exc:  # noqa: BLE001 -- reported without its message (routine text)
+        _error("routine_migration", error_message(exc))
+        raise  # unreachable: _error exits
+    if written is not None and not fresh:
+        _log("routine_migration", f"v{version} already has its routine migration")
+        return {"status": "unchanged", "assignment_version": version}
+    if artifact is None:
+        _log("routine_migration", "skipped: no routines this pipeline carries in the collection")
+        return {"status": "skipped", "assignment_version": version}
+    _log(
+        "routine_migration",
+        f"v{version}: {artifact.total} routines, "
+        + ", ".join(f"{n} {s}" for s, n in artifact.counts.items() if n),
+    )
+    _log_artifact("routine_migration", _path(store, str(written)))
+    return {"status": "complete", "assignment_version": version, "counts": artifact.counts}
+
+
 def phase_reality_check_finalize(
     store, job_id: str, db: str, assignment_version: int | None = None
 ) -> None:
@@ -1594,6 +1624,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         state["phase_status"]["reality_check"] = "complete"
         state["current_phase"] = "schema_design"
         _write_state(state)
+        phase_routine_migration(store, args.job_id, args.db)
         return
 
     # Settle pending engine choices at the approval gate (#1003)
@@ -1610,6 +1641,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
                 store, args.job_id, args.db, state.get("selected_engines", [])
             )
             _write_state(state)
+        phase_routine_migration(store, args.job_id, args.db)
         return
 
     # Header
@@ -1746,6 +1778,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     state["phase_status"]["reality_check"] = "complete"
     state["current_phase"] = "schema_design"
     _write_state(state)
+    # #1934: before schema design and synthesis, on the version the reality check kept.
+    phase_routine_migration(store, job_id, db_name)
 
     # If --all, continue to schema design and synthesis
     if args.all:
@@ -1765,6 +1799,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
             )
             _record_engines(state["selected_engines"])
             _write_state(state)
+            # A version the choices wrote gets its own routine migration.
+            phase_routine_migration(store, job_id, db_name)
 
         _start_phase("schema_design")
         schema_status = phase_schema_design(store, job_id, db_name, args.llm_mode)
@@ -1779,6 +1815,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
             state["phase_status"]["schema_design"] = "complete"
         state["current_phase"] = "synthesis"
         _write_state(state)
+        # A post-schema reroute (in process, Bedrock mode) writes a version synthesis reads.
+        phase_routine_migration(store, job_id, db_name)
 
         _start_phase("synthesis")
         phase_synthesis(store, job_id, db_name, args.llm_mode)

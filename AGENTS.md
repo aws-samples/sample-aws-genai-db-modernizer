@@ -201,6 +201,9 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
   wrote or, when it changed nothing, checked; readers take the record of the run
   the effective assignment descends from, never one from another lineage, #193,
   #215)
+- `routines/v<N>/routine_migration.json`: how each routine migrates (id, kind,
+  dependencies, deploy order, status, rewrite rules, check results; no routine text),
+  keyed on the assignment version, written after the reality check (#1934)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus a per-version copy of the rendered files, keyed on the assignment version
 - `deliverables/`: the customer folder `scripts/run_report.py` fills for the

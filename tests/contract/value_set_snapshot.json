@@ -895,6 +895,35 @@
     ],
     "version": "2.0"
   },
+  "routine_migration.MigrationStatus": {
+    "module": "routine_migration",
+    "values": [
+      "as_is",
+      "model_repaired",
+      "needs_attention",
+      "rewritten"
+    ],
+    "version": "1.0"
+  },
+  "routine_migration.RoutineKind": {
+    "module": "routine_migration",
+    "values": [
+      "event",
+      "function",
+      "procedure",
+      "trigger"
+    ],
+    "version": "1.0"
+  },
+  "routine_migration.SourceText": {
+    "module": "routine_migration",
+    "values": [
+      "exact",
+      "not_collected",
+      "not_exact"
+    ],
+    "version": "1.0"
+  },
   "schema_design_input.Confidence": {
     "module": "schema_design_input",
     "values": [

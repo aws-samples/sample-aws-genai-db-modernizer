@@ -40,7 +40,14 @@ SYNTHESIS_MODULES = (
     "src.report.facts",
 )
 # The modules that may import the loader or a checker, besides the checkers themselves.
-READERS = LOADERS | {"scripts.render_catalog"}
+# scripts.run_assessment and scripts.run_post_schema_routing run the routine-migration
+# phase (#1934); neither is a routing or synthesis module, which the walk below keeps
+# away from the checks.
+READERS = LOADERS | {
+    "scripts.render_catalog",
+    "scripts.run_assessment",
+    "scripts.run_post_schema_routing",
+}
 
 
 def _reads_routine_checks(path: Path) -> bool:
