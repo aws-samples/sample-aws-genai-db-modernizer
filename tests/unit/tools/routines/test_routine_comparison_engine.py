@@ -221,7 +221,15 @@ def test_an_original_that_does_not_load_could_not_be_compared_on_postgresql_16()
     assert credit.outcome == "no_differences_found"
 
 
-def test_no_engine_of_the_source_version_could_not_compare():
+@pytest.mark.passes_on_main  # main passes where no 9.6 is found; this pins it everywhere
+def test_no_engine_of_the_source_version_could_not_compare(monkeypatch):
+    """Hermetic (#2066): discovery finds no 9.6, whatever the runner has installed (a 9.6
+    binary that cannot start would give ``engine_failed``). Other majors stay as found."""
+    real = de.pg_candidates
+    monkeypatch.setattr(
+        de, "pg_candidates",
+        lambda *a, **k: {m: v for m, v in real(*a, **k).items() if m != "9.6"},
+    )  # fmt: skip
     (r,) = compare_routines([_pair(TAX, _tax("1.07"), _tax("1.07"))], TABLES,
                             source=disposable_target("postgresql", "9.6"),
                             target=disposable_target("postgresql", "16"),
