@@ -325,6 +325,10 @@ SELECT JSON_ARRAYAGG(e_obj) INTO @events FROM (
 -- list max_allowed_packet turned into NULL (as for the statements), and which of the
 -- privileges that decide what is visible this user lacks as a direct grant (a role may
 -- still grant one: a hint, never a failure).
+-- #1933: whether a routine body is readable depends on the server (the privilege
+-- query below, mysql_tools.privileges_not_seen_sql): MariaDB reads mysql.proc and
+-- has its own routine-reading privilege from 11.3; MySQL 8.0 has neither.
+SET @is_mariadb = VERSION() LIKE '%MariaDB%';
 SET @grantee = CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''',
                       SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''');
 SELECT (SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = @db)
@@ -342,11 +346,23 @@ WHERE NOT EXISTS (
         SELECT 1 FROM information_schema.user_privileges u
          WHERE u.grantee = @grantee
            AND (u.privilege_type = p.privilege
-                OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')))
+                OR (p.privilege = 'SHOW_ROUTINE' AND u.privilege_type = 'SELECT')
+                OR (p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
+                    AND REPLACE(u.privilege_type, ' ', '_') = 'SHOW_CREATE_ROUTINE')))
   AND NOT EXISTS (
         SELECT 1 FROM information_schema.schema_privileges s
-         WHERE s.grantee = @grantee AND s.table_schema = @db
-           AND s.privilege_type = p.privilege);
+         WHERE s.grantee = @grantee
+           AND ((s.table_schema = @db AND s.privilege_type = p.privilege)
+                OR (p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
+                    AND ((s.table_schema = 'mysql' AND s.privilege_type = 'SELECT')
+                         OR (s.table_schema = @db
+                             AND REPLACE(s.privilege_type, ' ', '_')
+                                 = 'SHOW_CREATE_ROUTINE')))))
+  AND NOT EXISTS (
+        SELECT 1 FROM information_schema.table_privileges t
+         WHERE p.privilege = 'SHOW_ROUTINE' AND @is_mariadb
+           AND t.grantee = @grantee AND t.table_schema = 'mysql'
+           AND t.table_name = 'proc' AND t.privilege_type = 'SELECT');
 SET @routine_capture = JSON_OBJECT(
   -- JSON_EXTRACT, not CAST(... AS JSON), which MariaDB does not have.
   'include_bodies', JSON_EXTRACT(IF(@include_routine_bodies = 1, 'true', 'false'), '$'),

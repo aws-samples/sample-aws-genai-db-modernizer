@@ -50,6 +50,8 @@ from src.agents.collector.routine_rows import (
 from src.contracts.collector_output import NonDmlTrigger, RoutineCapture, RoutineDependency
 from src.contracts.routine_sources import (
     MAX_CHUNK_SOURCES,
+    RoutineSecretFlag,
+    RoutineSecretScan,
     RoutineSession,
     RoutineSource,
     RoutineSourcesChunk,
@@ -433,10 +435,42 @@ def collection_engine(raw: object) -> str:
     return detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
 
 
+def collection_includes_bodies(raw: Mapping[str, Any]) -> bool:
+    """False when a raw collection says it ran with ``include_routine_bodies = 0``
+    (``metadata.routine_capture.include_bodies``); True otherwise, as before #1933."""
+    metadata = raw.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            return True
+    capture = metadata.get("routine_capture") if isinstance(metadata, Mapping) else None
+    return not (isinstance(capture, Mapping) and _flag(capture.get("include_bodies")) is False)
+
+
+def drop_raw_bodies(procedures: object, triggers: object, events: object = ()) -> int:
+    """The opt-out enforced on a raw collection's rows, in place (#1933): each body is
+    dropped and its row marked ``opted_out``, its size kept; returns how many rows held
+    one, so the ingest can say a file kept bodies it said it would not."""
+    held = 0
+    for row in [*_rows(procedures), *_rows(triggers), *_rows(events)]:
+        if row.get("definition") or row.get("show_create"):
+            held += 1
+            if row.get("body_chars") is None and isinstance(row.get("definition"), str):
+                row["body_chars"] = len(row["definition"])
+        row.pop("show_create", None)
+        row["definition"] = None
+        row["body_status"] = "opted_out"
+        row["body_status_reason"] = _OPTED_OUT
+        row.pop("body_exact", None)
+    return held
+
+
 def iter_collection_sources(raw: object) -> Iterator[RoutineSource]:
     """:func:`iter_routine_sources` for a raw collection file, read as given (before any
     redaction), in the engine its metadata names."""
-    if not isinstance(raw, Mapping):
+    if not isinstance(raw, Mapping) or not collection_includes_bodies(raw):
+        # #1933: a file collected with the opt-out yields none, whatever it holds.
         return iter(())
     return iter_routine_sources(
         collection_engine(raw),
@@ -499,6 +533,73 @@ def apply_body_statuses(
                     row["body_status_reason"] = mysql_create.NOT_EXACT_REASON
 
 
+# #1933: why a SQL Server or Oracle body could not be read. The scripts and live
+# collectors say whether a module is encrypted; anything else is a permission.
+_UNREADABLE = {
+    "sqlserver": (
+        "the collection user cannot read this body: grant VIEW DEFINITION on the "
+        "database, or collect as its owner"
+    ),
+    "sqlserver_encrypted": (
+        "the module was created WITH ENCRYPTION: SQL Server keeps no readable body for it"
+    ),
+    "oracle": (
+        "ALL_SOURCE holds no line of this unit for the collection user: collect as its owner"
+    ),
+    "oracle_wrapped": (
+        "the unit is wrapped (obfuscated PL/SQL): Oracle keeps no readable body for it"
+    ),
+}
+# A wrapped Oracle unit's source starts with its header and the word "wrapped"
+# ("PACKAGE BODY app.billing wrapped"), then the obfuscated text.
+_WRAPPED = re.compile(r"\A[^\n]*\bwrapped[ \t]*(?:\r?\n|\Z)", re.I)
+
+
+def mark_read_failed(procedures: object, triggers: object, error: BaseException) -> None:
+    """Each row with no status and no body is ``not_readable`` because the body read
+    failed (#1933), naming the error's type, never its message: not a permission
+    reason, since the read never said."""
+    reason = f"the read failed: {type(error).__name__}"
+    for row in [*_rows(procedures), *_rows(triggers)]:
+        if row.get("body_status") not in _BODY_STATUSES and not _body(row.get("definition")):
+            row["body_status"] = "not_readable"
+            row["body_status_reason"] = reason
+
+
+def mark_body_readability(engine: str, procedures: object, triggers: object) -> None:
+    """Each SQL Server and Oracle routine row with no ``body_status`` gets one (#1933),
+    in place: ``collected`` with a body, else ``not_readable`` with the reason (an
+    encrypted SQL Server module, or a body the user may not read). A row that has a
+    status (``opted_out``) keeps it; PostgreSQL's and MySQL's scripts set their own.
+    Never raises: an unreadable body never fails the collection."""
+    if engine not in ("sqlserver", "oracle"):
+        return
+    for row in [*_rows(procedures), *_rows(triggers)]:
+        if row.get("body_status") in _BODY_STATUSES:
+            continue
+        body = _body(row.get("definition"))
+        if body and engine == "oracle" and _WRAPPED.match(body):
+            # Oracle's counterpart of WITH ENCRYPTION: the text is not the routine.
+            row["definition"] = None
+            row["body_status"] = "not_readable"
+            row["body_status_reason"] = _UNREADABLE["oracle_wrapped"]
+            continue
+        if body:
+            row["body_status"] = "collected"
+            continue
+        row["body_status"] = "not_readable"
+        encrypted = engine == "sqlserver" and _flag(row.get("is_encrypted")) is True
+        row["body_status_reason"] = _UNREADABLE["sqlserver_encrypted" if encrypted else engine]
+
+
+# What a privilege the collection user lacks keeps out of the collection (#1933).
+_NOT_SEEN = {
+    "SHOW_ROUTINE": "routine bodies another user defined",
+    "TRIGGER": "triggers",
+    "EVENT": "scheduled events",
+    "VIEW_DEFINITION": "routines and triggers it has no permission on, and their bodies",
+}
+
 _UNSET: Any = object()
 
 
@@ -533,6 +634,15 @@ def routine_capture(
             params_counted,
         )
     privileges = raw.get("privileges_not_seen")
+    named = [p for p in privileges if isinstance(p, str)] if isinstance(privileges, list) else []
+    if named:
+        logger.warning(
+            "The collection user may not see every routine: %s not granted directly, so "
+            "the collection may lack %s (a role may still grant it; see the collection "
+            "grants in the docs)",
+            ", ".join(named),
+            "; ".join(_NOT_SEEN.get(p.upper(), p) for p in named),
+        )
     out: dict[str, Any] = {
         "include_bodies": _flag(raw.get("include_bodies")) is not False,
         "routines_counted": counted,
@@ -819,6 +929,27 @@ def _delete_chunks_from(store: Any, prefix: str, number: int) -> None:
         number += 1
 
 
+_FINDING_AT_LINE = re.compile(r"\s+at line \d+$")
+
+
+def _secret_kinds(text: str) -> tuple[list[str], list[str]]:
+    """What the repository's credential scan (``src/shared/secret_scan.py``, the one
+    the CI private scan uses, #2055) finds in ``text``: its credential kinds and its
+    public-address kinds, each sorted, never a value. A kind the contract cannot name is
+    recorded as ``other``; a scan that fails flags nothing and never stops the write."""
+    from src.contracts.routine_sources import FINDING_KIND
+    from src.shared.secret_scan import IP_KINDS, secret_findings
+
+    try:
+        found = secret_findings(text)
+    except Exception:  # noqa: BLE001 - a failed scan never stops the write
+        logger.warning("The credential scan failed on a routine body; it is not flagged")
+        return [], []
+    kinds = {_FINDING_AT_LINE.sub("", f) for f in found}
+    named = {k if FINDING_KIND.fullmatch(k) else "other" for k in kinds}
+    return sorted(named - IP_KINDS), sorted(named & IP_KINDS)
+
+
 def _write_chunks(
     store: Any,
     database_name: str,
@@ -828,10 +959,13 @@ def _write_chunks(
     sources: Iterable[RoutineSource],
     chunk_size: int,
 ) -> str | None:
+    from src.shared.secret_scan import rule_set
+
     prefix = _job_prefix(database_name, job_id)
     parts: list[RoutineSourcesPart] = []
     seen: set[bytes] = set()
     buffer: list[RoutineSource] = []
+    flagged: list[RoutineSecretFlag] = []
 
     def flush() -> None:
         number = len(parts) + 1
@@ -854,6 +988,17 @@ def _write_chunks(
                 f"two routine sources for {source.kind} {source.schema_name}.{source.specific_name}"
             )
         seen.add(mark)
+        credentials, addresses = _secret_kinds(source.create_statement)
+        if credentials or addresses:
+            flagged.append(
+                RoutineSecretFlag(
+                    kind=source.kind,
+                    schema_name=source.schema_name,
+                    specific_name=source.specific_name,
+                    credential_kinds=credentials,
+                    address_kinds=addresses,
+                )
+            )
         buffer.append(source)
         if len(buffer) >= chunk_size:
             flush()
@@ -871,7 +1016,17 @@ def _write_chunks(
         source_version=str(version) if version else None,
         total=sum(p.count for p in parts),
         parts=parts,
+        secret_scan=RoutineSecretScan(rule_set=rule_set(), flagged=flagged),  # type: ignore[arg-type]
     )
+    if flagged:
+        names = ", ".join(f"{f.schema_name or ''}.{f.specific_name}" for f in flagged[:20])
+        logger.warning(
+            "%d routine body(ies) hold what the scan flags (%s%s): they stay only in the "
+            "routine sources; the index names each and the kinds found",
+            len(flagged),
+            names,
+            f" and {len(flagged) - 20} more" if len(flagged) > 20 else "",
+        )
     key = f"{database_name}/{job_id}/collector/routine_sources.json"  # ROUTINE_SOURCES_FILE
     store.write_json(key, index.model_dump(mode="json"))
     return key

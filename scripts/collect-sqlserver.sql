@@ -18,6 +18,14 @@
 --   (grant VIEW DEFINITION to see every one); the routine is still listed. Their
 --   execution counts come from sys.dm_exec_procedure_stats, _function_stats and
 --   _trigger_stats (VIEW SERVER STATE); the script changes no setting.
+--   A body the user cannot read (encrypted, or no VIEW DEFINITION) is listed as
+--   not_readable with the reason (#1933), and the collection goes on;
+--   metadata.routine_capture.privileges_not_seen names VIEW_DEFINITION when the user
+--   lacks it, since sys.objects then also hides the modules it has no permission on.
+--
+-- Procedure, function and trigger code (#1933): edit the @include_routine_bodies
+-- DECLARE line below the header. 0 lists routines and triggers by name and size only,
+-- without their code (default: 1, code kept).
 --
 -- Usage:
 --   sqlcmd -S <host>,<port> -U <user> -P <pass> -d <database> \
@@ -65,6 +73,8 @@ DECLARE @query_limit INT = NULL;
 DECLARE @min_executions INT = 10;
 -- The seconds between the two reads of the counters (#1908); 0 for one read.
 DECLARE @rate_sample_seconds INT = 300;
+-- Routine code (#1933): 0 lists procedures, functions and triggers by name and size only.
+DECLARE @include_routine_bodies BIT = 1;
 -- A setting that is not a positive whole number stops the script here: it must never
 -- run with a NULL floor and read as a complete capture of nothing.
 IF @min_executions IS NULL OR @min_executions < 1
@@ -348,7 +358,16 @@ SET @metadata = (
                    ROUND(DATEDIFF_BIG(MICROSECOND, @rate_sample_t0, @rate_sample_t1) / 1000000.0, 3)
                        AS elapsed_seconds
             FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
-        )) AS rate_sample
+        )) AS rate_sample,
+        -- #1933: whether routine code was kept, and the privilege that decides what the
+        -- user sees (VIEW DEFINITION: without it sys.objects hides modules it has no
+        -- permission on, and OBJECT_DEFINITION returns NULL).
+        JSON_QUERY((
+            SELECT @include_routine_bodies AS include_bodies,
+                   JSON_QUERY(CASE WHEN HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'VIEW DEFINITION') = 1
+                                   THEN '[]' ELSE '["VIEW_DEFINITION"]' END) AS privileges_not_seen
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        )) AS routine_capture
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 );
 
@@ -536,7 +555,12 @@ SET @procedures = (
         'TSQL' AS language,
         -- #1652: the body, read from the catalog (no table data); NULL for an encrypted
         -- module or one this user may not see the definition of (VIEW DEFINITION).
-        OBJECT_DEFINITION(o.object_id) AS definition
+        CASE WHEN @include_routine_bodies = 1 THEN OBJECT_DEFINITION(o.object_id) END AS definition,
+        -- #1933: its size, whether it is encrypted (so an unread body says why), and
+        -- opted_out when bodies are off
+        DATALENGTH(OBJECT_DEFINITION(o.object_id)) / 2 AS body_chars,
+        OBJECTPROPERTY(o.object_id, 'IsEncrypted') AS is_encrypted,
+        CASE WHEN @include_routine_bodies = 0 THEN 'opted_out' END AS body_status
     FROM sys.objects o
     INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
     WHERE o.type IN ('P', 'FN', 'IF', 'TF')
@@ -569,7 +593,11 @@ SET @triggers = (
         -- #1652: a DML trigger fires once per statement; its state and its body.
         'STATEMENT' AS for_each,
         CASE WHEN tr.is_disabled = 1 THEN 0 ELSE 1 END AS is_enabled,
-        OBJECT_DEFINITION(tr.object_id) AS definition
+        CASE WHEN @include_routine_bodies = 1 THEN OBJECT_DEFINITION(tr.object_id) END AS definition,
+        -- #1933: its size, whether it is encrypted, and opted_out when bodies are off
+        DATALENGTH(OBJECT_DEFINITION(tr.object_id)) / 2 AS body_chars,
+        OBJECTPROPERTY(tr.object_id, 'IsEncrypted') AS is_encrypted,
+        CASE WHEN @include_routine_bodies = 0 THEN 'opted_out' END AS body_status
     FROM sys.triggers tr
     -- sys.objects, not sys.tables: an INSTEAD OF trigger can sit on a view (#1651)
     INNER JOIN sys.objects t ON tr.parent_id = t.object_id AND t.type IN ('U', 'V')

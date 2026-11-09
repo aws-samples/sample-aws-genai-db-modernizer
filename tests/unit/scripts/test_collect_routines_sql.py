@@ -45,9 +45,13 @@ def _code(text: str) -> str:
 
 
 def test_sqlserver_procedures_and_triggers_carry_their_bodies():
-    assert "OBJECT_DEFINITION(o.object_id) AS definition" in _section(SQLSERVER, "9. Procedures")
+    # #1933: unless @include_routine_bodies is 0
+    assert (
+        "WHEN @include_routine_bodies = 1 THEN OBJECT_DEFINITION(o.object_id) END AS definition"
+        in _section(SQLSERVER, "9. Procedures")
+    )
     triggers = _section(SQLSERVER, "10. Triggers")
-    assert "OBJECT_DEFINITION(tr.object_id) AS definition" in triggers
+    assert "THEN OBJECT_DEFINITION(tr.object_id) END AS definition" in triggers
     assert "CASE WHEN tr.is_disabled = 1 THEN 0 ELSE 1 END AS is_enabled" in triggers
     assert "'STATEMENT' AS for_each" in triggers
 

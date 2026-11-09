@@ -73,6 +73,10 @@ FACT_MODULES: dict[str, str] = {
 
 # Modules with a SQL regex that is not a routing or analysis query fact.
 OTHER_SQL_MODULES: dict[str, str] = {
+    "src/shared/secret_scan.py": (
+        "the credential scan's own allow rule: a column note naming a SQL type is no "
+        "credential (moved from ci/llm/private_scan.py, #1933); it reads no query fact"
+    ),
     "src/agents/collector/mysql_collector.py": (
         "the collector's time-range field, before any fact is read; its has_text_search is the "
         "text_search fact the live reader sets (#929)"

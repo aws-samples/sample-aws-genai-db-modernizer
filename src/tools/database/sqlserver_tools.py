@@ -358,6 +358,9 @@ class SQLServerRemoteCollector:
                 'TSQL' AS language,
                 -- #1652: NULL for an encrypted module or one the user may not see
                 CASE WHEN {flag} = 1 THEN OBJECT_DEFINITION(o.object_id) END AS definition,
+                -- #1933: its size and whether it is encrypted, as the script reads them
+                DATALENGTH(OBJECT_DEFINITION(o.object_id)) / 2 AS body_chars,
+                OBJECTPROPERTY(o.object_id, 'IsEncrypted') AS is_encrypted,
                 CASE WHEN {flag} = 0 THEN 'opted_out' END AS body_status
             FROM sys.objects o
             INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
@@ -365,6 +368,19 @@ class SQLServerRemoteCollector:
               AND {_SYSTEM_SCHEMAS_FILTER}
             ORDER BY routine_type, s.name, o.name
         """)  # nosec B608 — _SYSTEM_SCHEMAS_FILTER is a module constant, not user input
+
+    def collect_routine_capture(self, include_bodies: bool = True) -> dict:
+        """How routine code was read (#1933), as the script's metadata.routine_capture:
+        whether bodies were kept, and VIEW_DEFINITION when the user lacks VIEW
+        DEFINITION (sys.objects then hides the modules it has no permission on)."""
+        rows = self._query(
+            "SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'VIEW DEFINITION') AS granted"
+        )
+        granted = bool(rows) and str(rows[0].get("granted")) == "1"
+        return {
+            "include_bodies": include_bodies,
+            "privileges_not_seen": [] if granted else ["VIEW_DEFINITION"],
+        }
 
     def collect_triggers(self, include_bodies: bool = True) -> list[dict]:
         """DML triggers with every event, state and body unless ``include_bodies`` is
@@ -392,6 +408,9 @@ class SQLServerRemoteCollector:
                 'STATEMENT' AS for_each,
                 CASE WHEN tr.is_disabled = 1 THEN 0 ELSE 1 END AS is_enabled,
                 CASE WHEN {flag} = 1 THEN OBJECT_DEFINITION(tr.object_id) END AS definition,
+                -- #1933: its size and whether it is encrypted, as the script reads them
+                DATALENGTH(OBJECT_DEFINITION(tr.object_id)) / 2 AS body_chars,
+                OBJECTPROPERTY(tr.object_id, 'IsEncrypted') AS is_encrypted,
                 CASE WHEN {flag} = 0 THEN 'opted_out' END AS body_status
             FROM sys.triggers tr
             -- sys.objects, not sys.tables: an INSTEAD OF trigger can sit on a view (#1651)

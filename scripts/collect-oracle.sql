@@ -24,6 +24,12 @@
 --   which shows the units the user owns or may run; a trigger is listed only when
 --   the user owns it or its table (ALL_TRIGGERS). Which unit a statement ran in comes
 --   from V$SQL.PROGRAM_ID. Oracle keeps no per-routine execution count.
+--   A unit with no ALL_SOURCE line the user may read is listed as not_readable, with
+--   the reason (#1933), and the collection goes on.
+--
+-- Procedure, function, package and trigger code (#1933): edit the
+-- v_include_routine_bodies line at the top of the DECLARE block below. 0 lists them by
+-- name and size only, without their code (default: 1, code kept).
 --
 -- Usage:
 --   sqlplus -S <user>/<pass>@<host>:<port>/<service> @collect-oracle.sql > collection.json
@@ -110,6 +116,9 @@ SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
 
 DECLARE
+    -- Routine code (#1933): 0 lists procedures, functions, packages and triggers by name
+    -- and size only, without their code.
+    v_include_routine_bodies CONSTANT PLS_INTEGER := 1;
     v_owner       VARCHAR2(128);
     v_total_elapsed NUMBER := 0;
     -- #1908: the first read of the counters, its time and the seconds to the second.
@@ -329,6 +338,13 @@ BEGIN
                 'seconds' VALUE v_sample_seconds,
                 'elapsed_seconds' VALUE v_sample_elapsed
                 NULL ON NULL
+            ),
+            -- #1933: whether routine code was kept. The script reads the user's own
+            -- schema, whose every unit and trigger ALL_SOURCE and ALL_TRIGGERS show.
+            'routine_capture' VALUE JSON_OBJECT(
+                'include_bodies' VALUE CASE WHEN v_include_routine_bodies = 1
+                                            THEN 'true' ELSE 'false' END FORMAT JSON,
+                'privileges_not_seen' VALUE '[]' FORMAT JSON
             )
         ) AS j FROM V$VERSION WHERE ROWNUM = 1
     ) LOOP
@@ -524,12 +540,22 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('"procedures": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
-            'routine_name' VALUE LOWER(OBJECT_NAME),
-            'schema_name' VALUE LOWER(OWNER),
-            'routine_type' VALUE OBJECT_TYPE
+            'routine_name' VALUE LOWER(o.OBJECT_NAME),
+            'schema_name' VALUE LOWER(o.OWNER),
+            'routine_type' VALUE o.OBJECT_TYPE,
+            -- #1933: its size (a package's spec and body), kept when its code is not
+            'body_chars' VALUE z.SRC_CHARS,
+            'body_status' VALUE CASE WHEN v_include_routine_bodies = 0 THEN 'opted_out' END
         ) AS j
-        FROM ALL_OBJECTS
-        WHERE OWNER = v_owner AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
+        FROM ALL_OBJECTS o
+        -- #1933: every unit's size from one grouped read of ALL_SOURCE (a package's spec
+        -- and body together), not a read per unit
+        LEFT JOIN (
+            SELECT NAME AS SRC_NAME, CASE WHEN TYPE = 'PACKAGE BODY' THEN 'PACKAGE' ELSE TYPE END AS SRC_TYPE, SUM(LENGTH(TEXT)) AS SRC_CHARS
+            FROM ALL_SOURCE WHERE OWNER = v_owner
+            GROUP BY NAME, CASE WHEN TYPE = 'PACKAGE BODY' THEN 'PACKAGE' ELSE TYPE END
+        ) z ON z.SRC_NAME = o.OBJECT_NAME AND z.SRC_TYPE = o.OBJECT_TYPE
+        WHERE o.OWNER = v_owner AND o.OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
         ORDER BY OBJECT_TYPE, OBJECT_NAME
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
@@ -568,9 +594,18 @@ BEGIN
             'events' VALUE TRIGGERING_EVENT,
             -- #1652: the raw orientation ('BEFORE EACH ROW') and state ('ENABLED')
             'for_each' VALUE TRIGGER_TYPE,
-            'is_enabled' VALUE STATUS
+            'is_enabled' VALUE STATUS,
+            -- #1933: its size, kept when its code is not
+            'body_chars' VALUE z.SRC_CHARS,
+            'body_status' VALUE CASE WHEN v_include_routine_bodies = 0 THEN 'opted_out' END
         ) AS j
         FROM ALL_TRIGGERS
+        -- #1933: every trigger's size from one grouped read of ALL_SOURCE
+        LEFT JOIN (
+            SELECT NAME AS SRC_NAME, SUM(LENGTH(TEXT)) AS SRC_CHARS
+            FROM ALL_SOURCE WHERE OWNER = v_owner AND TYPE = 'TRIGGER'
+            GROUP BY NAME
+        ) z ON z.SRC_NAME = TRIGGER_NAME
         WHERE OWNER = v_owner
           AND TABLE_NAME IS NOT NULL
           AND TRIGGER_TYPE NOT LIKE '%EVENT%'
@@ -597,7 +632,8 @@ BEGIN
             'line' VALUE LINE, 'text' VALUE TEXT
         ) AS j
         FROM ALL_SOURCE
-        WHERE OWNER = v_owner
+        WHERE v_include_routine_bodies = 1
+          AND OWNER = v_owner
           AND TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER')
         ORDER BY TYPE, NAME, LINE
     ) LOOP

@@ -10902,7 +10902,7 @@
       }
     },
     "schema_hash": "f7ec97baad08fe4222393f947d36928c3f329c3f4a9cea9ef09bcb5eeea7f97f",
-    "version": "5.15"
+    "version": "5.16"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -25150,6 +25150,101 @@
           "kind": "array"
         }
       },
+      "secret_scan": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "flagged": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "address_kinds": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "credential_kinds": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "kind": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "event",
+                              "event_trigger",
+                              "function",
+                              "procedure",
+                              "trigger"
+                            ]
+                          }
+                        },
+                        "schema_name": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "specific_name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "rule_set": {
+                  "required": true,
+                  "schema": {
+                    "kind": "enum",
+                    "values": [
+                      "regex",
+                      "regex+detect-secrets"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "source_engine": {
         "required": true,
         "schema": {
@@ -25195,8 +25290,8 @@
         }
       }
     },
-    "schema_hash": "01dcaa2af8c0696665e1bf401ef4a4358f63ec26adad947107d4344ee2975480",
-    "version": "1.0"
+    "schema_hash": "bdc72077a2467a4f2b8d2f9cac480b262b288abd9fb7e75ea9614d051fdb73e0",
+    "version": "1.1"
   },
   "schema_design_input.SchemaDesignGroupsManifest": {
     "fields": {

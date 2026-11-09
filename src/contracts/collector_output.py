@@ -123,6 +123,10 @@ Version History:
   collector's DDL, LOGON and STARTUP triggers, each with its scope, events, command
   tags, state, function and body status. Routing never reads them. Backward compatible:
   defaults to None (none collected)
+- 5.16 (2026-11-09, #1933): RoutineCapture.privileges_not_seen also names SQL Server's
+  VIEW_DEFINITION; the SQL Server and Oracle collections record routine_capture, and
+  each routine's body_status, body_status_reason and body_chars. Backward compatible: no
+  field added or removed
 """
 
 import re
@@ -328,8 +332,9 @@ class RoutineCapture(BaseModel):
     privileges_not_seen: list[str] = Field(
         default_factory=list,
         description=(
-            "MySQL privileges that decide what is visible (SHOW_ROUTINE, TRIGGER, EVENT) "
-            "not granted to the collection user directly; a role may still grant one"
+            "Privileges that decide what is visible, not granted to the collection user "
+            "directly (a role may still grant one): MySQL's SHOW_ROUTINE, TRIGGER and "
+            "EVENT; SQL Server's VIEW_DEFINITION (#1933)"
         ),
     )
 
@@ -1779,7 +1784,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.15",
+        default="5.16",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

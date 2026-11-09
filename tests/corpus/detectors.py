@@ -522,6 +522,10 @@ OTHER_SQL_DETECTORS: tuple[SqlDetector, ...] = (
 # The OTHER_SQL_MODULES with no detector in the corpus: what their heuristics read, none of
 # it a collected workload query.
 NOT_CORPUS_MODULES: dict[str, str] = {
+    "src/shared/secret_scan.py": (
+        "finds credentials in text; its one SQL pattern (a column note naming a SQL type) "
+        "only allows a value, it reads no workload query"
+    ),
     "src/tools/database/ddl_parser.py": "reads DDL, not a workload query",
     "src/tools/schema/aurora_common/sql_safety.py": "checks generated DDL, not a workload query",
     "src/agents/schema_design/dynamodb_key_reconcile.py": (

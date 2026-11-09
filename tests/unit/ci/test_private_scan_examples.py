@@ -203,8 +203,11 @@ def test_a_raw_private_key_block_goes_whole_and_later_lines_keep_their_numbers()
 
 
 def test_a_value_that_cannot_be_placed_makes_the_redaction_incomplete(monkeypatch) -> None:
+    from src.shared import secret_scan
+
+    # The scan's lines are read by the shared definition (#1933).
     monkeypatch.setattr(
-        private_scan,
+        secret_scan,
         "_line_hits",
         lambda body, emails: [("token value", None)] if _LOOKS_REAL in body else [],
     )

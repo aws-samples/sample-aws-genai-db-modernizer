@@ -325,12 +325,19 @@ class OracleRemoteCollector:
         owner = owner or self.get_current_schema()
         rows = self._query(f"""
             SELECT
-                OBJECT_NAME AS routine_name,
-                OWNER AS schema_name,
-                OBJECT_TYPE AS routine_type
-            FROM ALL_OBJECTS
-            WHERE OWNER = '{owner}'
-              AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
+                o.OBJECT_NAME AS routine_name,
+                o.OWNER AS schema_name,
+                o.OBJECT_TYPE AS routine_type,
+                -- #1933: its size, as the script reads it
+                z.SRC_CHARS AS body_chars
+            FROM ALL_OBJECTS o
+            LEFT JOIN (
+                SELECT NAME AS SRC_NAME, CASE WHEN TYPE = 'PACKAGE BODY' THEN 'PACKAGE' ELSE TYPE END AS SRC_TYPE, SUM(LENGTH(TEXT)) AS SRC_CHARS
+                FROM ALL_SOURCE WHERE OWNER = '{owner}'
+                GROUP BY NAME, CASE WHEN TYPE = 'PACKAGE BODY' THEN 'PACKAGE' ELSE TYPE END
+            ) z ON z.SRC_NAME = o.OBJECT_NAME AND z.SRC_TYPE = o.OBJECT_TYPE
+            WHERE o.OWNER = '{owner}'
+              AND o.OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
             ORDER BY OBJECT_TYPE, OBJECT_NAME
         """)  # nosec B608 — owner from sys catalog
         for r in rows:
@@ -354,8 +361,15 @@ class OracleRemoteCollector:
                 STATUS AS is_enabled,
                 -- #2023: TABLE, VIEW, SCHEMA or DATABASE: where a DDL, LOGON or STARTUP
                 -- trigger is attached
-                BASE_OBJECT_TYPE AS base_object_type
+                BASE_OBJECT_TYPE AS base_object_type,
+                -- #1933: its size, as the script reads it
+                z.SRC_CHARS AS body_chars
             FROM ALL_TRIGGERS
+            LEFT JOIN (
+                SELECT NAME AS SRC_NAME, SUM(LENGTH(TEXT)) AS SRC_CHARS
+                FROM ALL_SOURCE WHERE OWNER = '{owner}' AND TYPE = 'TRIGGER'
+                GROUP BY NAME
+            ) z ON z.SRC_NAME = TRIGGER_NAME
             WHERE OWNER = '{owner}'
             ORDER BY TABLE_NAME, TRIGGER_NAME
         """)  # nosec B608 — owner from sys catalog

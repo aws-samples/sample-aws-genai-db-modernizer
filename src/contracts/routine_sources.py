@@ -33,9 +33,10 @@ Version History:
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 #: The most routines one chunk holds (#1652).
 MAX_CHUNK_SOURCES = 5000
@@ -175,11 +176,78 @@ class RoutineSourcesPart(BaseModel):
     )
 
 
+#: A finding kind as the scan names it; any other is recorded as ``other``.
+FINDING_KIND = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _()-]{0,63}")
+
+
+def _kind_names(v: list[str]) -> list[str]:
+    for kind in v:
+        if not FINDING_KIND.fullmatch(kind):
+            raise ValueError(f"a finding kind is a kind name, got {kind!r}")
+    return v
+
+
+class RoutineSecretFlag(BaseModel):
+    """One routine whose CREATE the credential scan flagged (#1933): which routine, and
+    the kinds found, never a value. A hard-coded public address is not a credential: it
+    is listed apart, in ``address_kinds``."""
+
+    kind: Literal["function", "procedure", "trigger", "event", "event_trigger"] = Field(
+        ..., description="What the routine is"
+    )
+    schema_name: str | None = Field(None, description="The routine's schema or database")
+    specific_name: str = Field(..., min_length=1, description="As in its RoutineSource")
+    credential_kinds: list[str] = Field(
+        default_factory=list,
+        description="What looks like a credential, e.g. 'AWS Access Key', 'password value'",
+    )
+    address_kinds: list[str] = Field(
+        default_factory=list,
+        description="A hard-coded public address: 'Public IP (ipv4)', 'Public IP (ipv6)'",
+    )
+
+    _credential_names = field_validator("credential_kinds")(_kind_names)
+    _address_names = field_validator("address_kinds")(_kind_names)
+
+    @model_validator(mode="after")
+    def _something_found(self) -> RoutineSecretFlag:
+        if not self.credential_kinds and not self.address_kinds:
+            raise ValueError("a flagged routine names at least one finding kind")
+        return self
+
+
+class RoutineSecretScan(BaseModel):
+    """How the routine bodies were scanned for credentials (#1933), by the repository's
+    own rules (``src/shared/secret_scan.py``), which always run."""
+
+    rule_set: Literal["regex", "regex+detect-secrets"] = Field(
+        ...,
+        description=(
+            "regex: the repository's own rules (credential key-value pairs, AWS keys, "
+            "private key headers, provider tokens, public addresses); "
+            "regex+detect-secrets: detect-secrets' plugins on top, where it is installed"
+        ),
+    )
+    flagged: list[RoutineSecretFlag] = Field(
+        default_factory=list, description="The routines whose CREATE the scan flagged"
+    )
+
+
 class RoutineSourcesContract(BaseModel):
-    """The index of a job's routine sources: which chunks hold them, in order."""
+    """The index of a job's routine sources: which chunks hold them, in order. Its
+    version moves on its own from the chunk's (the module's history above).
+
+    Version History:
+    - 1.0 (2026-11-06, #1652): First version.
+    - 1.1 (2026-11-09, #1933): Optional secret_scan (RoutineSecretScan: rule_set, regex
+      or regex+detect-secrets, and flagged RoutineSecretFlag entries with
+      credential_kinds and address_kinds): what the repository's credential scan found in
+      the bodies, each flagged routine with the kinds found, never a value. Backward
+      compatible: defaults to None
+    """
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., description="The job the collection belongs to")
     source_engine: Literal["postgresql", "mysql", "mariadb"] | None = Field(
@@ -200,6 +268,12 @@ class RoutineSourcesContract(BaseModel):
     )
     parts: list[RoutineSourcesPart] = Field(
         ..., description="The chunks, in the order the routines were written"
+    )
+    secret_scan: RoutineSecretScan | None = Field(
+        None,
+        description=(
+            "The credential scan of the bodies (#1933); None for an index written before it"
+        ),
     )
 
     @model_validator(mode="after")

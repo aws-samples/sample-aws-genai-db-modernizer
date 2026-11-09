@@ -45,7 +45,14 @@ from src.agents.collector.routine_rows import (
     log_skipped_triggers,
     routine_stats_status,
 )
-from src.agents.collector.routine_sources import body_fields, non_dml_triggers
+from src.agents.collector.routine_sources import (
+    body_fields,
+    mark_body_readability,
+    mark_read_failed,
+    non_dml_triggers,
+    routine_capture,
+    routine_capture_model,
+)
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -250,6 +257,14 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             server_counters=server_counters_model(live_server_counters(db)),
             # #1652: an older checkpoint's schema stage has none.
             routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
+            # #1933: how routine code was read (none in an older checkpoint).
+            routine_capture=routine_capture_model(
+                routine_capture(
+                    schema_raw.get("routine_capture"),
+                    listed=len(schema_raw.get("procedures") or [])
+                    + len(schema_raw.get("triggers") or []),
+                )
+            ),
         ),
         database_schema=Schema(
             tables=tables,
@@ -362,13 +377,17 @@ def _collect_schema_raw(db: OracleRemoteCollector, include_bodies: bool = True) 
     if include_bodies:
         try:
             attach_routine_sources(procedures, triggers, db.collect_routine_sources())
-        except Exception:
+        except Exception as exc:
             logger.warning("Failed to collect routine bodies")
+            # #1933: the read failed, which says nothing about permissions.
+            mark_read_failed(procedures, triggers, exc)
     else:
         # #1652: include_routine_bodies = False reads no body.
         for row in [*procedures, *triggers]:
             if isinstance(row, dict):
                 row["body_status"] = "opted_out"
+    # #1933: a unit with no source line the user may read is not_readable; never fails.
+    mark_body_readability("oracle", procedures, triggers)
 
     global_stats = {}
     try:
@@ -388,6 +407,8 @@ def _collect_schema_raw(db: OracleRemoteCollector, include_bodies: bool = True) 
         "procedures": procedures,
         "triggers": triggers,
         "routine_stats_status": dict(_ORACLE_STATS_STATUS),
+        # #1933: the user's own schema, whose every unit and trigger it sees.
+        "routine_capture": {"include_bodies": include_bodies, "privileges_not_seen": []},
         "global_stats": global_stats,
         "os_stats": os_stats,
     }
