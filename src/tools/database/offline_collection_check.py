@@ -79,8 +79,10 @@ ENGINE_SECTIONS: tuple[str, ...] = ("io_stats", "wait_events", "os_stats", "quer
 
 #: Optional routine sections some scripts write since #1652 (routine execution counts and
 #: how they were read; Oracle's routine source lines; MySQL's routine parameters and
-#: scheduled events): never reported absent, never unknown.
+#: scheduled events; PostgreSQL's event triggers, #2023): never reported absent, never
+#: unknown.
 ROUTINE_SECTIONS: tuple[str, ...] = (
+    "event_triggers",  # PostgreSQL's (#2023)
     "events",
     "routine_parameters",
     "routine_sources",

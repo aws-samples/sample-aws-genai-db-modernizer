@@ -124,7 +124,8 @@ def test_postgresql_triggers_come_from_pg_trigger_with_their_whole_create():
 
 def test_postgresql_bodies_are_opt_out_and_the_capture_says_so():
     assert "\\set include_routine_bodies 1" in POSTGRESQL
-    assert POSTGRESQL.count("CAST(:'routine_bodies_on' AS boolean)") == 5
+    # 6: with the event triggers' body status (#2023)
+    assert POSTGRESQL.count("CAST(:'routine_bodies_on' AS boolean)") == 6
     assert "NOT IN ('0', 'false', 'f', 'no', 'off') AS routine_bodies_on \\gset" in POSTGRESQL
     assert "'opted_out'" in POSTGRESQL
     assert "'routine_capture', json_build_object(" in POSTGRESQL
@@ -167,6 +168,25 @@ def test_the_live_postgresql_collector_reads_what_the_script_reads():
     )
     assert norm(_PROCEDURES_SQL) == script_procs
     assert norm(_TRIGGERS_SQL) == script_trigs
+
+
+def test_postgresql_event_triggers_come_from_pg_event_trigger_live_and_offline():
+    """#2023: the script's section 9c and the live read are one query (event triggers are
+    database-wide, so neither filters on a schema)."""
+    from src.tools.database.postgres_tools import _EVENT_TRIGGERS_SQL
+
+    section = _section(POSTGRESQL, "9c. Event triggers")
+    cte = section.split("event_triggers_data AS (", 1)[1].split("\n),\n", 1)[0]
+    body = cte.split("FROM (\n", 1)[1].rsplit("\n  ) ", 1)[0]
+
+    def norm(sql: str) -> str:
+        sql = sql.replace("CAST(:'routine_bodies_on' AS boolean)", "{flag} = 1")
+        sql = re.sub(r"ORDER BY[^\n]*\s*$", "", _code(sql).strip())
+        return re.sub(r"\s+", " ", sql).strip()
+
+    assert "FROM pg_event_trigger e" in body
+    assert norm(_EVENT_TRIGGERS_SQL) == norm(body)
+    assert "'event_triggers', (SELECT data FROM event_triggers_data)" in POSTGRESQL
 
 
 # -- Oracle -----------------------------------------------------------------------

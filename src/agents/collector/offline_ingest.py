@@ -113,6 +113,7 @@ def build_offline_contract(
         _merge_into_queries,
         _offline_query_log_source,
     )
+    from src.agents.collector.routine_sources import non_dml_triggers
     from src.shared.query_capture import offline_query_capture
     from src.tools.database.offline_parser import offline_version_label
 
@@ -132,6 +133,11 @@ def build_offline_contract(
     views = _build_views(parsed.get("views", []))
     procedures = _build_procedures(parsed.get("procedures", []))
     triggers = _build_triggers(parsed.get("triggers", []))
+    # #2023: the triggers the DML list cannot hold, kept apart; routing never reads them.
+    # Ids as the offline DML triggers' (unqualified, for every engine).
+    other_triggers = non_dml_triggers(
+        parsed.get("triggers", []), parsed.get("event_triggers") or []
+    )
     queries = _build_queries(
         parsed.get("queries", []), query_log_source=_offline_query_log_source(inp.engine.value)
     )
@@ -180,6 +186,7 @@ def build_offline_contract(
         views=views,
         procedures=procedures,
         triggers=triggers,
+        non_dml_triggers=other_triggers,
         # #1078: the installed extensions the PostgreSQL script read.
         extensions=parsed.get("extensions"),
         # #1834: the PostgreSQL script's enum types and their labels.

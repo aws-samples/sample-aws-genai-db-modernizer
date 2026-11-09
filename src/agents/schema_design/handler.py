@@ -304,6 +304,9 @@ def filter_collector_for_assignment(
     )
     filtered["database_schema"] = dict(collector_output.get("database_schema", {}))
     filtered["database_schema"]["tables"] = filtered_tables
+    # #2023: triggers outside the DML list are carried as routines, never designed
+    # against, so no design input (or prompt) holds them.
+    filtered["database_schema"].pop("non_dml_triggers", None)
 
     if target_engine in CACHE_OVERLAY_ENGINES:
         writes = _invalidation_writes(

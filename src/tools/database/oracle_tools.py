@@ -351,7 +351,10 @@ class OracleRemoteCollector:
                 TRIGGERING_EVENT AS event_type,
                 -- #1652: the raw orientation ('BEFORE EACH ROW') and state ('ENABLED')
                 TRIGGER_TYPE AS for_each,
-                STATUS AS is_enabled
+                STATUS AS is_enabled,
+                -- #2023: TABLE, VIEW, SCHEMA or DATABASE: where a DDL, LOGON or STARTUP
+                -- trigger is attached
+                BASE_OBJECT_TYPE AS base_object_type
             FROM ALL_TRIGGERS
             WHERE OWNER = '{owner}'
             ORDER BY TABLE_NAME, TRIGGER_NAME

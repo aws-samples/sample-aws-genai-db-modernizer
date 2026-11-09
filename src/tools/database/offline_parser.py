@@ -383,6 +383,8 @@ def _parse_offline_collection(
         "triggers": routines["triggers"],
         # #1652: MySQL scheduled events, how routine bodies and execution counts were read.
         "events": routines["events"],
+        # #2023: PostgreSQL's event triggers, with their body status.
+        "event_triggers": routines["event_triggers"],
         "routine_capture": routines["routine_capture"],
         "routine_stats_status": routines["routine_stats_status"],
         "queries": _transform_queries(
@@ -465,12 +467,19 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
             "procedures": _redacted_definitions(raw_procedures, source_engine),
             "triggers": _redacted_definitions(raw_triggers, source_engine),
             "events": [],
+            "event_triggers": [],
             "routine_capture": None,
             "routine_stats_status": None,
         }
     procedures = [dict(p) if isinstance(p, dict) else p for p in raw_procedures]
     triggers = [dict(t) if isinstance(t, dict) else t for t in raw_triggers]
     events = [dict(e) for e in data.get("events") or [] if isinstance(e, dict)]
+    # #2023: PostgreSQL's event triggers (the script's section 9c); no definition, their
+    # CREATE is rebuilt from the row (routine_sources.event_trigger_create).
+    raw_event_triggers = data.get("event_triggers")
+    event_triggers = [
+        dict(e) for e in raw_event_triggers if isinstance(e, dict)
+    ] if isinstance(raw_event_triggers, list) else []  # fmt: skip
     attach_routine_sources(procedures, triggers, data.get("routine_sources"))
     attach_routine_stats(procedures, triggers, data.get("routine_stats"))
     from src.agents.collector.routine_sources import RoutineSourcesBuild
@@ -483,14 +492,20 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
         events=events,
         parameters=data.get("routine_parameters"),
         notes=notes,
+        event_triggers=event_triggers,
     ):
         pass  # only each routine's status and exactness are kept here, never its CREATE
     apply_body_statuses(
-        notes, source_engine, procedures=procedures, triggers=triggers, events=events
+        notes,
+        source_engine,
+        procedures=procedures,
+        triggers=triggers,
+        events=events,
+        event_triggers=event_triggers,
     )
     capture = routine_capture(
         metadata.get("routine_capture") if isinstance(metadata, dict) else None,
-        listed=len(procedures) + len(triggers) + len(events),
+        listed=len(procedures) + len(triggers) + len(events) + len(event_triggers),
         parameters=data.get("routine_parameters"),
     )
     return {
@@ -501,6 +516,7 @@ def _routine_rows(data: Mapping, metadata: object, source_engine: str) -> dict[s
         "events": _redacted_comments(
             _redacted_definitions(events, source_engine), "event_comment", source_engine
         ),
+        "event_triggers": event_triggers,
         "routine_capture": capture,
         "routine_stats_status": routine_stats_status(data.get("routine_stats_status")),
     }

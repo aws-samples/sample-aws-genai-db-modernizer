@@ -57,7 +57,8 @@
 --                                size only, without their code (default: 1, kept)
 -- Each routine's whole CREATE statement (pg_get_functiondef, pg_get_triggerdef) needs
 -- no privilege beyond reading the catalog, and the routines and triggers are read from
--- pg_proc and pg_trigger, which show a read-only user every one. Function call counts
+-- pg_proc and pg_trigger, which show a read-only user every one; event triggers (#2023)
+-- come from pg_event_trigger, which does too. Function call counts
 -- come from pg_stat_user_functions, which PostgreSQL fills only when track_functions is
 -- pl or all; the script never changes the setting and records which it was.
 -- ==========================================================================
@@ -476,6 +477,35 @@ routine_stats_status_data AS (
          END AS data
 ),
 
+-- ===================== 9c. Event triggers (#2023) =====================
+-- pg_event_trigger: database-wide triggers on DDL events (ddl_command_start, sql_drop, ...),
+-- which pg_trigger does not list. PostgreSQL has no pg_get_triggerdef for one, so each
+-- row carries the pieces of its CREATE, quoted by the server (quote_ident), and the
+-- collector builds the statement from them, as pg_dump does; its state is is_enabled.
+-- One an extension owns is not listed (the extension creates it). Catalog reads only.
+event_triggers_data AS (
+  SELECT coalesce(json_agg(et ORDER BY et.trigger_name), '[]'::json) AS data
+  FROM (
+    SELECT
+      e.evtname AS trigger_name,
+      quote_ident(e.evtname) AS quoted_name,
+      e.evtevent AS event,
+      coalesce(to_json(e.evttags), '[]'::json) AS tags,
+      e.evtenabled::text AS is_enabled,
+      pg_get_userbyid(e.evtowner) AS owner,
+      e.evtfoid::regprocedure::text AS function_signature,
+      quote_ident(fn.nspname) || '.' || quote_ident(fp.proname) AS quoted_function,
+      CASE WHEN CAST(:'routine_bodies_on' AS boolean) THEN 'collected' ELSE 'opted_out' END AS body_status
+    FROM pg_event_trigger e
+    JOIN pg_proc fp ON fp.oid = e.evtfoid
+    JOIN pg_namespace fn ON fn.oid = fp.pronamespace
+    WHERE NOT EXISTS (
+        SELECT 1 FROM pg_depend x
+        WHERE x.classid = 'pg_event_trigger'::regclass AND x.objid = e.oid
+          AND x.refclassid = 'pg_extension'::regclass AND x.deptype = 'e')
+  ) et
+),
+
 -- ===================== 10. Query Patterns (pg_stat_statements) =====================
 queries_data AS (
   SELECT coalesce(json_agg(q ORDER BY q.total_time_ms DESC), '[]'::json) AS data
@@ -585,6 +615,7 @@ SELECT json_build_object(
   'views', (SELECT data FROM views_data),
   'procedures', (SELECT data FROM procedures_data),
   'triggers', (SELECT data FROM triggers_data),
+  'event_triggers', (SELECT data FROM event_triggers_data),
   'routine_stats', (SELECT data FROM routine_stats_data),
   'routine_stats_status', (SELECT data FROM routine_stats_status_data),
   'queries', (SELECT data FROM queries_data),

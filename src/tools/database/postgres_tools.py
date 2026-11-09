@@ -133,6 +133,30 @@ _TRIGGERS_SQL = """
 """
 
 
+# #2023: the offline script's section 9c. Event triggers are database-wide, so no schema
+# filter; ``{flag}`` is 1 or 0 (``include_routine_bodies``).
+_EVENT_TRIGGERS_SQL = """
+    SELECT
+      e.evtname AS trigger_name,
+      quote_ident(e.evtname) AS quoted_name,
+      e.evtevent AS event,
+      coalesce(to_json(e.evttags), '[]'::json) AS tags,
+      e.evtenabled::text AS is_enabled,
+      pg_get_userbyid(e.evtowner) AS owner,
+      e.evtfoid::regprocedure::text AS function_signature,
+      quote_ident(fn.nspname) || '.' || quote_ident(fp.proname) AS quoted_function,
+      CASE WHEN {flag} = 1 THEN 'collected' ELSE 'opted_out' END AS body_status
+    FROM pg_event_trigger e
+    JOIN pg_proc fp ON fp.oid = e.evtfoid
+    JOIN pg_namespace fn ON fn.oid = fp.pronamespace
+    WHERE NOT EXISTS (
+        SELECT 1 FROM pg_depend x
+        WHERE x.classid = 'pg_event_trigger'::regclass AND x.objid = e.oid
+          AND x.refclassid = 'pg_extension'::regclass AND x.deptype = 'e')
+    ORDER BY e.evtname
+"""
+
+
 def _nested(toplevel: object) -> bool | None:
     """``pg_stat_statements.toplevel`` read backwards (#1652): True for a statement that
     ran inside a function or procedure; None when the server does not report it."""
@@ -441,6 +465,13 @@ class PostgreSQLRemoteCollector:
         information_schema.triggers hides them from a read-only user."""
         flag = 1 if include_bodies else 0
         return self._query(_TRIGGERS_SQL.format(flag=flag))  # nosec B608 -- flag is 0 or 1
+
+    def collect_event_triggers(self, include_bodies: bool = True) -> list[dict]:
+        """Every event trigger of the database (#2023), from pg_event_trigger, which a
+        read-only user may read: its name, event, command tags, state, owner and
+        function, quoted by the server, from which its CREATE is built."""
+        flag = 1 if include_bodies else 0
+        return self._query(_EVENT_TRIGGERS_SQL.format(flag=flag))  # nosec B608 -- flag is 0 or 1
 
     def collect_routine_stats(self) -> tuple[list[dict], dict]:
         """The call counts PostgreSQL keeps per function (#1652, ``pg_stat_user_functions``,

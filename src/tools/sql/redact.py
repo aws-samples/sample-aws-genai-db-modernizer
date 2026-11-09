@@ -101,6 +101,7 @@ from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Any
 
+from src.contracts import collector_output as _collector_output
 from src.shared.sql_comments import block_comments_nest
 from src.shared.sql_spans import (
     Grammar,
@@ -1012,7 +1013,9 @@ def _number_edits(masked: str, dialect: str) -> list[tuple[int, int]]:
 
 # -- whole collections ------------------------------------------------------------
 
-_DEFINITIONS = ("views", "procedures", "triggers", "events")
+# The body-bearing lists, from the contract (#2023): the collector output's and the raw
+# collection's share their names, and the raw collection has none of its own.
+_DEFINITIONS = _collector_output.DEFINITION_LISTS
 
 #: Comments a raw collection carries on its routines and events (#1652): a value can hide
 #: in one, as in any comment.

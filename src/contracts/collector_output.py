@@ -117,6 +117,12 @@ Version History:
   statements_since_start): the server's uptime, statistics reset age and own statement
   count, which the rate window's representativeness check reads. Backward compatible:
   defaults to None (not read).
+- 5.15 (2026-11-09, #2023): Optional Schema.non_dml_triggers (NonDmlTrigger,
+  NonDmlTriggerScope): the triggers on no INSERT, UPDATE or DELETE that the DML list
+  cannot hold, PostgreSQL's TRUNCATE-only and event triggers and a live Oracle
+  collector's DDL, LOGON and STARTUP triggers, each with its scope, events, command
+  tags, state, function and body status. Routing never reads them. Backward compatible:
+  defaults to None (none collected)
 """
 
 import re
@@ -1099,6 +1105,128 @@ class Trigger(BaseModel):
     )
 
 
+#: The schema lists whose rows carry a ``definition`` (#1625, #2023): the one list both
+#: redactions read, this contract's validator and the dict-level
+#: ``src.tools.sql.redact.redact_collector_output`` (the read transform, the ``assess()``
+#: upload staging), so a new body-bearing list cannot be redacted on one path only.
+DEFINITION_LISTS: tuple[str, ...] = (
+    "views",
+    "procedures",
+    "triggers",
+    "events",
+    "non_dml_triggers",
+)
+
+
+class NonDmlTriggerScope(str, Enum):
+    """What a trigger outside the DML list is attached to (#2023)."""
+
+    table = "table"  # a table trigger on no DML event: PostgreSQL's TRUNCATE-only one
+    schema = "schema"  # Oracle: ON SCHEMA
+    database = "database"  # PostgreSQL's event triggers; Oracle: ON DATABASE
+
+
+# An event name as the source spells it: TRUNCATE, ddl_command_start, LOGON, CREATE,
+# ASSOCIATE STATISTICS.
+_TRIGGER_EVENT = re.compile(r"(?=.{1,64}$)[A-Za-z][A-Za-z_]*(?: [A-Za-z_]+)*")
+# A PostgreSQL command tag an event trigger filters on: 'CREATE TABLE', 'DROP FUNCTION'.
+_COMMAND_TAG = re.compile(r"[A-Z][A-Z ]{0,63}")
+
+
+class NonDmlTrigger(BaseModel):
+    """A trigger the DML list (:class:`Trigger`) cannot hold (#2023): a PostgreSQL
+    trigger that fires on TRUNCATE alone, a PostgreSQL event trigger, an Oracle DDL,
+    LOGON or STARTUP trigger. Kept so routine migration can check and carry it; routing
+    never reads it, and a trigger on any INSERT, UPDATE or DELETE stays in ``triggers``.
+    Its CREATE statement is kept apart, in the job's routine sources (PostgreSQL)."""
+
+    trigger_id: str = Field(..., description="Unique identifier for this trigger")
+    trigger_name: str = Field(..., description="Trigger name")
+    scope: NonDmlTriggerScope | None = Field(
+        None, description="What the trigger is attached to; None when not reported"
+    )
+    schema_name: str | None = Field(
+        None,
+        description=(
+            "Schema or database name: the owner of an Oracle schema or ON DATABASE "
+            "trigger; None for a PostgreSQL event trigger (database-wide, in no schema)"
+        ),
+    )
+    table_id: str | None = Field(
+        None, description="The table a table trigger is attached to; None otherwise"
+    )
+    events: list[str] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "The events it fires on, as the source names them: TRUNCATE; a PostgreSQL "
+            "event (ddl_command_start, ddl_command_end, sql_drop, table_rewrite, login); "
+            "an Oracle event (LOGON, STARTUP, DDL, CREATE, ...)"
+        ),
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "PostgreSQL: the command tags an event trigger filters on (WHEN TAG IN), "
+            "empty for every command"
+        ),
+    )
+    timing: TriggerTiming | None = Field(
+        None, description="BEFORE or AFTER the event; None when the event names it"
+    )
+    for_each: TriggerForEach | None = Field(
+        None, description="Whether a table trigger fires per row or per statement"
+    )
+    is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
+    function_id: str | None = Field(
+        None, description="PostgreSQL: the name of the function the trigger executes"
+    )
+    owner: str | None = Field(None, description="PostgreSQL: an event trigger's owner")
+    depends_on: list[RoutineDependency] | None = Field(
+        None, description="PostgreSQL: the function the trigger executes"
+    )
+    definition: str | None = Field(
+        None,
+        description=(
+            "The trigger's CREATE (PostgreSQL) or body (Oracle), with string literals "
+            "redacted (#1625)"
+        ),
+    )
+    body_status: RoutineBodyStatus | None = Field(
+        None, description="Whether the CREATE statement was collected"
+    )
+    body_status_reason: str | None = Field(
+        None, max_length=500, description="Why the body was not collected, in one sentence"
+    )
+    body_chars: int | None = Field(
+        None, ge=0, description="The body's length in characters, kept when the body is not"
+    )
+    body_exact: bool | None = Field(
+        None,
+        description=(
+            "Whether the routine sources hold its CREATE exactly: True for PostgreSQL (an "
+            "event trigger's is rebuilt from pg_event_trigger with the server's quoting, as "
+            "pg_dump does); None when no CREATE was kept"
+        ),
+    )
+
+    @field_validator("events")
+    @classmethod
+    def _event_names(cls, v: list[str]) -> list[str]:
+        for event in v:
+            if not _TRIGGER_EVENT.fullmatch(event):
+                raise ValueError(f"events holds event names, got {event!r}")
+        return v
+
+    @field_validator("tags")
+    @classmethod
+    def _command_tags(cls, v: list[str]) -> list[str]:
+        for tag in v:
+            if not _COMMAND_TAG.fullmatch(tag):
+                raise ValueError(f"tags holds PostgreSQL command tags, got {tag!r}")
+        return v
+
+
 class ScheduledEvent(BaseModel):
     """A MySQL scheduled event (#1652): routine code the server runs on a schedule."""
 
@@ -1174,6 +1302,14 @@ class Schema(BaseModel):
     )
     events: list[ScheduledEvent] | None = Field(
         None, description="MySQL scheduled events (#1652); None when not collected"
+    )
+    non_dml_triggers: list[NonDmlTrigger] | None = Field(
+        None,
+        description=(
+            "Triggers on no INSERT, UPDATE or DELETE (#2023): PostgreSQL's TRUNCATE-only "
+            "and event triggers, a live Oracle collector's DDL, LOGON and STARTUP "
+            "triggers. Routing never reads them; None when none was collected"
+        ),
     )
 
 
@@ -1643,7 +1779,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.14",
+        default="5.15",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1690,8 +1826,8 @@ class CollectorOutputContract(BaseModel):
                 tags = [redact_comment(tag, engine) for tag in pattern.query_tags]
                 pattern.query_tags = list(dict.fromkeys(tags))
         schema = self.database_schema
-        for items in (schema.views, schema.procedures, schema.triggers, schema.events):
-            for item in items or []:
+        for key in DEFINITION_LISTS:
+            for item in getattr(schema, key) or []:
                 if item.definition:
                     item.definition = redact_definition(item.definition, engine, settings)
         return self

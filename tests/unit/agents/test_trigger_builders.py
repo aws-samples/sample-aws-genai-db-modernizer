@@ -11,6 +11,7 @@ PostgreSQL live collections have their own builders.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -69,8 +70,10 @@ def test_an_events_list_beside_a_first_event_is_read(build):
 
 
 @pytest.mark.parametrize("build", [sqlserver_live, oracle_live, postgres_live], ids=_IDS[1:])
-@pytest.mark.parametrize("event", ["LOGON", "OTHER", "MULTIPLE", "TRUNCATE"])
-def test_a_live_trigger_with_no_dml_event_is_skipped(build, event, caplog):
+@pytest.mark.parametrize("event", ["LOGON", "MULTIPLE", "TRUNCATE", "ASSOCIATE STATISTICS"])
+def test_a_live_trigger_on_a_named_event_outside_dml_is_kept_apart_not_skipped(
+    build, event, caplog
+):
     rows = [
         _row(timing="AFTER", event_type=event),
         _row(timing="AFTER", event_type="DELETE", trigger_name="tr_delete"),
@@ -78,7 +81,21 @@ def test_a_live_trigger_with_no_dml_event_is_skipped(build, event, caplog):
     with caplog.at_level(logging.WARNING):
         triggers = build(rows)
     assert [[e.value for e in t.events] for t in triggers] == [["DELETE"]]
-    assert "Skipped 1 non-DML or DB-level trigger(s)" in caplog.text
+    # #2023: kept in non_dml_triggers, so no warning names it as skipped.
+    assert not re.search(r"dbo\.orders\.tr\b(?!_)", caplog.text), caplog.text
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("build", [sqlserver_live, oracle_live, postgres_live], ids=_IDS[1:])
+def test_a_live_trigger_with_the_no_event_placeholder_is_skipped(build, caplog):
+    rows = [
+        _row(timing="AFTER", event_type="OTHER"),
+        _row(timing="AFTER", event_type="DELETE", trigger_name="tr_delete"),
+    ]
+    with caplog.at_level(logging.WARNING):
+        triggers = build(rows)
+    assert [[e.value for e in t.events] for t in triggers] == [["DELETE"]]
+    assert "dbo.orders.tr" in caplog.text and "Skipped 1" in caplog.text
 
 
 @pytest.mark.parametrize("build", [sqlserver_live, oracle_live, postgres_live], ids=_IDS[1:])
@@ -91,19 +108,25 @@ def test_a_live_trigger_with_unknown_timing_or_no_table_is_skipped(build):
 @pytest.mark.parametrize("build", _BUILDERS, ids=_IDS)
 def test_the_skip_warning_names_each_skipped_trigger_and_the_reasons(build, caplog):
     rows = [
-        _row(timing="AFTER", event_type="LOGON", trigger_name="tr_logon"),
+        _row(timing="AFTER", event_type="OTHER", trigger_name="tr_other"),
         _row(timing="ON COMMIT", event_type="INSERT", trigger_name="tr_timing"),
         {"trigger_name": "tr_db", "timing": "AFTER", "event_type": "INSERT"},
+        # #2023: kept apart (non_dml_triggers), so neither skipped nor named
+        _row(timing="AFTER", event_type="LOGON", trigger_name="tr_logon"),
     ]
     with caplog.at_level(logging.WARNING):
         assert build(rows) is None
-    assert "Skipped 3 non-DML or DB-level trigger(s)" in caplog.text
+    assert "Skipped 3 trigger(s)" in caplog.text
     assert "unknown timing" in caplog.text
-    assert "dbo.orders.tr_logon, dbo.orders.tr_timing, tr_db" in caplog.text
+    assert "dbo.orders.tr_other, dbo.orders.tr_timing, tr_db" in caplog.text
+    assert "tr_logon" not in caplog.text
 
 
+@pytest.mark.passes_on_main
 def test_the_skip_warning_names_twenty_and_counts_the_rest(caplog):
-    rows = [_row(timing="AFTER", event_type="LOGON", trigger_name=f"t{i:02}") for i in range(23)]
+    rows = [
+        _row(timing="ON COMMIT", event_type="INSERT", trigger_name=f"t{i:02}") for i in range(23)
+    ]
     with caplog.at_level(logging.WARNING):
         shared(rows)
     assert "dbo.orders.t19 and 3 more" in caplog.text
