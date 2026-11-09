@@ -23,6 +23,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 3. **Design the schema**
    Produce JSON conforming to `output_schema` from the request file. Key principles:
+   - Sample documents (`document_examples`), every one: Example values are obvious placeholders, never real-looking data: `<token>`, `<email>` or `user@example.com` for a secret or personal value, and IP addresses only from the documentation ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and 2001:db8::/32. A column that holds a credential (a `*_token`, `token_hash`, `*_password`, `*_secret` or `*_key` column) gets a placeholder such as `<token>`, `<password>` or `<secret>`, never a made-up value; a number, a date or a flag keeps its own type.
    - Design only the tables and queries assigned to this engine; finalize rejects others. The request's `collector_output` holds exactly that scope: reference only its tables and `query_id`s
    - Embedding vs referencing for each parent-child relationship
    - Index strategy (compound, text, partial, unique)

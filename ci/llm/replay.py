@@ -27,14 +27,15 @@ it. The unit tests read the same fixture
 ``tests/unit/tools/validation/test_customer_text_guard_id_fields.py``).
 
 The e2e-llm upload carries the whole job folder as ``job.tar.gz`` (#1463, secrets
-and rendered files left out; ``ci/llm/run.py collect-job``), so the fixture holds the
-assignment versions, collector output, triage, reality-check and schema outputs too
-(``job/``) and every external-mode check is replayed.
+redacted and rendered files left out; ``ci/llm/run.py collect-job``), so the fixture
+holds the assignment versions, collector output, triage, reality-check and schema
+outputs too (``job/``) and every external-mode check is replayed. ``save`` refuses a
+run whose archive was redacted (#2053) unless given ``--allow-redacted``.
 
 Usage::
 
     uv run python ci/llm/replay.py save --from test-results/llm-both-wordpress \\
-        --to tests/fixtures/real_runs/wordpress-both
+        --to tests/fixtures/real_runs/wordpress-both [--allow-redacted]
     uv run python ci/llm/replay.py prepare --fixture tests/fixtures/real_runs/wordpress-both \\
         --root test-results/replay/artifacts
 """
@@ -54,7 +55,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ci.llm.private_scan import identity_findings, line_of, secret_findings  # noqa: E402
+from ci.llm.private_scan import (  # noqa: E402
+    REDACTION_RE,
+    identity_findings,
+    line_of,
+    secret_findings,
+)
 
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "real_runs" / "wordpress-both"
 
@@ -288,11 +294,40 @@ def _read_job_archive(archive: Path, db: str, job: str) -> tuple[dict[str, str],
     return files, max(versions, default=1)
 
 
-def save(source: Path, dest: Path) -> dict[str, Any]:
+#: ``ci/llm/run.py collect-job``'s list of the findings it redacted (#2053).
+JOB_FINDINGS = "job.findings.json"
+
+
+def _redacted_count(source: Path, results: dict[str, Any], job_files: dict[str, str]) -> int:
+    """How many findings ``collect-job`` redacted in the run's archive: its manifest,
+    the mark in ``results.json``, or the redaction markers left in the files."""
+    markers = sum(len(REDACTION_RE.findall(text)) for text in job_files.values())
+    scan = results.get("private_scan")
+    marked = int(scan.get("findings") or 0) if isinstance(scan, dict) else 0
+    listed = 0
+    if (source / JOB_FINDINGS).is_file():
+        listed = max(1, len(_load(source / JOB_FINDINGS).get("findings") or []))
+    return max(markers, marked, listed)
+
+
+def save(source: Path, dest: Path, allow_redacted: bool = False) -> dict[str, Any]:
     """Keep the passing run in ``source`` (an e2e-llm output folder,
-    ``test-results/llm-<mode>-<fixture>``) as the replay fixture ``dest``."""
+    ``test-results/llm-<mode>-<fixture>``) as the replay fixture ``dest``.
+
+    A run the private scan found values in (``collect-job`` redacted them and failed
+    the run) is refused unless ``allow_redacted`` (``--allow-redacted``), so redacted data
+    never becomes a fixture unnoticed. With it, such a run counts as passing when it
+    passed before the scan (``private_scan.pass_before_scan``), and ``run.json`` records
+    ``redacted_findings``."""
     results = _load(source / "results.json")
-    if results.get("pass") is not True:
+    scan = results.get("private_scan")
+    scan_failed_it = isinstance(scan, dict) and scan.get("pass_before_scan") is True
+    if results.get("pass") is not True and not (allow_redacted and scan_failed_it):
+        if scan_failed_it:
+            raise ValueError(
+                f"{source}: the private scan failed the run ({JOB_FINDINGS}); review the "
+                "findings, then pass --allow-redacted to keep it anyway"
+            )
         raise ValueError(f"{source}: results.json does not pass; keep a passing run only")
     db, job = results.get("db"), results.get("job_id")
     if not db or not job:
@@ -307,6 +342,12 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
     }
     files[TRANSCRIPT_FILE] = trim_transcript((source / TRANSCRIPT_FILE).read_text())
     job_files, synthesis_version = _read_job_archive(source / JOB_ARCHIVE, str(db), str(job))
+    redacted = _redacted_count(source, results, job_files)
+    if redacted and not allow_redacted:
+        raise ValueError(
+            f"{source}: the private scan redacted {redacted} finding(s) in the job archive "
+            f"({JOB_FINDINGS}); review them, then pass --allow-redacted to keep it anyway"
+        )
     # The transcript is prose and tool output: key-name findings (a word such as
     # "password" in a sentence) would flag it, so it gets the credential-shape scan only.
     found = [
@@ -351,6 +392,8 @@ def save(source: Path, dest: Path) -> dict[str, Any]:
         "synthesis_version": synthesis_version,
         "checks": results.get("checks"),
     }
+    if redacted:
+        run["redacted_findings"] = redacted
     (dest / RUN_FILE).write_text(json.dumps(run, indent=2) + "\n")
     return run
 
@@ -390,12 +433,17 @@ def main(argv: list[str] | None = None) -> int:
     p_save = sub.add_parser("save", help="Keep a passing e2e-llm run as the replay fixture.")
     p_save.add_argument("--from", dest="source", type=Path, required=True)
     p_save.add_argument("--to", dest="dest", type=Path, default=DEFAULT_FIXTURE)
+    p_save.add_argument(
+        "--allow-redacted",
+        action="store_true",
+        help="Keep a run whose job archive the private scan redacted (#2053).",
+    )
     p_prep = sub.add_parser("prepare", help="Lay the fixture out as a job and render it.")
     p_prep.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     p_prep.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "save":
-        print(json.dumps(save(args.source, args.dest)))
+        print(json.dumps(save(args.source, args.dest, args.allow_redacted)))
     elif args.command == "prepare":
         info = prepare(args.fixture, args.root)
         print(f"{info['db']} {info['job_id']} {info['mode']}")

@@ -80,12 +80,14 @@ For each query pattern where `query_type` in (SELECT, INSERT, UPDATE, DELETE):
 
 ### Document Examples
 
-For each collection, produce 2-3 realistic example documents showing:
+For each collection, produce 2-3 example documents showing:
 
 - The `_id` structure
 - Embedded arrays with sample entries
 - Reference fields
-- All top-level fields with realistic values
+- All top-level fields
+
+Example values are obvious placeholders, never real-looking data: `<token>`, `<email>` or `user@example.com` for a secret or personal value, and IP addresses only from the documentation ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and 2001:db8::/32. A column that holds a credential (a `*_token`, `token_hash`, `*_password`, `*_secret` or `*_key` column) gets a placeholder such as `<token>`, `<password>` or `<secret>`, never a made-up value; a number, a date or a flag keeps its own type.
 
 ## Phase 3: Index Design
 
@@ -193,7 +195,7 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `src/contr
 - `embedded_entities`: one per embed decision. Each must have `source_table`, `embed_path`, `strategy`, `avg_array_length`, `max_array_length_estimate`, and `rationale`.
 - `referenced_collections`: other collections this one references via foreign keys.
 - `indexes`: one per access pattern (no collection scans allowed). Each index has `index_name`, `keys`, `index_type`, `purpose`, and `source_query_ids`. `keys` maps each field to `1` or `-1`, never a string such as `"text"`. `index_type` is one of `compound`, `single`, `text`, `partial` or `unique`: a text index is `index_type: "text"` with its fields at `1`, and a partial index is `index_type: "partial"` with its `partialFilterExpression` in `partial_filter`. The contract has no sparse type: on a target that supports partial indexes, write the "only documents that have the field" index as `partial` with `partial_filter: {"<field>": {"$exists": true}}`; on one that does not, write it as `single` or `compound` and say in `purpose` that it is created with `sparse: true`.
-- `document_examples`: 2-3 realistic example documents with actual field names and plausible values.
+- `document_examples`: 2-3 example documents with actual field names. Example values are obvious placeholders, never real-looking data: `<token>`, `<email>` or `user@example.com` for a secret or personal value, and IP addresses only from the documentation ranges 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and 2001:db8::/32. A column that holds a credential (a `*_token`, `token_hash`, `*_password`, `*_secret` or `*_key` column) gets a placeholder such as `<token>`, `<password>` or `<secret>`, never a made-up value; a number, a date or a flag keeps its own type.
 - `estimated_avg_doc_size_kb` and `estimated_max_doc_size_kb`: computed from Phase 1 document sizing.
 
 `unsupported_patterns` — one entry per query that DocumentDB cannot serve:

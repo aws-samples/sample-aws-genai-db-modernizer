@@ -121,7 +121,7 @@ mkdir -p "$OUT"
 # must never stand in for this run's: a test step the job budget skips or stops
 # writes no junit, and results.json would otherwise read the old file (#1593).
 # Only these files: a dry run's $E2E_LLM_TRANSCRIPT may live in this folder.
-rm -f "$OUT/job.tar.gz" "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
+rm -f "$OUT/job.tar.gz" "$OUT/job.findings.json" "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
   "$OUT/reports-junit.xml" "$OUT/ui-junit.xml" "$OUT/explore.json" "$OUT/explore-expected.json"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 
@@ -135,6 +135,12 @@ CLAUDE_STARTED=0
 export E2E_LLM_DEADLINE_TS=$(($(date +%s) + ${E2E_LLM_JOB_BUDGET:-4800}))
 on_exit() {
   local rc=$?
+  # The fallback results.json first, so collect-job can mark a scan finding in it.
+  if [ ! -s "$OUT/results.json" ]; then
+    printf '{"schema_version": 2, "pass": false, "error": "%s failed before the run"}\n' \
+      "$PHASE" >"$OUT/results.json"
+    [ "$rc" -ne 0 ] || rc=1
+  fi
   if [ "$CLAUDE_STARTED" = "1" ]; then
     # Only test-results/ is uploaded: copy the run's own logs (the compact
     # run_assessment.py log in artifacts/<db>/<job>/_logs/, the local UI's
@@ -146,22 +152,30 @@ on_exit() {
     # The job's replay artifacts as one job.tar.gz, so the replay
     # (ci/replay.sh, #1463) has the assignment versions, collector output, triage
     # and the rest, not only the synthesis folder.
-    # Only the files the replay reads are archived, and any secret finding refuses
-    # the whole archive. The JSON (files, size, files too large, or the refusal's
-    # findings by kind and line, never a value) goes to the job log and the console.
+    # Only the files the replay reads are archived, and every uploaded file here is
+    # scanned too (#2053): a value on one line is redacted; a key, a cloud credential,
+    # a file it cannot read or clean withholds that file (and the archive), and a run
+    # with any finding withholds its binary uploads. A finding is listed (file, line,
+    # kind; never the value) in job.findings.json, fails the run in results.json and
+    # fails this job. A scan that cannot finish withholds every upload (fail closed).
+    # The JSON (counts only) goes to the job log and the console.
     mkdir -p "$OUT/job-logs"
-    uv run python ci/llm/run.py collect-job --artifact-root "$ARTIFACT_ROOT" --out "$OUT" \
-      --db "${DB:-}" --job "${JOB:-}" >"$OUT/job-logs/collect-job.json" 2>&1 || true
+    if ! uv run python ci/llm/run.py collect-job --artifact-root "$ARTIFACT_ROOT" --out "$OUT" \
+      --db "${DB:-}" --job "${JOB:-}" >"$OUT/job-logs/collect-job.json" 2>&1; then
+      find "$OUT" \( -type f -o -type l \) ! -path "$OUT/job-logs/collect-job.json" -delete
+      printf '{"schema_version": 2, "pass": false, "error": "%s"}\n' \
+        "the private scan failed; every upload was withheld" >"$OUT/results.json"
+      rc=1
+    fi
     echo "collect-job: $(cat "$OUT/job-logs/collect-job.json" 2>/dev/null)" >&2
+    if [ -s "$OUT/job.findings.json" ]; then
+      echo "error: the private scan found values in the upload; see $OUT/job.findings.json" >&2
+      rc=1
+    fi
     # The run may have left its own local API/UI up (ui/both modes); stop them
     # via the same allowlisted script /modernize uses, not pkill -- see
     # scripts/start_local_ui.py's module docstring.
     uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
-  fi
-  if [ ! -s "$OUT/results.json" ]; then
-    printf '{"schema_version": 2, "pass": false, "error": "%s failed before the run"}\n' \
-      "$PHASE" >"$OUT/results.json"
-    [ "$rc" -ne 0 ] || rc=1
   fi
   exit "$rc"
 }
