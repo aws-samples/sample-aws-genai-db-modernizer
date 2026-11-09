@@ -123,6 +123,7 @@ from src.shared.report_facts import (
     wave_retained_engine,
 )
 from src.shared.source_cache import cost_basis_fields
+from src.shared.table_order import collected_tables_first
 from src.shared.trade_off_topics import predates_topics, trade_off_note_kind, trade_off_topic
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
@@ -353,7 +354,7 @@ def run_synthesis_deterministic(
         40 <= r["confidence_score"] < 70 and r.get("migration_complexity_avg") == "HIGH"
         for r in ranking
     )
-    trade_offs = _collect_trade_offs(data)
+    trade_offs = order_trade_off_tables(_collect_trade_offs(data), data)
 
     say("[synthesis] Building migration waves...")
     cache_overlay = build_cache_overlay(data)
@@ -2128,6 +2129,20 @@ def _collect_trade_offs(data):
     # #1574: a long sentence two design parts both wrote is stated once, here, so
     # report.json, the risk details and every deliverable read the same list.
     return said_once_trade_offs(trade_offs)
+
+
+def order_trade_off_tables(trade_offs, data: SynthesisData):
+    """``trade_offs`` with each ``source_tables`` ordered collected tables first (#1914)."""
+    known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+    normalise = table_normaliser(data)
+    out = []
+    for t in trade_offs:
+        names = t.get("source_tables")
+        if names:
+            ordered = collected_tables_first(names, known, lambda n: next(iter(normalise([n])), n))
+            t = {**t, "source_tables": ordered}
+        out.append(t)
+    return out
 
 
 def _write_empty_report(store, database_name, job_id, assignment_version=0):

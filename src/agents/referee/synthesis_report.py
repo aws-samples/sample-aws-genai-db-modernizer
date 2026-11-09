@@ -96,6 +96,7 @@ from src.shared.row_counts import unknown_size_assumption
 from src.shared.signal_labels import signal_noun
 from src.shared.skill_sections import skill_sections, skill_subsections
 from src.shared.source_cache import cost_basis_fields
+from src.shared.table_order import collected_tables_first
 from src.shared.unsupported_pattern import (
     is_dedup_only_group_by,
     unsupported_pattern_ids,
@@ -1905,6 +1906,9 @@ def build_risk_assessment(
     risks = [_without_repeated_mitigation(r) for r in risks]
     risks = ground_risks(risks, eliminated or {}, query_engine)
     resolved = ground_risks(resolved, eliminated or {}, query_engine)
+    # #1914: an "Affects" list names the collected tables first, then other names.
+    risks = [order_affected_tables(r, data) for r in risks]
+    resolved = [order_affected_tables(r, data) for r in resolved]
     for r in resolved:
         logger.info(
             "Risk assessment: %s risk from %s resolved on %s (%s)",
@@ -1922,6 +1926,17 @@ def build_risk_assessment(
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
     }
+
+
+def order_affected_tables(risk: dict, data: SynthesisData) -> dict:
+    """``risk`` with ``affected_tables`` ordered collected tables first (#1914)."""
+    names = risk.get("affected_tables")
+    if not names:
+        return risk
+    known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+    normalise = _table_normaliser(data)
+    ordered = collected_tables_first(names, known, lambda n: next(iter(normalise([n])), n))
+    return {**risk, "affected_tables": ordered}
 
 
 _SQL_EXCERPT_CHARS = 120
