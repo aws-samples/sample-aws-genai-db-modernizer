@@ -1733,6 +1733,7 @@ def _build_output(
     views=None,
     procedures=None,
     triggers=None,
+    non_dml_triggers=None,
     engines_in_use=None,
     database_name: str | None = None,
     settings: object = None,
@@ -1754,7 +1755,8 @@ def _build_output(
     installed extensions an offline PostgreSQL collection lists (#1078), kept as
     :func:`source_extensions` reads them. ``enum_types``: an offline PostgreSQL
     collection's enum types and labels (#1834), kept as :func:`source_enum_types` reads them.
-    ``events``: MySQL scheduled events;
+    ``events``: MySQL scheduled events; ``non_dml_triggers``: the triggers the DML list
+    cannot hold (#2023);
     ``routine_stats_source``: how routine execution counts were read; ``routine_capture``:
     how routine bodies were read (#1652); ``server_counters``: the server's uptime, reset
     age and own statement count (#1991); each ignored when it is not one."""
@@ -1793,6 +1795,7 @@ def _build_output(
             triggers=triggers,
             enum_types=source_enum_types(enum_types),
             events=events,
+            non_dml_triggers=non_dml_triggers,
         ),
         queries=queries,
         metrics=metrics,

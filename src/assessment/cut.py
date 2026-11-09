@@ -284,8 +284,7 @@ def cut_collection(
     schema = dict(source.get("database_schema") or {})
     cut_tables, dropped_keys = _cut_tables(tables, kept)
     schema["tables"] = cut_tables
-    if "triggers" in schema:
-        schema["triggers"] = _cut_triggers(schema["triggers"], tables, kept)
+    _cut_schema_triggers(schema, tables, kept)
     out["database_schema"] = copy.deepcopy(schema)
 
     by_statement = {str(row["_from"]): row for row in rows}
@@ -492,6 +491,16 @@ def _cut_tables(
                 table["foreign_keys"] = copy.deepcopy(keys)
             out.append(table)
     return out, dropped
+
+
+def _cut_schema_triggers(
+    schema: dict[str, Any], tables: list[Mapping[str, Any]], kept: set[str]
+) -> None:
+    """``schema``'s triggers, and those outside the DML list (#2023), less those on a
+    dropped table, in place; a database-wide trigger names no table and is kept."""
+    for key in ("triggers", "non_dml_triggers"):
+        if key in schema:
+            schema[key] = _cut_triggers(schema[key], tables, kept)
 
 
 def _cut_triggers(triggers: Any, tables: list[Mapping[str, Any]], kept: set[str]) -> Any:

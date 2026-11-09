@@ -7,7 +7,8 @@ Routine migration carries each PostgreSQL and MySQL function, procedure, trigger
 event to Aurora (ADR-034), so the collection keeps the statement that creates it:
 
 - PostgreSQL: a row's ``definition`` is the server's own ``pg_get_functiondef`` /
-  ``pg_get_triggerdef`` text;
+  ``pg_get_triggerdef`` text; an event trigger's (#2023) is rebuilt from
+  ``pg_event_trigger`` with the server's own quoting (:func:`event_trigger_create`);
 - MySQL: a live collector's is the server's own ``SHOW CREATE`` text; the script's (and
   a live one's where SHOW CREATE is not permitted) is rebuilt from the catalog columns
   the rows carry (:mod:`src.agents.collector.mysql_routine_create`), exact only around a
@@ -31,6 +32,7 @@ import gzip
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,7 +40,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.agents.collector import mysql_routine_create as mysql_create
-from src.contracts.collector_output import RoutineCapture
+from src.agents.collector.routine_rows import (
+    other_trigger_events,
+    trigger_enabled,
+    trigger_for_each,
+    trigger_function_name,
+    trigger_timing,
+)
+from src.contracts.collector_output import NonDmlTrigger, RoutineCapture, RoutineDependency
 from src.contracts.routine_sources import (
     MAX_CHUNK_SOURCES,
     RoutineSession,
@@ -146,6 +155,8 @@ def routine_key(kind: str, row: Mapping[str, Any]) -> RoutineKey:
     differ by kind)."""
     if kind == "trigger":
         name = f"{row.get('table_name') or ''}.{row.get('trigger_name') or ''}"
+    elif kind == "event_trigger":  # database-wide: unique by name (#2023)
+        name = str(row.get("trigger_name") or "")
     elif kind == "event":
         name = str(row.get("event_name") or "")
     else:
@@ -183,6 +194,55 @@ def _body(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+# #2023: an event trigger's CREATE, rebuilt from the pieces the collection reads from
+# pg_event_trigger with the server's own quote_ident; each piece is checked for its shape,
+# so a row that is not one gives no statement.
+_QUOTED_NAME = r'(?:[a-z_][a-z0-9_$]*|"(?:[^"]|"")+")'
+_EVENT_TRIGGER_NAME = re.compile(_QUOTED_NAME)
+_EVENT_TRIGGER_FUNCTION = re.compile(rf"{_QUOTED_NAME}\.{_QUOTED_NAME}")
+_EVENT_NAME = re.compile(r"[a-z][a-z_]{0,62}")
+_COMMAND_TAG = re.compile(r"[A-Z][A-Z ]{0,63}")
+
+
+def _event_trigger_tags(row: Mapping[str, Any]) -> list[str] | None:
+    """An event trigger's command tags (``WHEN TAG IN``); None when one is not a tag."""
+    tags = row.get("tags")
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except ValueError:
+            return None
+    if tags is None:
+        return []
+    if not isinstance(tags, list) or not all(
+        isinstance(tag, str) and _COMMAND_TAG.fullmatch(tag) for tag in tags
+    ):
+        return None
+    return list(tags)
+
+
+def event_trigger_create(row: Mapping[str, Any]) -> str | None:
+    """A PostgreSQL event trigger's CREATE (#2023), as ``pg_dump`` writes it: PostgreSQL
+    has no ``pg_get_triggerdef`` for one, so it is built from ``pg_event_trigger``'s name,
+    event, tags and function, quoted by the server. None when a piece is missing or not of
+    its shape. Its enabled state is not part of it: ``is_enabled`` carries it, as for any
+    trigger."""
+    name, event, function = row.get("quoted_name"), row.get("event"), row.get("quoted_function")
+    tags = _event_trigger_tags(row)
+    if (
+        not isinstance(name, str)
+        or not _EVENT_TRIGGER_NAME.fullmatch(name)
+        or not isinstance(event, str)
+        or not _EVENT_NAME.fullmatch(event)
+        or not isinstance(function, str)
+        or not _EVENT_TRIGGER_FUNCTION.fullmatch(function)
+        or tags is None
+    ):
+        return None
+    when = " WHEN TAG IN (" + ", ".join(f"'{tag}'" for tag in tags) + ")" if tags else ""
+    return f"CREATE EVENT TRIGGER {name} ON {event}{when} EXECUTE FUNCTION {function}()"
+
+
 _PARAMETERS_CUT = (
     "the collection's routine parameter list came back cut (raise the server's "
     "max_allowed_packet and collect again): no CREATE is rebuilt without it"
@@ -197,6 +257,7 @@ def iter_routine_sources(
     events: object = (),
     parameters: object = (),
     notes: RoutineSourcesBuild | None = None,
+    event_triggers: object = (),
 ) -> Iterator[RoutineSource]:
     """The CREATE statement of each row whose ``body_status`` is ``collected``, one at a
     time. A row with any other status, or none (a collection before #1652), has no
@@ -206,7 +267,9 @@ def iter_routine_sources(
     text, exact; any other is rebuilt from the catalog, exact only around a body with no
     string or hex literal. ``parameters`` None means the list was not read or came back
     cut: no procedure or function is rebuilt, each is ``not_readable``. ``notes``
-    gathers each routine's status, reason and exactness (:class:`RoutineSourcesBuild`)."""
+    gathers each routine's status, reason and exactness (:class:`RoutineSourcesBuild`).
+    ``event_triggers``: PostgreSQL's (#2023), each rebuilt by :func:`event_trigger_create`
+    (``not_supported`` when it cannot be)."""
     if engine not in SOURCE_ENGINES:
         return
     found = notes if notes is not None else RoutineSourcesBuild()
@@ -302,6 +365,17 @@ def iter_routine_sources(
         if made is not None:
             yield made
 
+    if engine == "postgresql":
+        for row in _rows(event_triggers):
+            if row.get("body_status") != "collected":
+                continue
+            made = source(
+                routine_key("event_trigger", row), row, event_trigger_create(row),
+                "pg_event_trigger", str(row.get("trigger_name") or ""),
+            )  # fmt: skip
+            if made is not None:
+                yield made
+
     if engine == "mysql":
         for row in _rows(events):
             if row.get("body_status") != "collected":
@@ -324,6 +398,7 @@ def build_routine_sources(
     triggers: object,
     events: object = (),
     parameters: object = (),
+    event_triggers: object = (),
 ) -> RoutineSourcesBuild:
     """:func:`iter_routine_sources`, gathered: every source, status and exactness."""
     notes = RoutineSourcesBuild()
@@ -335,6 +410,7 @@ def build_routine_sources(
             events=events,
             parameters=parameters,
             notes=notes,
+            event_triggers=event_triggers,
         )
     )
     return RoutineSourcesBuild(
@@ -368,6 +444,7 @@ def iter_collection_sources(raw: object) -> Iterator[RoutineSource]:
         triggers=raw.get("triggers") or [],
         events=raw.get("events") or [],
         parameters=raw.get("routine_parameters"),
+        event_triggers=raw.get("event_triggers") or [],
     )
 
 
@@ -381,6 +458,7 @@ def routine_sources_from_collection(raw: object) -> RoutineSourcesBuild:
         triggers=raw.get("triggers") or [],
         events=raw.get("events") or [],
         parameters=raw.get("routine_parameters"),
+        event_triggers=raw.get("event_triggers") or [],
     )
 
 
@@ -391,6 +469,7 @@ def apply_body_statuses(
     procedures: object,
     triggers: object,
     events: object = (),
+    event_triggers: object = (),
 ) -> None:
     """Set each row's ``body_status`` (a failed rebuild becomes ``not_supported``, a cut
     parameter list ``not_readable``), ``body_status_reason`` and ``body_exact``, in
@@ -399,6 +478,7 @@ def apply_body_statuses(
         (procedure_kind, procedures),
         (lambda _row: "trigger", triggers),
         (lambda _row: "event", events),
+        (lambda _row: "event_trigger", event_triggers),
     )
     for kind_of, rows in groups:
         for row in _rows(rows):
@@ -532,6 +612,96 @@ def trigger_fields(row: Mapping[str, Any], follows: str | None = None) -> dict[s
     }
 
 
+_SCOPES = {"TABLE": "table", "VIEW": "table", "SCHEMA": "schema", "DATABASE": "database"}
+
+
+def _non_dml_trigger(row: Mapping[str, Any], events: list[str], *, qualified: bool) -> Any:
+    name = str(row.get("trigger_name") or "")
+    schema = _text(row.get("schema_name"))
+    table = _text(row.get("table_name"))
+    signature = row.get("function_signature")
+    fields = body_fields(row)
+    if fields["body_status"] != "collected":
+        fields["body_exact"] = None
+    base = str(row.get("base_object_type") or "").strip().upper()
+    return NonDmlTrigger(
+        trigger_id=f"{schema or ''}.{name}" if qualified else name,
+        trigger_name=name,
+        scope=("table" if table else _SCOPES.get(base)),  # type: ignore[arg-type]
+        schema_name=schema,
+        table_id=(f"{schema or ''}.{table}" if qualified else table) if table else None,
+        events=events,
+        timing=trigger_timing(row.get("timing")),  # type: ignore[arg-type]
+        for_each=trigger_for_each(row.get("for_each")),  # type: ignore[arg-type]
+        is_enabled=trigger_enabled(row.get("is_enabled")),
+        function_id=trigger_function_name(
+            f"EXECUTE FUNCTION {signature}" if signature else row.get("definition")
+        ),
+        owner=_text(row.get("owner")),
+        depends_on=trigger_fields(row)["depends_on"],
+        definition=row.get("definition") if isinstance(row.get("definition"), str) else None,
+        **fields,
+    )
+
+
+def _event_trigger(row: Mapping[str, Any]) -> Any:
+    name = str(row.get("trigger_name") or "")
+    event = row.get("event")
+    create = event_trigger_create(row)
+    fields = body_fields(row)
+    if fields["body_status"] == "collected" and create is None:
+        fields["body_status"] = "not_supported"
+        fields["body_status_reason"] = body_status_reason("postgresql", "not_supported")
+    if fields["body_chars"] is None and create is not None:
+        fields["body_chars"] = len(create)
+    collected = fields["body_status"] == "collected"
+    fields["body_exact"] = True if collected else None
+    signature = row.get("function_signature")
+    return NonDmlTrigger(
+        trigger_id=name,
+        trigger_name=name,
+        scope="database",  # type: ignore[arg-type]
+        events=[event] if isinstance(event, str) and _EVENT_NAME.fullmatch(event) else [],
+        tags=_event_trigger_tags(row) or [],
+        is_enabled=trigger_enabled(row.get("is_enabled")),
+        function_id=trigger_function_name(f"EXECUTE FUNCTION {signature}") if signature else None,
+        owner=_text(row.get("owner")),
+        depends_on=(
+            [RoutineDependency(kind="function", name=str(signature)[:1024])] if signature else None
+        ),
+        definition=create if collected else None,
+        **fields,
+    )
+
+
+def non_dml_triggers(
+    triggers: object, event_triggers: object = (), *, qualified: bool = False
+) -> list[Any] | None:
+    """The collection's triggers outside the DML list (#2023), as ``NonDmlTrigger``
+    rows: each trigger row on no INSERT, UPDATE or DELETE that names its events
+    (:func:`~src.agents.collector.routine_rows.other_trigger_events`: PostgreSQL's
+    TRUNCATE-only triggers, Oracle's DDL, LOGON and STARTUP triggers), then each
+    PostgreSQL event trigger row. ``qualified``: ids are ``schema.name``, as the Oracle
+    and SQL Server builders write them. None when there is none. Routing never reads
+    them: a trigger on any DML event stays in the DML list."""
+    out: list[Any] = []
+    for row in _rows(triggers):
+        events = other_trigger_events(row)
+        if events and row.get("trigger_name"):
+            try:
+                out.append(_non_dml_trigger(row, events, qualified=qualified))
+            except ValidationError:
+                logger.warning("Ignored a trigger row the contract cannot read")
+    for row in _rows(event_triggers):
+        if not row.get("trigger_name"):
+            continue
+        try:
+            out.append(_event_trigger(row))
+        except ValidationError:
+            logger.warning("Ignored an event trigger row the contract cannot read")
+    return out or None
+
+
 def event_fields(row: Mapping[str, Any]) -> dict[str, Any]:
     """``ScheduledEvent`` keyword arguments for a raw MySQL event row."""
     status = str(row.get("status") or "").upper()
@@ -557,7 +727,7 @@ def drop_routine_bodies(collector_output: dict[str, Any]) -> None:
     schema = collector_output.get("database_schema")
     if not isinstance(schema, dict):
         return
-    for key in ("procedures", "triggers", "events"):
+    for key in ("procedures", "triggers", "events", "non_dml_triggers"):
         for row in schema.get(key) or []:
             if isinstance(row, dict) and (row.get("definition") or row.get("body_status")):
                 row["definition"] = None

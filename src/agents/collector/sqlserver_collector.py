@@ -42,7 +42,7 @@ from src.agents.collector.routine_rows import (
     log_skipped_triggers,
     routine_stats_status,
 )
-from src.agents.collector.routine_sources import body_fields
+from src.agents.collector.routine_sources import body_fields, non_dml_triggers
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
     CollectorOutputContract,
@@ -261,7 +261,15 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             # #1652: an older checkpoint's schema stage has none.
             routine_stats_source=routine_stats_status(schema_raw.get("routine_stats_status")),
         ),
-        database_schema=Schema(tables=tables, views=views, procedures=procs, triggers=triggers),
+        database_schema=Schema(
+            tables=tables,
+            views=views,
+            procedures=procs,
+            triggers=triggers,
+            # #2023: none today (sys.triggers is read on tables and views only), but a
+            # row on no DML event is kept apart, never dropped.
+            non_dml_triggers=non_dml_triggers(schema_raw.get("triggers", []), qualified=True),
+        ),
         queries=queries,
         metrics=metrics,
     )
@@ -325,6 +333,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             tables=tables,
             procedures=_build_procedures(routines_raw.get("procedures") or []),
             triggers=_build_triggers(routines_raw.get("triggers") or []),
+            non_dml_triggers=non_dml_triggers(routines_raw.get("triggers") or [], qualified=True),
         ),
         queries=queries,
         metrics=metrics,

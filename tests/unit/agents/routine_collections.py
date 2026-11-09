@@ -172,3 +172,47 @@ def old_mysql_collection() -> dict[str, Any]:
                           "definition": MYSQL_BODY, "sql_mode": "STRICT_TRANS_TABLES"}]  # fmt: skip
     raw["triggers"] = []
     return raw
+
+
+# #2023: a trigger that fires on TRUNCATE alone, and two event triggers.
+PG_TRUNCATE_TRIGGER = (
+    "CREATE TRIGGER tg_orders_truncate BEFORE TRUNCATE ON public.orders "
+    f"FOR EACH STATEMENT EXECUTE FUNCTION audit_orders('{SEED}')"
+)
+PG_EVENT_TRIGGER = (
+    'CREATE EVENT TRIGGER "Guard DDL" ON ddl_command_start '
+    "WHEN TAG IN ('DROP TABLE', 'ALTER TABLE') EXECUTE FUNCTION public.guard_ddl()"
+)
+PG_EVENT_TRIGGER_NO_TAGS = (
+    "CREATE EVENT TRIGGER log_ddl ON ddl_command_end EXECUTE FUNCTION public.guard_ddl()"
+)
+
+
+def pg_event_trigger_row(
+    name: str, quoted: str, event: str, tags: list[str], status: str, enabled: str = "O"
+) -> dict[str, Any]:
+    """One row of the script's ``event_triggers`` section (and the live read's)."""
+    return {
+        "trigger_name": name, "quoted_name": quoted, "event": event, "tags": tags,
+        "is_enabled": enabled, "owner": "postgres", "function_signature": "public.guard_ddl()",
+        "quoted_function": "public.guard_ddl", "body_status": status,
+    }  # fmt: skip
+
+
+def pg_collection_with_non_dml_triggers(*, include_bodies: bool = True) -> dict[str, Any]:
+    """:func:`pg_collection` plus a TRUNCATE-only trigger and two event triggers (#2023)."""
+    raw = pg_collection(include_bodies=include_bodies)
+    status = "collected" if include_bodies else "opted_out"
+    raw["triggers"].append({
+        "trigger_name": "tg_orders_truncate", "schema_name": "public", "table_name": "orders",
+        "timing": "BEFORE", "event_type": "TRUNCATE", "for_each": "STATEMENT",
+        "is_enabled": "O", "function_signature": "public.audit_orders()",
+        "body_chars": len(PG_TRUNCATE_TRIGGER), "body_status": status,
+        "definition": PG_TRUNCATE_TRIGGER if include_bodies else None,
+    })  # fmt: skip
+    raw["event_triggers"] = [
+        pg_event_trigger_row("Guard DDL", '"Guard DDL"', "ddl_command_start",
+                             ["DROP TABLE", "ALTER TABLE"], status),
+        pg_event_trigger_row("log_ddl", "log_ddl", "ddl_command_end", [], status, enabled="D"),
+    ]  # fmt: skip
+    return raw

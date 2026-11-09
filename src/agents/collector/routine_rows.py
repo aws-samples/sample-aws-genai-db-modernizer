@@ -65,6 +65,32 @@ def dml_trigger(row: Mapping[str, Any]) -> tuple[list[str], str] | None:
     return events, timing
 
 
+# An event a trigger outside the DML list fires on, as the row names it (#2023); Oracle's
+# can be two words (ASSOCIATE STATISTICS).
+_OTHER_EVENT = re.compile(r"(?=.{1,64}$)[A-Z][A-Z_]*(?: [A-Z_]+)*")
+
+
+def other_trigger_events(row: Mapping[str, Any]) -> list[str]:
+    """The events of a trigger the DML list cannot hold (#2023), upper case, in the
+    row's order: TRUNCATE (PostgreSQL), LOGON, STARTUP, DDL, CREATE, ... (Oracle). Empty
+    for a trigger on any INSERT, UPDATE or DELETE, which stays in the DML list (or is
+    skipped there, for an unknown timing or no table), and for a row that names none."""
+    raw = row.get("events")
+    text = " ".join(
+        str(v)
+        for v in (row.get("event_type"), raw if isinstance(raw, str) else None)
+        if v is not None
+    )
+    if dml_trigger(row) is not None or trigger_events(text):
+        return []
+    out: list[str] = []
+    for token in re.split(r"\s+OR\s+|,", text.upper()):
+        event = " ".join(token.split())
+        if _OTHER_EVENT.fullmatch(event) and event != "OTHER" and event not in out:
+            out.append(event)
+    return out
+
+
 _NAMED_LIMIT = 20
 
 
@@ -75,14 +101,17 @@ def trigger_label(row: Mapping[str, Any]) -> str:
 
 
 def log_skipped_triggers(logger: logging.Logger, skipped: Sequence[Mapping[str, Any]]) -> None:
-    """The one warning every builder gives for the trigger rows it skipped, naming them."""
+    """The one warning every builder gives for the trigger rows it skipped, naming them.
+    A row the collection keeps among its triggers outside the DML list (#2023,
+    :func:`other_trigger_events`) is not skipped, and not named."""
+    skipped = [r for r in skipped if not other_trigger_events(r)]
     if not skipped:
         return
     names = [trigger_label(r) for r in skipped[:_NAMED_LIMIT]]
     more = len(skipped) - len(names)
     logger.warning(
-        "Skipped %d non-DML or DB-level trigger(s) (no INSERT/UPDATE/DELETE event, as for "
-        "LOGON/DDL/STARTUP/DROP or TRUNCATE; unknown timing; or no table_name): %s%s",
+        "Skipped %d trigger(s) the collection cannot hold (an INSERT/UPDATE/DELETE trigger "
+        "with an unknown timing or no table_name, or no event named): %s%s",
         len(skipped),
         ", ".join(names),
         f" and {more} more" if more else "",

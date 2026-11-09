@@ -561,12 +561,13 @@ class TestBuildTriggersNormalization:
                 "timing": "AFTER EVENT",
             },
         ]
+        raw[1]["event_type"] = "INSERT"  # a DML trigger with no table: skipped
         with caplog.at_level(logging.WARNING, logger="src.agents.collector.mysql_collector"):
-            _build_triggers(raw)
-        assert any(
-            "Skipped 2 non-DML" in rec.message or "Skipped 2 non-DML or DB-level" in rec.message
-            for rec in caplog.records
-        )
+            assert _build_triggers(raw) is None
+        # #2023: the LOGON trigger is kept apart (non_dml_triggers), not skipped.
+        (message,) = [r.message for r in caplog.records if "Skipped" in r.message]
+        assert message.startswith("Skipped 1 trigger(s)") and "sys_2" in message
+        assert "sys_1" not in message
 
 
 # ---------------------------------------------------------------------------

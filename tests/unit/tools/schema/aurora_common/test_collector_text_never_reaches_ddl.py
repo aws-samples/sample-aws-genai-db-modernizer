@@ -352,6 +352,14 @@ DDL_WRITERS = {
     # test_strings_follow_the_sql_mode_they_are_read_under and
     # test_composite_intervals_one_time_events_and_states.
     "src/agents/collector/mysql_routine_create.py",
+    # A PostgreSQL event trigger's CREATE rebuilt from pg_event_trigger (#2023), kept in the
+    # job's routine sources and run by nothing here: the name and function are the server's
+    # own quote_ident output, each checked for an identifier's shape, the event only
+    # [a-z_]+ and each command tag only [A-Z ]+; any other row gives no statement.
+    # tests/unit/agents/test_non_dml_triggers.py::
+    # test_an_event_trigger_whose_create_cannot_be_rebuilt_is_not_supported and
+    # test_an_event_trigger_piece_of_the_wrong_shape_gives_no_create.
+    "src/agents/collector/routine_sources.py",
 }
 _DDL_START = re.compile(
     r"^\s*(?:-- )?(?:CREATE|ALTER|DROP|GRANT|TRUNCATE|USE|SET search_path)(?: |$)"

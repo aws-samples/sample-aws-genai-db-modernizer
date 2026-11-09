@@ -22,8 +22,9 @@ _IMPORTERS = {
     "src/agents/collector/handler.py",  # writes them (both modes) or clears them
     "src/agents/collector/mysql_collector.py",  # builds them, live
     "src/agents/collector/postgres_collector.py",  # builds them, live
-    "src/agents/collector/sqlserver_collector.py",  # body fields only
-    "src/agents/collector/oracle_collector.py",  # body fields only
+    "src/agents/collector/sqlserver_collector.py",  # body fields, triggers outside DML
+    "src/agents/collector/oracle_collector.py",  # body fields, triggers outside DML
+    "src/agents/collector/offline_ingest.py",  # triggers outside the DML list (#2023)
     "src/agents/collector/routine_sources.py",  # the module itself
     "src/tools/database/offline_parser.py",  # body statuses, never a CREATE
     "scripts/run_collect.py",  # writes them

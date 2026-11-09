@@ -47,6 +47,7 @@ from src.agents.collector.routine_sources import (
     apply_body_statuses,
     attach_to_contract,
     build_routine_sources,
+    non_dml_triggers,
     procedure_fields,
     routine_capture,
     routine_capture_model,
@@ -277,7 +278,8 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
                 routine_capture(
                     schema_raw.get("routine_capture"),
                     listed=len(schema_raw.get("procedures") or [])
-                    + len(schema_raw.get("triggers") or []),
+                    + len(schema_raw.get("triggers") or [])
+                    + len(schema_raw.get("event_triggers") or []),
                 )
             ),
         ),
@@ -286,6 +288,10 @@ def _collect_live_stages(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             views=views,
             procedures=procs,
             triggers=triggers,
+            # #2023: TRUNCATE-only and event triggers (none in an older checkpoint).
+            non_dml_triggers=non_dml_triggers(
+                schema_raw.get("triggers", []), schema_raw.get("event_triggers") or []
+            ),
             # #1834: an older checkpoint's schema stage has none.
             enum_types=source_enum_types(schema_raw.get("enum_types")),
         ),
@@ -347,6 +353,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             tables=tables,
             procedures=_build_procedures(routines_raw.get("procedures") or []),
             triggers=_build_triggers(routines_raw.get("triggers") or []),
+            non_dml_triggers=non_dml_triggers(routines_raw.get("triggers") or []),
         ),
         queries=queries,
         metrics=metrics,
@@ -402,6 +409,12 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector, include_bodies: bool = Tr
         triggers = db.collect_triggers(include_bodies=include_bodies)
     except Exception:
         logger.warning("Failed to collect triggers")
+    # #2023: the database's event triggers (pg_event_trigger), kept apart from the DML list.
+    event_triggers: list[dict] = []
+    try:
+        event_triggers = db.collect_event_triggers(include_bodies=include_bodies)
+    except Exception:
+        logger.warning("Failed to collect event triggers")
     # #1652: the call counts PostgreSQL keeps, and how they were read.
     routine_status: dict | None = None
     try:
@@ -435,6 +448,7 @@ def _collect_schema_raw(db: PostgreSQLRemoteCollector, include_bodies: bool = Tr
         "views": views,
         "procedures": procedures,
         "triggers": triggers,
+        "event_triggers": event_triggers,
         "routine_stats_status": routine_status,
         "routine_capture": {"include_bodies": include_bodies, "privileges_not_seen": []},
         "global_stats": global_stats,
@@ -449,12 +463,13 @@ def _collect_routine_creates_raw(
     """The routine rows again, bodies included, read outside every checkpoint (#1652):
     a checkpoint stage is redacted (#1625), and a CREATE must keep its literals. Nothing
     is read when the caller opted out."""
-    out: dict[str, list[dict]] = {"procedures": [], "triggers": []}
+    out: dict[str, list[dict]] = {"procedures": [], "triggers": [], "event_triggers": []}
     if not include_bodies:
         return out
     reads = (
         ("procedures", lambda: db.collect_procedures(include_bodies=True)),
         ("triggers", lambda: db.collect_triggers(include_bodies=True)),
+        ("event_triggers", lambda: db.collect_event_triggers(include_bodies=True)),
     )
     for key, read in reads:
         try:
@@ -476,6 +491,7 @@ def _live_routines(db, schema_raw: object, *, include_bodies: bool) -> list[Rout
         "postgresql",
         procedures=schema_raw.get("procedures") or [],
         triggers=schema_raw.get("triggers") or [],
+        event_triggers=schema_raw.get("event_triggers") or [],
     )
     return build.sources
 

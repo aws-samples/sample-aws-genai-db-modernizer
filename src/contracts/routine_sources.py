@@ -8,9 +8,10 @@ Last Modified: 2026-11-06
 Description: The CREATE statement of each collected routine (#1652)
 
 The routine sources hold, per PostgreSQL or MySQL function, procedure, trigger and
-event, the statement that creates it on the target, with its string literals: they are
-code the target runs as written. PostgreSQL's and a live MySQL collector's are the
-server's own text (``pg_get_functiondef``, ``SHOW CREATE``); the MySQL script's are
+event, and per PostgreSQL event trigger (#2023), the statement that creates it on the
+target, with its string literals: they are code the target runs as written.
+PostgreSQL's and a live MySQL collector's are the server's own text
+(``pg_get_functiondef``, ``SHOW CREATE``); the MySQL script's are
 rebuilt from ``information_schema``, exact only for a body with no string literal
 (``RoutineSource.exact``). They are the one part of a job kept unredacted (the
 exception to #1625 recorded on #1652, ADR-034 Decision 4), and no report, model input
@@ -24,6 +25,9 @@ loads one chunk at a time, so a library of any size is carried in bounded memory
 
 Version History:
 - 1.0 (2026-11-06, #1652): First version.
+- 1.1 (2026-11-09, #2023): RoutineSource.kind event_trigger and origin pg_event_trigger:
+  a PostgreSQL event trigger's CREATE, rebuilt from pg_event_trigger with the server's
+  own quoting. Backward compatible: new values only
 """
 
 from __future__ import annotations
@@ -60,13 +64,17 @@ class RoutineSession(BaseModel):
 
 
 class RoutineSource(BaseModel):
-    kind: Literal["function", "procedure", "trigger", "event"] = Field(
-        ..., description="What the routine is"
+    kind: Literal["function", "procedure", "trigger", "event", "event_trigger"] = Field(
+        ...,
+        description="What the routine is; event_trigger: a PostgreSQL event trigger (#2023)",
     )
     routine_id: str = Field(
         ...,
         min_length=1,
-        description="The collector output's procedure_id, trigger_id or event_id",
+        description=(
+            "The collector output's procedure_id, trigger_id or event_id (an event "
+            "trigger's is its non_dml_triggers trigger_id)"
+        ),
     )
     schema_name: str | None = Field(None, description="The routine's schema or database")
     specific_name: str = Field(
@@ -74,19 +82,25 @@ class RoutineSource(BaseModel):
         min_length=1,
         description=(
             "Unique per kind and schema: PostgreSQL '<name>_<oid>', a trigger "
-            "'<table>.<trigger>', MySQL the routine or event name"
+            "'<table>.<trigger>', an event trigger its name, MySQL the routine or event name"
         ),
     )
     create_statement: str = Field(
         ..., min_length=1, description="The exact statement that creates it, literals included"
     )
     origin: Literal[
-        "pg_get_functiondef", "pg_get_triggerdef", "show_create", "information_schema"
+        "pg_get_functiondef",
+        "pg_get_triggerdef",
+        "pg_event_trigger",
+        "show_create",
+        "information_schema",
     ] = Field(
         ...,
         description=(
-            "Where the statement comes from: PostgreSQL's own text, MySQL's SHOW CREATE "
-            "(a live collector), or rebuilt from MySQL's information_schema (the script)"
+            "Where the statement comes from: PostgreSQL's own text, a PostgreSQL event "
+            "trigger rebuilt from pg_event_trigger with the server's own quoting (as "
+            "pg_dump does: exact), MySQL's SHOW CREATE (a live collector), or rebuilt from "
+            "MySQL's information_schema (the script)"
         ),
     )
     exact: bool = Field(
@@ -136,7 +150,7 @@ class RoutineSourcesChunk(BaseModel):
     """One chunk file: up to ``MAX_CHUNK_SOURCES`` routines."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     part: int = Field(..., ge=1, description="The chunk's number, from 1")
     sources: list[RoutineSource] = Field(
