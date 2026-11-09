@@ -32607,6 +32607,22 @@
                             ]
                           }
                         },
+                        "readiness_line_short": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
                         "redesign_note": {
                           "required": false,
                           "schema": {
@@ -37602,8 +37618,8 @@
         }
       }
     },
-    "schema_hash": "416790d2987d70c6df82483075299458168e6acd7157ef66fe2a2b6a93bebc06",
-    "version": "1.88"
+    "schema_hash": "a90e8298f7792e1b95c503cf1f49d446006e79243d7449acd89da8dc26ffa49c",
+    "version": "1.89"
   },
   "transformation_contract.StepContract": {
     "fields": {

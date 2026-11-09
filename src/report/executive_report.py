@@ -1226,9 +1226,11 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
                     "Open critical or high risks", wf.get("critical_high_risks", 0), st["small"]
                 )
             )
-            if wf.get("readiness_line"):
-                # #1992: whether the plan suggests the wave, as the facts state it.
-                content.append(_labelled("Readiness", wf["readiness_line"], st["small"]))
+            if wf.get("readiness_line_short"):
+                # #1992: whether the plan suggests the wave, as the facts state it; the
+                # short form names no table (#2075: the warnings stay in the engineering
+                # report).
+                content.append(_labelled("Readiness", wf["readiness_line_short"], st["small"]))
         flow += [_Panel(content, accent), _gap(10)]
     return flow[:-1] if waves else flow
 

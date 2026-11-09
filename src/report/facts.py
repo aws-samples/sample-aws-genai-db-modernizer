@@ -44,6 +44,7 @@ from src.shared.report_facts import (
     trade_off_topic_facts,
     unservable_query_facts,
     wave_one_moved_by_later_waves,
+    wave_readiness_rows,
 )
 
 from .waves import resolve_migration_waves
@@ -231,10 +232,48 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         ):
             # A block written before #1284: wave 1's later-wave moves, from the same function.
             missing["waves"] = _moved_by_later_waves_backfill(report, rows)
+        rows = missing.get("waves", waves)
+        if isinstance(rows, list) and any(
+            isinstance(w, dict) and w.get("readiness_line") and "readiness_line_short" not in w
+            for w in rows
+        ):
+            # A block written before #2075: the executive report's short readiness line,
+            # from the same function synthesis calls.
+            missing["waves"] = _short_readiness_backfill(report, facts, rows)
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.
     return compute_report_facts(report, waves=resolve_migration_waves(report), readiness=False)
+
+
+def _short_readiness_backfill(
+    report: dict[str, Any], facts: dict[str, Any], rows: list[Any]
+) -> list[Any]:
+    """Each wave row with its ``readiness_line_short`` (#2075), for a facts block stored
+    before it: the one ``wave_readiness_rows`` computes again from the same report, when
+    its full line is the stored one. Otherwise the stored line when it has nothing to
+    shorten (no review warnings, no redesign note), else None: the executive report then
+    prints no readiness line rather than one that names a table."""
+    by_wave = {
+        int(r.get("wave") or 0): r
+        for r in wave_readiness_rows(
+            report, resolve_migration_waves(report), facts.get("rate_windows")
+        )
+    }
+    out: list[Any] = []
+    for w in rows:
+        if not isinstance(w, dict) or not w.get("readiness_line") or "readiness_line_short" in w:
+            out.append(w)
+            continue
+        found = by_wave.get(int(w.get("wave") or 0)) or {}
+        if found.get("readiness_line") == w["readiness_line"]:
+            short = found.get("readiness_line_short")
+        elif not (w.get("review_warnings") or w.get("redesign_note")):
+            short = w["readiness_line"]
+        else:
+            short = None
+        out.append({**w, "readiness_line_short": short})
+    return out
 
 
 def _cross_engine_backfill(report: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:

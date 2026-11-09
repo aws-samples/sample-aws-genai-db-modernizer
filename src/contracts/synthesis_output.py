@@ -650,6 +650,10 @@ Version History:
   WaveFacts.review_warnings and review_warning_count: a suggested wave's design review warnings, which hold
   nothing and which approving the wave accepts. decision_wave is now the first
   suggested wave. Backward compatible: every new field defaults to None, 0 or empty.
+- 1.89 (2026-11-09, #2075): Added optional facts.waves[].readiness_line_short:
+  readiness_line as the executive report prints it, with design review warnings as a
+  count that points to the engineering report and a failed redesign round without its
+  reason, so it names no collected table or column.
 """
 
 from datetime import datetime
@@ -1642,6 +1646,15 @@ class WaveFacts(BaseModel):
         description=(
             "The wave's readiness as every deliverable prints it: suggested, or not "
             "suggested yet with its holds and next steps. None before the check"
+        ),
+    )
+    readiness_line_short: str | None = Field(
+        None,
+        description=(
+            "readiness_line as the executive report prints it (#2075): its design review "
+            "warnings as a count that points to the engineering report, and a failed "
+            "redesign round without its reason, so it names no collected table or column; "
+            "the same as readiness_line otherwise. None before the check"
         ),
     )
 
@@ -3497,7 +3510,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.88",
+        default="1.89",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

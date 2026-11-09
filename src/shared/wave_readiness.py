@@ -41,7 +41,10 @@ until wave 1 is suggested; and, when a rate-driven risk holds the wave while the
 window check failed, collect again over a longer window.
 
 The figures are computed once here, into ``facts.waves[]`` (ADR-032); every deliverable
-prints ``readiness_line`` as it is.
+prints ``readiness_line`` as it is, except the executive report, which prints
+``readiness_line_short`` (#2075): the same line with its review warnings as a count that
+points to the engineering report, and a failed redesign round without its reason, so it
+names no collected table or column.
 """
 
 from __future__ import annotations
@@ -69,6 +72,9 @@ READINESS = ("suggested", "held", "not_designed", "not_reviewed")
 #: The risk rules whose severity the measured rates drive: only these get "collect over
 #: a longer window" when the rate window check fails.
 RATE_DRIVEN_RULES = frozenset({"design.hot_partition"})
+
+#: Where the short readiness line sends the reader for the warnings it counts (#2075).
+WARNINGS_LISTED_IN = "listed in the engineering report"
 
 #: The rule, stated once next to the waves by every deliverable.
 READINESS_RULE_NOTE = (
@@ -368,18 +374,25 @@ def wave_readiness(
         redesign = [(redesign_by_engine or {}).get(e) or {} for e in engines]
         rounds = max([int(r.get("rounds") or 0) for r in redesign] or [0])
         stopped = next((str(r["note"]) for r in redesign if r.get("note")), None)
+        # The same note with no free text in it, for the executive report (#2075).
+        stopped_short = next(
+            (str(r.get("short_note") or r["note"]) for r in redesign if r.get("note")), None
+        )
+        short: str | None = None
         if holds:
             readiness = "held"
             steps = _next_steps(holds, by_id, designed, window_representative)
-            line = (
-                "Not suggested yet"
-                + (f" (redesigned {_times(rounds)}, still held)" if rounds else "")
-                + (f" ({stopped})" if stopped else "")
-                + ": "
+            redesigned = f" (redesigned {_times(rounds)}, still held)" if rounds else ""
+            reasons = (
+                ": "
                 + "; ".join(h["line"] for h in holds)
                 + ". Next step: "
                 + "; ".join(s["line"] for s in steps)
                 + "."
+            )
+            line, short = (
+                "Not suggested yet" + redesigned + (f" ({note})" if note else "") + reasons
+                for note in (stopped, stopped_short)
             )
         elif missing:
             readiness = "not_designed"
@@ -409,12 +422,15 @@ def wave_readiness(
             )
             if warnings:
                 # A review with only warnings holds nothing (maintainer decision on
-                # #2051): approving the wave accepts them.
-                line = (
-                    f"Suggested, with {_plural(len(warnings), 'design review warning', 'design review warnings')} "
-                    "to accept: "
-                    + "; ".join(_warning_phrase(w) for w in warnings)
-                    + ". If you do not accept them: "
+                # #2051): approving the wave accepts them. Each warning names the
+                # reviewed table and its columns: the short line counts them (#2075).
+                head = (
+                    "Suggested, with "
+                    f"{_plural(len(warnings), 'design review warning', 'design review warnings')}"
+                    " to accept"
+                )
+                otherwise = (
+                    " If you do not accept them: "
                     + "; ".join(
                         f"revise the {display_engine(e)} schema design in your modernization "
                         "session and review it again"
@@ -422,6 +438,10 @@ def wave_readiness(
                     )
                     + "."
                 )
+                line = (
+                    f"{head}: " + "; ".join(_warning_phrase(w) for w in warnings) + "." + otherwise
+                )
+                short = f"{head} ({WARNINGS_LISTED_IN})." + otherwise
         if i == 0 and readiness != "suggested" and wave.get("homogeneity") in _WAVE_ONE_MOVES:
             wave_one_unsuggested = True
         rows.append(
@@ -432,6 +452,7 @@ def wave_readiness(
                 "holds": holds,
                 "next_steps": steps,
                 "readiness_line": line,
+                "readiness_line_short": short or line,
                 "review_warnings": warnings if readiness == "suggested" else [],
                 "review_warning_count": len(warnings) if readiness == "suggested" else 0,
                 "redesign_rounds": rounds,
@@ -543,7 +564,8 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
     """Per engine, from one assignment version's redesign log (``report.json``'s
     ``wave_redesign``, #1992): the rounds that redesigned it, its last outcome, and the
     note a wave states when the last round did not keep a new design (it failed, did not
-    improve it, or a run ceiling stopped it)."""
+    improve it, or a run ceiling stopped it), and ``short_note``, the same with no free
+    text (a failed round's reason can name a table, #2075)."""
     out: dict[str, dict[str, Any]] = {}
     for rnd in (log or {}).get("rounds") or []:
         if not isinstance(rnd, Mapping):
@@ -552,12 +574,15 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
         raw = rnd.get("outcome")
         outcome: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
         for engine in rnd.get("engines") or []:
-            row = out.setdefault(str(engine), {"rounds": 0, "last": None, "note": None})
+            row = out.setdefault(
+                str(engine), {"rounds": 0, "last": None, "note": None, "short_note": None}
+            )
             last = outcome.get(engine)
             row["last"] = last
-            row["note"] = None
+            row["note"] = row["short_note"] = None
             if last == "stopped":
                 row["note"] = f"no further redesign round ran: {rnd.get('stopped')}"
+                row["short_note"] = "no further redesign round ran: a run ceiling stopped it"
                 continue
             row["rounds"] += 1
             if last == "failed":
@@ -565,8 +590,11 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
                     f"{(rnd.get('failed') or {}).get(engine) or f'redesign round {n} failed'}; "
                     "the earlier design is kept"
                 )
+                row["short_note"] = f"redesign round {n} failed; the earlier design is kept"
             elif last == "did_not_improve":
-                row["note"] = f"redesign round {n} did not improve it; the earlier design is kept"
+                row["note"] = row["short_note"] = (
+                    f"redesign round {n} did not improve it; the earlier design is kept"
+                )
     return out
 
 
