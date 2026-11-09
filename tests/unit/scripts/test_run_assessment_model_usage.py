@@ -487,6 +487,7 @@ def test_the_real_phases_record_the_engines_they_processed(monkeypatch, tmp_path
         "analysis",
         "assignment",
         "reality_check",
+        "routine_migration",  # #1934: timed like any phase, on the version it reads
         "engine_choices",
         "schema_design",
         "synthesis",

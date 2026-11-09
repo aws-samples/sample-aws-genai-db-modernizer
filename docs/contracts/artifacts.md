@@ -23,6 +23,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `analysis-aurora_mysql/decision-trace\.json` | `AuroraDecisionTrace` (`src.contracts.aurora_decision_trace`) |
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
+| `routines/v\d+/routine_migration\.json` | `RoutineMigrationContract` (`src.contracts.routine_migration`): how each collected routine migrates, keyed on the assignment version: id, kind, dependencies, deploy order, status, applied rewrite rules and check results, never the routine's text (#1934) |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
 | `decisions/(?!engine_scope\.json$)[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
 | `reality-check/(?:v\d+/)?output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |

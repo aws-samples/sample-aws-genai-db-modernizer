@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT-0
 
 """No report, model input or API response reads the routine sources (#1652, ADR-034
-Decision 4): only the collector modules that write them import their modules, nothing
-outside ``routine_sources.py`` reads a chunk, and only the writer and the contract
-registry name the files."""
+Decision 4): only the collector modules that write them and the routine-migration phase
+that checks them (#1934) import their modules, nothing outside ``routine_sources.py`` and
+that phase reads a chunk, and only the writer and the contract registry name the files."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ _IMPORTERS = {
     "src/tools/database/offline_parser.py",  # body statuses, never a CREATE
     "scripts/run_collect.py",  # writes them
     "scripts/run_assessment.py",  # writes them
+    "src/tools/routines/migration.py",  # reads them: the routine-migration phase (#1934)
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -78,6 +79,8 @@ def test_nothing_but_the_routine_sources_module_reads_a_chunk():
     assert readers <= {
         "src/agents/collector/routine_sources.py",
         "src/contracts/routine_sources.py",
+        # Checks each routine on its exact text and keeps no text (#1934, ADR-034).
+        "src/tools/routines/migration.py",
     }
 
 

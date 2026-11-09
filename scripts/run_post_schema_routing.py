@@ -114,6 +114,15 @@ def main() -> None:
                     status = orch.run_post_schema_routing_external(args.job_id, args.db)
             except RuntimeError as exc:
                 status = {"status": "error", "message": str(exc)}
+            if status["status"] != "error":
+                # #1934: a version this pass wrote gets its routine migration, as the
+                # versions run_assessment.py writes do (same phase, same inputs).
+                from src.tools.routines.migration import ensure_routine_migration, error_message
+
+                try:
+                    ensure_routine_migration(store, args.db, args.job_id)
+                except Exception as exc:  # noqa: BLE001 -- never its message (routine text)
+                    status = {"status": "error", "message": error_message(exc)}
     if status["status"] == "error":
         _error(status["message"])
     _output({**status, "log": str(log_dir / "run_post_schema_routing.log")})
