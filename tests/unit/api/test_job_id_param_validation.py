@@ -112,7 +112,7 @@ def mock_services():
 # (method, path template with {job_id}, extra query params, json body)
 _ROUTES: list[tuple[str, str, dict, dict | None]] = [
     # assessments.py
-    ("POST", "/api/v1/assessments/{job_id}/uploads/confirm", {"database_name": _VALID_DB}, None),
+    ("POST", "/api/v1/assessments/{job_id}/uploads/confirm", {"database_name": _VALID_DB}, {}),
     ("GET", "/api/v1/assessments/{job_id}/uploads", {"database_name": _VALID_DB}, None),
     (
         "DELETE",
@@ -200,13 +200,13 @@ _ROUTES: list[tuple[str, str, dict, dict | None]] = [
         "POST",
         "/api/v1/assessments/{job_id}/schema/dynamodb/confirm",
         {"database_name": _VALID_DB},
-        None,
+        {},
     ),
     (
         "POST",
         "/api/v1/assessments/{job_id}/schema/confirm-all",
         {"database_name": _VALID_DB},
-        None,
+        {},
     ),
 ]
 

@@ -7,12 +7,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
 
 from src.shared.contract_versioning import check_artifact
 from src.storage.artifact_store import ArtifactStore
+
+#: A percent-encoded separator or dot (``%2f``, ``%5c``, ``%2e``): no artifact key has
+#: one, and a key that does was decoded nowhere it should have been (#1991 review).
+_ENCODED_PATH_CHARS = re.compile(r"%(2f|5c|2e)", re.IGNORECASE)
+
+
+def _plain_key(path: str) -> str:
+    """``path`` when it carries no percent-encoded separator or dot; ValueError if not."""
+    if _ENCODED_PATH_CHARS.search(path):
+        raise ValueError(f"path carries an encoded separator: {path!r}")
+    return path
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -21,10 +33,12 @@ class LocalArtifactStore(ArtifactStore):
     Every method below resolves its path with ``os.path.realpath`` (follows
     symlinks, so a link inside the root that points elsewhere is caught
     too) and checks it with a single ``startswith`` call against the
-    resolved base_dir (with a trailing separator baked into both sides, so
-    a sibling directory whose name merely starts with the same prefix --
-    e.g. ``artifacts-evil`` next to ``artifacts`` -- isn't mistaken for
-    "inside" it) before touching the filesystem, then raises
+    resolved base_dir plus a trailing separator (so a sibling directory
+    whose name merely starts with the same prefix -- e.g. ``artifacts-evil``
+    next to ``artifacts`` -- isn't mistaken for "inside" it; #1991 review:
+    the resolved path itself is what ``startswith`` checks, the shape
+    CodeQL recognises, and only ``exists`` and ``list_prefix`` accept the
+    root itself) before touching the filesystem, then raises
     ``ValueError`` if it escapes. Callers already validate
     database_name/job_id/filename before building a key (#420/#505/#508),
     but CodeQL's py/path-injection query doesn't model a caller's
@@ -32,16 +46,17 @@ class LocalArtifactStore(ArtifactStore):
     ``os.path.realpath`` + ``startswith`` shape its own query help
     documents as the recognized sanitizer for exactly this query, applied
     inline at every sink rather than through a shared helper (every call
-    site still got flagged behind one).
+    site still got flagged behind one). A key with a percent-encoded
+    separator or dot is refused too (``_plain_key``).
     """
 
     def __init__(self, base_dir: str = "./artifacts"):
         self.base_dir = Path(base_dir)
 
     def read_json(self, path: str) -> dict:
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         with open(full_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -78,9 +93,9 @@ class LocalArtifactStore(ArtifactStore):
         removed it on success, so the ``finally`` unlink only ever does
         something on a failure path.
         """
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         full_dir = os.path.dirname(full_path)
         os.makedirs(full_dir, exist_ok=True)
@@ -113,26 +128,26 @@ class LocalArtifactStore(ArtifactStore):
                 pass
 
     def read_bytes(self, path: str) -> bytes:
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         with open(full_path, "rb") as f:
             return f.read()
 
     def write_bytes(self, path: str, data: bytes) -> None:
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "wb") as f:
             f.write(data)
 
     def delete(self, path: str) -> bool:
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         if not os.path.isfile(full_path):
             return False
@@ -140,17 +155,18 @@ class LocalArtifactStore(ArtifactStore):
         return True
 
     def exists(self, path: str) -> bool:
-        base = os.path.realpath(str(self.base_dir)) + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, path))
-        if not (full_path + os.sep).startswith(base):
+        base = os.path.realpath(str(self.base_dir))
+        full_path = os.path.realpath(os.path.join(base, _plain_key(path)))
+        if full_path == base:
+            return True
+        if not full_path.startswith(base + os.sep):
             raise ValueError(f"path escapes the artifact root: {path!r}")
         return os.path.exists(full_path)
 
     def list_prefix(self, prefix: str) -> list[str]:
         base_dir = os.path.realpath(str(self.base_dir))
-        base = base_dir + os.sep
-        full_path = os.path.realpath(os.path.join(self.base_dir, prefix))
-        if not (full_path + os.sep).startswith(base):
+        full_path = os.path.realpath(os.path.join(base_dir, _plain_key(prefix)))
+        if full_path != base_dir and not full_path.startswith(base_dir + os.sep):
             raise ValueError(f"path escapes the artifact root: {prefix!r}")
         if not os.path.exists(full_path):
             return []

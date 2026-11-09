@@ -202,3 +202,63 @@ def test_write_bytes_rejects_a_symlink_escaping_the_root(tmp_path) -> None:
 def test_list_prefix_accepts_the_root_itself(store) -> None:
     store.write_json("db/job/collector/output.json", {})
     assert store.list_prefix(".") == ["db/job/collector/output.json"]
+
+
+# ---------------------------------------------------------------------------
+# #1991 review: the resolved path itself is checked (the shape CodeQL's
+# py/path-injection recognises), and an encoded separator is refused
+# ---------------------------------------------------------------------------
+
+_ENCODED_PATHS = ["%2e%2e%2fescape.json", "db%2Fjob/output.json", "a%5c..%5cescape.json"]
+_METHODS = [
+    ("read_json", ()),
+    ("write_json", ({},)),
+    ("read_bytes", ()),
+    ("write_bytes", (b"x",)),
+    ("delete", ()),
+    ("exists", ()),
+    ("list_prefix", ()),
+]
+
+
+@pytest.mark.parametrize("name,args", _METHODS)
+@pytest.mark.parametrize("bad_path", _ENCODED_PATHS)
+def test_every_method_rejects_an_encoded_separator(store, tmp_path, name, args, bad_path) -> None:
+    with pytest.raises(ValueError, match="encoded separator"):
+        getattr(store, name)(bad_path, *args)
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("name,args", _METHODS)
+@pytest.mark.parametrize("bad_path", ["..", "../escape.json", "/etc/passwd"])
+def test_every_method_rejects_dot_dot_and_an_absolute_path(store, name, args, bad_path) -> None:
+    with pytest.raises(ValueError, match="escapes the artifact root"):
+        getattr(store, name)(bad_path, *args)
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("name,args", _METHODS)
+def test_every_method_rejects_a_symlinked_folder_escaping_the_root(tmp_path, name, args) -> None:
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    root.mkdir()
+    (outside / "job").mkdir(parents=True)
+    (outside / "job" / "f.json").write_text("{}")
+    os.symlink(outside, root / "db")
+    store = LocalArtifactStore(str(root))
+    with pytest.raises(ValueError, match="escapes the artifact root"):
+        getattr(store, name)("db/job/f.json", *args)
+    assert (outside / "job" / "f.json").read_text() == "{}"
+
+
+@pytest.mark.parametrize(
+    "name,args", [m for m in _METHODS if m[0] not in ("exists", "list_prefix")]
+)
+def test_a_file_operation_on_the_root_itself_is_refused(store, name, args) -> None:
+    with pytest.raises(ValueError, match="escapes the artifact root"):
+        getattr(store, name)(".", *args)
+
+
+@pytest.mark.passes_on_main
+def test_exists_is_true_for_the_root_itself(store) -> None:
+    assert store.exists("") is True and store.exists(".") is True

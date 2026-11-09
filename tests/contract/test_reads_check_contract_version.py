@@ -115,10 +115,6 @@ _REVISION = "revision_context.json: revision instructions, not a contract"
 _K6 = "the load generator's own summary files"
 _REFERENCE = "the raw offline upload (a collection, no contract) the script seeds"
 FILE_READS: dict[tuple[str, str, str], str] = {
-    ("src/shared/assumptions_file.py", "read_assumptions_file", "data"): (
-        "the customer's assumptions file (#1991), not a contract: checked key by key and "
-        "recorded as checked numbers only"
-    ),
     ("src/atx_orchestrator/core.py", "_discover_uploaded_input", "collection"): (
         "the customer upload, copied verbatim to the seed key; the store checks it when "
         "it is read back"

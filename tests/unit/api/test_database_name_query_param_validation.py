@@ -31,7 +31,7 @@ _BAD_DB_NAMES = ["../escape", "..", ".", "a/b", "a\\b", "a b", "", "café", "a" 
 
 # (method, path, json body or None)
 _ROUTES: list[tuple[str, str, dict | None]] = [
-    ("POST", "/api/v1/assessments/job1/uploads/confirm", None),
+    ("POST", "/api/v1/assessments/job1/uploads/confirm", {}),
     ("GET", "/api/v1/assessments/job1/uploads", None),
     ("DELETE", "/api/v1/assessments/job1/uploads/collector-output.json", None),
     ("DELETE", "/api/v1/assessments/job1/artifacts", None),
@@ -60,8 +60,8 @@ _ROUTES: list[tuple[str, str, dict | None]] = [
             "new_patterns": [],
         },
     ),
-    ("POST", "/api/v1/assessments/job1/schema/dynamodb/confirm", None),
-    ("POST", "/api/v1/assessments/job1/schema/confirm-all", None),
+    ("POST", "/api/v1/assessments/job1/schema/dynamodb/confirm", {}),
+    ("POST", "/api/v1/assessments/job1/schema/confirm-all", {}),
 ]
 
 

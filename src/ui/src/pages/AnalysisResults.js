@@ -61,6 +61,7 @@ import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
+import AssumptionsPanel from "../components/AssumptionsPanel";
 import TradeOffTopicGroups from "../components/TradeOffTopicGroups";
 import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -308,6 +309,13 @@ const AnalysisResultsPage = memo(() => {
 
   useEffect(() => { fetchData(); }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // #1991: an assumptions change re-ran synthesis and the deliverables: reload both.
+  const [deliverablesRound, setDeliverablesRound] = useState(0);
+  const reloadAfterAssumptionChange = useCallback(() => {
+    fetchData();
+    setDeliverablesRound(n => n + 1);
+  }, [fetchData]);
+
   // #822: the query routing table's rows. The list endpoint returns at most
   // JOURNEY_PAGE_SIZE journeys a page, so the remaining pages are read too.
   useEffect(() => {
@@ -362,7 +370,7 @@ const AnalysisResultsPage = memo(() => {
     };
     load();
     return () => { cancelled = true; };
-  }, [jobId]);
+  }, [jobId, deliverablesRound]);
 
   // Load Ace editor
   useEffect(() => {
@@ -2115,6 +2123,10 @@ const AnalysisResultsPage = memo(() => {
               </Container>
             )}
 
+
+            {/* #1991: the assumptions a customer can change, re-running only what a
+                change affects (the server checks and records it). */}
+            <AssumptionsPanel jobId={jobId} t={t} onChanged={reloadAfterAssumptionChange} />
 
             {/* Migration roadmap (#957): report.json's waves, the same ones the
                 PDF and the engineering report show. */}

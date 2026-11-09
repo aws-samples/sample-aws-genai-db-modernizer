@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Request
 
 from src.shared.database_name import validate_database_name
 from src.shared.job_id import validate_job_id
@@ -77,3 +77,16 @@ def validated_filename(filename: str) -> str:
     ):
         raise HTTPException(status_code=422, detail=_FILENAME_ERROR)
     return filename
+
+
+def require_json_content_type(request: Request) -> None:
+    """Dependency: only accept requests that declare a JSON body.
+
+    Browsers cannot send this content type cross-origin without a CORS
+    preflight, which the API only grants to its own UI origin. A route that reads
+    its body itself (the assumptions panel's, #1991) needs it most: FastAPI's own
+    JSON check does not run there.
+    """
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type != "application/json":
+        raise HTTPException(status_code=415, detail="Content-Type must be application/json.")

@@ -26661,7 +26661,8 @@
                                         "customer",
                                         "default",
                                         "file",
-                                        "flag"
+                                        "flag",
+                                        "ui"
                                       ]
                                     }
                                   },
@@ -28504,7 +28505,8 @@
                                 "customer",
                                 "default",
                                 "file",
-                                "flag"
+                                "flag",
+                                "ui"
                               ]
                             }
                           },
@@ -36176,8 +36178,8 @@
         }
       }
     },
-    "schema_hash": "140516af8cdcfbaa29eadc5a266091b3a221408dd7b0c3e51cd288143be3abdd",
-    "version": "1.86"
+    "schema_hash": "f2f7d4d82a6ff19b4940f800971b8394a3a6b28a3ef53b97463d8e0646e3e8a5",
+    "version": "1.87"
   },
   "transformation_contract.StepContract": {
     "fields": {

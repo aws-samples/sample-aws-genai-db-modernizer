@@ -149,6 +149,7 @@ from src.api.routes import (  # noqa: E402
     agent_interaction,
     assessments,
     assignments,
+    assumptions,
     dashboard,
     graph,
     graph_explorer,
@@ -188,6 +189,7 @@ dashboard.sfn_service = _sfn
 query_journeys.sfn_service = _sfn
 phases.sfn_service = _sfn
 schema_revisions.sfn_service = _sfn
+assumptions.sfn_service = _sfn
 assessments.s3_service = _s3
 results.s3_service = _s3
 
@@ -196,6 +198,7 @@ assignments.artifact_store = _artifact_store
 agent_interaction.artifact_store = _artifact_store
 schema_revisions.artifact_store = _artifact_store
 query_journeys.artifact_store = _artifact_store
+assumptions.artifact_store = _artifact_store
 
 # Wire graph route
 from src.graph import GraphStoreCache  # noqa: E402
@@ -215,6 +218,7 @@ _orchestrator = create_orchestrator(store=_artifact_store)
 
 phases.orchestrator = _orchestrator
 schema_revisions.orchestrator = _orchestrator
+assumptions.orchestrator = _orchestrator
 
 # Register routers
 app.include_router(assessments.router)
@@ -224,6 +228,7 @@ app.include_router(assignments.router)
 app.include_router(phases.router)
 app.include_router(agent_interaction.router)
 app.include_router(schema_revisions.router)
+app.include_router(assumptions.router)
 app.include_router(query_journeys.router)
 app.include_router(graph.router)
 # Experimental, off unless MODERNIZER_EXPERIMENTAL_GRAPH_UI=1 (#308).

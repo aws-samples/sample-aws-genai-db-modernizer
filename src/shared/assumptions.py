@@ -27,9 +27,11 @@ lines; approving the gate approves them, and nothing asks about them.
 
 #1991: a customer sets them in one place, the optional assumptions file
 (``src.shared.assumptions_file``, ``run_assessment.py --assumptions``), or growth alone
-with ``--growth``. :func:`record_assumptions` records the values under
-``decisions/assumptions.json`` with each one's origin (``flag``, ``file``, or
-``customer`` for any other writer), and keeps a value another writer recorded. A peak
+with ``--growth``, or in the results page's assumptions panel (``src.api.routes.assumptions``,
+which re-runs only the phases a change affects, :data:`RERUN_PHASES`).
+:func:`record_assumptions` records the values under ``decisions/assumptions.json`` with
+each one's origin (``flag``, ``file``, ``ui``, or ``customer`` for any other writer), and
+keeps a value another writer recorded. A peak
 the customer sets is every designer's peak (:func:`design_context`); growth never
 reaches a designer.
 
@@ -45,9 +47,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
-#: ``flag`` and ``file`` (#1991): set with ``--growth`` or the assumptions file;
-#: ``customer``: by any other writer, and every report written before #1991.
-Origin = Literal["default", "collected", "customer", "flag", "file"]
+#: ``flag`` and ``file`` (#1991): set with ``--growth`` or the assumptions file; ``ui``:
+#: in the results page's assumptions panel; ``customer``: by any other writer, and every
+#: report written before #1991.
+Origin = Literal["default", "collected", "customer", "flag", "file", "ui"]
 PeakBasis = Literal["cloudwatch", "sampled", "not_measured", "customer"]
 
 DEFAULT_GROWTH = 5.0
@@ -69,7 +72,14 @@ SETTABLE: dict[str, tuple[str, float, bool, float]] = {
     "peak_to_avg_ratio": ("peak", 1.0, True, 100.0),
 }
 #: The origin a writer records (``via``): anything else is the customer's.
-_ORIGIN_BY_VIA: dict[str, Origin] = {"cli": "flag", "file": "file"}
+_ORIGIN_BY_VIA: dict[str, Origin] = {"cli": "flag", "file": "file", "ui": "ui"}
+#: The phases a change re-runs, by recorded key, in order (#1991): growth reaches only
+#: synthesis and the deliverables it renders; the peak is every designer's, so schema
+#: design and everything after it.
+RERUN_PHASES: dict[str, tuple[str, ...]] = {
+    "growth_multiplier": ("synthesis", "report"),
+    "peak_to_avg_ratio": ("schema_design", "synthesis", "report"),
+}
 
 
 def check_value(key: str, value: object) -> float:
@@ -90,6 +100,31 @@ def check_value(key: str, value: object) -> float:
         bound = f"{low:g} (included)" if low_ok else f"{low:g} (excluded)"
         raise ValueError(f"{name} must be between {bound} and {high:g}, got {number:g}")
     return number
+
+
+def settable_ranges() -> list[dict[str, Any]]:
+    """Each assumption a customer can set, as the UI's settings panel offers it (#1991):
+    its name (the assumptions file's key), recorded key, range (:data:`SETTABLE`, the one
+    :func:`check_value` enforces) and the phases a change re-runs (:data:`RERUN_PHASES`)."""
+    return [
+        {
+            "name": name,
+            "key": key,
+            "min": low,
+            "min_included": low_ok,
+            "max": high,
+            "reruns": list(RERUN_PHASES[key]),
+        }
+        for key, (name, low, low_ok, high) in SETTABLE.items()
+    ]
+
+
+def range_text(key: str) -> str:
+    """The range :func:`check_value` enforces for ``key``, in words: "between 0
+    (excluded) and 100"."""
+    _name, low, low_ok, high = SETTABLE[key]
+    bound = f"{low:g} (included)" if low_ok else f"{low:g} (excluded)"
+    return f"between {bound} and {high:g}"
 
 
 def _num(value: object) -> float | None:
@@ -226,7 +261,7 @@ def _recorded_origin(decision: Mapping[str, Any], key: str) -> Origin:
     its writer (``via``) says it: ``--growth`` recorded ``cli``."""
     origins = decision.get("origins")
     origin = origins.get(key) if isinstance(origins, Mapping) else None
-    if origin in ("flag", "file", "customer"):
+    if origin in ("flag", "file", "ui", "customer"):
         return origin  # type: ignore[no-any-return]
     return _ORIGIN_BY_VIA.get(str(decision.get("via") or ""), "customer")
 
@@ -236,6 +271,7 @@ def _recorded_origin(decision: Mapping[str, Any], key: str) -> Origin:
 ORIGIN_LABELS: dict[str, str] = {
     "flag": "set in the run's options",
     "file": "set in the assumptions file",
+    "ui": "set in the UI",
     "customer": "set by the customer",
 }
 
@@ -434,6 +470,7 @@ __all__ = [
     "DEFAULT_GROWTH",
     "PEAK_MAX_DAYS",
     "PEAK_MIN_DAYS",
+    "RERUN_PHASES",
     "SCENARIO_GROWTHS",
     "assumption_items",
     "SETTABLE",
@@ -447,8 +484,10 @@ __all__ = [
     "peak_context",
     "query_peak_factor",
     "read_assumptions",
+    "range_text",
     "record_assumptions",
     "scenario_growths",
+    "settable_ranges",
 ]
 
 
@@ -488,7 +527,7 @@ def _share(n: float) -> str:
 def _growth_said(origin: str) -> str:
     """How the scenario line marks the job's own growth: "the default growth", "the
     growth set in the assumptions file"."""
-    if origin in ("flag", "file"):
+    if origin in ("flag", "file", "ui"):
         return f" (the growth {origin_label(origin)})"
     return f" (the {origin} growth)"
 

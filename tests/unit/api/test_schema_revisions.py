@@ -450,12 +450,14 @@ class TestPutRevisions:
 
 
 class TestPostConfirm:
+    @pytest.mark.passes_on_main
     def test_returns_200_with_confirmed_version_and_engine(self, client):
         tc, store = client
         _setup_schema_v1(store, "mydb", "job-1", "dynamodb")
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/dynamodb/confirm",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -465,6 +467,7 @@ class TestPostConfirm:
         assert "engine" in data
         assert data["engine"] == "dynamodb"
 
+    @pytest.mark.passes_on_main
     def test_confirmed_version_matches_latest(self, client):
         tc, store = client
         prefix = "mydb/job-1/schema-dynamodb/"
@@ -476,18 +479,21 @@ class TestPostConfirm:
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/dynamodb/confirm",
+            json={},
             params={"database_name": "mydb"},
         )
 
         assert resp.status_code == 200
         assert resp.json()["confirmed_version"] == 2
 
+    @pytest.mark.passes_on_main
     def test_writes_confirmed_json(self, client):
         tc, store = client
         _setup_schema_v1(store, "mydb", "job-1", "dynamodb")
 
         tc.post(
             "/api/v1/assessments/job-1/schema/dynamodb/confirm",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -495,12 +501,14 @@ class TestPostConfirm:
         write_calls = [str(call) for call in store.write_json.call_args_list]
         assert any("confirmed.json" in c for c in write_calls)
 
+    @pytest.mark.passes_on_main
     def test_returns_404_when_no_schema_exists(self, client):
         tc, store = client
         store.list_prefix.return_value = []
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/dynamodb/confirm",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -534,12 +542,14 @@ class TestPostConfirmAll:
         store.read_json.side_effect = _read_json
         store.exists.return_value = True
 
+    @pytest.mark.passes_on_main
     def test_returns_200_with_dict_of_engine_to_version(self, client):
         tc, store = client
         self._setup_multi_engine(store, "mydb", "job-1", ["dynamodb", "opensearch"])
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -548,12 +558,14 @@ class TestPostConfirmAll:
         assert "confirmed" in data
         assert isinstance(data["confirmed"], dict)
 
+    @pytest.mark.passes_on_main
     def test_all_active_engines_appear_in_response(self, client):
         tc, store = client
         self._setup_multi_engine(store, "mydb", "job-1", ["dynamodb", "opensearch"])
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -561,12 +573,14 @@ class TestPostConfirmAll:
         assert "dynamodb" in confirmed
         assert "opensearch" in confirmed
 
+    @pytest.mark.passes_on_main
     def test_writes_confirmed_json_for_each_engine(self, client):
         tc, store = client
         self._setup_multi_engine(store, "mydb", "job-1", ["dynamodb", "opensearch"])
 
         tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
@@ -574,6 +588,7 @@ class TestPostConfirmAll:
         confirmed_writes = [c for c in write_calls if "confirmed.json" in c]
         assert len(confirmed_writes) == 2
 
+    @pytest.mark.passes_on_main
     def test_returns_400_when_no_engines_found(self, client):
         tc, store = client
         # Triage returns empty selected_agents
@@ -582,11 +597,13 @@ class TestPostConfirmAll:
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
         assert resp.status_code == 400
 
+    @pytest.mark.passes_on_main
     def test_calls_orchestrator_confirm_when_available(self, client):
         tc, store = client
         from src.api.routes import schema_revisions
@@ -597,12 +614,14 @@ class TestPostConfirmAll:
 
         tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
         mock_orch.confirm_schema_design.assert_called_once_with("job-1")
         schema_revisions.orchestrator = None
 
+    @pytest.mark.passes_on_main
     def test_confirmed_versions_are_latest_per_engine(self, client):
         tc, store = client
         engines = ["dynamodb"]
@@ -624,12 +643,14 @@ class TestPostConfirmAll:
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
         assert resp.status_code == 200
         assert resp.json()["confirmed"]["dynamodb"] == 2
 
+    @pytest.mark.passes_on_main
     def test_returns_409_when_job_was_cancelled(self, client):
         """Cancelling a job blocks any further API-driven phase (#383, #518
         round 1) -- confirm-all must not write confirmed.json for a dead job."""
@@ -643,6 +664,7 @@ class TestPostConfirmAll:
 
         resp = tc.post(
             "/api/v1/assessments/job-1/schema/confirm-all",
+            json={},
             params={"database_name": "mydb"},
         )
 
