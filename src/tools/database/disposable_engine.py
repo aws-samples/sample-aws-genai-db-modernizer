@@ -70,7 +70,8 @@ Not as root. ``start`` refuses when the process runs as root, because the 0700
 guarantee above cannot be kept: ``pgserver`` creates a user and widens the folder
 and its parents to ``o+rx``, and ``initdb`` and ``mysqld`` refuse root outright.
 The refusal is an ``EngineStartError`` ("running as root"), an environment failure
-and not a missing engine. Run these engines, and the tests that use them, as an
+and not a missing engine; it comes after the missing-version check, so a major no
+binary offers is still ``EngineUnavailable`` as root. Run these engines, and the tests that use them, as an
 ordinary user.
 
 Version. The engine runs the source's major version (PostgreSQL ``12`` to ``17``,
@@ -1917,18 +1918,19 @@ def start(
             f"start({engine!r}) needs the source's major version; "
             "pass newest=True to take the newest major present"
         )
-    if _is_root():
-        raise EngineStartError(
-            f"{engine} {version} was not started: running as root, where the private "
-            "socket folder cannot stay 0700 (and initdb and mysqld refuse root); "
-            "run as an ordinary user"
-        )
     majors = available_majors(engine, mysqld_path=mysqld_path, pg_bin_dir=pg_bin_dir)
     if not majors:
         raise _unavailable(engine, version, "no binary found (" + _HOW_TO[engine] + ")")
     if want and want not in majors:
         raise _unavailable(engine, version, "only " + ", ".join(majors) + " present")
     want = want or majors[-1]
+    # After the version checks, so a major nobody has is "no engine" even as root.
+    if _is_root():
+        raise EngineStartError(
+            f"{engine} {version} was not started: running as root, where the private "
+            "socket folder cannot stay 0700 (and initdb and mysqld refuse root); "
+            "run as an ordinary user"
+        )
     sweep_stale()
     workdir = _short_tempdir()
     server: Any = None

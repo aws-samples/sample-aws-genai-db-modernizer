@@ -482,11 +482,20 @@ def test_matching_major_starts_and_other_major_is_unavailable():
 
 def test_running_as_root_is_refused(monkeypatch):
     monkeypatch.setattr(de, "_is_root", lambda: True)
+    monkeypatch.setattr(de, "available_majors", lambda *a, **k: ["16"])  # one is present
     with pytest.raises(de.EngineStartError, match="running as root") as err:
         de.start("postgresql", "16")
     assert not isinstance(err.value, de.EngineUnavailable), "not a missing version"
     assert "no engine" not in str(err.value)
     assert not _leftovers()
+
+
+def test_a_missing_major_is_unavailable_even_as_root(monkeypatch):
+    """#2066: as root, a major nobody has is "no engine", not a start failure."""
+    monkeypatch.setattr(de, "_is_root", lambda: True)
+    monkeypatch.setattr(de, "available_majors", lambda *a, **k: ["16"])
+    with pytest.raises(de.EngineUnavailable, match="no engine for postgresql 9.6"):
+        de.start("postgresql", "9.6")
 
 
 # --------------------------------------------------------------- binary discovery
