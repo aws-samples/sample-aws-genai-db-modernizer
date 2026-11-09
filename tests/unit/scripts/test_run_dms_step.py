@@ -749,8 +749,9 @@ STEP_RESOURCES = {"SecretsAccessRole": "AWS::IAM::Role", "SubnetGroup": "AWS::DM
                   "ReplicationInstance": "AWS::DMS::ReplicationInstance",
                   "SourceEndpoint": "AWS::DMS::Endpoint", "TargetEndpoint": "AWS::DMS::Endpoint",
                   "ReplicationTask": "AWS::DMS::ReplicationTask"}  # fmt: skip
-# The writes that act only on this job's step stack, each refused for any other stack (#2048).
-OWNED = ("stop", "restart-validation", "teardown")
+# The writes that act only on this job's step stack, each refused for any other stack (#2048,
+# #2061).
+OWNED = ("stop", "restart-validation", "resume", "retry", "teardown")
 
 
 def _summary(logical, kind, status="CREATE_COMPLETE"):
@@ -1725,7 +1726,8 @@ def _prove_poll(cred, rows, **task):
     _stack(cred)
     _connections(cred)
     _prove_task(cred, **task)
-    if task.get("status", "running") not in ("ready", *script.TASK_STOPPED):
+    # A running task's validation, or a stopped or failed one's recovery (#2061), reads them.
+    if task.get("status", "running") not in ("ready", "failed-move"):
         cred.stub("dms").add_response(
             "describe_table_statistics", {"ReplicationTaskArn": TASK, "TableStatistics": rows}
         )
@@ -2284,3 +2286,595 @@ def test_teardown_names_the_binlog_retention_on_a_mysql_source(tmp_path, capsys)
     assert code == 0 and out["status"] == "deleted", out
     assert "binary log retention" in out["source_reminder"]
     assert not any("slot" in i for i in out["source_followups"])
+
+
+# --- A stopped or failed task: resume, retry, fix hints, credential errors (#2061) -------------
+
+# A task whose full load finished (DMS's own statistics), and one stopped part way through it.
+LOADED = {
+    "ReplicationTaskStats": {
+        "FullLoadProgressPercent": 100,
+        "TablesLoaded": 2,
+        "FullLoadStartDate": HOUR_AGO,
+        "FullLoadFinishDate": HOUR_AGO,
+    }
+}
+PART_LOADED = {
+    "ReplicationTaskStats": {
+        "FullLoadProgressPercent": 40,
+        "TablesLoaded": 1,
+        "TablesLoading": 1,
+        "FullLoadStartDate": HOUR_AGO,
+    }
+}
+NEVER_LOADED = {"ReplicationTaskStats": {"FullLoadProgressPercent": 0, "TablesQueued": 2}}
+
+
+def _start(cred, kind):
+    cred.stub("dms").add_response(
+        "start_replication_task", {},
+        {"ReplicationTaskArn": TASK, "StartReplicationTaskType": kind},
+    )  # fmt: skip
+
+
+def _cli(tmp_path, capsys, cred, command, *extra):
+    code = script.main([command, "--job-id", "job1", "--db", "shop", "--artifact-root",
+                        str(tmp_path), "--approve", "--interval-seconds", "30", *extra],
+                       clients=_clients(cred), sleep=lambda _s: None)  # fmt: skip
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1, lines  # one compact JSON status line; progress goes to stderr
+    return code, json.loads(lines[0])
+
+
+def _owned_task(cred, status, **fields):
+    _stack(cred)
+    _resources(cred)
+    _task_by_arn(cred, status, **fields)
+
+
+def _loaded(cred, *rows, pages=1, state="Table error", **counters):
+    """describe_table_statistics: (schema, table, full load rows, inserts) per table."""
+    stats = [{"SchemaName": s, "TableName": t, "FullLoadRows": n, "Inserts": i,
+              "AppliedInserts": i, "TableState": state, **counters} for s, t, n, i in rows]  # fmt: skip
+    size = -(-len(stats) // pages) if stats else 0
+    chunks = [stats[k * size : (k + 1) * size] for k in range(pages)] if stats else [[]]
+    for k, chunk in enumerate(chunks):
+        page: dict = {"ReplicationTaskArn": TASK, "TableStatistics": chunk}
+        params: dict = {"ReplicationTaskArn": TASK, **({"Marker": f"m{k}"} if k else {})}
+        if k + 1 < len(chunks):
+            page["Marker"] = f"m{k + 1}"
+        cred.stub("dms").add_response("describe_table_statistics", page, params)
+
+
+def _completed(cred):
+    _loaded(cred, ("shop", "orders", 10, 0), ("shop", "customers", 5, 0), state="Table completed")
+
+
+GRANTS = {"LastFailureMessage": "Access denied; you need (at least one of) the REPLICATION SLAVE "
+                                "privilege(s) for this operation",
+          "StopReason": "Stop Reason FATAL_ERROR"}  # fmt: skip
+
+
+def test_resume_starts_a_stopped_task_whose_full_load_finished_and_waits_until_it_runs(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    _start(cred, "resume-processing")
+    _poll_task(cred, "starting")
+    _poll_task(cred, "running")
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 0 and out["status"] == "resumed" and out["reached"] is True
+    assert out["task_status"] == "running" and out["waited_seconds"] == 60
+    assert out["stack_name"] == STACK and out["task_arn"] == TASK
+    _no_pending(cred)  # one resume-processing start, no stop, no reload
+
+
+@pytest.mark.parametrize(("stats", "state", "why"), [
+    (PART_LOADED, "Table completed", "its full load started"),
+    ({"ReplicationTaskStats": {"FullLoadProgressPercent": 100}}, "Table completed",
+     "its full load made progress"),  # no FullLoadFinishDate: not proven finished
+    (LOADED, "Full load", "shop.orders is Full load"),
+    (LOADED, "Table error", "shop.orders is Table error"),
+    (LOADED, "Table is being reloaded", "shop.orders is Table is being reloaded"),
+    (LOADED, "Table cancelled", "shop.orders is Table cancelled"),
+])  # fmt: skip
+def test_resume_refuses_a_stopped_task_whose_full_load_did_not_finish_with_the_customers_steps(
+    tmp_path, capsys, stats, state, why
+):
+    """resume-processing reloads partly loaded tables: over DO_NOTHING that duplicates rows. When
+    retry cannot reload either, resume gives the customer's steps, never a pointer to retry."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **stats)
+    _loaded(cred, ("shop", "orders", 10, 0), state=state)
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 1 and out["kind"] == "target_may_hold_rows" and why in out["message"]
+    assert "run retry" not in out["message"] and out["tables_to_empty"] == ["shop.orders"]
+    assert any("reload-target" in s for s in out["customer_steps"])
+    _no_pending(cred)  # no start of any kind
+
+
+def test_resume_points_at_retry_only_when_retry_would_reload(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **NEVER_LOADED)
+    _loaded(cred, ("shop", "orders", 0, 0), state="Before load")
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 1 and "run retry" in out["message"] and "kind" not in out
+    _no_pending(cred)
+
+
+def test_a_finished_load_stuck_on_a_table_is_no_dead_end(tmp_path, capsys):
+    """Re-review #2074: 100% with a finish date but a table not completed. The status line
+    offers nothing, and resume and retry both give the same customer's steps."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, status="stopped", stats=LOADED["ReplicationTaskStats"])
+    _loaded(cred, ("shop", "orders", 10, 0), state="Table is being reloaded")
+    _status_cli(tmp_path, cred)
+    line = _lines(capsys)[-1]
+    assert line["recovery"] is None and "Table is being reloaded" in line["recovery_refused"]
+    outs = []
+    for command in ("resume", "retry"):
+        _owned_task(cred, "stopped", **LOADED)
+        _loaded(cred, ("shop", "orders", 10, 0), state="Table is being reloaded")
+        code, out = _cli(tmp_path, capsys, cred, command)
+        assert code == 1 and out["kind"] == "target_may_hold_rows", (command, out)
+        assert "run resume" not in out["message"] and "run retry" not in out["message"]
+        outs.append(out)
+    assert outs[0]["customer_steps"] == outs[1]["customer_steps"] == line["customer_steps"]
+    assert outs[0]["tables_to_empty"] == line["tables_to_empty"] == ["shop.orders"]
+    _no_pending(cred)
+
+
+def test_resume_reports_a_task_still_starting_at_the_deadline(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    _start(cred, "resume-processing")
+    for _ in range(2):
+        _poll_task(cred, "starting")
+    code, out = _cli(tmp_path, capsys, cred, "resume", "--wait-seconds", "60")
+    assert code == 0 and out["status"] == "starting" and out["reached"] is False
+    _no_pending(cred)
+
+
+def test_a_resume_that_stops_again_after_starting_is_reported_failed(tmp_path, capsys):
+    """stopped -> starting -> stopped: the task went back, it is not still starting."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    _start(cred, "resume-processing")
+    _poll_task(cred, "starting")
+    _poll_task(cred, "stopped")
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 0 and out["status"] == "resume_failed" and out["waited_seconds"] == 60
+    _no_pending(cred)
+
+
+def test_a_resume_that_fails_again_carries_the_failures_hint(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    _start(cred, "resume-processing")
+    _poll_task(cred, "starting")
+    _poll_task(cred, "failed", **GRANTS)
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 0 and out["status"] == "resume_failed" and out["task_status"] == "failed"
+    assert "REPLICATION CLIENT" in out["hint"] and "REPLICATION SLAVE" in out["dms_reports"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize(("status", "pointer"), [("ready", "start"),
+                                                 ("stopping", "wait until it has stopped"),
+                                                 ("running", "nothing to resume"),
+                                                 ("starting", "nothing to resume"),
+                                                 ("modifying", "status shows")])  # fmt: skip
+def test_resume_refuses_a_task_that_is_not_stopped(tmp_path, capsys, status, pointer):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, status)
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 1 and out["message"].startswith(script.dms_reports(
+        {"Status": status, "StopReason": "Stop Reason NORMAL"}))  # fmt: skip
+    assert "resume acts only on a stopped or failed task" in out["message"]
+    assert pointer in out["message"]
+    _no_pending(cred)  # no table statistics read, no start of any kind
+
+
+@pytest.mark.parametrize("command", ["resume", "retry"])
+def test_resume_and_retry_without_a_stack_or_a_task_are_an_error(tmp_path, capsys, command):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _no_stack(cred)
+    code, out = _cli(tmp_path, capsys, cred, command)
+    assert code == 1 and "no stack" in out["message"] and "nothing to" in out["message"]
+    _stack(cred, status="DELETE_FAILED")
+    _resources(cred, task_status="DELETE_COMPLETE")
+    code, out = _cli(tmp_path, capsys, cred, command)
+    assert code == 1 and "no task" in out["message"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize(("status", "stats"), [("failed", {}), ("failed", NEVER_LOADED),
+                                               ("stopped", NEVER_LOADED)])  # fmt: skip
+def test_retry_reloads_a_task_whose_full_load_never_started_and_waits_until_it_runs(
+    tmp_path, capsys, status, stats
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, status, **GRANTS, **stats)
+    _loaded(cred, ("shop", "orders", 0, 0), ("shop", "customers", 0, 0), pages=2)
+    _start(cred, "reload-target")
+    _poll_task(cred, "starting")
+    _poll_task(cred, "running")
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 0 and out["status"] == "retried" and out["reached"] is True
+    assert out["task_status"] == "running" and out["tables_checked"] == 2
+    _no_pending(cred)  # every page of statistics read before the reload
+
+
+def test_retry_reloads_a_task_that_failed_before_it_had_table_statistics(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **GRANTS)
+    _loaded(cred)
+    _start(cred, "reload-target")
+    _poll_task(cred, "running")
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 0 and out["status"] == "retried" and out["tables_checked"] == 0
+    _no_pending(cred)
+
+
+def test_a_retry_that_reads_failed_until_the_deadline_is_reported_failed(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **GRANTS)
+    _loaded(cred, ("shop", "orders", 0, 0))
+    _start(cred, "reload-target")
+    for _ in range(2):
+        _poll_task(cred, "failed", **GRANTS)
+    code, out = _cli(tmp_path, capsys, cred, "retry", "--wait-seconds", "60")
+    assert code == 0 and out["status"] == "retry_failed" and out["reached"] is False
+    assert "REPLICATION CLIENT" in out["hint"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize(("status", "stats", "rows", "counters", "why"), [
+    # DMS restarts its table statistics on a reload: a started full load refuses at 0 rows.
+    ("failed", LOADED, (("shop", "orders", 0, 0),), {}, "its full load started"),
+    ("stopped", PART_LOADED, (("shop", "orders", 0, 0),), {}, "its full load started"),
+    ("failed", {}, (("shop", "orders", 10, 0),), {}, "shop.orders FullLoadRows is 10"),
+    ("failed", {}, (("shop", "orders", 0, 3),), {}, "shop.orders Inserts is 3"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"Updates": 2}, "shop.orders Updates is 2"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"AppliedDeletes": 1}, "AppliedDeletes is 1"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"Ddls": 1}, "shop.orders Ddls is 1"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadErrorRows": 4}, "FullLoadErrorRows"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadReloaded": True}, "shop.orders was loaded"),
+    ("failed", {}, (("shop", "orders", 0, 0),), {"FullLoadStartTime": HOUR_AGO}, "was loaded"),
+    ("failed", {"ReplicationTaskStats": {"TablesLoaded": 1}}, (("shop", "orders", 0, 0),), {},
+     "TablesLoaded is 1"),
+])  # fmt: skip
+def test_retry_refuses_a_task_that_may_have_written_to_aurora_and_prints_the_customers_steps(
+    tmp_path, capsys, status, stats, rows, counters, why
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, status, **GRANTS, **stats)
+    _loaded(cred, *rows, ("shop", "customers", 0, 0), **counters)
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["status"] == "error" and out["kind"] == "target_may_hold_rows"
+    assert why in out["message"] and "never connects to your databases" in out["message"]
+    assert out["tables_to_empty"] == ["shop.orders", "shop.customers"]  # every table of the step
+    steps = out["customer_steps"]
+    assert (
+        "SET FOREIGN_KEY_CHECKS = 0; TRUNCATE TABLE `shop`.`orders`; TRUNCATE TABLE "
+        "`shop`.`customers`; SET FOREIGN_KEY_CHECKS = 1;"
+    ) in steps  # SQL only, one entry
+    text = "\n".join(steps)
+    assert "On the Aurora cluster (the target), never on the source" in text
+    assert (f"aws dms start-replication-task --replication-task-arn {TASK} "
+            f"--start-replication-task-type reload-target --region {REGION}") in text  # fmt: skip
+    assert "REPLICATION CLIENT" in out["hint"]  # fix the cause first
+    _no_pending(cred)  # no start of any kind
+
+
+def test_retry_with_no_table_statistics_names_the_steps_tables_in_words(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **LOADED)
+    _loaded(cred)
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["kind"] == "target_may_hold_rows" and out["tables_to_empty"] == []
+    assert any("every table step-1.ddl.sql created" in s for s in out["customer_steps"])
+    assert not any("TRUNCATE" in s for s in out["customer_steps"])
+    _no_pending(cred)
+
+
+def test_retry_quotes_postgresql_tables_and_keeps_the_sql_apart_from_the_prose(tmp_path, capsys):
+    _job(tmp_path)
+    _pg_plan(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "failed", **LOADED)
+    _loaded(cred, ("public", 'odd"name', 4, 0), ("public", "posts", 9, 0))
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and out["kind"] == "target_may_hold_rows"
+    steps = out["customer_steps"]
+    assert 'TRUNCATE TABLE "public"."odd""name", "public"."posts";' in steps  # the whole entry
+    assert any(s.startswith("If PostgreSQL refuses") for s in steps)
+    assert not any("FOREIGN_KEY_CHECKS" in s for s in steps)
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize(("status", "pointer"), [
+    ("ready", "run start"), ("running", "nothing to retry"), ("stopping", "run retry again"),
+    ("failed-move", "status shows"),
+])  # fmt: skip
+def test_retry_refuses_a_task_it_does_not_cover(tmp_path, capsys, status, pointer):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, status)
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and "retry acts only on a stopped or failed task" in out["message"]
+    assert pointer in out["message"]
+    _no_pending(cred)  # no table statistics read, no start
+
+
+def test_retry_points_at_resume_only_when_resume_would_run(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    code, out = _cli(tmp_path, capsys, cred, "retry")
+    assert code == 1 and "run resume" in out["message"] and "kind" not in out
+    _no_pending(cred)
+
+
+# Property: recovery names a command only when that command would write, and when it names
+# none, neither writes; a command points at the other only when the other is the one named.
+_STATUSES = ["stopped", "failed", "ready", "running", "stopping", "failed-move"]
+_STATS = {"loaded": LOADED, "part": PART_LOADED, "never": NEVER_LOADED, "none": {},
+          "no_finish": {"ReplicationTaskStats": {"FullLoadProgressPercent": 100}}}  # fmt: skip
+_TABLES = {"completed": ("Table completed", 0), "reloading": ("Table is being reloaded", 0),
+           "before": ("Before load", 0), "error_rows": ("Table error", 5), "empty": None}  # fmt: skip
+
+
+@pytest.mark.parametrize("status", _STATUSES)
+@pytest.mark.parametrize("stats", list(_STATS))
+@pytest.mark.parametrize("tables", list(_TABLES))
+def test_recovery_always_names_a_command_that_would_run(tmp_path, capsys, status, stats, tables):
+    _job(tmp_path)
+    fields = _STATS[stats]
+    table = _TABLES[tables]
+    rows = [] if table is None else [("shop", "orders", table[1], 0)]
+    state = "Table completed" if table is None else table[0]
+    task = {"Status": status, "ReplicationTaskArn": TASK, **fields}
+    stat_rows = [{"SchemaName": s, "TableName": n, "FullLoadRows": c, "Inserts": i,
+                  "AppliedInserts": i, "TableState": state} for s, n, c, i in rows]  # fmt: skip
+    named = script.recovery(task, stat_rows)
+    reads = status in ("stopped", "failed")
+    for command, start_type in (("resume", "resume-processing"), ("retry", "reload-target")):
+        cred = StubbedCredMgr()
+        _owned_task(cred, status, **fields)
+        if reads:
+            _loaded(cred, *rows, state=state)
+        if command == named:
+            _start(cred, start_type)
+            _poll_task(cred, "running")
+        code, out = _cli(tmp_path, capsys, cred, command)
+        if command == named:
+            assert code == 0 and out["status"] in ("resumed", "retried"), out
+        else:
+            assert code == 1, out
+            other = "retry" if command == "resume" else "resume"
+            assert (f"run {other}" in out.get("message", "")) == (named == other), out
+        _no_pending(cred)
+
+
+def test_restart_validation_keeps_its_result_lines_through_the_shared_resume(tmp_path, capsys):
+    """restart-validation's second half is the one resume uses: its line is unchanged."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped")
+    _start(cred, "resume-processing")
+    _poll_task(cred, "running")
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "restarted" and out["resumed"] is True
+    assert out["hint"] is None
+    _no_pending(cred)
+
+
+def test_restart_validation_reports_a_task_that_stopped_again_after_starting(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped")
+    _start(cred, "resume-processing")
+    _poll_task(cred, "starting")
+    _poll_task(cred, "stopped")
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "resume_failed" and out["waited_seconds"] == 60
+    _no_pending(cred)
+
+
+# Fix hints and the recovery Prove may offer, on every task_stopped line.
+
+
+def _failed_status(cred, status="failed", stats=None, tables=None, **fields):
+    """A Prove status poll of a task that is not running; ``tables`` None: no statistics read."""
+    _stack(cred)
+    _connections(cred)
+    cred.stub("dms").add_response("describe_replication_tasks", {"ReplicationTasks": [{
+        "ReplicationTaskArn": TASK, "Status": status, **fields,
+        "ReplicationTaskStats": stats or {"FullLoadProgressPercent": 40, "TablesLoaded": 2}}]})  # fmt: skip
+    if tables is not None:
+        cred.stub("dms").add_response(
+            "describe_table_statistics", {"ReplicationTaskArn": TASK, "TableStatistics": tables}
+        )
+
+
+def test_the_prove_task_stopped_line_carries_the_failures_hint(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, LastFailureMessage="Failed to run load command. Cannot allocate memory",
+                   StopReason="Stop Reason FATAL_ERROR", tables=[])  # fmt: skip
+    code = _status_cli(tmp_path, cred, "--until", "caught_up", "--wait-seconds", "0")
+    out = _lines(capsys)[-1]
+    assert code == 0 and out["phase"] == "task_stopped" and "instance_class" in out["hint"]
+    # 40% loaded: neither command may reload, so the line carries the customer's steps.
+    assert out["recovery"] is None and "TablesLoaded is 2" in out["recovery_refused"]
+    assert out["tables_to_empty"] == [] and any(
+        "reload-target --region us-east-1" in s for s in out["customer_steps"]
+    )
+
+
+@pytest.mark.parametrize(("status", "stats", "tables", "offer"), [
+    ("stopped", LOADED["ReplicationTaskStats"], [], "resume"),
+    ("stopped", NEVER_LOADED["ReplicationTaskStats"], [], "retry"),
+    ("failed", {"FullLoadProgressPercent": 0}, [], "retry"),
+    ("stopped", PART_LOADED["ReplicationTaskStats"], [], None),
+    ("stopped", {"FullLoadProgressPercent": 100}, [], None),  # no finish date
+    ("failed", LOADED["ReplicationTaskStats"], [], None),
+    ("failed-move", LOADED["ReplicationTaskStats"], None, None),  # no statistics read
+])  # fmt: skip
+def test_the_task_stopped_line_names_the_recovery_prove_may_offer(
+    tmp_path, capsys, status, stats, tables, offer
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, status=status, stats=stats, tables=tables)
+    _status_cli(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert out["phase"] == "task_stopped" and out["recovery"] == offer
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("fields", [{"LastFailureMessage": "Something DMS has never said"},
+                                    {"StopReason": "Stop Reason NORMAL"}, {}])  # fmt: skip
+def test_a_task_stopped_line_with_an_unknown_failure_carries_no_hint(tmp_path, capsys, fields):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, tables=[], **fields)
+    _status_cli(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert out["phase"] == "task_stopped" and "hint" in out and out["hint"] is None
+
+
+def test_the_task_stopped_wait_and_stop_lines_carry_the_hint():
+    cred = StubbedCredMgr()
+    _stack(cred)
+    _task_rows(cred)
+    _poll_task(cred, "failed", **GRANTS)
+    out = script.wait_status(_clients(cred), STACK, "task_stopped", 0, 30, sleep=lambda _s: None)
+    assert out["reached"] is True and "REPLICATION CLIENT" in out["hint"]
+
+
+def test_a_running_task_line_carries_no_hint_from_an_old_failure(tmp_path, capsys):
+    """DMS keeps the last failure message after a resume; the task runs, so no hint."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_status(cred, status="running", LastFailureMessage=GRANTS["LastFailureMessage"])
+    cred.stub("dms").add_response(
+        "describe_table_statistics",
+        {"ReplicationTaskArn": TASK, "TableStatistics": _rows(pending=1)},
+    )
+    code = _status_cli(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert code == 0 and out["phase"] == "loading" and "hint" in out and out["hint"] is None
+    assert out["recovery"] is None
+
+
+# Credential errors: refresh and run again, and what this run already changed.
+
+
+def _raise_on(cred, service, operation, exc, call=1):
+    """Raise ``exc`` on the ``call``-th ``operation``, before the Stubber reads its queue."""
+    client = cred.clients[service] if service in cred.clients else cred.client(service)
+    seen = {"n": 0}
+
+    def boom(**_kwargs):
+        seen["n"] += 1
+        if seen["n"] == call:
+            raise exc
+
+    service_id = client.meta.service_model.service_id.hyphenize()
+    client.meta.events.register(f"provide-client-params.{service_id}.{operation}", boom)
+
+
+@pytest.mark.parametrize("exc", ["NoCredentialsError", "SSOTokenLoadError", "LoginTokenLoadError"])
+def test_a_missing_or_expired_session_is_a_credentials_error_on_a_read(tmp_path, capsys, exc):
+    from botocore import exceptions
+
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    cls = getattr(exceptions, exc)
+    _raise_on(cred, "cloudformation", "DescribeStacks",
+              cls() if exc == "NoCredentialsError" else cls(error_msg="expired"))  # fmt: skip
+    code = _status_cli(tmp_path, cred)
+    out = _lines(capsys)[-1]
+    assert code == 1 and out["status"] == "error" and out["kind"] == "credentials"
+    assert out["message"].endswith(
+        "refresh your credentials and run /move step-1 again; nothing else changed"
+    )
+    assert exc in out["message"]
+    _no_pending(cred)
+
+
+def test_an_expired_token_on_the_resume_itself_changed_nothing(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    cred.stub("dms").add_client_error("start_replication_task", "ExpiredTokenException",
+                                      "The security token included in the request is expired")  # fmt: skip
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 1 and out["kind"] == "credentials"
+    assert out["message"].endswith("nothing else changed")
+    _no_pending(cred)
+
+
+def test_an_expired_token_after_the_resume_says_the_task_was_started(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped", **LOADED)
+    _completed(cred)
+    _start(cred, "resume-processing")
+    cred.stub("dms").add_client_error("describe_replication_tasks", "ExpiredToken", "expired")
+    code, out = _cli(tmp_path, capsys, cred, "resume")
+    assert code == 1 and out["kind"] == "credentials"
+    assert "nothing else changed" not in out["message"]
+    assert "this run already called StartReplicationTask" in out["message"]
+    assert "status shows where the task stands" in out["message"]
+    _no_pending(cred)
+
+
+def test_an_expired_token_between_the_stop_and_the_resume_says_the_task_was_stopped(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "running")
+    cred.stub("dms").add_response("stop_replication_task", {}, {"ReplicationTaskArn": TASK})
+    _poll_task(cred, "stopped")
+    cred.stub("dms").add_client_error("start_replication_task", "ExpiredTokenException", "expired")
+    code, out, _ = _restart(tmp_path, capsys, cred)
+    assert code == 1 and out["kind"] == "credentials"
+    assert "this run already called StopReplicationTask before" in out["message"]
+    assert "StartReplicationTask before" not in out["message"]  # the start never happened
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # an AWS error that is not about credentials stays as it was
+def test_an_aws_error_that_is_not_about_credentials_has_no_kind(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _owned_task(cred, "stopped")
+    cred.stub("dms").add_client_error("start_replication_task", "InvalidResourceStateFault", "no")
+    code, out = _cli(tmp_path, capsys, cred, "restart-validation")
+    assert code == 1 and "kind" not in out and "InvalidResourceStateFault" in out["message"]
+    _no_pending(cred)

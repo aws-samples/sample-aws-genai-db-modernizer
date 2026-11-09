@@ -48,6 +48,23 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   validator. The same refusals and ownership checks as ``stop``; both waits share one
   ``--wait-seconds`` (default and maximum 540); a task that is neither running nor stopped is
   refused, and one that has not stopped by the deadline is not resumed.
+- ``resume --approve`` and ``retry --approve`` (#2061): Prove's way on from a task DMS stopped.
+  ``resume`` starts this job's stopped task again with ``resume-processing`` only once its full
+  load finished (every table ``Table completed``): CDC resumes from its checkpoint and nothing
+  reloads. ``retry`` reloads this job's failed task, or a stopped one whose full load did not
+  finish, from the start (``reload-target``) only when DMS's statistics show the task never
+  wrote to Aurora (no full load ever started, every table counter 0). When neither may run,
+  both refuse with ``"kind": "target_may_hold_rows"``, the step's tables and the customer's own
+  steps (empty them on Aurora, then reload the task themselves): nothing here connects to a
+  database. Each points at the other only when the other would run. Both wait until the task
+  runs, with the same refusals and ownership checks as ``stop``.
+- Every line about the task carries ``hint`` (the fix for a failure DMS describes in a known
+  way, ``src/tools/data_movement/dms_failures.py``; None for any other). ``status``'s line
+  carries ``recovery``: ``resume`` or ``retry`` only when that command would run, by the same
+  rule they use (``recovery_plan``, with the table states), else None; for a stopped or failed
+  task neither may reload, it carries ``recovery_refused``, ``tables_to_empty`` and
+  ``customer_steps`` instead. Credentials that are missing or have expired print
+  ``"kind": "credentials"``, with what this run had already changed.
 
 The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under the artifact
 root) holds ids and ARNs only, never a secret's value: an unknown key, such as ``password``,
@@ -63,6 +80,8 @@ Usage:
     uv run python scripts/run_dms_step.py status --job-id <id> --db <db> --until stack --wait-seconds 540
     uv run python scripts/run_dms_step.py stop --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py restart-validation --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py resume --job-id <id> --db <db> --approve
+    uv run python scripts/run_dms_step.py retry --job-id <id> --db <db> --approve
     uv run python scripts/run_dms_step.py teardown --job-id <id> --db <db> --approve
 """
 
@@ -94,8 +113,10 @@ STEP_DIR = "data-movement/step-1"
 TEMPLATE = "dms-step-1.yaml"
 ENDING = ("stop", "teardown")
 RESTART = "restart-validation"  # Prove's stop-and-resume of a stalled validator (#2048)
-WRITES = ("deploy", "execute", "test", "start", RESTART, *ENDING)
-WAITS = (*ENDING, RESTART)  # the writes that wait, by default up to MAX_WAIT_SECONDS
+RESUME, RETRY = "resume", "retry"  # Prove's way on from a stopped or a failed task (#2061)
+RECOVER = (RESUME, RETRY)
+WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *ENDING)
+WAITS = (*ENDING, RESTART, *RECOVER)  # the writes that wait, by default up to MAX_WAIT_SECONDS
 READS = ("preflight", "gate", "status")
 LOCAL = ("steps", "summary", "plan")
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
@@ -138,11 +159,61 @@ def dms_reports(task: dict[str, Any] | None) -> str:
 
 
 def _task_report(task: dict[str, Any] | None) -> dict[str, Any]:
-    """The task fields every ending line carries: DMS's status, its words, and its reasons."""
+    """The task fields every ending line carries: DMS's status, its words, its reasons and, for a
+    failure the catalog knows, its fix ``hint`` (#2061; None otherwise)."""
+    from src.tools.data_movement.dms_failures import failure_hint
+
     return {"task_status": "deleted" if task is None else task.get("Status"),
             "dms_reports": dms_reports(task),
             "stop_reason": None if task is None else task.get("StopReason"),
-            "last_failure": None if task is None else task.get("LastFailureMessage")}  # fmt: skip
+            "last_failure": None if task is None else task.get("LastFailureMessage"),
+            "hint": failure_hint(task)}  # fmt: skip
+
+
+def full_load_finished(task: dict[str, Any]) -> bool:
+    """The task's own statistics say its full load finished: ``FullLoadProgressPercent`` 100, a
+    ``FullLoadFinishDate`` ("the date the replication task full load was completed", DMS API
+    Reference, ReplicationTaskStats) and no table loading, queued or errored."""
+    stats = task.get("ReplicationTaskStats") or {}
+    return (stats.get("FullLoadProgressPercent") == 100
+            and stats.get("FullLoadFinishDate") is not None
+            and not any(stats.get(k) for k in ("TablesLoading", "TablesQueued", "TablesErrored")))  # fmt: skip
+
+
+def recovery_plan(
+    task: dict[str, Any] | None, tables: list[dict[str, Any]]
+) -> tuple[str | None, list[str]]:
+    """The one rule ``status``'s ``recovery``, ``resume`` and ``retry`` share (#2061): (plan,
+    why). ``resume``: a stopped task whose full load finished (``full_load_finished``) with every
+    table ``Table completed``. ``retry``: a failed task, or a stopped one that cannot resume,
+    that DMS's statistics show never wrote to Aurora (``_never_wrote``). ``steps``: a failed or
+    stopped task that is neither, so Aurora may hold rows and the customer empties the tables
+    and reloads themselves; ``why`` says what showed it. None: any other task."""
+    if task is None or task.get("Status") not in ("stopped", "failed"):
+        return None, []
+    unfinished = [f"{r.get('SchemaName')}.{r.get('TableName')} is {r.get('TableState')}"
+                  for r in tables
+                  if str(r.get("TableState") or "").casefold() != TABLE_COMPLETED]  # fmt: skip
+    if task.get("Status") == "stopped" and full_load_finished(task) and not unfinished:
+        return RESUME, []
+    why = _never_wrote(task, tables)
+    if not why:
+        return RETRY, []
+    return "steps", why + [u for u in unfinished if u not in why]
+
+
+def recovery(task: dict[str, Any] | None, tables: list[dict[str, Any]]) -> str | None:
+    """The command Prove may offer: ``resume``, ``retry`` (each one that would run), or None."""
+    plan, _ = recovery_plan(task, tables)
+    return plan if plan in RECOVER else None
+
+
+@dataclass(frozen=True)
+class StepsContext:
+    """What the customer's own steps name: the task's region and the source engine family."""
+
+    region: str
+    family: str | None
 
 
 # The logical ids and types dms-step-1.yaml creates: stop and teardown act only on a stack that
@@ -266,7 +337,7 @@ def _parser() -> argparse.ArgumentParser:
         "--until", choices=["stack", "connections", "running", "caught_up", "task_stopped"]
     )
     p.add_argument("--wait-seconds", type=int, default=None,
-                   help=f"status: default 0; stop, restart-validation, teardown: default {MAX_WAIT_SECONDS}")  # fmt: skip
+                   help=f"status: default 0; {', '.join(WAITS)}: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
     return p
 
@@ -483,7 +554,8 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
 
 
 def status(clients: MoveClients, name: str, lag: LagReader | None = None,
-           retention: RetentionReader | None = None) -> dict[str, Any]:  # fmt: skip
+           retention: RetentionReader | None = None,
+           steps: StepsContext | None = None) -> dict[str, Any]:  # fmt: skip
     """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
     with a ``lag`` reader, its capture lag; with a ``retention`` reader, once the task has run,
     the source's change-log retention (#2060)."""
@@ -522,15 +594,12 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
         raise MoveError(f"stack {name}: its replication task was not found")
     task = tasks[0]
     task_stats = task.get("ReplicationTaskStats") or {}
-    out.update({"connections": connections, "task_status": task.get("Status"),
+    out.update({"connections": connections, **_task_report(task), "recovery": None,
                 "full_load_percent": task_stats.get("FullLoadProgressPercent"),
                 "tables_loaded": task_stats.get("TablesLoaded"),
                 "tables_loading": task_stats.get("TablesLoading"),
                 "tables_queued": task_stats.get("TablesQueued"),
-                "tables_errored": task_stats.get("TablesErrored"),
-                "stop_reason": task.get("StopReason"),
-                "last_failure": task.get("LastFailureMessage"),
-                "dms_reports": dms_reports(task)})  # fmt: skip
+                "tables_errored": task_stats.get("TablesErrored")})  # fmt: skip
     if task.get("Status") == "ready":
         statuses = {c["status"] for c in connections.values()}
         phase = ("connections_testing" if "testing" in statuses
@@ -538,7 +607,11 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
                  else "ready_to_start" if statuses == {"successful"} else "connections_not_tested")  # fmt: skip
         return {**out, "phase": phase}
     if task.get("Status") in TASK_STOPPED:
-        return _source_retention({**out, "phase": "task_stopped"}, retention)
+        out = {**out, "phase": "task_stopped"}
+        if task.get("Status") in ("stopped", "failed"):
+            tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
+            out.update(_recovery_fields(task, tables, steps))
+        return _source_retention(out, retention)
     from src.tools.data_movement import dms_gate as gate
 
     tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
@@ -560,6 +633,20 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
     phase = "caught_up" if loaded and not pending_tables and not pending_records else (
         "validating" if loaded else "loading")  # fmt: skip
     return _source_retention(_judge_validation({**out, "phase": phase}, task, loaded), retention)
+
+
+def _recovery_fields(
+    task: dict[str, Any], tables: list[dict[str, Any]], steps: StepsContext | None
+) -> dict[str, Any]:
+    """``recovery`` for a stopped or failed task and, when neither command would run, the
+    customer's own steps (``tables_to_empty``, ``customer_steps``) with why (#2061)."""
+    plan, why = recovery_plan(task, tables)
+    if plan != "steps":
+        return {"recovery": plan}
+    found: dict[str, Any] = {"recovery": None, "recovery_refused": "; ".join(why)}
+    if steps is not None:
+        found.update(customer_steps(task, tables, steps))
+    return found
 
 
 def _source_retention(out: dict[str, Any], reader: RetentionReader | None) -> dict[str, Any]:
@@ -728,13 +815,14 @@ def wait_status(
     on_poll: Callable[[dict[str, Any]], None] | None = None,
     lag: LagReader | None = None,
     retention: RetentionReader | None = None,
+    steps: StepsContext | None = None,
 ) -> dict[str, Any]:
     """Poll until ``until`` holds or the time is up. Under ``caught_up``, ``on_poll`` gets each
     poll's progress line but the last one (the result line carries it), a validation with
     no progress over the window ends the wait as ``validation_stalled``, and a ``critical``
     source retention ends it with ``stopped_for`` ``source_retention`` (#2060)."""
     read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(
-        status, lag=lag, retention=retention
+        status, lag=lag, retention=retention, steps=steps
     )
     done = UNTIL.get(until or "")
     if until == "task_stopped":
@@ -943,7 +1031,7 @@ def _stack_tag_is_this_jobs(name: str, stack: dict[str, Any], job_id: str) -> bo
 def _not_the_step(name: str, why: str) -> MoveError:
     return MoveError(f"stack {name} is not this job's step 1 DMS stack: {why}; stop and teardown "
                      "only end the stack dms-step-1.yaml created for this job (end any other "
-                     "stack yourself; restart-validation acts on that stack's task only)")  # fmt: skip
+                     "stack yourself; restart-validation, resume and retry act on that stack's task only)")  # fmt: skip
 
 
 def _step_resources(clients: MoveClients, name: str) -> dict[str, dict[str, Any]]:
@@ -1103,6 +1191,54 @@ def stop(
             "reached": stopped["reached"], "waited_seconds": stopped["waited_seconds"]}  # fmt: skip
 
 
+def _owned_task(clients: MoveClients, name: str, job_id: str, verb: str) -> dict[str, Any]:
+    """This job's step task, checked as ``stop`` checks it; an error when there is none."""
+    stack, task = _this_jobs_task(clients, name, job_id)
+    if stack is None or task is None:
+        what = "no stack" if stack is None else "no task"
+        raise MoveError(f"stack {name}: {what}, nothing to {verb} (status shows where it stands)")
+    return task
+
+
+def _start_and_wait(
+    clients: MoveClients,
+    task: dict[str, Any],
+    start_type: str,
+    command: str,
+    waited: int,
+    wait_seconds: int,
+    interval: int,
+    sleep: Callable[[float], None],
+) -> tuple[dict[str, Any] | None, str, int]:
+    """Start this job's task with ``start_type`` and wait until it runs: (task, outcome, waited).
+
+    Right after the call DMS may still read the task's earlier status, so the wait goes on
+    through it and through ``starting``. The outcome is ``running``; ``starting`` (starting, or a
+    stopped task still reading stopped, at the deadline); or ``failed`` (it failed, still reads
+    failed, went back to its earlier status after it had started, or is gone)."""
+    arn, before = task["ReplicationTaskArn"], task.get("Status")
+    clients.dms.start_replication_task(ReplicationTaskArn=arn, StartReplicationTaskType=start_type)
+    moved = False
+
+    def settled(state: str | None) -> bool:
+        nonlocal moved
+        moved = moved or state != before
+        return moved and state != "starting"
+
+    current, state, waited = _wait_task(clients, arn, task, before, settled, command, waited,
+                                        wait_seconds, interval, sleep)  # fmt: skip
+    if state == "running":
+        return current, "running", waited
+    if state == "starting" or (state == before == "stopped" and not moved):
+        return current, "starting", waited
+    return current, "failed", waited
+
+
+def _started(outcome: str, names: tuple[str, str, str]) -> str:
+    """The line's status for a start's outcome: (running, starting, failed) names."""
+    return dict(zip(("running", "starting", "failed"), names, strict=True))[outcome]
+
+
 def restart_validation(
     clients: MoveClients,
     name: str,
@@ -1119,34 +1255,202 @@ def restart_validation(
     share ``wait_seconds``. A task a previous run left stopped is only resumed. A task neither
     running nor stopped (failed, never started, changing) is refused, and one that has not
     stopped by the deadline is not resumed: ``stopping``, and the same run again finishes it."""
-    stack, task = _this_jobs_task(clients, name, job_id)
-    if stack is None or task is None:
-        what = "no stack" if stack is None else "no task"
-        raise MoveError(f"stack {name}: {what}, nothing to restart (status shows where it stands)")
+    task = _owned_task(clients, name, job_id, "restart")
     state = task.get("Status")
     if state not in TASK_RUNNING | {"stopping", "stopped"}:
         raise MoveError(f"{dms_reports(task)}: {RESTART} resumes only a task that was running "
                         "(status shows where it stands)")  # fmt: skip
-    arn = task["ReplicationTaskArn"]
-    out = {"stack_name": name, "task_arn": arn}
+    out = {"stack_name": name, "task_arn": task["ReplicationTaskArn"]}
     stopped = _stop_task(clients, task, RESTART, wait_seconds, interval, sleep)
     current, waited = stopped["task"], stopped["waited_seconds"]
     if not stopped["reached"] or current is None:
         return {"status": "stopping" if current else "no_task", **out, **_task_report(current),
                 "resumed": False, "reached": False, "waited_seconds": waited}  # fmt: skip
-    clients.dms.start_replication_task(
-        ReplicationTaskArn=arn, StartReplicationTaskType="resume-processing"
-    )
-    # Right after the call DMS may still read stopped: wait through stopped and starting.
-    current, state, waited = _wait_task(clients, arn, current, "stopped",
-                                        lambda s: s not in ("stopped", "starting"), RESTART,
-                                        waited, wait_seconds, interval, sleep)  # fmt: skip
-    if state in ("stopped", "starting"):
-        result = "starting"
-    else:
-        result = "restarted" if state == "running" else "resume_failed"
-    return {"status": result, **out, **_task_report(current), "resumed": True,
-            "reached": state == "running", "waited_seconds": waited}  # fmt: skip
+    current, outcome, waited = _start_and_wait(clients, current, "resume-processing", RESTART,
+                                               waited, wait_seconds, interval, sleep)  # fmt: skip
+    return {"status": _started(outcome, ("restarted", "starting", "resume_failed")), **out,
+            **_task_report(current), "resumed": True, "reached": outcome == "running",
+            "waited_seconds": waited}  # fmt: skip
+
+
+# DescribeTableStatistics' TableState once a table's full load finished (DMS API Reference,
+# TableStatistics: "Table does not exist | Before load | Full load | Table completed | Table
+# cancelled | Table error | Table is being reloaded"); compared case-folded.
+TABLE_COMPLETED = "table completed"
+# Every per-table counter of TableStatistics that says DMS wrote something to the target.
+WRITE_COUNTERS = ("FullLoadRows", "FullLoadErrorRows", "FullLoadCondtnlChkFailedRows", "Inserts",
+                  "Updates", "Deletes", "Ddls", "AppliedInserts", "AppliedUpdates",
+                  "AppliedDeletes", "AppliedDdls")  # fmt: skip
+
+
+def _not_this_command(
+    command: str,
+    task: dict[str, Any],
+    plan: str | None,
+    why: list[str],
+    tables: list[dict[str, Any]],
+    steps: StepsContext,
+) -> dict[str, Any]:
+    """The refusal of a command the shared rule does not name: the customer's steps when neither
+    would run, else a pointer to the one that would (never to one that would refuse too)."""
+    if plan == "steps":
+        return {"status": "error", "kind": "target_may_hold_rows",
+                "task_arn": task["ReplicationTaskArn"], **_task_report(task),
+                "message": f"DMS may have written rows to Aurora ({'; '.join(why)}), and a "
+                           f"{command} over them appends duplicates or hits key errors, so "
+                           f"{command} refuses (and so would {RETRY if command == RESUME else RESUME}). "
+                           "The modernizer never connects to your databases: empty the step's "
+                           "tables on Aurora yourself, then reload the task (customer_steps)",
+                **customer_steps(task, tables, steps)}  # fmt: skip
+    other = {
+        RESUME: "a stopped task whose full load finished: run resume",
+        RETRY: "a task DMS's statistics show never wrote to Aurora: run retry",
+    }[str(plan)]
+    raise MoveError(f"{dms_reports(task)}: {command} does not cover this task; {other}")
+
+
+def _state_pointer(command: str, task: dict[str, Any]) -> MoveError:
+    state = str(task.get("Status"))
+    pointer = {"ready": "a task that never ran: run start",
+               "stopping": "wait until it has stopped (status --until task_stopped), then run "
+                           f"{command} again",
+               "running": f"the task is running: nothing to {command}",
+               "starting": f"the task is starting: nothing to {command}"}.get(
+        state, "status shows where it stands")  # fmt: skip
+    return MoveError(f"{dms_reports(task)}: {command} acts only on a stopped or failed task; "
+                     f"{pointer}")  # fmt: skip
+
+
+def _recover(
+    command: str,
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    steps: StepsContext,
+    sleep: Callable[[float], None],
+) -> dict[str, Any]:
+    """``resume`` or ``retry``: run it only when ``recovery_plan`` names it (#2061)."""
+    task = _owned_task(clients, name, job_id, command)
+    if task.get("Status") not in ("stopped", "failed"):
+        raise _state_pointer(command, task)
+    arn = task["ReplicationTaskArn"]
+    rows = _table_statistics(clients, arn)
+    plan, why = recovery_plan(task, rows)
+    out = {"stack_name": name, "task_arn": arn}
+    if plan != command:
+        return {**out, **_not_this_command(command, task, plan, why, rows, steps)}
+    start_type, names = {RESUME: ("resume-processing", ("resumed", "starting", "resume_failed")),
+                         RETRY: ("reload-target", ("retried", "starting", "retry_failed"))}[command]  # fmt: skip
+    current, outcome, waited = _start_and_wait(clients, task, start_type, command, 0,
+                                               wait_seconds, interval, sleep)  # fmt: skip
+    return {"status": _started(outcome, names), **out, **_task_report(current),
+            "tables_checked": len(rows), "reached": outcome == "running",
+            "waited_seconds": waited}  # fmt: skip
+
+
+def resume(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    steps: StepsContext,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Start this job's stopped task again with ``resume-processing`` and wait until it runs
+    (#2061), only when ``recovery_plan`` says ``resume``: its full load finished.
+
+    For a full-load-and-cdc task, ``resume-processing`` "replicate[s] the changes from the last
+    stop position", but for the full load it "will reload any tables that were partially loaded
+    or not yet loaded" (DMS API Reference, StartReplicationTask). Under ``TargetTablePrepMode:
+    DO_NOTHING`` such a reload appends duplicates or hits key errors, so any other stopped or
+    failed task is refused: with a pointer to ``retry`` when retry would run, otherwise with the
+    customer's steps (``target_may_hold_rows``). Only an allowed resume reloads nothing."""
+    return _recover(RESUME, clients, name, job_id, wait_seconds, interval, steps, sleep)
+
+
+def _never_wrote(task: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
+    """Why the task may have written to Aurora; empty only when DMS's statistics show it never
+    did: no ``FullLoadStartDate`` ("the date the replication task full load was started", DMS
+    API Reference, ReplicationTaskStats), no table loaded, loading or errored, and every table's
+    write counters 0 with no full load start time and no reload."""
+    stats = task.get("ReplicationTaskStats") or {}
+    why = ["its full load started" if stats.get("FullLoadStartDate") is not None else "",
+           "its full load made progress" if stats.get("FullLoadProgressPercent") else "",
+           *(f"{k} is {stats[k]}" for k in ("TablesLoaded", "TablesLoading", "TablesErrored")
+             if stats.get(k))]  # fmt: skip
+    for r in rows:
+        table = f"{r.get('SchemaName')}.{r.get('TableName')}"
+        why += [f"{table} {k} is {r[k]}" for k in WRITE_COUNTERS if r.get(k)]
+        if r.get("FullLoadStartTime") is not None or r.get("FullLoadReloaded"):
+            why.append(f"{table} was loaded")
+    return [w for w in why if w]
+
+
+def _quoted_table(family: str | None, schema: str, table: str) -> str:
+    quote = '"' if family == "postgresql" else "`"
+    return ".".join(f"{quote}{part.replace(quote, quote * 2)}{quote}" for part in (schema, table))
+
+
+def _truncate_sql(family: str | None, tables: list[tuple[str, str]]) -> list[str]:
+    """The steps that empty ``tables`` on Aurora, each SQL entry SQL only (never run here)."""
+    mysql = " ".join(["SET FOREIGN_KEY_CHECKS = 0;",
+                      *(f"TRUNCATE TABLE {_quoted_table('mysql', s, t)};" for s, t in tables),
+                      "SET FOREIGN_KEY_CHECKS = 1;"])  # fmt: skip
+    pg = f"TRUNCATE TABLE {', '.join(_quoted_table('postgresql', s, t) for s, t in tables)};"
+    pg_note = ("If PostgreSQL refuses because another table references one of these, add that "
+               "table to the same TRUNCATE statement.")  # fmt: skip
+    if family == "mysql":
+        return ["On Aurora MySQL, run:", mysql]
+    if family == "postgresql":
+        return ["On Aurora PostgreSQL, run:", pg, pg_note]
+    return ["On Aurora MySQL, run:", mysql, "On Aurora PostgreSQL, run:", pg, pg_note]
+
+
+def customer_steps(
+    task: dict[str, Any], tables: list[dict[str, Any]], steps: StepsContext
+) -> dict[str, Any]:
+    """The customer's own steps when no command may reload: empty every table of the step on
+    Aurora, then reload the task themselves. Each SQL entry is SQL only; never run here."""
+    names = [(str(r.get("SchemaName")), str(r.get("TableName"))) for r in tables]
+    empty = (_truncate_sql(steps.family, names) if names else
+             ["Empty every table step-1.ddl.sql created (DMS lists no table for this task)."])  # fmt: skip
+    return {"tables_to_empty": [f"{s}.{n}" for s, n in names], "customer_steps": [
+        "Fix what stopped the task first (its hint and last_failure): a reload before the fix "
+        "fails the same way.",
+        "On the Aurora cluster (the target), never on the source, as a user that may truncate "
+        "these tables, empty every table of the step:",
+        *empty,
+        "Then reload the task from the start, with your own credentials: aws dms "
+        f"start-replication-task --replication-task-arn {task['ReplicationTaskArn']} "
+        f"--start-replication-task-type reload-target --region {steps.region}",
+        "Then run /move step-1 again: it goes on at Prove.",
+    ]}  # fmt: skip
+
+
+def retry(
+    clients: MoveClients,
+    name: str,
+    job_id: str,
+    wait_seconds: int,
+    interval: int,
+    *,
+    steps: StepsContext,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Reload this job's failed task, or a stopped one that cannot resume, from the start
+    (``reload-target``) and wait until it runs, only when ``recovery_plan`` says ``retry``: DMS's
+    statistics show the task never wrote to Aurora (#2061, ``_never_wrote``).
+
+    With ``TargetTablePrepMode: DO_NOTHING`` a reload over rows already on Aurora appends
+    duplicates or hits key errors, and DMS's table statistics restart with each reload, so
+    counters of 0 alone do not prove the tables are empty: any sign of a full load refuses with
+    the customer's own steps (empty the tables on Aurora, then reload the task themselves), or
+    with a pointer to ``resume`` when resume would run. Nothing here connects to a database."""
+    return _recover(RETRY, clients, name, job_id, wait_seconds, interval, steps, sleep)
 
 
 def _resources_are_this_jobs(
@@ -1254,6 +1558,55 @@ def _delete_step_stack(
 # --- Entry point -------------------------------------------------------------------------
 
 
+# Botocore's errors for credentials that are missing or have run out (#2061).
+CREDENTIAL_ERRORS = ("NoCredentialsError", "PartialCredentialsError", "CredentialRetrievalError",
+                     "SSOError", "SSOTokenLoadError", "UnauthorizedSSOTokenError",
+                     "TokenRetrievalError", "LoginTokenLoadError")  # fmt: skip
+CREDENTIAL_CODES = {"ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId",
+                    "UnrecognizedClientException"}  # fmt: skip
+READ_CALLS = ("Describe", "List", "Get")  # any other call this script makes writes
+
+
+def _track_writes(clients: MoveClients) -> tuple[list[str], Callable[[], None]]:
+    """The AWS writes this run made, in order, and the call that stops recording them."""
+    made: list[str] = []
+
+    def record(http_response: Any, model: Any, **_kwargs: Any) -> None:
+        if http_response.status_code < 300 and not model.name.startswith(READ_CALLS):
+            made.append(model.name)
+
+    targets = [c for c in (clients.cloudformation, clients.dms, clients.s3, clients.sts) if c]
+    for client in targets:
+        client.meta.events.register("after-call", record)
+
+    def stop() -> None:
+        for client in targets:
+            client.meta.events.unregister("after-call", record)
+
+    return made, stop
+
+
+def _credential_error(exc: Exception) -> bool:
+    from botocore import exceptions
+    from botocore.exceptions import ClientError
+
+    if isinstance(exc, ClientError):
+        return exc.response.get("Error", {}).get("Code") in CREDENTIAL_CODES
+    return isinstance(exc, tuple(getattr(exceptions, n) for n in CREDENTIAL_ERRORS))
+
+
+def credentials_error(exc: Exception, made: list[str]) -> dict[str, Any]:
+    """``kind`` ``credentials``: what to do, and what this run had already changed."""
+    text = (f"the AWS credentials are missing or have expired ({type(exc).__name__}: {exc}): "
+            "refresh your credentials and run /move step-1 again")  # fmt: skip
+    if made:
+        text += (f"; this run already called {', '.join(dict.fromkeys(made))} before the "
+                 "credentials ran out, so status shows where the task stands")  # fmt: skip
+    else:
+        text += "; nothing else changed"
+    return {"status": "error", "kind": "credentials", "message": text}
+
+
 def _print_progress(line: dict[str, Any]) -> None:
     print(json.dumps(line), flush=True)
 
@@ -1325,6 +1678,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         )
     if args.command == "execute" and not args.change_set:
         return emit({"status": "error", "message": "execute needs --change-set <name> from deploy"})
+    made: list[str] = []
+    untrack: Callable[[], None] = lambda: None  # noqa: E731
     try:
         db, job_id = validate_database_name(args.db), validate_job_id(args.job_id)
         args.db, args.job_id = db, job_id
@@ -1355,6 +1710,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             if args.command == "status":
                 cloudwatch = cred.client("cloudwatch")
         name = stack_name(inputs, job_id)
+        made, untrack = _track_writes(clients)
         if args.command == "status":
             retention = None if cloudwatch is None else RetentionReader(
                 cloudwatch, inputs.source_kind, inputs.source_id,
@@ -1362,7 +1718,9 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             return emit(wait_status(clients, name, args.until, args.wait_seconds,
                                     args.interval_seconds, sleep=sleep, on_poll=_print_progress,
                                     lag=None if cloudwatch is None else LagReader(cloudwatch),
-                                    retention=retention))  # fmt: skip
+                                    retention=retention,
+                                    steps=StepsContext(inputs.region, source_family(
+                                        args.artifact_root, db, job_id))))  # fmt: skip
         if args.command == "deploy":
             return emit(deploy(clients, args.artifact_root, db, job_id, inputs, sleep=sleep))
         if args.command == "execute":
@@ -1375,6 +1733,11 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         if args.command == RESTART:
             return emit(restart_validation(clients, name, job_id, args.wait_seconds,
                                            args.interval_seconds, sleep=sleep))  # fmt: skip
+        if args.command in RECOVER:
+            command = resume if args.command == RESUME else retry
+            context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
+            return emit(command(clients, name, job_id, args.wait_seconds, args.interval_seconds,
+                                steps=context, sleep=sleep))  # fmt: skip
         if args.command == "teardown":
             return emit(
                 teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,
@@ -1384,7 +1747,11 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
     except (MoveError, ValueError) as exc:
         return emit({"status": "error", "message": str(exc)})
     except Exception as exc:  # noqa: BLE001 - this script must always print JSON
+        if _credential_error(exc):
+            return emit(credentials_error(exc, made))
         return emit({"status": "error", "message": f"{type(exc).__name__}: {exc}"})
+    finally:
+        untrack()
 
 
 if __name__ == "__main__":

@@ -92,9 +92,9 @@ def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
         if args.command in run_dms_step.ENDING:
             assert args.approve, command
             assert command in ending, f"stop or teardown outside Ending the step: {command}"
-        elif args.command == run_dms_step.RESTART:
+        elif args.command in (run_dms_step.RESTART, *run_dms_step.RECOVER):
             assert args.approve, command
-            assert command in prove, f"restart-validation outside Prove: {command}"
+            assert command in prove, f"{args.command} outside Prove: {command}"
         elif args.command in run_dms_step.WRITES:
             assert args.approve, command
             assert command in move, f"an AWS write outside Move: {command}"
@@ -540,3 +540,80 @@ def test_ending_the_step_shows_what_is_left_on_the_source() -> None:
         "<source_reminder>`" in ending
     )
     assert "the customer runs them, never you" in ending
+
+
+# --- A stopped or failed task: one recovery, explained and asked for (#2061) -----------------
+
+
+def _recovery() -> str:
+    prove = _flat(_section("Stage 4: Prove"))
+    return prove[prove.index("**Stopped or failed task.**") :]
+
+
+def test_a_stopped_task_is_offered_one_resume_and_a_failed_one_one_retry() -> None:
+    prove = _bash_commands(_section("Stage 4: Prove"))
+    for command in ("resume", "retry"):
+        line = f"uv run python scripts/run_dms_step.py {command} --job-id {{job_id}} --db {{db}} --approve"
+        assert line in prove, command
+    recovery = _recovery()
+    resume_q = "Resume the replication task of stack {stack_name} now?"
+    retry_q = "Retry the replication task of stack {stack_name} now?"
+    for question in (resume_q, retry_q):
+        assert f'"{question}" Only on a yes' in recovery, question
+    assert "at most once per run" in recovery
+    # Plain words before each question: what the write does, and what it never does.
+    resume = recovery[recovery.index("`recovery` `resume`") : recovery.index(resume_q)]
+    for words in ("after its full load finished", "resumes from its checkpoint", "nothing reloads",
+                  "nothing is deleted", "ask whether the customer has fixed it first",
+                  "`Stop Reason NORMAL`"):  # fmt: skip
+        assert words in resume, words
+    retry = recovery[recovery.index("`recovery` `retry`") : recovery.index(retry_q)]
+    for words in ("the full load never started", "`FullLoadRows`", "refuses and changes nothing",
+                  "may already hold rows"):  # fmt: skip
+        assert words in retry, words
+    assert "the Aurora tables are still empty" not in recovery  # more than the check proves
+    assert "counting a restart from Validation stalled" in recovery
+    stalled = _flat(_section("Stage 4: Prove")).split("**Validation stalled.**", 1)[1]
+    assert "it counts as the run's one recovery" in stalled
+    assert "never in a run that already resumed or retried the task" in stalled
+    assert "names a command only when that command would run" in recovery
+    assert "A `recovery` of null with `customer_steps`" in recovery
+    assert '"recovery"' in (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
+    assert recovery.index("resume --job-id") < recovery.index("run the Poll again")
+
+
+def test_the_hint_is_shown_verbatim_before_any_recovery_is_offered() -> None:
+    recovery = _recovery()
+    assert "show its `hint` verbatim" in recovery
+    assert recovery.index("`hint`") < recovery.index("Resume the replication task")
+    assert "A `hint` of null means" in recovery and "never guess a fix" in recovery
+    assert '"hint"' in (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
+
+
+def test_a_failed_task_with_rows_loaded_gets_the_customers_steps_and_no_sql_from_us() -> None:
+    recovery = _recovery()
+    assert '`"kind": "target_may_hold_rows"`' in recovery
+    assert "every entry of `customer_steps` verbatim, each on its own" in recovery
+    assert "an SQL entry is SQL only" in recovery
+    assert "never connects to the customer's databases or runs SQL on them" in recovery
+    assert "never run them yourself" in recovery
+    assert (
+        "`MOVE_RESULT: stopped stage=prove reason=task may have written rows to Aurora: "
+        in recovery
+    )
+
+
+def test_auto_never_resumes_or_retries_and_the_task_stopped_ending_is_kept() -> None:
+    recovery = _recovery()
+    assert "Under `--auto`, never run `resume` or `retry`" in recovery
+    assert "`--approve-deploy` does not cover them" in recovery
+    headless = _flat(_section("Headless (`--auto`)"))
+    assert "never resumes or retries a stopped or failed task" in headless
+    ending = "`MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`"
+    assert recovery.count(ending) >= 2  # on a no, and after a second stop in the same run
+
+
+def test_a_credentials_error_says_refresh_and_run_again() -> None:
+    creds = _flat(_section("Credentials and secrets"))
+    assert '`"kind": "credentials"`' in creds
+    assert "refresh their credentials" in creds and "run `/move step-1` again" in creds
