@@ -23,6 +23,9 @@ Version History:
   columns), and the ``key_not_validatable`` warning finding for a key on a column type
   DMS cannot validate on; ``no_key`` now also covers a table whose only unique index
   allows NULLs.
+- 1.3 (2026-11-09, #1947): Added optional ``StepContract.routines`` (``StepRoutines``,
+  ``StepRoutine``): the routines step 1 carries in its deploy script, in order, and why
+  each other one is not carried; left out of the dump when None.
 """
 
 from typing import Literal
@@ -169,11 +172,124 @@ class Rule(BaseModel):
         return self
 
 
+RoutineCarry = Literal["carried", "not_carried", "deferred_to_cutover"]
+RoutineEnabledAs = Literal["enabled", "disabled", "absent"]
+
+
+class StepRoutine(BaseModel):
+    """One routine of the step's source, and whether step 1 carries it (#1947).
+
+    Identifiers and reason codes only, never a routine's text: the exact ``CREATE`` stays
+    in the job's routine sources, and only the deploy script step 1 generates holds it."""
+
+    routine_id: str = Field(..., min_length=1, description="The routine-migration row's id")
+    kind: Literal["function", "procedure", "trigger", "event"] = Field(
+        ..., description="What the routine is"
+    )
+    schema_name: str | None = Field(None, description="The routine's schema or database")
+    name: str = Field(..., min_length=1, description="The routine's own name")
+    specific_name: str | None = Field(
+        None, description="With kind and schema_name, finds its exact CREATE in the routine sources"
+    )
+    table: str | None = Field(None, description="A trigger's table, as the collection names it")
+    signature: str | None = Field(
+        None, description="Its argument types, as the routine-migration row has them"
+    )
+    returns: str | None = Field(None, description="A function's return type, when known")
+    carry: RoutineCarry = Field(
+        ...,
+        description=(
+            "carried: in the deploy script; not_carried: blocks cutover until a reason is "
+            "settled; deferred_to_cutover: a MySQL trigger or event, created by the cutover "
+            "script, since MySQL cannot create one disabled"
+        ),
+    )
+    order: int | None = Field(
+        None, ge=1, description="Its place in the deploy script, from 1; set only when carried"
+    )
+    migration_status: Literal["as_is", "rewritten"] | None = Field(
+        None, description="The routine-migration status of a carried routine"
+    )
+    enabled_as: RoutineEnabledAs | None = Field(
+        None,
+        description=(
+            "The state step 1 leaves it in: enabled, disabled (a PostgreSQL trigger) or "
+            "absent (deferred to cutover); None when not carried"
+        ),
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Why it is not carried: rule ids and reason codes, never text",
+    )
+
+    @model_validator(mode="after")
+    def _carry_fits(self) -> "StepRoutine":
+        carried = self.carry == "carried"
+        if carried != (self.order is not None) or carried != (self.migration_status is not None):
+            raise ValueError(
+                f"{self.kind} {self.routine_id}: order and status are set when carried"
+            )
+        if self.carry == "not_carried" and not self.reasons:
+            raise ValueError(f"{self.kind} {self.routine_id}: not carried without a reason")
+        if self.carry != "not_carried" and self.reasons:
+            raise ValueError(f"{self.kind} {self.routine_id}: {self.carry} with reasons")
+        expected = {"carried": ("enabled", "disabled"), "deferred_to_cutover": ("absent",)}
+        if self.enabled_as not in expected.get(self.carry, (None,)):
+            raise ValueError(f"{self.kind} {self.routine_id}: enabled_as {self.enabled_as}")
+        return self
+
+
+class StepRoutines(BaseModel):
+    """The routines step 1 carries, in deploy order, and why each other one is not (#1947).
+
+    Step 1 generates the deploy script from it; the customer runs that script after the
+    full load, and the read-only check script after it; Prove reads the check's output."""
+
+    source: Literal["routine_migration", "none"] = Field(
+        ...,
+        description=(
+            "routine_migration: read from routines/v<N>/routine_migration.json; none: the "
+            "collection lists no routine this pipeline carries"
+        ),
+    )
+    routine_migration_version: int | None = Field(
+        None, ge=1, description="The routine-migration artifact read (routines/v<N>)"
+    )
+    total: int = Field(0, ge=0, description="Routines in the section")
+    carried: int = Field(0, ge=0, description="Routines in the deploy script")
+    not_carried: int = Field(0, ge=0, description="Routines that block cutover")
+    deferred: int = Field(0, ge=0, description="Routines the cutover script creates")
+    routines: list[StepRoutine] = Field(
+        default_factory=list, description="Carried in deploy order, then the rest by id"
+    )
+
+    @model_validator(mode="after")
+    def _counts(self) -> "StepRoutines":
+        counted = {"carried": 0, "not_carried": 0, "deferred_to_cutover": 0}
+        for row in self.routines:
+            counted[row.carry] += 1
+        if (self.total, self.carried, self.not_carried, self.deferred) != (
+            len(self.routines),
+            counted["carried"],
+            counted["not_carried"],
+            counted["deferred_to_cutover"],
+        ):
+            raise ValueError("the routines section's counts disagree with its rows")
+        orders = [r.order for r in self.routines if r.order is not None]
+        if orders != list(range(1, len(orders) + 1)):
+            raise ValueError("carried routines are not in deploy order 1..carried")
+        if (self.source == "none") != (self.routine_migration_version is None) or (
+            self.source == "none" and self.routines
+        ):
+            raise ValueError("source none has no rows and no routine-migration version")
+        return self
+
+
 class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(
@@ -196,6 +312,16 @@ class StepContract(BaseModel):
     )
     rules: list[Rule] = Field(
         default_factory=list, description="One rule per target table the step builds"
+    )
+    # Left out of the dump when None, so a contract written before #1947 keeps its bytes
+    # (and the SHA-256 a plan pins).
+    routines: StepRoutines | None = Field(
+        None,
+        exclude_if=lambda section: section is None,
+        description=(
+            "Step 1: the routines it carries in its deploy script, in order, and why each "
+            "other one is not carried; None in a contract written before the section existed"
+        ),
     )
 
     @model_validator(mode="after")

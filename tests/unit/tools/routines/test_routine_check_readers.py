@@ -47,6 +47,10 @@ READERS = LOADERS | {
     "scripts.render_catalog",
     "scripts.run_assessment",
     "scripts.run_post_schema_routing",
+    # Step 1's routines (#1947): the section reads the routine-migration artifact, and the
+    # deploy script re-applies the rewrites; neither is a routing or synthesis module.
+    "src.tools.data_movement.step1_routines",
+    "src.tools.data_movement.routine_scripts",
 }
 
 

@@ -42,6 +42,12 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   print one progress line per poll on stderr. ``teardown``'s line carries ``source_reminder``
   and ``source_followups``: what is left on the source (on PostgreSQL, the replication slot DMS
   leaves behind, with the read-only query to find it and the statement that drops it; #2060).
+- ``routines`` (#1947): once ``status`` reads the full load at 100% (read-only), write step 1's
+  routine scripts for the customer to run: ``routines-deploy.sql`` (the carried routines in
+  dependency order; PostgreSQL triggers created disabled; MySQL triggers and events left to
+  the cutover script), the read-only ``routines-check.sql`` and ``routines.md``.
+  ``routines-check`` (no AWS call): read the customer's ``routines-check.tsv`` strictly and write
+  ``routines-check.json``, which the gate's routines check reads. Neither connects to a database.
 - ``restart-validation --approve`` (#2048): when Prove reports ``validation_stalled``, stop this
   job's step 1 task, wait until it has stopped, start it again with ``resume-processing`` (CDC
   resumes from its checkpoint, nothing reloads) and wait until it runs; this restarts the DMS
@@ -133,9 +139,11 @@ RESUME, RETRY = "resume", "retry"  # Prove's way on from a stopped or a failed t
 RECOVER = (RESUME, RETRY)
 WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *ENDING)
 WAITS = (*ENDING, RESTART, *RECOVER)  # the writes that wait, by default up to MAX_WAIT_SECONDS
-READS = ("preflight", "gate", "status")
+ROUTINES = "routines"  # writes step 1's routine scripts once the full load is done (#1947)
+ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS call (#1947)
+READS = ("preflight", "gate", "status", ROUTINES)
 VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
-LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY)
+LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, ROUTINES_CHECK)
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -357,6 +365,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--wait-seconds", type=int, default=None,
                    help=f"status: default 0; {', '.join(WAITS)}: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
+    p.add_argument("--target-user", help="routines: the Aurora MySQL user the DEFINER clauses "
+                   "name (default: the routine-migration artifact's)")  # fmt: skip
     return p
 
 
@@ -1771,6 +1781,85 @@ def verify_step(
             "gate": gate}  # fmt: skip
 
 
+# --- Routines (#1947): scripts the customer runs; nothing connects to a database ---------
+
+ROUTINES_SHOWN = 50  # routines named on a printed line; the files name every one
+
+
+def _not_carried(section: Any) -> list[dict[str, Any]]:
+    return [{"routine_id": r.routine_id, "kind": r.kind, "reasons": r.reasons}
+            for r in section.routines if r.carry == "not_carried"]  # fmt: skip
+
+
+def routines(clients: MoveClients, root: str, db: str, job_id: str, inputs: MoveInputs, name: str,
+             *, target_user: str | None = None) -> dict[str, Any]:  # fmt: skip
+    """Write step 1's routine scripts (``routine_scripts``) once the task's full load is at
+    100%: the deploy script, the read-only check script and their instructions, for the
+    customer to run. Read-only in AWS (the task's status); it never connects to a database."""
+    from src.contracts.routine_check import STATIC_LABEL
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.routine_scripts import write_routine_scripts
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    section = step.contract.routines
+    if section is None:
+        raise MoveError("the step 1 contract has no routines section (written before #1947): run "
+                        "Prepare's three commands again")  # fmt: skip
+    not_carried = _not_carried(section)
+    base = {"carried": section.carried, "not_carried": len(not_carried), "deferred": section.deferred,
+            "not_carried_routines": not_carried[:ROUTINES_SHOWN], "label": STATIC_LABEL}  # fmt: skip
+    if section.carried == 0 and section.deferred == 0:
+        return {"status": "nothing_to_deploy", **base}
+    now = status(clients, name)
+    if now.get("full_load_percent") != 100:
+        raise MoveError(f"the routines are created after the full load; the full load is at "
+                        f"{now.get('full_load_percent')}% ({now.get('phase')}): run this again when "
+                        "status shows full_load_percent 100")  # fmt: skip
+    scripts = write_routine_scripts(store, db, job_id, step.contract, step.contract_sha256,
+                                    _step_dir(root, db, job_id),
+                                    target_database=inputs.target_database_name,
+                                    target_user=target_user)  # fmt: skip
+    refused = [{"routine_id": i, "kind": k, "reason": c} for k, i, c in scripts.refused]
+    return {"status": "ready", **base, "in_script": scripts.in_script, "refused": len(refused),
+            "refused_routines": refused[:ROUTINES_SHOWN], "files": scripts.files}  # fmt: skip
+
+
+def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
+    """Read the customer's output of the routine check script (``routines-check.tsv``),
+    strictly, and write ``routines-check.json`` for the gate. No AWS call. A refused file
+    removes an earlier result, so the gate never reads a check the file contradicts."""
+    from src.contracts.routine_check import STATIC_LABEL, RoutineCheckResult
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.routine_check import RoutineCheckOutputError, read_check
+    from src.tools.data_movement.routine_scripts import CHECK_OUTPUT
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    output = _step_dir(root, db, job_id) / CHECK_OUTPUT
+    key = f"{db}/{job_id}/data-movement/step-1/routines-check.json"
+    try:
+        result = read_check(output, step.contract, job_id=job_id, database_name=db,
+                            contract_sha=step.contract_sha256,
+                            target_database=inputs.target_database_name)  # fmt: skip
+    except RoutineCheckOutputError as exc:
+        store.delete(key)
+        raise MoveError(f"{output}: refused: {exc}") from None
+    if result is None:
+        store.delete(key)
+        return {"status": "no_output", "expected": str(output), "label": STATIC_LABEL}
+    checked: RoutineCheckResult = result
+    store.write_json(key, checked.model_dump(mode="json"))
+    return {"status": result.status, "label": result.label, "carried": result.carried,
+            "confirmed": result.confirmed, "deferred": result.deferred,
+            "mismatches": [m.model_dump(mode="json") for m in result.mismatches[:ROUTINES_SHOWN]],
+            "mismatch_count": len(result.mismatches), "not_carried": len(result.not_carried),
+            "not_carried_routines": [m.model_dump(mode="json") for m in result.not_carried[:ROUTINES_SHOWN]],
+            "result": str(Path(root) / key)}  # fmt: skip
+
+
 # --- Entry point -------------------------------------------------------------------------
 
 
@@ -1913,6 +2002,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             return emit(deploy_plan(args.artifact_root, db, job_id, inputs))
         if args.command in (VERIFY_SCRIPTS, VERIFY):
             return emit(verify_step(args.command, args.artifact_root, db, job_id, inputs))
+        if args.command == ROUTINES_CHECK:
+            return emit(routines_check(args.artifact_root, db, job_id, inputs))
         _use_profile(inputs.write_profile if args.command in WRITES else inputs.read_profile)
         if args.command in ("preflight", "gate"):
             return _delegate(args.command, args, inputs)
@@ -1939,6 +2030,9 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                     retention=retention, change_set=args.change_set,
                                     steps=StepsContext(inputs.region, source_family(
                                         args.artifact_root, db, job_id))))  # fmt: skip
+        if args.command == ROUTINES:
+            return emit(routines(clients, args.artifact_root, db, job_id, inputs, name,
+                                 target_user=args.target_user))  # fmt: skip
         if args.command == "deploy":
             return emit(deploy(clients, args.artifact_root, db, job_id, inputs, sleep=sleep))
         if args.command == "execute":

@@ -219,6 +219,16 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "(ADR-034 Decision 1) and Aurora's default master user name on each: plumbing for "
         "the routine-migration phase, no routing rule (#1934)",
     ),
+    "src/tools/data_movement/step1_routines.py": (
+        frozenset({"DEFERRED_KINDS"}),
+        "the routine kinds each same-family Aurora target leaves to the cutover script "
+        "(ADR-034 Decision 6): plumbing for step 1's routines section, no routing rule (#1947)",
+    ),
+    "src/tools/data_movement/routine_check.py": (
+        frozenset({"_KINDS"}),
+        "the routine kinds each Aurora target's check output may name: plumbing for reading "
+        "step 1's routine check, no routing rule (#1947)",
+    ),
     "src/tools/data_movement/dms_preflight.py": (
         frozenset({"_VERSION_ENGINE"}),
         "the source-engine name the version parser takes for each Aurora engine: plumbing "

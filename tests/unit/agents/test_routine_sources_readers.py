@@ -30,6 +30,7 @@ _IMPORTERS = {
     "scripts/run_collect.py",  # writes them
     "scripts/run_assessment.py",  # writes them
     "src/tools/routines/migration.py",  # reads them: the routine-migration phase (#1934)
+    "src/tools/data_movement/routine_scripts.py",  # writes step 1's deploy script (#1947)
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -82,6 +83,8 @@ def test_nothing_but_the_routine_sources_module_reads_a_chunk():
         "src/contracts/routine_sources.py",
         # Checks each routine on its exact text and keeps no text (#1934, ADR-034).
         "src/tools/routines/migration.py",
+        # Writes the exact text only into step 1's deploy script (#1947, ADR-034).
+        "src/tools/data_movement/routine_scripts.py",
     }
 
 

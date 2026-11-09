@@ -343,6 +343,14 @@ DDL_WRITERS = {
     # test_quoted_schema_names_are_pinned_as_identifiers, test_quoted_definers_are_rewritten
     # and test_bad_arguments_are_value_errors.
     "src/tools/routines/rewrites.py",
+    # Step 1's routine scripts (#1947), run by the customer, never by the modernizer: each
+    # routine's own exact CREATE, and around it SET search_path, ALTER TABLE ... DISABLE
+    # TRIGGER and USE built only from names with no control or separator character, each
+    # quoted with its quote doubled (MySQL literals also escape backslashes); sql_mode and
+    # collation pass a fixed shape; tests/unit/tools/data_movement/test_routine_scripts.py::
+    # test_a_name_that_could_break_out_of_a_script_line_is_refused and
+    # test_a_session_value_outside_the_allowlist_is_refused_never_written.
+    "src/tools/data_movement/routine_scripts.py",
     # A MySQL routine's CREATE rebuilt from information_schema (#1652), kept in the job's
     # routine sources and run by nothing here: every name is backticked with backticks
     # doubled (quote_ident), every comment and time a string literal read under the

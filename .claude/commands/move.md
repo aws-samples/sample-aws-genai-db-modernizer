@@ -207,13 +207,27 @@ Both wait until the task runs, up to 540 seconds, and refuse any stack that is n
 
 On a no, with nothing to offer, or when the Poll after a resume or a retry ends at `task_stopped` again (never offer a second one: show its `hint`), end with `MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>`. Under `--auto`, never run `resume` or `retry` and never ask: `--approve-deploy` does not cover them, so end with that same line.
 
+**Routines.** When `phase` is `caught_up`, and before the gate, write step 1's routine scripts (read-only in AWS; the modernizer never connects to a database):
+
+```bash
+uv run python scripts/run_dms_step.py routines --job-id {job_id} --db {db}
+```
+
+`"status": "nothing_to_deploy"`: say so in one line (list `not_carried_routines`, each with its `reasons`, if any) and go to the Gate. `"status": "ready"`: show `carried`, `in_script`, `deferred` (Aurora MySQL triggers and events, left to the cutover script), every entry of `not_carried_routines` and `refused_routines` with its reasons, and the `label` verbatim; point the customer at `routines.md` in `files`. The customer runs `routines-deploy.sql`, then `routines-check.sql`, saving its output as `routines-check.tsv` next to them, as that file says. Ask them to say when the check output is there; under `--auto`, never wait: go to the Gate (its routines check stays `pending`). Then run (no AWS call):
+
+```bash
+uv run python scripts/run_dms_step.py routines-check --job-id {job_id} --db {db}
+```
+
+Show its `status` (`pass` or `fail`), `confirmed` of `carried`, every entry of `mismatches` (each `routine_id` with its `problem`) and of `not_carried_routines`, and the `label`. `"status": "no_output"`: the file is not at `expected` yet; ask again. An error line (a refused file) names what is wrong: tell the customer to run `routines-check.sql` again. Then go to the Gate.
+
 **Gate.** When `phase` is `caught_up` (the full load is at 100% and validation caught up), run the read-only gate (it runs `scripts/check_dms_step_gate.py` on the stack and prints that script's line):
 
 ```bash
 uv run python scripts/run_dms_step.py gate --job-id {job_id} --db {db}
 ```
 
-Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:` or `parity:`), every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or validation are still arriving: run the gate again in a few minutes. Then quote the line's `cutover_message` field verbatim, as a block quote: never shorten, reword or summarise it, and never recommend a time to cut over. When to cut over is the customer's decision (`cutover_decision` is `customer`); this command never cuts over.
+Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:`, `parity:` or `routines:`), every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or validation are still arriving: run the gate again in a few minutes. Then quote the line's `cutover_message` field verbatim, as a block quote: never shorten, reword or summarise it, and never recommend a time to cut over. When to cut over is the customer's decision (`cutover_decision` is `customer`); this command never cuts over.
 
 **Verify (optional).** Then offer, in one line, an independent read-only comparison of the source and Aurora (per moved table, a row count and a checksum); say it is optional and does not change the gate. Under `--auto`, never offer it. On a yes, run (no AWS call; the modernizer never connects to a database):
 
@@ -281,6 +295,7 @@ uv run python scripts/run_dms_step.py status --job-id {job_id} --db {db} --until
 - With `--inputs` and without `--approve-deploy`: the preflight (read-only) and `plan` (no AWS call) run, then the run ends before any AWS write with `MOVE_RESULT: stopped stage=move reason=deploy needs --approve-deploy`.
 - With `--inputs` and `--approve-deploy`: Move runs every step without its question, then Prove.
 - `--auto` never stops the task or deletes the stack (Ending the step), never restarts the task when validation stalls, and never resumes or retries a stopped or failed task (Prove).
+- `--auto` writes the routine scripts (Prove) but never waits for the customer to run them: the gate's routines check stays `pending`.
 - The writes refuse to run under `MODERNIZER_CI_SANDBOX=1` (the CI headless runs), whatever the flags.
 
 ## Result line

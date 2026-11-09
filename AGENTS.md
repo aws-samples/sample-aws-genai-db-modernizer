@@ -204,6 +204,10 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `routines/v<N>/routine_migration.json`: how each routine migrates (id, kind,
   dependencies, deploy order, status, rewrite rules, check results; no routine text),
   keyed on the assignment version, written after the reality check (#1934)
+- `data-movement/step-1/`: `/move`'s step 1 files; `routines-deploy.sql` (the one file
+  besides the routine sources that holds routine text) and the read-only
+  `routines-check.sql` the customer runs, and `routines-check.json`, read from their
+  check output (#1947)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus a per-version copy of the rendered files, keyed on the assignment version
 - `deliverables/`: the customer folder `scripts/run_report.py` fills for the
