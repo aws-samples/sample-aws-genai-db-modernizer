@@ -187,6 +187,23 @@ def test_group_input_keeps_the_triggers_on_its_tables() -> None:
     assert "is_enabled" not in kept[0]
 
 
+def test_group_input_leaves_out_the_trigger_enable_mode() -> None:
+    """#2071: the mode is for the cutover, not the design; the model input is unchanged."""
+    collector = get_ecommerce_collector_output()
+    triggers = collector["database_schema"]["triggers"]
+    triggers.append(
+        {**triggers[0], "trigger_id": "tg_mode", "trigger_name": "tg_mode",
+         "table_id": PRODUCTS, "is_enabled": True, "enabled_mode": "A"}
+    )  # fmt: skip
+    # The collection keeps the mode ...
+    contract = CollectorOutputContract.model_validate(collector)
+    assert contract.database_schema.triggers[-1].enabled_mode == "A"
+    data = _products_group(collector, _analysis(collector))
+    (kept,) = data["collector_output"]["database_schema"]["triggers"]
+    assert kept["trigger_id"] == "tg_mode" and kept["is_enabled"] is True
+    assert "enabled_mode" not in kept  # ... and the design input leaves it out
+
+
 def test_group_input_drops_nulls_and_fields_the_design_does_not_read() -> None:
     collector = get_ecommerce_collector_output()
     data = _products_group(collector, _analysis(collector))

@@ -430,6 +430,105 @@ _TRIGGER_ON_FIRST = re.compile(
 _DDL_STATS_STATUS = {"status": "offline", "reason": "read from DDL: bodies, no stats"}
 
 
+# #2071: PostgreSQL trigger enable modes in a DDL upload. pg_dump writes a trigger's
+# CREATE TRIGGER, then ``ALTER TABLE <table> DISABLE | ENABLE [REPLICA | ALWAYS] TRIGGER
+# <name>`` when its mode is not the default O. Names are compared as PostgreSQL folds them
+# (unquoted lower-cased, quoted exact).
+_PG_IDENT = r'(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)'
+_PG_QUALIFIED = rf"(?:{_PG_IDENT}\s*\.\s*)?{_PG_IDENT}"
+_LEADING_COMMENTS = re.compile(r"\A(?:\s*--[^\n]*(?:\n|\Z))*\s*")
+_PG_ALTER_TABLE = re.compile(
+    rf"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?({_PG_QUALIFIED})\s*\*?\s+(.*)\Z",
+    re.I | re.S,
+)
+_PG_ALTER_TRIGGER = re.compile(rf"ALTER\s+TRIGGER\s+({_PG_IDENT})\s+ON\s+({_PG_QUALIFIED})", re.I)
+_PG_TRIGGER_ACTION = re.compile(
+    rf"\s*(ENABLE(?:\s+(REPLICA|ALWAYS))?|DISABLE)\s+TRIGGER\s+({_PG_IDENT})\s*\Z", re.I
+)
+_PG_MODE_LETTER = {"": "O", "REPLICA": "R", "ALWAYS": "A"}
+_PG_TRIGGER_WORD = re.compile(r"\bTRIGGER\b", re.I)
+_OR_REPLACE = re.compile(r"CREATE\s+OR\s+REPLACE\b", re.I)
+
+
+def _pg_ident(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith('"') and raw.endswith('"'):
+        return raw[1:-1].replace('""', '"')
+    return raw.lower()
+
+
+def _pg_table_key(raw: str) -> tuple[str | None, str]:
+    parts = [_pg_ident(part) for part in re.findall(_PG_IDENT, raw)]
+    return (parts[-2], parts[-1]) if len(parts) >= 2 else (None, parts[-1])
+
+
+class _PgTriggerModes:
+    """Each PostgreSQL trigger's mode as the file's statements set it, in file order:
+    O at its CREATE, then each ALTER on it. A mode the file does not settle is None: an
+    ALTER it cannot read, a table named with and without its schema (the search path
+    decides), a rename, or a CREATE OR REPLACE of a trigger it already holds."""
+
+    def __init__(self) -> None:
+        self.keys: list[tuple[tuple[str | None, str], str]] = []
+        self.modes: list[str | None] = []
+        self.unknown: set[int] = set()
+
+    def create(self, table: str, name: str, replace: bool) -> None:
+        key = (_pg_table_key(table), _pg_ident(re.findall(_PG_IDENT, name)[-1]))
+        if replace and key in self.keys:  # OR REPLACE may keep the old mode
+            self.unknown.update(i for i, k in enumerate(self.keys) if k == key)
+            self.unknown.add(len(self.keys))
+        self.keys.append(key)
+        self.modes.append("O")
+
+    def _on(self, table: tuple[str | None, str]) -> tuple[list[int], list[int]]:
+        """The triggers on ``table``, and those that may be on it (same table name, one of
+        the two names qualified and the other not)."""
+        same, maybe = [], []
+        for i, ((schema, name), _) in enumerate(self.keys):
+            if name != table[1]:
+                continue
+            if schema == table[0]:
+                same.append(i)
+            elif schema is None or table[0] is None:
+                maybe.append(i)
+        return same, maybe
+
+    def statement(self, block: str) -> bool:
+        """Apply an ALTER TABLE / ALTER TRIGGER statement; False when ``block`` is not one
+        that touches a trigger's mode or name."""
+        text = _LEADING_COMMENTS.sub("", block)
+        renamed = _PG_ALTER_TRIGGER.match(text)
+        if renamed:
+            same, maybe = self._on(_pg_table_key(renamed.group(2)))
+            name = _pg_ident(renamed.group(1))
+            self.unknown.update(i for i in same + maybe if self.keys[i][1] == name)
+            return True
+        alter = _PG_ALTER_TABLE.match(text)
+        if not alter or not _PG_TRIGGER_WORD.search(alter.group(2)):
+            return False
+        same, maybe = self._on(_pg_table_key(alter.group(1)))
+        self.unknown.update(maybe)
+        for action in alter.group(2).split(","):
+            if not _PG_TRIGGER_WORD.search(action):
+                continue  # another sub-command (ADD COLUMN ...): no trigger's mode
+            m = _PG_TRIGGER_ACTION.match(action)
+            if not m:  # a trigger action it cannot read: every trigger on the table
+                self.unknown.update(same)
+                continue
+            enable = m.group(1).upper() != "DISABLE"
+            letter = _PG_MODE_LETTER[(m.group(2) or "").upper()] if enable else "D"
+            target = m.group(3)
+            wildcard = not target.startswith('"') and target.upper() in ("ALL", "USER")
+            for i in same:
+                if wildcard or self.keys[i][1] == _pg_ident(target):
+                    self.modes[i] = letter
+        return True
+
+    def result(self) -> list[str | None]:
+        return [None if i in self.unknown else m for i, m in enumerate(self.modes)]
+
+
 def _routine_name(name: str) -> tuple[str | None, str]:
     parts = [_unquote(p) for p in re.split(r"\s*\.\s*", name.strip())]
     return (parts[-2], parts[-1]) if len(parts) >= 2 else (None, parts[0])
@@ -486,7 +585,10 @@ def parse_ddl_routines(ddl_text: str, dialect: str) -> dict:
     ``routine_stats_status`` is ``offline``. A block this cannot read is left out."""
     procedures: list[dict] = []
     triggers: list[dict] = []
+    pg_modes = _PgTriggerModes() if dialect == "postgresql" else None
     for block in _routine_blocks(ddl_text or "", dialect):
+        if pg_modes is not None and pg_modes.statement(block):
+            continue
         head = _ROUTINE_HEAD.search(block)
         if not head:
             continue
@@ -533,7 +635,12 @@ def parse_ddl_routines(ddl_text: str, dialect: str) -> dict:
         }
         if schema:
             trigger["schema_name"] = schema
+        if pg_modes is not None:
+            pg_modes.create(table, head.group(2), replace=bool(_OR_REPLACE.match(definition)))
         triggers.append(trigger)
+    if pg_modes is not None:  # #2071: the PostgreSQL trigger's mode, None when unsettled
+        for trigger, mode in zip(triggers, pg_modes.result(), strict=True):
+            trigger["enabled_mode"] = mode
     return {
         "procedures": procedures,
         "triggers": triggers,

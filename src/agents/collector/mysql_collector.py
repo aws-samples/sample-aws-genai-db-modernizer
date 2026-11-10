@@ -38,8 +38,10 @@ from src.agents.collector.routine_rows import (
     merge_trigger_rows,
     routine_stats_status,
     trigger_enabled,
+    trigger_enabled_mode,
     trigger_for_each,
     trigger_function_name,
+    trigger_mode_source,
 )
 from src.agents.collector.routine_sources import (
     apply_body_statuses,
@@ -1613,13 +1615,15 @@ def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
 def trigger_shape_fields(t: Mapping[str, Any]) -> dict[str, Any]:
     """``Trigger`` keyword arguments every builder reads the same way from a raw row
     (#1652): its orientation (any spelling: 'ROW', 'BEFORE EACH ROW'), its body, its
-    enabled flag (any spelling: 1, 'ENABLED', PostgreSQL 'O'), the function it executes
+    enabled flag (any spelling: 1, 'ENABLED', PostgreSQL 'O') and PostgreSQL's exact
+    enable mode (#2071), the function it executes
     (PostgreSQL: from its function signature or its EXECUTE FUNCTION clause) and the
     execution count the engine keeps."""
     return {
         "for_each": trigger_for_each(t.get("for_each") or t.get("timing")),
         "definition": t.get("definition"),
         "is_enabled": trigger_enabled(t.get("is_enabled")),
+        "enabled_mode": trigger_enabled_mode(trigger_mode_source(t)),
         "function_id": trigger_function_name(
             f"EXECUTE FUNCTION {t['function_signature']}"
             if t.get("function_signature")

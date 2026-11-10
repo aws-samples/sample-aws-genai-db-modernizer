@@ -5330,6 +5330,27 @@
                             ]
                           }
                         },
+                        "enabled_mode": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "A",
+                                  "D",
+                                  "O",
+                                  "R"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "events": {
                           "required": true,
                           "schema": {
@@ -6791,6 +6812,27 @@
                                   }
                                 },
                                 "kind": "array"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "enabled_mode": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "A",
+                                  "D",
+                                  "O",
+                                  "R"
+                                ]
                               },
                               {
                                 "kind": "scalar",
@@ -10901,8 +10943,8 @@
         }
       }
     },
-    "schema_hash": "f7ec97baad08fe4222393f947d36928c3f329c3f4a9cea9ef09bcb5eeea7f97f",
-    "version": "5.16"
+    "schema_hash": "73691d4e7fe117c89ab4f3ea45ec589161f85d3f93c90f458f91616ac9110a4f",
+    "version": "5.17"
   },
   "cutover_check.CutoverCheckResult": {
     "fields": {
