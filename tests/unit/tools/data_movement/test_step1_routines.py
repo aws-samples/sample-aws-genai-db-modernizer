@@ -350,3 +350,50 @@ def test_a_section_written_before_the_trigger_fields_still_loads():
     assert section.routines[0].source_state is None
     assert section.model_dump(mode="json") == {**old, "routines": [
         {**old["routines"][0], "specific_name": None, "signature": None, "returns": None}]}  # fmt: skip
+
+
+def test_a_postgresql_trigger_carries_the_collected_tgenabled_letter_as_it_is():
+    from src.tools.data_movement.step1_routines import _collection_triggers
+
+    names = ("t_o", "t_a", "t_r", "t_d", "t_none_on", "t_none_off", "t_odd", "t_unknown")
+    rows = [row(f"public.orders.{n}", "trigger", name=n, table="public.orders",
+                specific=f"orders.{n}") for n in names]  # fmt: skip
+    given = {"t_o": ("O", True), "t_a": ("A", True), "t_r": ("R", False), "t_d": ("D", False),
+             "t_none_on": (None, True), "t_none_off": (None, False), "t_odd": ("X", True),
+             "t_unknown": (None, None)}  # fmt: skip
+    collection = {"triggers": [
+        {"trigger_name": n, "schema_name": "public", "table_id": "orders", "enabled_mode": mode,
+         "is_enabled": enabled} for n, (mode, enabled) in given.items()]}  # fmt: skip
+    section = build_step_routines(
+        migration(rows), make_contract("aurora_postgresql"), version=2,
+        triggers=_collection_triggers(collection, "aurora_postgresql"),
+    )  # fmt: skip
+    # The letter wins over is_enabled (A reads enabled, R disabled, #2099); no letter, or
+    # one PostgreSQL does not have, keeps the honest enabled / disabled, never O.
+    assert {r.name: r.source_state for r in section.routines} == {
+        "t_o": "O", "t_a": "A", "t_r": "R", "t_d": "D", "t_none_on": "enabled",
+        "t_none_off": "disabled", "t_odd": "enabled", "t_unknown": None}  # fmt: skip
+
+
+@pytest.mark.passes_on_main
+def test_a_collection_written_before_enabled_mode_still_gives_enabled_or_disabled(tmp_path):
+    """A 5.16 collection (no ``enabled_mode``) loads, and its triggers keep today's
+    enabled / disabled state: the cutover then names them for a check by hand."""
+    from src.contracts.collector_output import Trigger
+
+    old = [
+        {"trigger_id": f"t{i}", "trigger_name": n, "schema_name": "public", "table_id": "orders",
+         "event_type": "INSERT", "timing": "BEFORE", "is_enabled": on}
+        for i, (n, on) in enumerate((("t_on", True), ("t_off", False)))
+    ]  # fmt: skip
+    assert [Trigger.model_validate(t).enabled_mode for t in old] == [None, None]
+    store = _store_with(tmp_path, {2: migration([
+        row(f"public.orders.{n}", "trigger", name=n, table="public.orders", specific=f"orders.{n}")
+        for n in ("t_on", "t_off")])})  # fmt: skip
+    store.write_json("shop/job1/collector/output.json",
+                     {"contract_version": "5.16", "database_schema": {"triggers": old}})  # fmt: skip
+    section = attach_step_routines(
+        store, "shop", "job1", make_contract("aurora_postgresql")
+    ).routines
+    assert {r.name: r.source_state for r in section.routines} == {"t_on": "enabled",
+                                                                  "t_off": "disabled"}  # fmt: skip

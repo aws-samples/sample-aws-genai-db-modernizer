@@ -310,11 +310,25 @@ _MYSQL_EFFECT = (
 )
 
 
+def _pg_set_to(scripts: CutoverScripts) -> str:
+    """How the header says the triggers are set: their source state only when the
+    collection gives every one's exact letter (#2099)."""
+    if not scripts.state_folded:
+        return " to their source state"
+    if scripts.state_folded == scripts.in_script:
+        return " enabled or disabled as the collection records"
+    exact = scripts.in_script - scripts.state_folded
+    return (
+        f": {exact} to their source state, {scripts.state_folded} enabled or disabled as "
+        "the collection records"
+    )
+
+
 def _header(engine: str, contract_sha: str, scripts: CutoverScripts, resume: bool) -> list[str]:
     pg = engine == "aurora_postgresql"
     what = (
-        f"sets the {scripts.in_script} triggers step 1 created disabled to their source state, "
-        f"of which {scripts.stays_disabled} stay disabled"
+        f"sets the {scripts.in_script} triggers step 1 created disabled{_pg_set_to(scripts)}; "
+        f"{scripts.stays_disabled} of them stay disabled"
         if pg
         else f"creates the {scripts.in_script} MySQL triggers and events step 1 left to this script"
     )
