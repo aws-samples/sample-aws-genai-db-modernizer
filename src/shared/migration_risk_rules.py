@@ -43,6 +43,19 @@ rule                       severity  raised when
                                      for a cross-engine or a same-engine wave 1; an
                                      informational gap raises none, and a gap check for
                                      another engine than wave 1's raises none
+``routines.migrate_yourself``
+                           HIGH      routines the pipeline could not translate automatically
+                                     (a failed check or dependency, or code it could not
+                                     read or check): a to-do for the customer that holds no
+                                     wave (``wave_readiness.NON_HOLDING_RULES``, #1938)
+``routines.behaves_differently``
+                           MEDIUM    routines whose only failed checks behave differently
+``routines.opted_out``     MEDIUM    routines with no code to check: the customer turned
+                                     body collection off (information)
+``routines.carried``       LOW       carried routines with a header rewrite or a check that
+                                     could not run: one risk with the counts. Every routine
+                                     rule reads ``facts.routines`` and is in the wave that
+                                     brings in the routines' Aurora target
 =========================  ========  ==========================================================
 """
 
@@ -64,6 +77,12 @@ from src.shared.report_facts import (
     scope_unservable_rows,
 )
 from src.shared.risk_severity import overall_risk_level, severity_rank
+from src.shared.routine_facts import (
+    CUTOVER_SENTENCE,
+    ROUTINE_DETAILS_LISTED,
+    ROUTINE_RISK_SEVERITY,
+)
+from src.shared.wave_readiness import NON_HOLDING_RULES
 
 # A wave-gate strategy line names its risk ids up to this many, else counts them.
 GATE_IDS_NAMED = 5
@@ -103,6 +122,14 @@ RULES: dict[str, RiskRule] = {
     "design.carried_writes": RiskRule(
         "MEDIUM", "MIGRATION_COMPLEXITY", "write-group members the engine fits poorly"
     ),
+    "routines.migrate_yourself": RiskRule(
+        "HIGH", "MIGRATION_COMPLEXITY", "routines to migrate yourself"
+    ),
+    "routines.behaves_differently": RiskRule(
+        "MEDIUM", "MIGRATION_COMPLEXITY", "routines that behave differently"
+    ),
+    "routines.opted_out": RiskRule("MEDIUM", "OPERATIONAL_RISK", "routines with no code collected"),
+    "routines.carried": RiskRule("LOW", "MIGRATION_COMPLEXITY", "carried routines to check"),
 }
 
 # A flagged query held on its engine by a customer pin (#1033): the pin, not a
@@ -445,6 +472,223 @@ def relational_gap_risks(
 
 
 # ---------------------------------------------------------------------------
+# The routines the pipeline could not carry automatically (#1938, ADR-034 Decision 7)
+# ---------------------------------------------------------------------------
+
+#: A routine risk class -> the rule that raises it.
+ROUTINE_RULES: dict[str, str] = {
+    "migrate_yourself": "routines.migrate_yourself",
+    "behaves_differently": "routines.behaves_differently",
+    "opted_out": "routines.opted_out",
+    "carried_review": "routines.carried",
+}
+
+# A routine's category -> how its detail line says why it was not translated.
+_CATEGORY_WORDS = {
+    "not_readable": "not readable",
+    "not_checked": "not checked",
+    "not_exact": "rebuilt around a literal",
+}
+
+
+def _kinds(rows: list[Mapping[str, Any]]) -> str:
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[str(r["kind"])] = counts.get(str(r["kind"]), 0) + 1
+    return ", ".join(n_of(n, k, f"{k}s") for k, n in sorted(counts.items()))
+
+
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _routine_detail(row: Mapping[str, Any]) -> str:
+    head = f"{row['kind']} {row['routine_id']}"
+    words = _CATEGORY_WORDS.get(str(row.get("category")))
+    if words:
+        return f"{head}: {words} ({', '.join(row.get('reasons') or [])})"
+    return f"{head}: {', '.join(row.get('severity_basis') or [])}"
+
+
+def _listed_details(
+    rows: list[Mapping[str, Any]], routines: Mapping[str, Any], catalog: Mapping[str, Any]
+) -> list[str]:
+    """Each routine (up to ``ROUTINE_DETAILS_LISTED``) and what set its class, then each
+    rule's catalog reason and fix hint."""
+    listed = rows[:ROUTINE_DETAILS_LISTED]
+    details = [_routine_detail(r) for r in listed]
+    if len(rows) > len(listed):
+        details.append(
+            f"And {len(rows) - len(listed)} more: the engineering report lists every routine."
+        )
+    for rid in sorted({str(b) for r in rows for b in r.get("severity_basis") or []}):
+        rule = catalog.get(rid)
+        if not isinstance(rule, Mapping):
+            continue
+        text = f"{rid}: {str(rule.get('reason') or '').strip()}"
+        if rule.get("fix_hint"):
+            text += f" Fix: {str(rule['fix_hint']).strip()}"
+        details.append(text)
+    return details
+
+
+# A reason code -> the plain words a risk's text gives it; a rule id reads "a check
+# failed" (the codes and rule ids stay in the facts and the details).
+_CAUSE_WORDS = {
+    "dependency_cycle": "in a dependency cycle",
+    "depends_on_needs_attention": "names a routine that is not translated",
+    "depends_on_table_not_collected": "names a table the collection does not have",
+    "depends_on_routine_not_collected": "names a routine the collection does not have",
+    "source_text_not_collected": "no exact code was collected",
+    "source_text_not_exact": "its code was rebuilt around a literal",
+}
+_FAILED_CHECK = "a check failed"
+_NOT_READABLE = "its code could not be read"
+
+
+def _causes(rows: list[Mapping[str, Any]]) -> str:
+    """`` Why: a check failed (1); in a dependency cycle (2).``: each cause the rows have,
+    in plain words, with how many routines it applies to; only the causes present."""
+    counts: dict[str, int] = {}
+    for r in rows:
+        words: list[str] = []
+        if r.get("category") == "not_readable":
+            words.append(_NOT_READABLE)
+        for b in r.get("severity_basis") or []:
+            word = _CAUSE_WORDS.get(str(b), _FAILED_CHECK)
+            if word == _CAUSE_WORDS["source_text_not_collected"] and words:
+                continue  # an unreadable body is why no exact code was collected
+            if word not in words:
+                words.append(word)
+        for w in words:
+            counts[w] = counts.get(w, 0) + 1
+    if not counts:
+        return ""
+    return " Why: " + listed_items([f"{w} ({n})" for w, n in counts.items()]) + "."
+
+
+def _routine_mitigation(action: str, wave: int | None) -> str:
+    """A routine risk's next step: with a wave, a pointer to its gate (:func:`by_gate`);
+    without one, no timing advice, only the cutover sentence (maintainer rule)."""
+    if wave:
+        return by_gate(action, wave)
+    return f"{action}. {_cap(CUTOVER_SENTENCE)}."
+
+
+def routine_risks(
+    routines: Mapping[str, Any] | None,
+    migration_waves: Iterable[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """The routine risks ``facts.routines`` implies (``src.shared.routine_facts``), one per
+    class in :data:`ROUTINE_RULES` order, each with its class's severity, in the wave
+    ``facts.routines.wave`` names (the first that brings in the routines' Aurora target;
+    else in none, with no timing advice). ``migration_waves`` is not read: the facts carry
+    the wave.
+
+    Maintainer decisions on #1938 (2026-11-10): the routines the pipeline could not
+    translate automatically are one HIGH to-do, worded from the facts' own
+    ``migrate_yourself_line`` and ``migrate_yourself_step``, which holds no wave and which
+    the wave's gate lists as a to-do (``Risk.to_do``), not as a condition; the carried
+    routines to check are one LOW risk with the counts, the routines listed in the facts
+    only. Every text counts routines by kind and names none, nor a table (the executive
+    report prints it), and gives causes in plain words; the HIGH and MEDIUM details name
+    each routine with its rule ids and reason codes."""
+    if not isinstance(routines, Mapping):
+        return []
+    target = canonical_engine_id(str(routines.get("target_engine") or ""))
+    wave = routines.get("wave") if isinstance(routines.get("wave"), int) else None
+    name = display_engine(target)
+    catalog = {str(r["rule_id"]): r for r in routines.get("rules") or [] if isinstance(r, Mapping)}
+    by_class: dict[str, list[Mapping[str, Any]]] = {}
+    for r in routines.get("routines") or []:
+        if isinstance(r, Mapping) and r.get("risk_classes"):
+            by_class.setdefault(str(r["risk_classes"][0]), []).append(r)
+    out: list[dict[str, Any]] = []
+    for cls, severity in ROUTINE_RISK_SEVERITY.items():
+        rows = by_class.get(cls) or []
+        if not rows:
+            continue
+        k = len(rows)
+        they, are = ("it", "is") if k == 1 else ("they", "are")
+        details: list[str] | None = _listed_details(rows, routines, catalog)
+        to_do_item: str | None = None
+        if cls == "migrate_yourself":
+            to_do = routines.get("migrate_yourself_line")
+            step = routines.get("migrate_yourself_step")
+            if not to_do or not step:
+                continue
+            description = (
+                f"{_cap(str(to_do))}. {'It is' if k == 1 else 'They are'} {_kinds(rows)}. "
+                "This is a to-do and holds no wave." + _causes(rows)
+            )
+            if wave:
+                mitigation = by_gate(_cap(str(step)), wave)
+            else:  # the step already ends with the cutover sentence
+                mitigation = f"{_cap(str(step))}."
+            to_do_item = f"migrate {n_of(k, 'routine', 'routines')} yourself"
+        elif cls == "behaves_differently":
+            description = (
+                f"{n_of(k, 'routine', 'routines')} ({_kinds(rows)}) would load on {name} but "
+                f"behave differently from the source, so {they} {are} not carried until "
+                "changed." + _causes(rows)
+            )
+            mitigation = _routine_mitigation(
+                f"Change each routine as its rules' fix hints say, test it on {name} and "
+                "compare its results with the source",
+                wave,
+            )
+        elif cls == "opted_out":
+            description = (
+                f"{n_of(k, 'routine', 'routines')} ({_kinds(rows)}) "
+                f"{'has' if k == 1 else 'have'} no code to check: routine body collection "
+                f"was turned off, so {they} {are} not checked and not created on {name}."
+            )
+            mitigation = _routine_mitigation(
+                "To have them checked and carried, collect again with routine bodies "
+                "included; otherwise migrate them yourself",
+                wave,
+            )
+        else:
+            rewritten = int(routines.get("rewritten_carried_count") or 0)
+            unknown = int(routines.get("unknown_checks_count") or 0)
+            runs = "it runs" if rewritten == 1 else "they run"
+            parts = [
+                (
+                    f"{n_of(rewritten, 'has', 'have')} a safe header rewrite (the owner or "
+                    f"DEFINER set to the target user, so {runs} with that user's privileges)"
+                    if rewritten
+                    else ""
+                ),
+                (f"for {unknown}, not every check could run" if unknown else ""),
+            ]
+            description = (
+                f"{n_of(k, 'routine is', 'routines are')} carried to {name} and need a "
+                "check on the target: " + "; ".join(p for p in parts if p) + "."
+            )
+            mitigation = _routine_mitigation(
+                f"Check the carried routines when they are deployed on {name} in step 1, and "
+                "that the target user's privileges cover what each rewritten one does",
+                wave,
+            )
+            details = None
+        risk = make_risk(
+            ROUTINE_RULES[cls],
+            target or None,
+            f"Wave {wave}: {description}" if wave and cls != "migrate_yourself" else description,
+            mitigation,
+            {t for r in rows for t in r.get("tables") or []},
+            (),
+            wave,
+            severity=severity,
+            details=details,
+        )
+        if to_do_item:
+            risk["to_do"] = to_do_item
+        out.append(risk)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Numbering and the wave-gate lines
 # ---------------------------------------------------------------------------
 
@@ -471,7 +715,8 @@ def _gate_groups(risks: list[dict[str, Any]]) -> list[tuple[int | None, str, str
     risks by id up to ``GATE_IDS_NAMED``, else by count (the cards carry the ids)."""
     by_wave: dict[int | None, list[dict[str, Any]]] = {}
     for r in risks:
-        if r.get("rule") in RULES:
+        # A to-do is no condition of the gate (#1938): :func:`_to_do_groups` lists it.
+        if r.get("rule") in RULES and r.get("rule") not in NON_HOLDING_RULES:
             by_wave.setdefault(r.get("wave"), []).append(r)
     out = []
     for wave in sorted(by_wave, key=lambda w: (w is None, w or 0)):
@@ -490,23 +735,48 @@ def _gate_groups(risks: list[dict[str, Any]]) -> list[tuple[int | None, str, str
     return out
 
 
+def _to_do_groups(risks: list[dict[str, Any]]) -> dict[int | None, str]:
+    """wave -> its to-do sentence (#1938): each risk of a rule in ``NON_HOLDING_RULES``
+    by its ``to_do`` and id, "To do before wave 1: migrate 5 routines yourself (RISK-002)."
+    With no wave there is no timing, only the cutover sentence."""
+    by_wave: dict[int | None, list[str]] = {}
+    for r in risks:
+        if r.get("rule") in NON_HOLDING_RULES and r.get("to_do"):
+            by_wave.setdefault(r.get("wave"), []).append(f"{r['to_do']} ({r.get('risk_id')})")
+    out: dict[int | None, str] = {}
+    for wave, items in by_wave.items():
+        if wave:
+            out[wave] = f"To do before wave {wave}: {'; '.join(items)}."
+        else:
+            out[wave] = f"To do: {'; '.join(items)}; {CUTOVER_SENTENCE}."
+    return out
+
+
 def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
-    """One mitigation-strategy line per wave: the risks to close before its gate. A
-    wave the roadmap shows carries its line in its own gate instead (:func:`add_gate_lines`)."""
-    return [
+    """One mitigation-strategy line per wave: the risks to close before its gate, then its
+    to-do (:func:`_to_do_groups`). A wave the roadmap shows carries its lines in its own
+    gate instead (:func:`add_gate_lines`)."""
+    lines = [
         f"{f'Before the Wave {wave} gate' if wave else 'Before cutover'}, close {ids} ({labels})."
         for wave, ids, labels in _gate_groups(risks)
     ]
+    to_dos = _to_do_groups(risks)
+    return lines + [to_dos[w] for w in sorted(to_dos, key=lambda w: (w is None, w or 0))]
 
 
 def wave_gate_lines(risks: list[dict[str, Any]]) -> dict[int, str]:
     """wave number -> the sentence its gate in the roadmap ends with: the risks to close
-    before it (#1510). The roadmap owns it; a mitigation points at it (:func:`by_gate`)."""
-    return {
+    before it (#1510), then its to-do, which is no condition of the gate (#1938). The
+    roadmap owns it; a mitigation points at it (:func:`by_gate`)."""
+    out = {
         wave: f"Close {ids} before this gate ({labels})."
         for wave, ids, labels in _gate_groups(risks)
         if wave
     }
+    for wave, line in _to_do_groups(risks).items():
+        if wave:
+            out[wave] = f"{out[wave]} {line}" if wave in out else line
+    return out
 
 
 def _gate_with(wave: dict[str, Any], line: str, old: str | None) -> None:
@@ -635,11 +905,23 @@ def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any
         "routing.flagged": flagged_unservable_risks(report, waves, tables),
         "relational.gaps": relational_gap_risks(gaps, report.get("migration_waves")),
         "routing.no_engine_in_scope": scope_unservable_risks(report),
+        **{
+            rule: [
+                r
+                for r in routine_risks(
+                    facts.get("routines") if isinstance(facts, Mapping) else None
+                )
+                if r["rule"] == rule
+            ]
+            for rule in ROUTINE_RULES.values()
+        },
     }
 
 
 # A wave-gate strategy line (``wave_gate_strategies``), whatever its labels.
-_GATE_LINE = re.compile(r"^Before (?:the Wave \d+ gate|cutover), close ")
+_GATE_LINE = re.compile(
+    r"^(?:Before (?:the Wave \d+ gate|cutover), close |To do(?: before wave \d+)?: )"
+)
 
 
 def _with_gate_lines(strategies: list[Any], new: list[str]) -> list[Any]:

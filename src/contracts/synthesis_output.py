@@ -662,12 +662,28 @@ Version History:
   open_warning_count; WaveRedesignCheck.warning; WaveRedesignRound.wave_edit,
   decision_version and reviewed_before, and its not_reviewed outcome. Backward
   compatible: every new field defaults to None, 0 or empty.
+- 1.91 (2026-11-10, #1938): Added optional facts.routines (RoutineFacts with
+  RoutineFactRow, RoutineRefFact and RoutineRuleFact): the routine-migration headline
+  counts (carried as they are, rewritten, repaired, need repair, rebuilt around a
+  literal, not checked, no code collected, not readable, with checks that could not
+  run), the customer's to-do and its next step with their wave, the routines behind the
+  routine risks with their class, severity and what set it, and the rules they name; ids,
+  kinds, rule ids and reason codes only. Added facts.waves[].to_dos: the to-dos a wave's
+  lines end with, which hold nothing, and Risk.to_do: the to-do a wave's gate lists
+  instead of a condition. Backward compatible: defaults to None or empty.
 """
 
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from src.contracts.assignment_models import (  # re-exported, see docstring below
     AuroraEngineChoice,
@@ -1004,8 +1020,26 @@ class Risk(BaseModel):
             "the results page list them, the executive report states only the count"
         ),
     )
+    to_do: str | None = Field(
+        None,
+        description=(
+            "The customer's to-do a wave's gate lists instead of a condition to close "
+            "(#1938: 'migrate N routines yourself'), for a rule whose risks hold no wave; "
+            "None otherwise (left out of the dump, so every other risk keeps the shape "
+            "it had before 1.91). Counts only, no name"
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
+
+    @model_serializer(mode="wrap")
+    def _without_an_empty_to_do(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """A risk with no to-do dumps as it did before ``to_do`` existed (#1938): a
+        report written before 1.91 renders the same risks as a new synthesis."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("to_do") is None:
+            data.pop("to_do", None)
+        return data
 
 
 class RiskAssessment(BaseModel):
@@ -1765,6 +1799,14 @@ class WaveFacts(BaseModel):
             "warnings as a count that points to the engineering report, and a failed "
             "redesign round without its reason, so it names no collected table or column; "
             "the same as readiness_line otherwise. None before the check"
+        ),
+    )
+    to_dos: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The customer's to-dos the wave's lines end with (#1938: the routines the "
+            "pipeline could not translate automatically, facts.routines' "
+            "migrate_yourself_line); they hold nothing. Counts only, no name"
         ),
     )
 
@@ -3092,6 +3134,172 @@ class PriceListFacts(BaseModel):
     )
 
 
+RoutineCategory = Literal[
+    "as_is",
+    "rewritten",
+    "repaired",
+    "needs_repair",
+    "not_exact",
+    "not_checked",
+    "opted_out",
+    "not_readable",
+]
+RoutineRiskClass = Literal[
+    "migrate_yourself",
+    "behaves_differently",
+    "opted_out",
+    "carried_review",
+]
+
+
+class RoutineRefFact(BaseModel):
+    """A routine by its kind and id (``routines/v<N>/routine_migration.json``'s key)."""
+
+    kind: str = Field(..., description="function, procedure, trigger or event")
+    routine_id: str = Field(..., min_length=1, description="The routine's routine_id")
+
+
+class RoutineRuleFact(BaseModel):
+    """A routine check or rewrite rule a row names, as the rule catalog states it."""
+
+    rule_id: str = Field(..., min_length=1)
+    rule: Literal["check", "rewrite"] = Field(..., description="A check or a rewrite rule")
+    impact: str | None = Field(None, description="A check rule's impact")
+    reason: str = Field(..., description="The catalog's reason")
+    fix_hint: str | None = Field(None, description="A check rule's fix hint")
+
+
+class RoutineFactRow(BaseModel):
+    """One routine that carries a risk (#1938): ids, kinds, rule ids and reason codes
+    only, never its text, a diff of it or what a check found in it."""
+
+    routine_id: str = Field(..., min_length=1)
+    kind: str = Field(..., description="function, procedure, trigger or event")
+    status: str = Field(..., description="The routine-migration artifact's status")
+    category: RoutineCategory = Field(..., description="The headline count it is in")
+    risk_classes: list[RoutineRiskClass] = Field(
+        ..., min_length=1, description="The routine risks it is listed under, most severe first"
+    )
+    severity: str = Field(..., description="Its most severe class's severity")
+    severity_basis: list[str] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "What set the severity (the trace): the failed rule ids, the reason codes, "
+            "rewritten, or the rule ids that could not be checked"
+        ),
+    )
+    reasons: list[str] = Field(
+        default_factory=list, description="The artifact's reasons (failed rule ids, reason codes)"
+    )
+    blocked_by: list[RoutineRefFact] = Field(
+        default_factory=list, description="The routines it names that need attention"
+    )
+    rewrites: list[str] = Field(default_factory=list, description="The rewrite rule ids applied")
+    unknown_checks: list[str] = Field(
+        default_factory=list, description="The check rule ids that could not be checked"
+    )
+    notes: list[str] = Field(default_factory=list, description="The artifact's notes")
+    tables: list[str] = Field(
+        default_factory=list, description="The collected tables it names (what it touches)"
+    )
+    deploy_order: int = Field(..., ge=1)
+
+
+class RoutineFacts(BaseModel):
+    """The routine-migration headline and the routines behind its risks (#1938, ADR-034
+    Decision 7), computed once from the newest ``routines/v<N>/routine_migration.json``
+    at or below the report's assignment version (``src.shared.routine_facts``).
+
+    The ``*_count`` categories split ``routine_count`` (each routine in one): ``as_is``,
+    ``rewritten`` and ``repaired`` are carried; ``needs_repair`` failed a check or a
+    dependency; ``not_exact`` was checked on a rebuilt ``CREATE`` that is not exact;
+    ``not_checked`` has no exact ``CREATE``; ``opted_out`` has none because the customer
+    turned body collection off; ``not_readable``'s body could not be read.
+    ``unknown_checks_count`` and ``rewritten_carried_count`` overlap them: carried
+    routines with a check that could not run, and with a header rewrite. The class
+    counts (``migrate_yourself_count``, ``behaves_differently_count``,
+    ``carried_review_count``) count each routine by its most severe class. ``proof``
+    says what the verdicts rest on."""
+
+    assignment_version: int = Field(..., ge=1, description="The artifact's version read")
+    source_engine: str = Field(...)
+    target_engine: str = Field(...)
+    wave: int | None = Field(
+        None, ge=1, description="The first wave that brings in target_engine; None: none"
+    )
+    routine_count: int = Field(..., ge=0, description="The routines in the artifact")
+    carried_count: int = Field(..., ge=0, description="as_is + rewritten + repaired")
+    as_is_count: int = Field(..., ge=0)
+    rewritten_count: int = Field(..., ge=0)
+    repaired_count: int = Field(..., ge=0)
+    needs_repair_count: int = Field(..., ge=0)
+    not_exact_count: int = Field(..., ge=0)
+    not_checked_count: int = Field(..., ge=0)
+    opted_out_count: int = Field(..., ge=0)
+    not_readable_count: int = Field(..., ge=0)
+    unknown_checks_count: int = Field(
+        ..., ge=0, description="Carried routines with a check that could not run"
+    )
+    rewritten_carried_count: int = Field(
+        ..., ge=0, description="Carried routines with a header rewrite"
+    )
+    migrate_yourself_count: int = Field(
+        ..., ge=0, description="Routines the pipeline could not translate automatically"
+    )
+    behaves_differently_count: int = Field(..., ge=0)
+    carried_review_count: int = Field(
+        ..., ge=0, description="Carried routines rewritten or with a check that could not run"
+    )
+    migrate_yourself_line: str | None = Field(
+        None,
+        description=(
+            "The to-do the risk and the wave line state: 'we could not translate N routines "
+            "automatically; migrate them yourself before wave N'; None with no such routine"
+        ),
+    )
+    migrate_yourself_step: str | None = Field(
+        None,
+        description=(
+            "Its next step: 'migrate these routines yourself before wave N, then check them "
+            "again'; None with no such routine"
+        ),
+    )
+    counts_by_kind: dict[str, int] = Field(default_factory=dict, description="kind -> routines")
+    reason_counts: dict[str, int] = Field(
+        default_factory=dict, description="A reason (rule id or reason code) -> routines"
+    )
+    proof: Literal["checked, not load-tested"] = Field(
+        "checked, not load-tested",
+        description="What the verdicts rest on: the static checks, no load-and-run proof yet",
+    )
+    line: str = Field(..., description="The headline sentence, with no routine or table name")
+    routines: list[RoutineFactRow] = Field(
+        default_factory=list, description="Every routine with a risk class, in deploy order"
+    )
+    rules: list[RoutineRuleFact] = Field(
+        default_factory=list, description="Every rule the rows name, by id"
+    )
+
+    @model_validator(mode="after")
+    def _counts_split_the_total(self) -> "RoutineFacts":
+        parts = (
+            self.as_is_count,
+            self.rewritten_count,
+            self.repaired_count,
+            self.needs_repair_count,
+            self.not_exact_count,
+            self.not_checked_count,
+            self.opted_out_count,
+            self.not_readable_count,
+        )
+        if sum(parts) != self.routine_count:
+            raise ValueError("the routine categories do not add up to the total")
+        if self.carried_count != sum(parts[:3]):
+            raise ValueError("carried_count is not as_is + rewritten + repaired")
+        return self
+
+
 class RelationalGapFacts(BaseModel):
     """The relational move's version and feature gaps against its Aurora target (#471),
     computed once at synthesis by ``src.tools.analysis.relational_gaps``."""
@@ -3515,6 +3723,14 @@ class ReportFacts(BaseModel):
             "None when there is no Aurora target, no collection, or the report predates 1.35"
         ),
     )
+    routines: RoutineFacts | None = Field(
+        None,
+        description=(
+            "How the job's routines migrate (#1938): the headline counts and the routines "
+            "behind the routine risks; None when the job has no routine-migration artifact "
+            "(no routines, or a report written before it)"
+        ),
+    )
     query_pattern_counts: QueryPatternFacts | None = Field(
         None,
         description=(
@@ -3620,7 +3836,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.90",
+        default="1.91",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

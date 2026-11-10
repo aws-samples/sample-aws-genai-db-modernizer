@@ -32,7 +32,9 @@ this payload.
   reader of a 3-4 sentence summary.
 - A ``design.carried_writes`` risk (#1362) carries ``detail_count`` instead of its
   ``details`` (one long approach per statement); its description already counts the
-  statements by intent. Every other risk keeps its ``details``.
+  statements by intent. So does a routine risk (#1938, ``routines.*``): its details name
+  each routine, and its description counts them by kind. Every other risk keeps its
+  ``details``.
 - A trade-off's ``target_tables`` is dropped when it only repeats the bare
   names of its ``source_tables``.
 - A table mapping's alternatives are the engine names, without scores.
@@ -61,7 +63,14 @@ RANKING_KEEP = (
 )
 WAVE_DROP = ("rationale", "gate", "gate_parts")
 # Risks whose details are one long text per statement: the summary gets their count.
-SUMMARISED_DETAIL_RULES = frozenset({"design.carried_writes"})
+SUMMARISED_DETAIL_RULES = frozenset(
+    {
+        "design.carried_writes",
+        "routines.migrate_yourself",
+        "routines.behaves_differently",
+        "routines.opted_out",
+    }
+)
 
 
 def _bare(table: object) -> str:

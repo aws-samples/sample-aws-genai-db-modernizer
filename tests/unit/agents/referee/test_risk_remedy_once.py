@@ -23,6 +23,7 @@ from src.agents.referee.synthesis_report import _build_mitigation_strategies
 from src.contracts.synthesis_output import join_gate_parts
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.report_facts import compute_report_facts
+from src.shared.wave_readiness import NON_HOLDING_RULES
 from tests.report_concision import (
     gate_restatements,
     gate_risk_ids,
@@ -222,7 +223,19 @@ def test_each_waves_gate_lists_the_risks_to_close_before_it() -> None:
         if len(ids) <= GATE_IDS_NAMED:
             assert named[w["wave"]] == ids, w["wave"]
         else:
-            assert f"Close the {len(ids)} Wave {w['wave']} risks before this gate" in w["gate"]
+            # A to-do (#1938) is listed after the conditions, not counted among them.
+            closed = {
+                r["risk_id"]
+                for r in risks
+                if r["wave"] == w["wave"] and r["rule"] not in NON_HOLDING_RULES
+            }
+            assert f"Close the {len(closed)} Wave {w['wave']} risks before this gate" in w["gate"]
+            for r in risks:
+                if r["wave"] == w["wave"] and r["rule"] in NON_HOLDING_RULES:
+                    assert (
+                        f"To do before wave {w['wave']}: {r['to_do']} ({r['risk_id']})."
+                        in w["gate"]
+                    )
     for w in waves:
         assert "before this gate" in w["gate"], w["wave"]
         if "gate_parts" in w:

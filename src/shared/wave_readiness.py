@@ -24,7 +24,10 @@ The checks, in the order a wave's holds list them:
   placement the executive summary's exposures use). A risk with neither holds no wave.
   A risk another engine's analysis raised on queries since moved here
   (``reattributed_from``) holds the wave only when this engine's own analysis or design
-  flags one of the same queries; the hold names the engine that raised it.
+  flags one of the same queries; the hold names the engine that raised it. A risk of a
+  rule in :data:`NON_HOLDING_RULES` never holds a wave (maintainer decision on #1938):
+  the routines the pipeline could not translate are a to-do for the customer, listed in
+  the wave's line (``to_dos``) instead.
 - ``slower_and_pricier``: the source's monthly cost is known and the plan costs more,
   and the wave carries an open medium performance risk (a high one already holds it):
   the plan never suggests a target it rates slower and pricier than the source.
@@ -69,6 +72,9 @@ NEXT_STEPS = ("design", "revise_design", "review_again", "collect_longer", "earl
 #: Each wave's readiness.
 READINESS = ("suggested", "held", "not_designed", "not_reviewed")
 
+#: The risk rules whose risks never hold a wave, whatever their severity (#1938): a
+#: to-do for the customer, which the wave's line lists.
+NON_HOLDING_RULES = frozenset({"routines.migrate_yourself"})
 #: The risk rules whose severity the measured rates drive: only these get "collect over
 #: a longer window" when the rate window check fails.
 RATE_DRIVEN_RULES = frozenset({"design.hot_partition"})
@@ -283,7 +289,7 @@ def _holds_for(
     mine = [
         r
         for r in risks
-        if risk_wave(r, r.get("engine"), waves) == n
+        if risk_wave(r, r.get("engine"), waves) == n and r.get("rule") not in NON_HOLDING_RULES
         # Another engine's flag holds here only when this engine flags the query too.
         and (not r.get("reattributed_from") or r.get("receiving_engine_flags"))
     ]
@@ -436,6 +442,7 @@ def wave_readiness(
     unsupported_by_engine: Mapping[str, int] | None = None,
     review_warnings_by_engine: Mapping[str, list[Mapping[str, Any]]] | None = None,
     wave_edits: Mapping[int, Mapping[str, Any]] | None = None,
+    to_dos_by_wave: Mapping[int, Sequence[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per wave, in order: ``wave``, ``readiness``, ``suggested`` (True when
     suggested, False when held, None otherwise), ``holds``, ``next_steps`` and the
@@ -450,7 +457,8 @@ def wave_readiness(
     :func:`redesign_facts` of the redesign log: a wave states the rounds its engines were
     redesigned in, and why no further round ran when a ceiling stopped it.
     ``wave_edits`` is :func:`wave_edit_facts` (#2067): a suggested wave's line states the
-    customer's decision on its warnings.
+    customer's decision on its warnings. ``to_dos_by_wave`` (wave -> sentences, #1938)
+    are the customer's to-dos a wave's line ends with ("To do: ..."); they hold nothing.
     """
     designed = {str(e) for e in designed_engines}
     unserved = unserved_by_engine or {}
@@ -567,6 +575,12 @@ def wave_readiness(
                     f"{head}: " + "; ".join(_warning_phrase(w) for w in warnings) + "." + otherwise
                 )
                 short = f"{head} ({WARNINGS_LISTED_IN})." + otherwise
+        to_dos = [str(t) for t in (to_dos_by_wave or {}).get(int(wave.get("wave") or 0)) or []]
+        if to_dos:
+            # Counts only, so the short line takes it as it is.
+            tail = " To do: " + "; ".join(to_dos) + "."
+            short = (short or line) + tail
+            line += tail
         if i == 0 and readiness != "suggested" and wave.get("homogeneity") in _WAVE_ONE_MOVES:
             wave_one_unsuggested = True
         rows.append(
@@ -578,6 +592,7 @@ def wave_readiness(
                 "next_steps": steps,
                 "readiness_line": line,
                 "readiness_line_short": short or line,
+                "to_dos": to_dos,
                 "review_warnings": warnings if readiness == "suggested" else [],
                 "review_warning_count": len(warnings) if readiness == "suggested" else 0,
                 "accepted_warnings": accepted,

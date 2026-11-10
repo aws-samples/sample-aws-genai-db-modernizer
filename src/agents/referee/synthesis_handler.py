@@ -127,6 +127,7 @@ from src.shared.report_facts import (
     table_owner_fields,
     wave_retained_engine,
 )
+from src.shared.routine_facts import read_routine_facts
 from src.shared.source_cache import cost_basis_fields
 from src.shared.trade_off_topics import predates_topics, trade_off_note_kind, trade_off_topic
 from src.storage.artifact_store import ArtifactStore
@@ -528,6 +529,10 @@ def run_synthesis_deterministic(
     hot_partitions = _hot_partitions(data)
     # #471: the relational move's gaps, read before the risks, which raise them (#1149).
     relational_gaps = _relational_gaps(data)
+    # #1938: the routine-migration facts (the newest artifact at or below this version),
+    # read before the risks, which raise them. Routing never reads them (ADR-034
+    # Decision 8): the assignment is already written.
+    routines = read_routine_facts(store, database_name, job_id, assignment_version, migration_waves)
     # #1362: the write-group members their engine serves poorly, read before the risks,
     # which raise them; report.json keeps them for the detailed engineering report (#1364).
     carried_writes = _carried_writes(store, database_name, job_id, data)
@@ -582,6 +587,7 @@ def run_synthesis_deterministic(
             copy_lines=copy_lines,
             hot_partitions=hot_partitions,
             busiest_partition_key=busiest_partition_key,
+            routines=routines,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -753,6 +759,7 @@ def run_synthesis_deterministic(
         "scope_unservable": scope_unservable,
         "carried_writes": carried_writes,
         "relational_gaps": relational_gaps,
+        "routines": routines,
         "hot_partitions": hot_partitions,
         "busiest_partition_key": busiest_partition_key,
         "growth_scenarios": growth_scenarios,
@@ -1680,6 +1687,19 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
             else None
         ),
         growth_scenarios=result.get("growth_scenarios"),
+        # #1938: the routine facts the risks were raised from (an older caller's result
+        # without them reads the artifact here).
+        routines=(
+            result["routines"]
+            if "routines" in result
+            else read_routine_facts(
+                store,
+                result["database_name"],
+                result["job_id"],
+                assignment_version,
+                result.get("migration_waves"),
+            )
+        ),
     )
 
     return output_data

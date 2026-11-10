@@ -1301,8 +1301,33 @@ def _all_kinds() -> list[dict[str, Any]]:
             }
         ],
         carried_writes=[_carried("w1", "db.a", DDB, 20, "retention-delete", "Retention delete")],
+        # #1938: a routine that cannot be carried as it is.
+        routines=_routine_facts(),
         start_id=7,
     )
+
+
+def _routine_facts() -> dict[str, Any] | None:
+    from src.shared.routine_facts import routine_facts
+    from tests.unit.shared.test_routine_facts import REWRITE, _artifact, _fail, _row
+
+    # One routine per routine rule: one to migrate by hand, one that behaves differently,
+    # one with no code collected, one carried with a header rewrite.
+    return routine_facts(
+        _artifact(
+            _row("db.f()", "needs_attention", reasons=["pg-language"],
+                 checks=[_fail("pg-language")]),
+            _row("db.g()", "needs_attention", reasons=["pg-public-schema"],
+                 checks=[_fail("pg-public-schema")]),
+            _row("db.h()", "needs_attention", source_text="not_collected",
+                 body_status="opted_out", reasons=["source_text_not_collected"]),
+            _row("db.k()", "rewritten", rewrites=[REWRITE]),
+            source="mysql",
+            target=AURORA,
+        ),
+        1,
+        [WAVE_1],
+    )  # fmt: skip
 
 
 def test_ids_continue_after_the_analysis_risks() -> None:
@@ -1324,7 +1349,17 @@ def test_every_rule_is_raised_by_the_fixture_and_documented() -> None:
 def test_every_risk_has_evidence_a_mitigation_and_a_wave() -> None:
     for r in _all_kinds():
         assert r["mitigation"], r["rule"]
-        assert r["affected_tables"] or r["query_ids"], r
+        # #1938: a routine risk's evidence is the routines its details name (a routine
+        # need not name a table).
+        assert (
+            r["affected_tables"]
+            or r["query_ids"]
+            # The carried routines are one risk with counts (maintainer decision on #1938).
+            or (
+                str(r["rule"]).startswith("routines.")
+                and (r.get("details") or r["rule"] == "routines.carried")
+            )
+        ), r
         # #1329: a query with no engine in the scope is in no wave; it blocks cutover.
         expected = (None,) if r["rule"] == "routing.no_engine_in_scope" else (1, 2, 3)
         assert r["wave"] in expected, r
@@ -1339,6 +1374,8 @@ def test_the_strategies_name_each_risk_by_wave_gate() -> None:
         "Before the Wave 3 gate",
         # #1329: the queries with no engine in the scope, in no wave.
         "Before cutover",
+        # #1938: the routine to-do, listed as a to-do, not a condition.
+        "To do before wave 1: migrate 1 routine yourself (RISK-022).",
     ]
     joined = " ".join(lines)
     for r in risks:
