@@ -116,7 +116,7 @@ The pilot runs wordpress (MySQL 8.0) first as a smoke run of the whole chain, th
 ## Open questions
 
 - Sizing and cost per step: Flink parallelism and state, and MSK. MSK Serverless: 120 compacted partitions per cluster (adjustable), 250 GB per compacted partition, 5 MBps ingress per partition. MSK Connect: 60 workers per account, 10 per connector.
-- Reconciliation evidence for the gates without writing into the source. DMS data validation covers step 1 for tables with a primary key or unique index (not views, not Db2 for z/OS; it stops after 10,000 failed records); later steps need counts and checksums per rule.
+- Reconciliation evidence for the gates without writing into the source. DMS data validation covers step 1 for tables with a primary key or unique index (not views, not Db2 for z/OS; it stops after 10,000 failed records); later steps need counts and checksums per rule. Step 1 also has optional read-only per-table counts and checksums the customer runs on both sides (#1998, `run_dms_step.py verify-scripts`), outside the gate.
 - Incremental snapshots without a step 1: Debezium's signal table needs write access in the database it reads, which would be the source. Use the MySQL read-only (GTID) mode, or no incremental snapshots there.
 - Failed transforms: dead-letter topics per target, reporting and replay.
 - Security and observability of the pipeline (credentials, encryption, least privilege, lag and failure metrics).

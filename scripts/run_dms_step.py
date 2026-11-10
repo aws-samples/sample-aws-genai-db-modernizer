@@ -58,6 +58,11 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   steps (empty them on Aurora, then reload the task themselves): nothing here connects to a
   database. Each points at the other only when the other would run. Both wait until the task
   runs, with the same refusals and ownership checks as ``stop``.
+- ``verify-scripts`` and ``verify`` (#1998, optional; no AWS call, never connects to a database):
+  write step 1's read-only comparison scripts (``verify-source.sql``, ``verify-target.sql``,
+  ``verify.md``) for the customer to run; read their output files strictly and write
+  ``verify.json`` (per table match, changing, differ, not_compared or missing). It never
+  changes the gate.
 - Every line about the task carries ``hint`` (the fix for a failure DMS describes in a known
   way, ``src/tools/data_movement/dms_failures.py``; None for any other). ``status``'s line
   carries ``recovery``: ``resume`` or ``retry`` only when that command would run, by the same
@@ -118,7 +123,8 @@ RECOVER = (RESUME, RETRY)
 WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *ENDING)
 WAITS = (*ENDING, RESTART, *RECOVER)  # the writes that wait, by default up to MAX_WAIT_SECONDS
 READS = ("preflight", "gate", "status")
-LOCAL = ("steps", "summary", "plan")
+VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
+LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY)
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -1555,6 +1561,62 @@ def _delete_step_stack(
             "waited_seconds": waited}  # fmt: skip
 
 
+# --- Verify (#1998): optional scripts the customer runs; nothing connects to a database ---
+
+VERIFY_SHOWN = 50  # tables named on a printed line; verify.json names every one
+
+
+def verify_step(
+    command: str, root: str, db: str, job_id: str, inputs: MoveInputs
+) -> dict[str, Any]:
+    """``verify-scripts``: write step 1's read-only comparison scripts and ``verify.md``.
+    ``verify``: read the customer's output files strictly and write ``verify.json``; a
+    refused file, or none yet, removes an earlier result. No AWS call; it never changes the
+    gate."""
+    from src.contracts.verify_result import VerifyResult
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.verify_check import VerifyOutputError, read_verify
+    from src.tools.data_movement.verify_scripts import OUTPUTS, write_verify_scripts
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    key = f"{db}/{job_id}/data-movement/step-1/verify.json"
+    step_dir = _step_dir(root, db, job_id)
+    gate = "verify is optional and does not change the gate"
+    if command == VERIFY_SCRIPTS:
+        store.delete(key)  # a result read from the earlier scripts' files is stale
+        for name in OUTPUTS.values():  # and so are those files: none may decide a result
+            (step_dir / name).unlink(missing_ok=True)
+        target_db = inputs.target_database_name or step.plan.source.database
+        made = write_verify_scripts(step.contract, step.contract_sha256, step_dir,
+                                    source_engine=step.plan.source.engine,
+                                    target_database=target_db)  # fmt: skip
+        return {"status": "ready", "tables": made.tables, "columns": made.columns,
+                "not_checked": [{"table_id": t, "reason": r} for t, r in made.not_checked][:VERIFY_SHOWN],
+                "files": made.files, "gate": gate}  # fmt: skip
+    try:
+        result = read_verify(step_dir, step.contract, job_id=job_id, database_name=db,
+                             contract_sha=step.contract_sha256)  # fmt: skip
+    except VerifyOutputError as exc:
+        store.delete(key)
+        raise MoveError(f"refused: {exc}") from None
+    if result is None:
+        store.delete(key)
+        return {"status": "no_output", "expected": [str(step_dir / OUTPUTS[(s, 1)]) for s in
+                                                    ("source", "target")], "gate": gate}  # fmt: skip
+    checked: VerifyResult = result
+    store.write_json(key, checked.model_dump(mode="json"))
+    counts = {s: sum(1 for t in result.tables if t.status == s)
+              for s in ("match", "changing", "differ", "not_compared", "missing")}  # fmt: skip
+    named = [{"table_id": t.table_id, "status": t.status, "missing_on": t.missing_on,
+              "unhashed_on": t.unhashed_on} for t in result.tables if t.status != "match"]  # fmt: skip
+    return {"status": result.status, **counts, "tables": len(result.tables),
+            "second_run": result.second_run, "not_matched": named[:VERIFY_SHOWN],
+            "not_checked": len(result.not_checked), "result": str(Path(root) / key),
+            "gate": gate}  # fmt: skip
+
+
 # --- Entry point -------------------------------------------------------------------------
 
 
@@ -1695,6 +1757,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         inputs = load_inputs(inputs_path)
         if args.command == "plan":
             return emit(deploy_plan(args.artifact_root, db, job_id, inputs))
+        if args.command in (VERIFY_SCRIPTS, VERIFY):
+            return emit(verify_step(args.command, args.artifact_root, db, job_id, inputs))
         _use_profile(inputs.write_profile if args.command in WRITES else inputs.read_profile)
         if args.command in ("preflight", "gate"):
             return _delegate(args.command, args, inputs)

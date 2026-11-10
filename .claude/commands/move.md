@@ -213,6 +213,20 @@ uv run python scripts/run_dms_step.py gate --job-id {job_id} --db {db}
 
 Show the evidence from that line only: its `status` (`pass`, `pending` or `fail`), every entry of `reasons` (prefixed `load:`, `lag:` or `parity:`), every named entry of `exceptions` (each `table` with its `kind`: what the parity check left out), and `gate` (the path of `gate.json`, with the full load, lag and parity evidence). `pending` usually means lag datapoints or validation are still arriving: run the gate again in a few minutes. Then quote the line's `cutover_message` field verbatim, as a block quote: never shorten, reword or summarise it, and never recommend a time to cut over. When to cut over is the customer's decision (`cutover_decision` is `customer`); this command never cuts over.
 
+**Verify (optional).** Then offer, in one line, an independent read-only comparison of the source and Aurora (per moved table, a row count and a checksum); say it is optional and does not change the gate. Under `--auto`, never offer it. On a yes, run (no AWS call; the modernizer never connects to a database):
+
+```bash
+uv run python scripts/run_dms_step.py verify-scripts --job-id {job_id} --db {db}
+```
+
+Point the customer at `verify.md` in its `files` (they run both scripts with read-only sessions, twice each, as it says); once they say the outputs are there, run:
+
+```bash
+uv run python scripts/run_dms_step.py verify --job-id {job_id} --db {db}
+```
+
+Show its `status`, the `match`, `changing`, `differ`, `not_compared` and `missing` counts, every entry of `not_matched` and its `gate` verbatim, never a value; `"status": "no_output"` means the files are not at `expected` yet, and an error line (a refused file) names the file to produce again.
+
 Then tell the customer in one line how the step ends: when you have cut over, or to abandon the move, ask `/move step-1` to end the step; it stops the task and then deletes the DMS stack (CloudFormation cannot delete a running task). End with `MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`.
 
 ## Ending the step

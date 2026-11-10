@@ -561,6 +561,8 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"data-movement/step-\d+/plan\.json", "src.contracts.data_movement_plan:DataMovementPlan"),
     (r"data-movement/step-\d+/gate\.json", "src.contracts.dms_gate:DmsGate"),
     (r"data-movement/step-\d+/preflight\.json", "src.contracts.dms_preflight:DmsPreflight"),
+    # #1998: the customer's runs of step 1's read-only verify scripts, compared.
+    (r"data-movement/step-\d+/verify\.json", "src.contracts.verify_result:VerifyResult"),
     (r"data-movement/hub/plan\.json", "src.contracts.data_movement_plan:HubPlan"),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),
     (r"[^/]+/answers\.json", "src.contracts.agent_interaction_models:AgentAnswers"),
