@@ -62,6 +62,25 @@ def _recorded_review(query_ids: list[str]) -> dict[str, Any]:
     return review
 
 
+#: The Aurora MySQL review answer (#2081): its contract has no routing flags, so it can
+#: hold or warn about its wave but never move a query.
+AURORA_REVIEW: dict[str, Any] = {
+    "verdict": "APPROVED",
+    "summary": "The draft keeps the source keys and indexes.",
+    "change_requests": [
+        {
+            "category": "indexing",
+            "severity": "warning",
+            "target": "wp_posts",
+            "requested_change": "add an index on post_author",
+            "rationale": "the author listing scans wp_posts",
+        }
+    ],
+    "strengths": ["keeps every source primary key"],
+    "pe_notes": [],
+}
+
+
 def _source(table: str) -> str:
     return table.rsplit(".", 1)[-1]
 
@@ -152,7 +171,8 @@ class Headless:
         """``run_pe_review.py``, the recording as every answer, one finalize each."""
         prepared = self.run("pe-review", "run_pe_review.py")
         for review in prepared["reviews"]:
-            _write(Path(review["response"]), self.review)
+            answer = self.review if review["engine"] == "dynamodb" else AURORA_REVIEW
+            _write(Path(review["response"]), answer)
             group = [] if review["group"] is None else ["--group", str(review["group"])]
             done = self.run(
                 "pe-review-finalize",
@@ -250,6 +270,10 @@ def headless(tmp_path_factory) -> dict:
             if g["carried_from"] is not None
         ],
         "second_reviews": second_reviews,
+        "aurora_request_v3": json.loads(
+            (root / DB / JOB / "llm_requests" / "pe_review_aurora_mysql.json").read_text()
+        ),
+        "aurora_trace_v3": store.read_json(f"{prefix}/schema-aurora_mysql/v3/design_trace.json"),
         "second": second,
         "again": again,
         "router": store.read_json(f"{prefix}/post-schema-router/router_output.json"),
@@ -317,7 +341,7 @@ def rolled(headless, tmp_path_factory) -> dict:
 
 
 class TestTheReviewIsAnExternalStep:
-    def test_one_request_per_dynamodb_group_and_aurora_is_skipped(self, headless) -> None:
+    def test_one_request_per_dynamodb_group_on_the_first_version(self, headless) -> None:
         [first_prepare] = [line for step, line in headless["lines"] if step == "pe-review"][:1]
         groups = [r["group"] for r in first_prepare["reviews"]]
         assert first_prepare["status"] == "awaiting_llm"
@@ -343,10 +367,41 @@ class TestTheReviewIsAnExternalStep:
             ([headless["id"]], "full_scan")
         ] * n
 
-    def test_the_redesign_is_reviewed_and_aurora_mysql_is_skipped(self, headless) -> None:
+    def test_the_redesign_is_reviewed_aurora_mysql_included(self, headless) -> None:
+        """#2081: the Aurora MySQL design is reviewed too, with its own skill and the
+        delta and evidence the Bedrock reviewer reads."""
         reviews = headless["second_reviews"]
-        assert [r["engine"] for r in reviews["reviews"]] == ["dynamodb"] * len(reviews["reviews"])
+        engines = [r["engine"] for r in reviews["reviews"]]
+        assert engines.count("aurora_mysql") == 1 and set(engines) == {"aurora_mysql", "dynamodb"}
+        assert reviews["skipped"] == []
         assert all(r["response"].count("/llm_responses/") == 1 for r in reviews["reviews"])
+        request = headless["aurora_request_v3"]
+        assert request["skill_prompt"] == "src/skills/aurora_mysql-pe-review.md"
+        assert request["design"] == {"delta_version": "1.0"} | {
+            k: []
+            for k in ("tables", "type_rules", "optimizations", "app_layer_notes", "trade_offs")
+        }
+        assert set(request["evidence"]) == {
+            "migration_strategy",
+            "residual_types",
+            "hot_queries",
+            "touched_tables",
+        }
+        assert headless["id"] in request["query_ids"]
+
+    def test_the_aurora_review_routes_nothing(self, headless) -> None:
+        """Its contract has no routing flags: recorded with its warning, it moves no query."""
+        from src.agents.referee.post_schema_router import routing_flags_from_trace
+
+        trace = headless["aurora_trace_v3"]
+        assert trace["pe_review"]["verdict"] == "APPROVED"
+        assert [(e["type"], e["blockers"], len(e["warnings"])) for e in trace["trace"]] == [
+            ("pe_review", 0, 1)
+        ]
+        assert routing_flags_from_trace(trace) == []
+        designs = headless["report"]["schema_designs"]["aurora_mysql"]
+        assert (designs["reviewed_count"], designs["open_review_count"]) == (1, 0)
+        assert len(designs["review_warnings"]) == 1
 
 
 class TestTheRerouteRunsTheSharedRouter:
@@ -371,8 +426,10 @@ class TestTheRerouteRunsTheSharedRouter:
         assert line["status"] == "awaiting_redesign" and line["missing_designs"] == []
         carried = headless["carried_v3"]
         assert 0 < len(carried) < headless["groups_v3"]
+        # #2081: the Aurora MySQL redesign waits for its review too.
         assert line["missing_reviews"] == [
-            f"dynamodb group {g}" for g in range(headless["groups_v3"]) if g not in carried
+            "aurora_mysql",
+            *(f"dynamodb group {g}" for g in range(headless["groups_v3"]) if g not in carried),
         ]
         assert not headless["has_pass_1_unreviewed"]
         # Reviewed after the merge and merged again: the trace has them.

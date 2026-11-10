@@ -26,11 +26,13 @@ source, a wave 1 not suggested, a wave not designed yet.
    merged with the rest; ``redesign_request.json`` records the failed checks, which the
    design input of every mode carries (:func:`redesign_input`, risk text framed);
 2. the engine is designed and reviewed again, then synthesis runs again;
-3. :func:`plan_round` closes the round. The new design is kept only when it exists and
-   is **strictly better**: fewer holds on the engine's waves or fewer assigned queries it
+3. :func:`plan_round` closes the round. The new design is kept only when it exists, its
+   review ran (every engine's design is reviewed in both modes, #2081) and it is
+   **strictly better**: fewer holds on the engine's waves or fewer assigned queries it
    marks unsupported, and more of neither. Otherwise the earlier design is put back
-   (``did_not_improve``, or ``failed`` when no design was written) and synthesis runs
-   once more on it. A design that failed to run is put back at once (:func:`fail_round`).
+   (``did_not_improve``, ``not_reviewed``, or ``failed`` when no design was written) and
+   synthesis runs once more on it. A design that failed to run is put back at once
+   (:func:`fail_round`).
    ``fixed`` means the kept design is reviewed and no redesign-fixable hold is left;
    ``improved`` means it is kept and still held.
 
@@ -91,6 +93,11 @@ LOOP_ENDINGS = frozenset({COMPLETE, EXHAUSTED, STOPPED})
 #: The status line of a run with no in-process design (no model): no round, with its
 #: ``reason``.
 SKIPPED = "skipped"
+#: The status line of a round whose redesign's review is still to come (#2081, a
+#: headless run): review it, synthesize, then check again; the round stays open.
+AWAITING_REVIEW = "awaiting_review"
+#: The status lines a caller continues from, not endings of the loop.
+LOOP_STEPS = frozenset({"awaiting_synthesis", "awaiting_redesign", AWAITING_REVIEW})
 
 
 def log_key(db: str, job_id: str, version: int) -> str:
@@ -437,6 +444,20 @@ def _reviewed(report: Mapping[str, Any], engine: str) -> bool:
     )
 
 
+def pending_reviews(
+    store: ArtifactStore, db: str, job_id: str, version: int, log: Mapping[str, Any]
+) -> list[str]:
+    """The open round's designs whose review is not recorded yet (``missing_reviews``):
+    a headless run reviews a redesign as its own step, so the round must not close
+    ``not_reviewed`` before it. A review recorded as failed is recorded."""
+    rnd = _open_round(log)
+    if rnd is None:
+        return []
+    from src.agents.schema_design.pe_review_external import missing_reviews
+
+    return missing_reviews(store, db, job_id, version, list(rnd.get("engines") or []))
+
+
 def _close(
     store: ArtifactStore,
     db: str,
@@ -457,18 +478,14 @@ def _close(
     restored: list[str] = []
     for engine in rnd.get("engines") or []:
         before = list((rnd.get("before") or {}).get(engine) or [0, 0])
-        reviewed_before = bool((rnd.get("reviewed_before") or {}).get(engine, True))
         if engine not in designed:
             outcome[engine] = FAILED
             rnd.setdefault("failed", {})[
                 engine
             ] = f"redesign round {n} failed: schema_design_{engine} wrote no design"
-        elif not _review_ran(report, engine) and (
-            reviewed_before
-            or int((_designs(report).get(engine) or {}).get("failed_review_count") or 0)
-        ):
-            # A design is never kept unreviewed when the one it replaced was reviewed, or
-            # when its review failed (#2067 review): no review, no better.
+        elif not _review_ran(report, engine):
+            # Every design is reviewed in both modes (#2081): a design whose review did
+            # not run or failed is never kept, whatever the one it replaced had.
             outcome[engine] = NOT_REVIEWED
         elif not _strictly_better(_round_score(report, engine, before), before):
             outcome[engine] = DID_NOT_IMPROVE
@@ -515,10 +532,14 @@ def plan_round(
     *,
     parts: bool = False,
     budget: Callable[[], str | None] | None = None,
+    wait_for_reviews: bool = False,
 ) -> dict[str, Any]:
     """Close the last round from ``report`` and start the next one when a fixable hold
     is left and rounds remain. The status line:
 
+    - ``awaiting_review`` (only with ``wait_for_reviews``, a headless run, which reviews
+      a design as its own step): ``missing_reviews`` lists the round's designs with no
+      review recorded yet: review them, synthesize, then run this again;
     - ``awaiting_synthesis``: an engine's earlier design was put back (``restored``):
       synthesize again, then run this again;
     - ``awaiting_redesign``: design again exactly ``engines`` (``parts``: the DynamoDB
@@ -528,6 +549,9 @@ def plan_round(
       (``budget`` gave a reason: no round starts; synthesize once more to state it).
     """
     log = read_log(store, db, job_id, version)
+    pending = pending_reviews(store, db, job_id, version, log) if wait_for_reviews else []
+    if pending:
+        return {"status": AWAITING_REVIEW, "missing_reviews": pending, "rounds": len(log["rounds"])}
     restored = _close(store, db, job_id, version, log, report)
     if restored:
         store.write_json(log_key(db, job_id, version), log)
@@ -578,7 +602,6 @@ def plan_round(
             "engines": sorted(requests),
             "requests": [requests[e] for e in sorted(requests)],
             "before": {e: engine_score(report, e) for e in sorted(requests)},
-            "reviewed_before": {e: _review_ran(report, e) for e in sorted(requests)},
             "parts": affected,
             "outcome": None,
         }

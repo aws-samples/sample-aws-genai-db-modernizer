@@ -22,8 +22,9 @@ the decision) or ``nothing_to_edit``.
 
 ``--check``, after each synthesis: closes the round by the #1992 loop's rule and prints
 ``awaiting_synthesis`` (the earlier design is back: synthesize again, then check again),
-``awaiting_redesign`` (the next round) or ``complete`` with the wave's new readiness
-line. A design that fails is rolled back with ``run_wave_redesign.py --rollback``.
+``awaiting_redesign`` (the next round), ``awaiting_review`` (a redesign's review is not
+recorded yet: review it, synthesize, then check again) or ``complete`` with the wave's
+new readiness line. A design that fails is rolled back with ``run_wave_redesign.py --rollback``.
 
 Routing never changes: no assignment version is written. Without a model no redesign
 can run: with ``--no-model`` (what ``/wave-edit --llm-mode none`` passes), ``--reject``

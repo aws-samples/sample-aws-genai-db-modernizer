@@ -117,9 +117,10 @@ class PEReviewResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_changes_match_verdict(self) -> PEReviewResult:
-        blockers = [cr for cr in self.change_requests if cr.severity == Severity.BLOCKER]
-        if self.verdict == ReviewVerdict.APPROVED and blockers:
-            raise ValueError("Cannot approve with blocker-severity change requests.")
-        if self.verdict == ReviewVerdict.CHANGES_REQUESTED and not self.change_requests:
-            raise ValueError("Must provide change_requests when verdict=CHANGES_REQUESTED.")
+        # The one verdict rule every engine's review is held to (#2081).
+        from src.shared.review_verdict import verdict_errors
+
+        errors = verdict_errors(self.verdict, self.change_requests)
+        if errors:
+            raise ValueError(errors[0])
         return self

@@ -130,6 +130,16 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalArtifactStore
     return s
 
 
+def _os_redesign(store: LocalArtifactStore, name: str) -> None:
+    """A round's OpenSearch design and its review, as the design and review subagents
+    record them: a headless round closes only once its review is in (#2081)."""
+    store.write_json(OS_DESIGN, {"design": name})
+    store.write_json(
+        f"{DB}/{JOB}/schema-opensearch/v{V}/design_trace.json",
+        {"pe_review": {"source": "external", "verdict": "APPROVED"}},
+    )
+
+
 def _decision(store: LocalArtifactStore, wave: int, n: int) -> dict[str, Any]:
     return store.read_json(f"{DB}/{JOB}/decisions/wave-edit/wave-{wave}/v{n}.json")
 
@@ -191,7 +201,7 @@ def test_rejected_warnings_reach_the_designer_framed_and_only_wave_n_moves(
     rnd = read_log(store, DB, JOB, V)["rounds"][0]
     assert rnd["wave_edit"] == 2 and rnd["decision_version"] == 1
     assert rnd["before"] == {"dynamodb": [0, 0, 2]}
-    assert rnd["reviewed_before"] == {"dynamodb": True}
+    assert "reviewed_before" not in rnd  # legacy since #2081: written no more
     WaveRedesignLog.model_validate(read_log(store, DB, JOB, V))
 
 
@@ -335,6 +345,24 @@ def test_an_unreviewed_design_is_never_kept(
     )
 
 
+def test_an_old_jobs_unreviewed_design_is_not_replaced_by_an_unreviewed_one(
+    store: LocalArtifactStore,
+) -> None:
+    """#2081: a job saved when Claude Code reviewed no Aurora or ElastiCache design has
+    an earlier design with no review. Its redesign is reviewed now; one whose review did
+    not run is never kept on score alone."""
+    before = _report([], reviewed=0)
+    before["facts"]["waves"][1].update(
+        readiness="held", holds=[_hold("unsupported_queries", engine="dynamodb")]
+    )
+    we.decide(store, DB, JOB, before, V, wave=2, reject=[])
+    store.write_json(DESIGN, {"design": "second"})
+    status = we.check(store, DB, JOB, _report([], reviewed=0), V, wave=2)
+    assert status["status"] == "awaiting_synthesis"
+    assert store.read_json(DESIGN) == {"design": "first"}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "not_reviewed"}
+
+
 def test_a_new_blocker_is_worse_even_with_fewer_warnings(store: LocalArtifactStore) -> None:
     we.decide(store, DB, JOB, _report(), V, wave=2, reject=[1])
     store.write_json(DESIGN, {"design": "second"})
@@ -343,12 +371,13 @@ def test_a_new_blocker_is_worse_even_with_fewer_warnings(store: LocalArtifactSto
     assert store.read_json(DESIGN) == {"design": "first"}
 
 
+@pytest.mark.passes_on_main  # #2081 only adds the review a headless round waits for
 def test_the_rounds_of_one_edit_are_bounded(store: LocalArtifactStore) -> None:
     # A blocker left after each kept round sends the engine back, at most twice.
     holds = [_hold("open_review", "opensearch")] * 3
     we.decide(store, DB, JOB, _report(wave3_holds=holds), V, wave=3, reject=[])
     for n in range(1, MAX_REDESIGN_ROUNDS + 1):
-        store.write_json(OS_DESIGN, {"design": f"round {n}"})
+        _os_redesign(store, f"round {n}")
         status = we.check(store, DB, JOB, _report(wave3_holds=holds[n:]), V, wave=3)
         if n < MAX_REDESIGN_ROUNDS:
             assert status["status"] == "awaiting_redesign" and status["round"] == n + 1
@@ -359,6 +388,7 @@ def test_the_rounds_of_one_edit_are_bounded(store: LocalArtifactStore) -> None:
     ]
 
 
+@pytest.mark.passes_on_main  # #2081 only adds the review a headless round waits for
 def test_wave_edit_and_the_automatic_loop_keep_separate_round_budgets(
     store: LocalArtifactStore,
 ) -> None:
@@ -372,7 +402,7 @@ def test_wave_edit_and_the_automatic_loop_keep_separate_round_budgets(
     # A wave edit on the same wave still gets its own two rounds.
     first = we.decide(store, DB, JOB, _report(wave3_holds=holds[2:]), V, wave=3, reject=[])
     assert first["status"] == "awaiting_redesign" and first["round"] == 1
-    store.write_json(OS_DESIGN, {"design": "edit 1"})
+    _os_redesign(store, "edit 1")
     second = we.check(store, DB, JOB, _report(wave3_holds=holds[3:]), V, wave=3)
     assert second["status"] == "awaiting_redesign" and second["round"] == 2
 
@@ -454,3 +484,18 @@ def test_the_command_ships_with_its_script_allowed_in_ci() -> None:
         "`Bash(uv run python scripts/run_wave_edit.py *)` (#2067)"
         in (REPO / "ci/README.md").read_text()
     )
+
+
+def test_a_wave_edit_round_waits_for_its_redesigns_review(store: LocalArtifactStore) -> None:
+    """#2081 review: /wave-edit's check never closes a round before its review is in."""
+    holds = [_hold("open_review", "opensearch")]
+    we.decide(store, DB, JOB, _report(wave3_holds=holds), V, wave=3, reject=[])
+    store.write_json(OS_DESIGN, {"design": "second"})
+    status = we.check(store, DB, JOB, _report(wave3_holds=[]), V, wave=3)
+    assert status == {"status": "awaiting_review", "missing_reviews": ["opensearch"], "wave": 3}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] is None
+    _os_redesign(store, "second")
+    # Reviewed now: the round closes on its score, and the better design is kept.
+    we.check(store, DB, JOB, _report(wave3_holds=[]), V, wave=3)
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"opensearch": "improved"}
+    assert store.read_json(OS_DESIGN) == {"design": "second"}

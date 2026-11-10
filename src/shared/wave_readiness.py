@@ -678,14 +678,17 @@ def _last_review(run: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _holds_review(review: Mapping[str, Any]) -> bool:
-    """A review holds its wave only with a blocker (maintainer decision on #2051): a
-    review with only warnings does not. An older record with no severities holds when it
-    did not approve the design."""
+    """A review holds its wave when it has a blocker, whatever its verdict (maintainer
+    decision on #2051; #2081: an approval that lists a blocker holds too): a review with
+    only warnings does not. An older record with no severities holds when it did not
+    approve the design. A review that failed to run holds nothing."""
     verdict = str(review.get("verdict") or "").upper()
-    if verdict in ("APPROVED", "FAILED"):
+    if verdict == "FAILED":
         return False
     blockers = review.get("blockers")
-    return True if blockers is None else int(blockers) > 0
+    if blockers is None:
+        return verdict != "APPROVED"
+    return int(blockers) > 0
 
 
 def _runs(trace: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:

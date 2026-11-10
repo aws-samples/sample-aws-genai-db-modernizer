@@ -39583,7 +39583,7 @@
       }
     },
     "schema_hash": "8dd0bb3d21d6f9ec51c74e84cc15fe9a97e41c02265d480882ea1be1d119ace7",
-    "version": "1.92"
+    "version": "1.93"
   },
   "transformation_contract.StepContract": {
     "fields": {

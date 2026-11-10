@@ -55,8 +55,8 @@ LOOP_MODULES: dict[str, ModuleType] = {
     for engine in DESIGNER_MODULES
 }
 ENGINES = tuple(DESIGNER_MODULES)
-#: The engines /review-schema reviews headless (the others carry no routing flags).
-HEADLESS_ENGINES = ("dynamodb", "documentdb", "opensearch")
+#: The engines /review-schema reviews headless: every engine (#2081).
+HEADLESS_ENGINES = ENGINES
 
 NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 #: Spellings a skill once used that no contract accepts.
@@ -170,7 +170,7 @@ def test_a_stated_review_count_is_the_runners(engine: str) -> None:
     assert all(number == cap for _, number in stated), (engine, cap, stated)
 
 
-@pytest.mark.passes_on_main  # guards the command's restatement, which already agrees
+@pytest.mark.passes_on_main  # main's command already names only these, now for all six (#2081)
 def test_review_schema_names_only_values_every_headless_engine_accepts() -> None:
     command = (REPO / ".claude/commands/review-schema.md").read_text(encoding="utf-8")
     common = set.intersection(*(_allowed(engine) for engine in HEADLESS_ENGINES))

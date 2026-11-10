@@ -18,7 +18,8 @@ front of you.
   designer, who revises the design; a fresh review then reads the revision. A
   design gets at most two reviews, and the design after the second is accepted
   as it stands, so raise every change that matters now rather than saving one
-  for later.
+  for later. In a headless run there is no revision: the review is recorded with
+  the design.
 - `APPROVED` ends the loop. Change requests on an approved review are not
   applied, so advice that does not block the design goes in `pe_notes`.
 - `pe_notes` can be added to the design's trade-offs as review notes, which the

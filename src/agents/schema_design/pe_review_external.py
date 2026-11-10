@@ -24,10 +24,17 @@ A flag is evidence, never a destination: the post-schema router gates the
 flagged engine and the shared scorer picks among the engines the assignment
 keeps (ADR-031 Decision 11 Amendment 2). Nothing here routes.
 
+Every engine's design is reviewed, as in Bedrock mode (#2081): a review's
+``blocker`` change requests hold its wave and the others are listed for the
+customer to accept (``src/shared/wave_readiness.py``, #2051), whether or not its
+contract can flag. The Aurora and ElastiCache contracts carry no
+``routing_flags``, so their reviews route nothing. An Aurora reviewer reads what
+the Bedrock one reads: the designer's delta against the deterministic draft and
+the evidence it is judged against (``bedrock_delta.pe_review_evidence``), or the
+full design when that delta is no longer the one the design was built from.
+
 One review per design, with no revision round: the review's change requests
-and notes are recorded in the trace only. Engines whose review contract has no
-``routing_flags`` (Aurora, ElastiCache) are skipped, because a headless review
-of them could not change anything the pipeline reads.
+and notes are recorded in the trace only.
 """
 
 from __future__ import annotations
@@ -225,9 +232,80 @@ def _design_targets(
             "design_key": f"{base}/schema_output.json",
             "design": output,
             "query_ids": query_ids,
-            "table_count": None,
+            "table_count": _source_table_count(store, db, job_id, engine),
+            **_aurora_delta_view(store, db, job_id, engine, version),
         }
     ], None
+
+
+def _source_table_count(store: ArtifactStore, db: str, job_id: str, engine: str) -> int | None:
+    """The source tables the engine was designed from, as the Bedrock reviewer is told
+    (the Aurora draft's tables, or ElastiCache's collector tables), from the engine's
+    design request; None (count the design) for other engines or with no request."""
+    from src.shared import catalog
+
+    # The Bedrock reviewers that are told the source's count (Aurora, ElastiCache).
+    if engine not in catalog.engine_ids(status=catalog.ACTIVE, role=("relational", "cache")):
+        return None
+    request = _read(store, f"{db}/{job_id}/llm_requests/schema_design_{engine}.json")
+    if not isinstance(request, dict):
+        return None
+    view = request.get("design_view")
+    if isinstance(view, dict) and isinstance(view.get("tables"), list):
+        return len(view["tables"])
+    collector = request.get("collector_output")
+    if isinstance(collector, dict) and isinstance(collector.get("tables"), list):
+        return len(collector["tables"])
+    return None
+
+
+def _digest(store: ArtifactStore, key: str) -> str | None:
+    import hashlib
+
+    try:
+        return hashlib.sha256(store.read_bytes(key)).hexdigest()
+    except (OSError, ValueError):
+        return None
+
+
+def _aurora_delta_view(
+    store: ArtifactStore, db: str, job_id: str, engine: str, version: int
+) -> dict[str, Any]:
+    """An Aurora design's delta and its evidence, as the Bedrock reviewer gets them
+    (``pe_review_prompt``): ``{"review_design", "evidence"}``, or ``{}`` to review the
+    full design. Only the delta ``--finalize`` built this design from counts, by the
+    digests its ``finalize_record.json`` keeps: a later response (a redesign round's,
+    put back since) is another design's."""
+    from src.shared import catalog
+
+    # The relational engines are the Aurora ones, designed as a delta (#273).
+    if engine not in catalog.engine_ids(status=catalog.ACTIVE, role="relational"):
+        return {}
+    from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
+    from src.tools.schema.aurora_common.bedrock_delta import pe_review_evidence
+
+    base = f"{db}/{job_id}/schema-{engine}/v{version}"
+    response = f"{db}/{job_id}/llm_responses/schema_design_{engine}.json"
+    record = _read(store, f"{base}/finalize_record.json")
+    if not isinstance(record, dict) or record.get("status") != "complete":
+        return {}
+    if record.get("response_sha256") != _digest(store, response) or record.get(
+        "output_sha256"
+    ) != _digest(store, f"{base}/schema_output.json"):
+        return {}
+    raw = _read(store, response)
+    request = _read(store, f"{db}/{job_id}/llm_requests/schema_design_{engine}.json")
+    view = request.get("design_view") if isinstance(request, dict) else None
+    if not isinstance(raw, dict) or not isinstance(view, dict):
+        return {}
+    try:
+        delta = AuroraDesignDeltaContract.model_validate(raw)
+    except ValidationError:
+        return {}  # a legacy full contract: --finalize converted it, review the result
+    return {
+        "review_design": delta.model_dump(mode="json"),
+        "evidence": pe_review_evidence(delta, view),
+    }
 
 
 def _designed_engines(store: ArtifactStore, db: str, job_id: str, version: int) -> list[str]:
@@ -284,15 +362,6 @@ def prepare_pe_review_llm_input(
         if not _has_contract(engine):
             skipped.append({"engine": engine, "reason": "unknown engine"})
             continue
-        if not can_flag(engine):
-            skipped.append(
-                {
-                    "engine": engine,
-                    "reason": "its review contract has no routing_flags, so a review "
-                    "could not change the assignment",
-                }
-            )
-            continue
         targets, reason = _design_targets(store, db, job_id, version, engine)
         if reason:
             skipped.append({"engine": engine, "reason": reason})
@@ -330,9 +399,11 @@ def prepare_pe_review_llm_input(
                     if target.get("context_tables")
                     else {}
                 ),
-                "flag_contract": ModelFlag.model_json_schema(),
+                # Only a contract that carries routing_flags gets their shape.
+                **({"flag_contract": ModelFlag.model_json_schema()} if can_flag(engine) else {}),
                 "output_schema": review_contract(engine).model_json_schema(),
-                "design": _review_design(engine, design),
+                "design": target.get("review_design") or _review_design(engine, design),
+                **({"evidence": target["evidence"]} if "evidence" in target else {}),
             }
             key = request_key(db, job_id, engine, group)
             # Indented, so the reviewer can page it with Read offset/limit. The
@@ -361,12 +432,12 @@ def missing_reviews(
 ) -> list[str]:
     """The designs of ``engines`` on ``version`` whose review is not recorded yet.
 
-    Only engines whose review can flag; an engine with no design yet is left to
-    the caller's missing-design check. A DynamoDB group is ``"dynamodb group <G>"``.
+    Every engine with a review contract (#2081); an engine with no design yet is left
+    to the caller's missing-design check. A DynamoDB group is ``"dynamodb group <G>"``.
     """
     missing: list[str] = []
     for engine in engines:
-        if not _has_contract(engine) or not can_flag(engine):
+        if not _has_contract(engine):
             continue
         targets, reason = _design_targets(store, db, job_id, version, engine)
         if reason:
@@ -441,6 +512,14 @@ def apply_pe_review_llm_output(
         review = review_contract(engine).model_validate(answer)
     except ValidationError as exc:
         return {"status": "validation_failed", "errors": _contract_errors(exc)}
+    dumped = review.model_dump(mode="json")
+    # The verdict rule DynamoDB's contract enforces, for every engine's new answer
+    # (#2081); a saved review is never re-checked, so it still loads.
+    from src.shared.review_verdict import verdict_errors
+
+    rule = verdict_errors(dumped.get("verdict"), dumped.get("change_requests"))
+    if rule:
+        return {"status": "validation_failed", "errors": [f"verdict: {e}" for e in rule]}
 
     raw_flags = [dict(f) for f in getattr(review, "routing_flags", None) or []]
     flags, rejected = parse_model_flags(raw_flags)
@@ -458,7 +537,6 @@ def apply_pe_review_llm_output(
                 "the router ignores them"
             )
 
-    dumped = review.model_dump(mode="json")
     verdict = str(dumped.get("verdict", ""))
     key = trace_key(db, job_id, engine, version, group)
     trace = _read(store, key)

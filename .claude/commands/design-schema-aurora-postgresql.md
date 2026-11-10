@@ -132,3 +132,12 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 6. **Update state**
    Only after `--finalize` printed `"status": "complete"`: set `phase_status.schema_design_aurora_postgresql` = "complete"
+
+7. **PE review** (run on your own only)
+   Dispatched by `/modernize` or `/design-schema`, stop after Step 6: your dispatcher runs the review, the one Bedrock mode runs after every Aurora PostgreSQL design. Run on your own (you are the top-level session), request it:
+
+   ```bash
+   uv run python scripts/run_pe_review.py --job-id {job_id} --db {database_name} --engine aurora_postgresql
+   ```
+
+   If it prints `"status": "awaiting_llm"`, dispatch one subagent for its one review with the `/modernize` 6c task text (`Follow /review-schema ...`) and wait for it to report. Its blockers hold the design's wave and its warnings are listed for the customer to accept; an Aurora PostgreSQL review carries no routing flags, so it moves no query.

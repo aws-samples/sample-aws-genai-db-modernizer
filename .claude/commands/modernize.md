@@ -170,13 +170,13 @@ Run it exactly as shown, on its own, and read `status` and the keys named here f
 - `"status": "complete"`: set `phase_status.schema_design_<engine>` = "complete".
 - `"status": "validation_failed"`, `"finalize_pending"` or `"not_finalized"`: set `phase_status.schema_design_<engine>` = "failed". That is a phase failure for `schema_design_<engine>`, with the line's `errors` (or its `status`) as the reason: see Error Handling. A subagent that returned `failed` after its 3 attempts ends here too.
 
-**6c. PE review** once every schema subagent from 6b has reported: the review Bedrock mode runs after every design. Its routing flags are what the post-schema reroute (6e) reads.
+**6c. PE review** once every schema subagent from 6b has reported: the review Bedrock mode runs after every design, every engine's design, Aurora and ElastiCache included. Its blockers and warnings feed wave readiness, and its routing flags (DynamoDB, DocumentDB and OpenSearch reviews carry them) are what the post-schema reroute (6e) reads.
 
 ```bash
 uv run python scripts/run_pe_review.py --job-id {job_id} --db {database_name}
 ```
 
-It prints one JSON line. `"status": "complete"`: there is nothing to review; go on. `"status": "awaiting_llm"`: `reviews` lists one review per design that has none recorded yet (one per group for DynamoDB), each with `engine`, `group` (`null` except for DynamoDB), `request`, `response` and `finalize`; `skipped` names the engines with nothing to review and why (an Aurora or ElastiCache review carries no routing flags). Launch one review subagent per entry, all in a SINGLE message, with this task text (`{ENGINE}`, `{GROUP}`, `{REQUEST}`, `{RESPONSE}` and `{FINALIZE}` = that entry's `engine`, `group`, `request`, `response` and `finalize`):
+It prints one JSON line. `"status": "complete"`: there is nothing to review; go on. `"status": "awaiting_llm"`: `reviews` lists one review per design that has none recorded yet (one per group for DynamoDB), each with `engine`, `group` (`null` except for DynamoDB), `request`, `response` and `finalize`; `skipped` names the engines with nothing to review and why. Launch one review subagent per entry, all in a SINGLE message (a DynamoDB part's dispatch description is the one under **DynamoDB labels**; every other engine's dispatch description: `{SERVICE} review`, `{SERVICE}` = the engine's AWS service name, for example `Aurora MySQL review`), with this task text (`{ENGINE}`, `{GROUP}`, `{REQUEST}`, `{RESPONSE}` and `{FINALIZE}` = that entry's `engine`, `group`, `request`, `response` and `finalize`):
 
 ```text
 Follow /review-schema for job_id={job_id} db={database_name} engine={ENGINE} group={GROUP}. Request: {REQUEST}. Write only {RESPONSE}, then run exactly: {FINALIZE}. Do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it.
@@ -184,7 +184,7 @@ Follow /review-schema for job_id={job_id} db={database_name} engine={ENGINE} gro
 
 **Done signal.** After every review subagent's report, run the same `scripts/run_pe_review.py` command again, on its own: it lists only the reviews not recorded yet. `"status": "complete"` means every review is in: go on at once to 6d (or 6e). An `awaiting_llm` line lists the reviews still to record: end the turn with no text while one of them has a subagent that has not reported, and never dispatch a second subagent for it; one whose subagent already reported is recorded as `--failed` (below).
 
-Wait for all of them to report (see Waiting Rule). A review subagent that returns `failed` is not a phase failure: that design keeps no routing flags, as when a Bedrock review errors. If it did not record that itself, record it with that entry's `finalize` command plus `--failed` (DynamoDB adds `--group {G}`), so 6e does not wait for it:
+Wait for all of them to report (see Waiting Rule). A review subagent that returns `failed` is not a phase failure: that design keeps no routing flags and its wave reads not reviewed, as when a Bedrock review errors. If it did not record that itself, record it with that entry's `finalize` command plus `--failed` (DynamoDB adds `--group {G}`), so 6e does not wait for it:
 
 ```bash
 uv run python scripts/run_pe_review.py --job-id {job_id} --db {database_name} --engine {ENGINE} --finalize --failed
@@ -266,6 +266,7 @@ It prints one JSON line:
 - `"status": "complete"` (nothing a redesign can fix is held) or `"status": "exhausted"` (the rounds ran out, or the engines left are not sent back again; their waves stay held and the deliverables say so): set `phase_status.wave_redesign` = "complete" and go on to Completion.
 - `"status": "awaiting_redesign"`: a wave is held for a reason its design can fix, so round `round` of at most `max_rounds` sends it back. Design again exactly the engines in `engines`, the way 6a-6d design them: DynamoDB split → group drafts → reviews → merge, every other engine one `/design-schema-<engine>` subagent (6b task text) and then its review (6c). Their design input carries the failed checks (`redesign_request`); the engine and its queries stay, so run no post-schema reroute. Then dispatch the Phase 7 synthesis subagent again with the same task text, and run this command again once it has reported.
 - `"status": "awaiting_synthesis"`: the round's design was missing or no better, and the earlier design is back in place (`restored`). Dispatch the Phase 7 synthesis subagent again, then run this command again.
+- `"status": "awaiting_review"`: `missing_reviews` lists the round's designs whose review is not recorded yet (`dynamodb group <G>` is part G + 1). Run 6c for them (and `--merge` again for a DynamoDB part), then dispatch the Phase 7 synthesis subagent again and run this command again once it has reported. The round stays open until its reviews are in.
 - A redesign that fails (its phase failure, after the one retry under `--auto`): put the earlier designs back once, then dispatch the Phase 7 synthesis subagent again and run the first command again. The run goes on with the earlier design, and the wave reads held with the failure:
 
   ```bash
