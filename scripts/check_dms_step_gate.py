@@ -6,7 +6,10 @@
 
 On demand, read-only (DMS, CloudWatch and CloudFormation describe, get and list calls), writes
 ``<db>/<job>/data-movement/step-1/gate.json`` and prints one JSON status line with the
-contract hash, ``cutover_decision: "customer"`` and the fixed cutover message. When to cut
+contract hash, ``cutover_decision: "customer"`` and the fixed cutover message, and, when records
+did not validate, ``validation_failures`` (the tables, with their counts) and
+``validation_failures_check`` (DMS's failure table on Aurora, the read-only SQL for the
+customer to run there, and hints; #2064), in the shape ``run_dms_step.py status`` uses. When to cut
 over is the customer's decision. Use read-only credentials (``AWS_PROFILE``). Exit 1 only
 when the gate could not run.
 
@@ -38,6 +41,7 @@ from src.tools.data_movement.dms_gate import (  # noqa: E402
     write_gate,
 )
 from src.tools.data_movement.dms_step import DmsStepError  # noqa: E402
+from src.tools.data_movement.table_errors import gate_failures, step_plan  # noqa: E402
 
 
 def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -> int:
@@ -96,7 +100,8 @@ def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -
                       "cutover_decision": gate.cutover_decision,
                       "cutover_message": cutover_message_text(gate.cutover_message_id),
                       "reasons": [f"{c.id}: {r}" for c in gate.checks for r in c.reasons],
-                      "exceptions": [{"table": e.table, "kind": e.kind} for e in gate.exceptions]}))  # fmt: skip
+                      "exceptions": [{"table": e.table, "kind": e.kind} for e in gate.exceptions],
+                      **gate_failures(gate, step_plan(args.artifact_root, db, job_id))}))  # fmt: skip
     return 0
 
 

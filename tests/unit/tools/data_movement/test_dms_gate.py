@@ -141,10 +141,14 @@ def test_a_contract_table_must_be_completed_to_pass(state, status):
     assert any("shop.customers" in r and (state in r or not state) for r in check.reasons)
 
 
-def test_a_load_error_row_or_failed_conditional_check_fails():
+def test_dynamodb_only_load_counters_never_fail_an_aurora_load_but_a_table_error_does():
+    # FullLoadErrorRows and FullLoadCondtnlChkFailedRows are "valid only for migrations where
+    # DynamoDB is the target" (DMS API Reference, TableStatistics): the table state decides (#2064).
     stats = [g.stat("shop.audit_log"), g.stat("shop.customers"), g.stat("shop.orders")]
-    assert load_check(INPUTS, _view(stats=stats)).status == "pass"
     stats[1]["FullLoadCondtnlChkFailedRows"] = 2
+    stats[1]["FullLoadErrorRows"] = 3
+    assert load_check(INPUTS, _view(stats=stats)).status == "pass"
+    stats[1]["TableState"] = "Table error"
     check = load_check(INPUTS, _view(stats=stats))
     assert check.status == "fail" and any("shop.customers" in r for r in check.reasons)
 

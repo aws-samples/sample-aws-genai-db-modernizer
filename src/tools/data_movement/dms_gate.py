@@ -269,12 +269,11 @@ def load_check(inputs: Step1Inputs, view: TaskView) -> GateCheck:
                             f"{table_id} is not in the task's table statistics"))  # fmt: skip
             continue
         state = str(s.get("TableState") or "")
-        bad_rows = int(s.get("FullLoadErrorRows") or 0) + int(
-            s.get("FullLoadCondtnlChkFailedRows") or 0
-        )
-        if state in TABLE_FAILED or bad_rows:
-            reasons.append(("fail", f"{table_id}: {state or 'no state'} "
-                            f"({bad_rows} rows failed to load)"))  # fmt: skip
+        # By the table state only: FullLoadErrorRows and FullLoadCondtnlChkFailedRows are "valid
+        # only for migrations where DynamoDB is the target" (DMS API Reference, TableStatistics),
+        # so on Aurora they are always 0 and say nothing (#2064).
+        if state in TABLE_FAILED:
+            reasons.append(("fail", f"{table_id}: {state} (the table did not load)"))
         elif state != TABLE_COMPLETED:
             reasons.append(
                 (

@@ -92,7 +92,11 @@ def test_every_aws_write_passes_approve_and_only_in_the_move_stage() -> None:
         if args.command in run_dms_step.ENDING:
             assert args.approve, command
             assert command in ending, f"stop or teardown outside Ending the step: {command}"
-        elif args.command in (run_dms_step.RESTART, *run_dms_step.RECOVER):
+        elif args.command in (
+            run_dms_step.RESTART,
+            *run_dms_step.RECOVER,
+            *run_dms_step.TABLE_RECOVER,
+        ):
             assert args.approve, command
             assert command in prove, f"{args.command} outside Prove: {command}"
         elif args.command in run_dms_step.WRITES:
@@ -280,7 +284,7 @@ def test_resume_maps_every_status_phase_to_a_stage() -> None:
     resume = _flat(_section("Step 0: The job and the step"))
     phases = {"no_stack", "stack_in_progress", "stack_failed", "connections_not_tested",
               "connections_testing", "connections_failed", "ready_to_start", "loading",
-              "validating", "validation_stalled", "caught_up", "task_stopped",
+              "validating", "validation_stalled", "table_errors", "caught_up", "task_stopped",
               "stack_create_failed", "stack_in_review"}  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
     for phase in phases:
@@ -573,10 +577,10 @@ def test_a_stopped_task_is_offered_one_resume_and_a_failed_one_one_retry() -> No
                   "may already hold rows"):  # fmt: skip
         assert words in retry, words
     assert "the Aurora tables are still empty" not in recovery  # more than the check proves
-    assert "counting a restart from Validation stalled" in recovery
+    assert "a run that already restarted the task, reloaded tables or revalidated" in recovery
     stalled = _flat(_section("Stage 4: Prove")).split("**Validation stalled.**", 1)[1]
     assert "it counts as the run's one recovery" in stalled
-    assert "never in a run that already resumed or retried the task" in stalled
+    assert "never in a run that already resumed, retried, reloaded tables or revalidated" in stalled
     assert "names a command only when that command would run" in recovery
     assert "A `recovery` of null with `customer_steps`" in recovery
     assert '"recovery"' in (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()

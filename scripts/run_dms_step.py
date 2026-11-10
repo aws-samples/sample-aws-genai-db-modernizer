@@ -9,7 +9,9 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
 
 - ``steps``, ``summary``, ``plan``: no AWS call. The job's steps; step 1's contract, sizing,
   cost, what it does not move and the customer-responsibility disclaimer; the stack name, the
-  parameters and the equivalent ``aws cloudformation deploy`` command.
+  parameters and the equivalent ``aws cloudformation deploy`` command, and ``empty_target``:
+  the question, before the task starts, whether every step 1 table is empty on Aurora, with a
+  read-only query for the customer to run (#2064).
 - ``preflight [--confirm <check_id>]``, ``gate``: read-only; they run
   ``scripts/check_dms_step_preflight.py`` and ``scripts/check_dms_step_gate.py`` with the
   inputs file's values and print those scripts' own line. The file's optional
@@ -64,6 +66,13 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   steps (empty them on Aurora, then reload the task themselves): nothing here connects to a
   database. Each points at the other only when the other would run. Both wait until the task
   runs, with the same refusals and ownership checks as ``stop``.
+- ``reload-tables --approve`` and ``revalidate --approve`` (#2064): Prove's way on from a
+  ``table_errors`` phase or from validation failures, on this job's running task only.
+  ``reload-tables`` reloads the errored tables (``ReloadTables``, ``data-reload``) only when
+  DMS's statistics show none of them was ever written to; otherwise it refuses with
+  ``"kind": "target_may_hold_rows"`` and the customer's ``table_steps`` (empty them on Aurora,
+  then reload them). ``revalidate`` revalidates the tables with failed or suspended records
+  (``validate-only``, which reloads no data). The same refusals and ownership checks as ``stop``.
 - ``verify-scripts`` and ``verify`` (#1998, optional; no AWS call, never connects to a database):
   write step 1's read-only comparison scripts (``verify-source.sql``, ``verify-target.sql``,
   ``verify.md``) for the customer to run; read their output files strictly and write
@@ -85,7 +94,11 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   carries ``recovery``: ``resume`` or ``retry`` only when that command would run, by the same
   rule they use (``recovery_plan``, with the table states), else None; for a stopped or failed
   task neither may reload, it carries ``recovery_refused``, ``tables_to_empty`` and
-  ``customer_steps`` instead. Credentials that are missing or have expired print
+  ``customer_steps`` instead. A running task's line carries ``table_problems`` (errored tables
+  and validation failures, names and counts only, never a value; ``table_errors.py``); an
+  errored table ends ``caught_up``'s wait as ``table_errors``, with ``table_recovery``
+  (``reload-tables`` only when it would run) or ``table_steps``, and validation failures carry
+  ``validation_failures_check`` (read-only SQL on DMS's failure table, for the customer). Credentials that are missing or have expired print
   ``"kind": "credentials"``, with what this run had already changed.
 
 The inputs file (default ``<db>/<job>/data-movement/step-1/inputs.json`` under the artifact
@@ -137,7 +150,9 @@ ENDING = ("stop", "teardown")
 RESTART = "restart-validation"  # Prove's stop-and-resume of a stalled validator (#2048)
 RESUME, RETRY = "resume", "retry"  # Prove's way on from a stopped or a failed task (#2061)
 RECOVER = (RESUME, RETRY)
-WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *ENDING)
+RELOAD_TABLES, REVALIDATE = "reload-tables", "revalidate"  # Prove's per-table writes (#2064)
+TABLE_RECOVER = (RELOAD_TABLES, REVALIDATE)
+WRITES = ("deploy", "execute", "test", "start", RESTART, *RECOVER, *TABLE_RECOVER, *ENDING)
 WAITS = (*ENDING, RESTART, *RECOVER)  # the writes that wait, by default up to MAX_WAIT_SECONDS
 ROUTINES = "routines"  # writes step 1's routine scripts once the full load is done (#1947)
 ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS call (#1947)
@@ -162,7 +177,9 @@ VALIDATION_FIX = ("check the endpoints' secrets and that the validator can conne
 PROGRESS_FIELDS = ("time", "phase", "full_load_percent", "tables_loaded", "inserts_applied",
                    "updates_applied", "capture_lag_seconds", "apply_lag_seconds",
                    "validated_tables", "pending_tables", "not_enabled_tables",
-                   "source_retention", "source_warning")  # fmt: skip
+                   "source_retention", "source_warning", "tables_errored", "errored_tables",
+                   "errored_tables_not_shown", "validation_failures",
+                   "validation_failures_not_shown")  # fmt: skip
 LAG_WINDOW_MINUTES = 5
 # What DMS's own task status means, in the words the customer sees (``dms_reports``).
 _DMS_WORDS = {"stopped": "stopped (not running)", "failed": "failed (not running)",
@@ -239,6 +256,7 @@ class StepsContext:
 
     region: str
     family: str | None
+    dms_version: str | None = None  # the plan's DMS engine version: where validation fails go
 
 
 # The logical ids and types dms-step-1.yaml creates: stop and teardown act only on a stack that
@@ -535,6 +553,28 @@ def parameters(inputs: MoveInputs, template_params: dict[str, Any]) -> dict[str,
     return out
 
 
+def empty_target(root: str, db: str, job_id: str) -> dict[str, Any]:
+    """``plan``'s ``empty_target`` (#2064): the question the customer answers before the task
+    starts, every step 1 table empty on Aurora, with a read-only query for them to run."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_step import contract_tables, load_step1
+    from src.tools.data_movement.table_errors import empty_target_check
+
+    try:  # the plan line also serves Ending the step: a contract it cannot read names none
+        step = load_step1(LocalArtifactStore(base_dir=root), db, job_id, with_ddl=False)
+        tables = sorted(t.table_id for t in contract_tables(step.contract))
+    except (OSError, ValueError):  # DmsStepError is a ValueError
+        tables = []
+    return empty_target_check(source_family(root, db, job_id), tables)
+
+
+def _status_context(root: str, db: str, job_id: str, region: str) -> StepsContext:
+    from src.tools.data_movement.table_errors import dms_version, step_plan
+
+    return StepsContext(region, source_family(root, db, job_id),
+                        dms_version(step_plan(root, db, job_id)))  # fmt: skip
+
+
 def deploy_plan(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
     path, body, template_params = _template(root, db, job_id)
     params = parameters(inputs, template_params)
@@ -667,7 +707,42 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
     loaded = task_stats.get("FullLoadProgressPercent") == 100
     phase = "caught_up" if loaded and not pending_tables and not pending_records else (
         "validating" if loaded else "loading")  # fmt: skip
-    return _source_retention(_judge_validation({**out, "phase": phase}, task, loaded), retention)
+    judged = _table_problems(_judge_validation({**out, "phase": phase}, task, loaded), task,
+                             tables, steps)  # fmt: skip
+    return _source_retention(judged, retention)
+
+
+def _table_problems(out: dict[str, Any], task: dict[str, Any], tables: list[dict[str, Any]],
+                    steps: StepsContext | None) -> dict[str, Any]:  # fmt: skip
+    """``table_problems`` (#2064): the tables that did not load and the validation failures,
+    names and counts only. A table in an error state makes the phase ``table_errors`` (the load
+    cannot finish; a ``Table cancelled`` one does on its second poll, ``CancelWatch``); either
+    carries ``table_recovery`` ``reload-tables`` only when that command would run, else the
+    customer's ``table_steps``. Validation failures carry the read-only
+    ``validation_failures_check``."""
+    from src.tools.data_movement import table_errors as te
+
+    problems = te.table_problems(task, tables)
+    out = {**out, "tables_errored": problems["tables_errored"], "table_problems": problems}
+    family = None if steps is None else steps.family
+    if problems["validation_failures"]:
+        out["validation_failures_check"] = te.failures_check(
+            family, task["ReplicationTaskArn"], None if steps is None else steps.dms_version
+        )
+    if not problems["errored_tables"]:
+        return out
+    plan, why, names = te.reload_plan(task, tables)
+    if problems["tables_errored"]:
+        out["phase"] = "table_errors"
+    out["table_recovery"] = RELOAD_TABLES if plan == RELOAD_TABLES else None
+    if plan == "steps":
+        out["table_recovery_refused"] = "; ".join(why)
+        if steps is not None:
+            out["table_steps"] = te.table_steps(task["ReplicationTaskArn"], steps.region, names,
+                                                _truncate_sql(family, names))  # fmt: skip
+    elif plan is None:
+        out["table_recovery_refused"] = "; ".join(why)
+    return out
 
 
 def _executing(clients: MoveClients, stack: dict[str, Any], change_set: str | None) -> bool:
@@ -816,6 +891,7 @@ def progress_line(current: dict[str, Any]) -> dict[str, Any]:
     validation = current.get("validation") or {}
     applied = current.get("changes_applied") or {}
     retention = current.get("source_retention") or {}
+    problems = current.get("table_problems") or {}
     return {"status": "progress", "time": datetime.now(UTC).isoformat(timespec="seconds"),
             "phase": current.get("phase"), "full_load_percent": current.get("full_load_percent"),
             "tables_loaded": current.get("tables_loaded"),
@@ -826,7 +902,12 @@ def progress_line(current: dict[str, Any]) -> dict[str, Any]:
             "pending_tables": validation.get("pending_tables"),
             "not_enabled_tables": validation.get("not_enabled_tables"),
             "source_retention": retention.get("level"),
-            "source_warning": retention.get("message")}  # fmt: skip
+            "source_warning": retention.get("message"),
+            "tables_errored": current.get("tables_errored"),
+            "errored_tables": [t["table"] for t in problems.get("errored_tables") or []],
+            "errored_tables_not_shown": problems.get("errored_tables_not_shown"),
+            "validation_failures": problems.get("validation_failures"),
+            "validation_failures_not_shown": problems.get("validation_failures_not_shown")}  # fmt: skip
 
 
 class _StallWatch:
@@ -877,7 +958,7 @@ UNTIL: dict[str, Callable[[dict[str, Any]], bool]] = {
     "running": lambda s: s.get("task_status") == "running"
     or s["phase"] in ("task_stopped", *NO_TASK),
     "caught_up": lambda s: s["phase"]
-    in ("caught_up", "validation_stalled", "task_stopped", *NO_TASK),
+    in ("caught_up", "validation_stalled", "table_errors", "task_stopped", *NO_TASK),
 }
 
 
@@ -907,13 +988,16 @@ def wait_status(
     if until == "task_stopped":
         read, done = task_state, lambda s: s["task_stopped"]
     watch = _StallWatch()
+    from src.tools.data_movement.table_errors import CancelWatch
+
+    cancels = CancelWatch()  # a Table cancelled seen on two polls in a row (#2064)
     current = read(clients, name)
     if until is None or done is None:
         return current
     now = clock()
     deadline = now + wait_seconds
     if until == "caught_up":
-        current = watch.judge(current, now)
+        current = cancels.judge(watch.judge(current, now))
     while (
         not done(current)
         and not _source_critical(current, until)
@@ -924,7 +1008,7 @@ def wait_status(
         sleep(interval)
         current = read(clients, name)
         if until == "caught_up":
-            current = watch.judge(current, now + interval)  # read one interval after the check
+            current = cancels.judge(watch.judge(current, now + interval))  # one interval on
     out = {**current, "until": until, "reached": done(current)}
     if _source_critical(current, until):  # also when reached: a critical reading is never lost
         out["stopped_for"] = "source_retention"
@@ -1620,6 +1704,71 @@ def retry(
     return _recover(RETRY, clients, name, job_id, wait_seconds, interval, steps, sleep)
 
 
+def _running_task(clients: MoveClients, name: str, job_id: str, command: str) -> dict[str, Any]:
+    """This job's task, checked as ``stop`` checks it, and running: DMS reloads or revalidates
+    the tables of a running task only."""
+    task = _owned_task(clients, name, job_id, command)
+    if task.get("Status") != "running":
+        raise MoveError(f"{dms_reports(task)}: {command} acts only on a running task "
+                        "(status shows where it stands)")  # fmt: skip
+    return task
+
+
+def reload_tables(clients: MoveClients, name: str, job_id: str, *,
+                  steps: StepsContext) -> dict[str, Any]:  # fmt: skip
+    """Reload this job's errored tables (``ReloadTables``, ``data-reload``; #2064), only when
+    DMS's statistics show no errored table was ever written to (``table_errors.reload_plan``):
+    with ``TargetTablePrepMode: DO_NOTHING`` a reload into a table that holds rows appends
+    duplicates or fails on the same keys. Otherwise it refuses with ``target_may_hold_rows``
+    and the customer's ``table_steps`` (empty the tables on Aurora, then reload them)."""
+    from src.tools.data_movement import table_errors as te
+
+    task = _running_task(clients, name, job_id, RELOAD_TABLES)
+    arn = task["ReplicationTaskArn"]
+    rows = _table_statistics(clients, arn)
+    plan, why, tables = te.reload_plan(task, rows)
+    out = {"stack_name": name, "task_arn": arn, **_task_report(task)}
+    if plan is None:
+        raise MoveError(f"{RELOAD_TABLES}: {'; '.join(why)}, nothing to reload")
+    names = [f"{s}.{t}" for s, t in tables]
+    if plan == "steps":
+        return {"status": "error", "kind": "target_may_hold_rows", **out,
+                "tables_to_empty": names,
+                "message": f"DMS may have written rows to these tables on Aurora ({'; '.join(why)}), "
+                           f"and a reload over them appends duplicates or hits key errors, so "
+                           f"{RELOAD_TABLES} refuses. The modernizer never connects to your "
+                           "databases: empty the tables on Aurora yourself, then reload them "
+                           "(table_steps)",
+                "table_steps": te.table_steps(arn, steps.region, tables,
+                                              _truncate_sql(steps.family, tables))}  # fmt: skip
+    try:
+        calls = te.reload(clients.dms, arn, tables, "data-reload")
+    except te.PartialReload as exc:
+        raise MoveError(str(exc)) from None
+    return {"status": "reloading", **out, "tables_reloaded": names, "calls": calls}
+
+
+def revalidate(clients: MoveClients, name: str, job_id: str) -> dict[str, Any]:
+    """Revalidate this job's tables with failed or suspended records (``ReloadTables``,
+    ``validate-only``; #2064): DMS validates them again and reloads no data. Refused unless the
+    task runs with validation on and such a table exists."""
+    from src.tools.data_movement import table_errors as te
+
+    task = _running_task(clients, name, job_id, REVALIDATE)
+    if validation_enabled(task) is False:
+        raise MoveError(f"{REVALIDATE}: the task turns validation off, nothing to revalidate")
+    arn = task["ReplicationTaskArn"]
+    tables = te.revalidate_tables(_table_statistics(clients, arn))
+    if not tables:
+        raise MoveError(f"{REVALIDATE}: no table has failed or suspended validation records")
+    try:
+        calls = te.reload(clients.dms, arn, tables, "validate-only")
+    except te.PartialReload as exc:
+        raise MoveError(str(exc)) from None
+    return {"status": "revalidating", "stack_name": name, "task_arn": arn, **_task_report(task),
+            "tables_revalidated": [f"{s}.{t}" for s, t in tables], "calls": calls}  # fmt: skip
+
+
 def _resources_are_this_jobs(
     clients: MoveClients, name: str, resources: dict[str, dict[str, Any]], job_id: str
 ) -> bool:
@@ -1999,7 +2148,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         )
         inputs = load_inputs(inputs_path)
         if args.command == "plan":
-            return emit(deploy_plan(args.artifact_root, db, job_id, inputs))
+            return emit({**deploy_plan(args.artifact_root, db, job_id, inputs),
+                         "empty_target": empty_target(args.artifact_root, db, job_id)})  # fmt: skip
         if args.command in (VERIFY_SCRIPTS, VERIFY):
             return emit(verify_step(args.command, args.artifact_root, db, job_id, inputs))
         if args.command == ROUTINES_CHECK:
@@ -2028,8 +2178,8 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                     args.interval_seconds, sleep=sleep, on_poll=_print_progress,
                                     lag=None if cloudwatch is None else LagReader(cloudwatch),
                                     retention=retention, change_set=args.change_set,
-                                    steps=StepsContext(inputs.region, source_family(
-                                        args.artifact_root, db, job_id))))  # fmt: skip
+                                    steps=_status_context(args.artifact_root, db, job_id,
+                                                          inputs.region)))  # fmt: skip
         if args.command == ROUTINES:
             return emit(routines(clients, args.artifact_root, db, job_id, inputs, name,
                                  target_user=args.target_user))  # fmt: skip
@@ -2050,6 +2200,11 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
             return emit(command(clients, name, job_id, args.wait_seconds, args.interval_seconds,
                                 steps=context, sleep=sleep))  # fmt: skip
+        if args.command == RELOAD_TABLES:
+            context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
+            return emit(reload_tables(clients, name, job_id, steps=context))
+        if args.command == REVALIDATE:
+            return emit(revalidate(clients, name, job_id))
         if args.command == "teardown":
             return emit(
                 teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,
