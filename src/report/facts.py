@@ -46,6 +46,7 @@ from src.shared.report_facts import (
     wave_one_moved_by_later_waves,
     wave_readiness_rows,
 )
+from src.shared.routine_facts import needs_routine_words, with_routine_words
 
 from .waves import resolve_migration_waves
 
@@ -240,6 +241,10 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #2075: the executive report's short readiness line,
             # from the same function synthesis calls.
             missing["waves"] = _short_readiness_backfill(report, facts, rows)
+        if needs_routine_words(facts.get("routines")):
+            # A block written before #1939: the words the deliverables print, from the
+            # same function synthesis calls, over the stored rows and rules.
+            missing["routines"] = with_routine_words(facts["routines"])
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.

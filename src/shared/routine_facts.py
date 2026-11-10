@@ -62,6 +62,13 @@ artifact's ``findings``): the exact text stays in the routine sources (the two-f
 decision, ADR-034 Decision 4). Verdicts rest on the static checks, labelled
 :data:`PROOF_LABEL` until the load-and-run proof (#1945).
 
+**The words** (#1939). The deliverables print each row's ``status_text`` and ``why``
+(:func:`routine_status_text`, :func:`routine_why`: the catalog's reason and fix hint for
+a failed check, plain words for each reason, rewrite and check that could not run, never
+a code) and the block's ``others_line`` for the routines no row lists, so the engineering
+report and the results page say the same; :func:`with_routine_words` fills them in for a
+block stored before them.
+
 Nothing in routing reads this module (ADR-034 Decision 8).
 """
 
@@ -220,7 +227,10 @@ def migrate_yourself_lines(count: int, wave: int | None) -> tuple[str | None, st
 
 def proof_sentence(carried: int, unknown: int) -> str:
     """What the carried routines' verdicts rest on: "checked, not load-tested" only for
-    the routines whose checks all ran (a check that could not run is never checked)."""
+    the routines whose checks all ran (a check that could not run is never checked);
+    nothing when no routine is carried."""
+    if carried <= 0:
+        return ""  # nothing carried: no routine's checks all ran (#1939)
     if not unknown:
         return f"{PROOF_LABEL.capitalize()}."
     head = f"For {_n(unknown, 'carried routine', 'carried routines')} not every check could run"
@@ -312,7 +322,7 @@ def routine_facts(
     text = _line(counts, total, classes_n["behaves_differently"])
     wave = target_wave(str(data["target_engine"]), migration_waves)
     to_do, step = migrate_yourself_lines(classes_n["migrate_yourself"], wave)
-    return {
+    out = {
         "assignment_version": version,
         "source_engine": data["source_engine"],
         "target_engine": data["target_engine"],
@@ -330,9 +340,15 @@ def routine_facts(
         "counts_by_kind": dict(sorted(kinds.items())),
         "reason_counts": dict(sorted(reasons.items())),
         "proof": PROOF_LABEL,
-        "line": f"{text} "
-        + proof_sentence(
-            counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
+        "line": " ".join(
+            p
+            for p in (
+                text,
+                proof_sentence(
+                    counts["as_is"] + counts["rewritten"] + counts["repaired"], unknown_carried
+                ),
+            )
+            if p
         ),
         "routines": rows,
         "rules": [
@@ -347,6 +363,232 @@ def routine_facts(
             if rid in catalog
         ],
     }
+    rewrite_kinds = {
+        str(w["rule_id"]): str(w.get("rewrite"))
+        for row in data.get("routines") or []
+        for w in row.get("rewrites") or []
+    }
+    return with_routine_words(out, rewrite_kinds)
+
+
+# ---------------------------------------------------------------------------
+# The words every deliverable prints for a routine (#1939)
+# ---------------------------------------------------------------------------
+
+#: A headline category -> the routine's status in plain words.
+STATUS_WORDS: dict[str, str] = {
+    "as_is": "Carried as it is",
+    "rewritten": "Carried with a rewrite",
+    "repaired": "Carried, repaired",
+    "needs_repair": "Not carried: needs repair",
+    "not_exact": "Not carried: its code was rebuilt around a literal",
+    "not_checked": "Not carried: no exact code was collected",
+    "opted_out": "Not carried: no code collected",
+    "not_readable": "Not carried: its code could not be read",
+}
+#: The risk classes whose routines the deliverables list one by one; the carried routines
+#: to check (``carried_review``, LOW) roll up into :func:`check_notes` (maintainer
+#: decision 2 on #1938).
+LISTED_CLASSES = frozenset({"migrate_yourself", "behaves_differently", "opted_out"})
+#: A carried-routine note names at most this many routines, then how many more.
+NOTE_IDS_LISTED = 10
+_CARRIED_CATEGORIES = frozenset({"as_is", "rewritten", "repaired"})
+# The categories with no code to check: a check that could not run on them says nothing.
+_NO_CODE_CATEGORIES = frozenset({"not_readable", "opted_out", "not_checked"})
+
+# A reason code -> the sentence a routine's ``why`` gives it. Never an id: the routines a
+# row names are its ``blocked_by``, which the renderers format as ids.
+_WHY_CODE: dict[str, str] = {
+    "dependency_cycle": "It is in a dependency cycle.",
+    "depends_on_needs_attention": "It names a routine that is not translated.",
+    "depends_on_table_not_collected": "It names a table the collection does not have.",
+    "depends_on_routine_not_collected": "It names a routine the collection does not have.",
+    "source_text_not_collected": "No exact code was collected.",
+    "source_text_not_exact": (
+        "Its code was rebuilt around a literal, so it is not exact; collect it again to "
+        "have it checked and carried."
+    ),
+}
+# ``source_text_not_collected`` by why no code was collected (the row's category).
+_WHY_NO_CODE: dict[str, str] = {
+    "not_readable": "The collection user could not read its code.",
+    "opted_out": "Routine body collection was turned off, so there is no code to check.",
+}
+#: A rewrite's kind (the artifact's ``rewrite``) -> its carried-routine note's label.
+REWRITE_LABELS: dict[str, str] = {
+    "definer": "DEFINER set to the target user",
+    "owner": "Owner set to the target user",
+    "search_path": "search_path pinned in the header",
+}
+_REWRITE_LABEL = "Safe header rewrite"
+_UNKNOWN_LABEL = "A check could not run"
+
+
+def routine_status_text(row: Mapping[str, Any]) -> str:
+    """A row's status in plain words: its headline category, and for a routine that needs
+    repair whether it would behave differently."""
+    category = str(row.get("category"))
+    if category == "needs_repair" and "behaves_differently" in (row.get("risk_classes") or []):
+        return "Not carried: would behave differently"
+    return STATUS_WORDS.get(category, "Not carried")
+
+
+def _rule_text(rule: Mapping[str, Any] | None, *, fix: bool) -> str:
+    if not isinstance(rule, Mapping):
+        return ""
+    text = str(rule.get("reason") or "").strip()
+    if fix and rule.get("fix_hint"):
+        text += f" Fix: {str(rule['fix_hint']).strip()}"
+    return f": {text}" if text else ""
+
+
+def routine_why(row: Mapping[str, Any], rules: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Why a routine that is not carried is in its class, in plain words: each failed
+    check with the catalog's reason and fix hint, and each reason code. ``rules`` is
+    ``facts.routines.rules`` by rule id. Never a code and never an id (the routines it names
+    are ``blocked_by``). What many routines share, a rewrite or a check that could not run,
+    is stated once in :func:`check_notes`; a carried row has nothing here."""
+    category = str(row.get("category"))
+    if category in _CARRIED_CATEGORIES:
+        return []
+    out: list[str] = []
+    for reason in row.get("reasons") or []:
+        reason = str(reason)
+        if reason == "source_text_not_collected":
+            out.append(_WHY_NO_CODE.get(category, _WHY_CODE[reason]))
+        elif reason in _WHY_CODE:
+            out.append(_WHY_CODE[reason])
+        else:
+            rule = rules.get(reason)
+            impact = rule.get("impact") if isinstance(rule, Mapping) else None
+            head = (
+                "It would behave differently"
+                if impact == "behaves_differently"
+                else "A check failed"
+            )
+            out.append(f"{head}{_rule_text(rule, fix=True) or '.'}")
+    return out
+
+
+def _ref(row: Mapping[str, Any]) -> dict[str, str]:
+    return {"kind": str(row.get("kind")), "routine_id": str(row.get("routine_id"))}
+
+
+def check_notes(
+    rows: Iterable[Mapping[str, Any]],
+    rules: Mapping[str, Mapping[str, Any]],
+    rewrite_kinds: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """What many routines share, once per note (the LOW roll-up, maintainer decision 2 on
+    #1938): each rewrite rule and each check that could not run, with its label, the
+    catalog's reason once, how many routines it applies to and the first
+    :data:`NOTE_IDS_LISTED` of them by kind and id (``more_count`` the rest). A check that
+    could not run on a routine with no code collected says nothing and is left out.
+    ``rewrite_kinds`` maps a rewrite rule id to its kind (definer, owner, search_path), for
+    the label; without it the label is generic."""
+    notes: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        no_code = str(r.get("category")) in _NO_CODE_CATEGORIES
+        keyed = [("rewrite", str(x)) for x in r.get("rewrites") or []] + [
+            ("check_not_run", str(x)) for x in ([] if no_code else r.get("unknown_checks") or [])
+        ]
+        for kind, rid in keyed:
+            if (kind, rid) not in notes:
+                rule = rules.get(rid)
+                label = (
+                    REWRITE_LABELS.get(str((rewrite_kinds or {}).get(rid)), _REWRITE_LABEL)
+                    if kind == "rewrite"
+                    else _UNKNOWN_LABEL
+                )
+                notes[(kind, rid)] = {
+                    "note": kind,
+                    "rule_id": rid,
+                    "label": label,
+                    "text": (
+                        str(rule.get("reason") or "").strip() if isinstance(rule, Mapping) else ""
+                    ),
+                    "routines": [],
+                }
+            notes[(kind, rid)]["routines"].append(_ref(r))
+    out = []
+    for key in sorted(notes, key=lambda k: (k[0] != "rewrite", k[1])):
+        note = notes[key]
+        refs = note.pop("routines")
+        out.append(
+            {
+                **note,
+                "note_count": len(refs),
+                "routines": refs[:NOTE_IDS_LISTED],
+                "more_count": max(0, len(refs) - NOTE_IDS_LISTED),
+            }
+        )
+    return out
+
+
+def others_line(total: int, listed: int) -> str | None:
+    """The routines no row lists, once: each is carried and every check on it ran and
+    passed (a routine with a check that could not run, a rewrite or a reason has a row).
+    None when every routine has a row."""
+    others = total - listed
+    if others <= 0:
+        return None
+    if not listed:
+        if total == 1:
+            return "The routine is carried and every check on it passed."
+        return f"Each of the {total} routines is carried and every check on it passed."
+    if others == 1:
+        return "The other routine is carried and every check on it passed."
+    return f"The other {others} routines are carried and every check on them passed."
+
+
+def with_routine_words(
+    facts: Mapping[str, Any], rewrite_kinds: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """``facts.routines`` with what the deliverables print (#1939), all derived from its
+    own rows and rules: each row's ``status_text``, ``why`` and ``listed`` (the to-do,
+    behaves-differently and opted-out rows the deliverables list one by one), the
+    ``to_do_routines`` to migrate yourself, the ``check_notes`` the carried routines to
+    check roll up into, and ``others_line``. A block stored before them (#1938, or one
+    whose fields were emptied by a model round trip) gets the same."""
+    out = dict(facts)
+    rules = {
+        str(r["rule_id"]): r
+        for r in facts.get("rules") or []
+        if isinstance(r, Mapping) and r.get("rule_id")
+    }
+    rows = [r for r in facts.get("routines") or [] if isinstance(r, Mapping)]
+    out["routines"] = [
+        {
+            **r,
+            "status_text": routine_status_text(r),
+            "why": routine_why(r, rules),
+            "listed": bool(LISTED_CLASSES & set(r.get("risk_classes") or [])),
+        }
+        for r in rows
+    ]
+    out["to_do_routines"] = [
+        _ref(r) for r in rows if "migrate_yourself" in (r.get("risk_classes") or [])
+    ]
+    out["check_notes"] = check_notes(rows, rules, rewrite_kinds)
+    out["others_line"] = others_line(int(facts.get("routine_count") or 0), len(rows))
+    return out
+
+
+def needs_routine_words(facts: Any) -> bool:
+    """Whether a stored ``facts.routines`` lacks the words (#1939): missing, or empty where
+    its own counts say there is something (a model round trip fills in None and [])."""
+    if not isinstance(facts, Mapping):
+        return False
+    rows = [r for r in facts.get("routines") or [] if isinstance(r, Mapping)]
+    if any(not r.get("status_text") or "listed" not in r for r in rows):
+        return True
+    if "check_notes" not in facts or "to_do_routines" not in facts:
+        return True
+    if int(facts.get("migrate_yourself_count") or 0) and not facts.get("to_do_routines"):
+        return True
+    if int(facts.get("carried_review_count") or 0) and not facts.get("check_notes"):
+        return True
+    return not facts.get("others_line") and int(facts.get("routine_count") or 0) > len(rows)
 
 
 def read_routine_facts(

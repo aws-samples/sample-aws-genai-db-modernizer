@@ -519,9 +519,9 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _BUDGET,
     ),
     "src/shared/routine_facts.py": (
-        frozenset({"ROUTINE_DETAILS_LISTED"}),
-        "an output budget: how many routines a routine risk's details name (#1938), "
-        "not a routing rule",
+        frozenset({"ROUTINE_DETAILS_LISTED", "NOTE_IDS_LISTED"}),
+        "output budgets: how many routines a routine risk's details (#1938) and a routine "
+        "note (#1939) name, not routing rules",
     ),
     "src/shared/migration_risk_rules.py": (
         frozenset({"GATE_IDS_NAMED", "LISTED_ITEMS"}),

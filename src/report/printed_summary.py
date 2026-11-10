@@ -57,6 +57,7 @@ from .risks import (
     _severity_counts_text,
     filtered_risks,
 )
+from .routines import routine_summary_lines, routine_wave
 
 # The final summary lists every CRITICAL and HIGH risk, and tops the list up with the next most
 # severe ones to at least this many; the results page and the engineering report list them all.
@@ -407,6 +408,16 @@ def render_final_summary(
         # #1992: each wave the plan does not suggest, as the facts state it.
         if isinstance(note, Mapping) and note.get("line"):
             lines.append(f"- Wave {note.get('wave')}: {prose(str(note['line']))}")
+    # #1939: the routines' headline counts and the to-do, as the facts state them; the
+    # to-do once: a wave line above already ends with it when its wave is not suggested.
+    routine_noted = any(
+        isinstance(n, Mapping) and n.get("line") and n.get("wave") == routine_wave(dict(report))
+        for n in facts.get("wave_readiness_notes") or []
+    )
+    lines += [
+        f"- {label}: {prose(text)}"
+        for label, text in routine_summary_lines(dict(report), to_do=not routine_noted)
+    ]
     lines += [f"- Cache layer: {prose(n)}" for n in cache_role_notes(dict(report))]
     lines += [f"- Cache layer note: {prose(n)}" for n in cache_change_notes(dict(report))]
 

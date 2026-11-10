@@ -1,0 +1,407 @@
+{
+  "assignment_version": 1,
+  "source_engine": "postgresql",
+  "target_engine": "aurora_postgresql",
+  "wave": 1,
+  "routine_count": 10,
+  "carried_count": 3,
+  "as_is_count": 2,
+  "rewritten_count": 1,
+  "repaired_count": 0,
+  "needs_repair_count": 4,
+  "not_exact_count": 1,
+  "not_checked_count": 0,
+  "opted_out_count": 1,
+  "not_readable_count": 1,
+  "unknown_checks_count": 2,
+  "rewritten_carried_count": 1,
+  "migrate_yourself_count": 5,
+  "behaves_differently_count": 1,
+  "carried_review_count": 2,
+  "migrate_yourself_line": "we could not translate 5 routines automatically; migrate them yourself before wave 1",
+  "migrate_yourself_step": "migrate these routines yourself before wave 1, then check them again",
+  "counts_by_kind": {
+    "function": 9,
+    "trigger": 1
+  },
+  "reason_counts": {
+    "dependency_cycle": 2,
+    "depends_on_needs_attention": 2,
+    "pg-language": 1,
+    "pg-public-schema": 1,
+    "source_text_not_collected": 2,
+    "source_text_not_exact": 1
+  },
+  "proof": "checked, not load-tested",
+  "line": "3 of 10 routines carry over: 2 as they are, 1 rewritten. 7 were not carried automatically: 4 need repair (1 of them behaves differently), 1 was rebuilt around a literal, 1 has no code collected, 1 was not readable. For 2 carried routines not every check could run; the other 1 is checked, not load-tested.",
+  "routines": [
+    {
+      "routine_id": "public.plain_unknown()",
+      "kind": "function",
+      "status": "as_is",
+      "category": "as_is",
+      "risk_classes": [
+        "carried_review"
+      ],
+      "severity": "LOW",
+      "severity_basis": [
+        "pg-dependency"
+      ],
+      "reasons": [],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [
+        "pg-dependency"
+      ],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 2,
+      "status_text": "Carried as it is",
+      "why": [],
+      "listed": false
+    },
+    {
+      "routine_id": "public.owned()",
+      "kind": "function",
+      "status": "rewritten",
+      "category": "rewritten",
+      "risk_classes": [
+        "carried_review"
+      ],
+      "severity": "LOW",
+      "severity_basis": [
+        "pg-owner-to-target-user",
+        "pg-superuser"
+      ],
+      "reasons": [],
+      "blocked_by": [],
+      "rewrites": [
+        "pg-owner-to-target-user"
+      ],
+      "unknown_checks": [
+        "pg-superuser"
+      ],
+      "notes": [
+        "runs_as_target_user"
+      ],
+      "tables": [],
+      "deploy_order": 3,
+      "status_text": "Carried with a rewrite",
+      "why": [],
+      "listed": false
+    },
+    {
+      "routine_id": "public.py_fn()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "pg-language"
+      ],
+      "reasons": [
+        "pg-language"
+      ],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [
+        "public.orders"
+      ],
+      "deploy_order": 4,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "A check failed: pg-language reason. Fix: pg-language fix."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.f_a()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.f_b()"
+        }
+      ],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 5,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "It is in a dependency cycle.",
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.f_b()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "reasons": [
+        "dependency_cycle",
+        "depends_on_needs_attention"
+      ],
+      "blocked_by": [
+        {
+          "kind": "function",
+          "routine_id": "public.f_a()"
+        }
+      ],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 6,
+      "status_text": "Not carried: needs repair",
+      "why": [
+        "It is in a dependency cycle.",
+        "It names a routine that is not translated."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.public_path()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "needs_repair",
+      "risk_classes": [
+        "behaves_differently"
+      ],
+      "severity": "MEDIUM",
+      "severity_basis": [
+        "pg-public-schema"
+      ],
+      "reasons": [
+        "pg-public-schema"
+      ],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 7,
+      "status_text": "Not carried: would behave differently",
+      "why": [
+        "It would behave differently: pg-public-schema reason. Fix: pg-public-schema fix."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.secret()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "not_readable",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "source_text_not_collected"
+      ],
+      "reasons": [
+        "source_text_not_collected"
+      ],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 8,
+      "status_text": "Not carried: its code could not be read",
+      "why": [
+        "The collection user could not read its code."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.opted_out()",
+      "kind": "function",
+      "status": "needs_attention",
+      "category": "opted_out",
+      "risk_classes": [
+        "opted_out"
+      ],
+      "severity": "MEDIUM",
+      "severity_basis": [
+        "source_text_not_collected"
+      ],
+      "reasons": [
+        "source_text_not_collected"
+      ],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [],
+      "deploy_order": 9,
+      "status_text": "Not carried: no code collected",
+      "why": [
+        "Routine body collection was turned off, so there is no code to check."
+      ],
+      "listed": true
+    },
+    {
+      "routine_id": "public.orders.tg_audit",
+      "kind": "trigger",
+      "status": "needs_attention",
+      "category": "not_exact",
+      "risk_classes": [
+        "migrate_yourself"
+      ],
+      "severity": "HIGH",
+      "severity_basis": [
+        "source_text_not_exact"
+      ],
+      "reasons": [
+        "source_text_not_exact"
+      ],
+      "blocked_by": [],
+      "rewrites": [],
+      "unknown_checks": [],
+      "notes": [],
+      "tables": [
+        "public.orders"
+      ],
+      "deploy_order": 10,
+      "status_text": "Not carried: its code was rebuilt around a literal",
+      "why": [
+        "Its code was rebuilt around a literal, so it is not exact; collect it again to have it checked and carried."
+      ],
+      "listed": true
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "pg-dependency",
+      "rule": "check",
+      "impact": "blocks_move",
+      "reason": "pg-dependency reason.",
+      "fix_hint": "pg-dependency fix."
+    },
+    {
+      "rule_id": "pg-language",
+      "rule": "check",
+      "impact": "blocks_move",
+      "reason": "pg-language reason.",
+      "fix_hint": "pg-language fix."
+    },
+    {
+      "rule_id": "pg-owner-to-target-user",
+      "rule": "rewrite",
+      "impact": null,
+      "reason": "pg-owner-to-target-user reason.",
+      "fix_hint": "pg-owner-to-target-user fix."
+    },
+    {
+      "rule_id": "pg-public-schema",
+      "rule": "check",
+      "impact": "behaves_differently",
+      "reason": "pg-public-schema reason.",
+      "fix_hint": "pg-public-schema fix."
+    },
+    {
+      "rule_id": "pg-superuser",
+      "rule": "check",
+      "impact": "needs_rewrite",
+      "reason": "pg-superuser reason.",
+      "fix_hint": "pg-superuser fix."
+    }
+  ],
+  "to_do_routines": [
+    {
+      "kind": "function",
+      "routine_id": "public.py_fn()"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.f_a()"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.f_b()"
+    },
+    {
+      "kind": "function",
+      "routine_id": "public.secret()"
+    },
+    {
+      "kind": "trigger",
+      "routine_id": "public.orders.tg_audit"
+    }
+  ],
+  "check_notes": [
+    {
+      "note": "rewrite",
+      "rule_id": "pg-owner-to-target-user",
+      "label": "Owner set to the target user",
+      "text": "pg-owner-to-target-user reason.",
+      "note_count": 1,
+      "routines": [
+        {
+          "kind": "function",
+          "routine_id": "public.owned()"
+        }
+      ],
+      "more_count": 0
+    },
+    {
+      "note": "check_not_run",
+      "rule_id": "pg-dependency",
+      "label": "A check could not run",
+      "text": "pg-dependency reason.",
+      "note_count": 1,
+      "routines": [
+        {
+          "kind": "function",
+          "routine_id": "public.plain_unknown()"
+        }
+      ],
+      "more_count": 0
+    },
+    {
+      "note": "check_not_run",
+      "rule_id": "pg-superuser",
+      "label": "A check could not run",
+      "text": "pg-superuser reason.",
+      "note_count": 1,
+      "routines": [
+        {
+          "kind": "function",
+          "routine_id": "public.owned()"
+        }
+      ],
+      "more_count": 0
+    }
+  ],
+  "others_line": "The other routine is carried and every check on it passed."
+}

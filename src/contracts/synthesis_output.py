@@ -671,6 +671,12 @@ Version History:
   kinds, rule ids and reason codes only. Added facts.waves[].to_dos: the to-dos a wave's
   lines end with, which hold nothing, and Risk.to_do: the to-do a wave's gate lists
   instead of a condition. Backward compatible: defaults to None or empty.
+- 1.92 (2026-11-10, #1939): Added optional facts.routines.others_line, to_do_routines
+  and check_notes (RoutineNoteFact), and facts.routines.routines[].status_text, why and
+  listed: what every deliverable prints for the routines (each listed row's status and
+  why in plain words, the routines to migrate yourself, each rewrite and check that
+  could not run once with its routines, the routines with no row). Backward compatible: default to
+  None, False or empty.
 """
 
 from datetime import datetime
@@ -3204,6 +3210,45 @@ class RoutineFactRow(BaseModel):
         default_factory=list, description="The collected tables it names (what it touches)"
     )
     deploy_order: int = Field(..., ge=1)
+    status_text: str | None = Field(
+        None,
+        description=(
+            "Its status in plain words, as every deliverable prints it (#1939): 'Carried "
+            "as it is', 'Not carried: needs repair', ...; None in a block stored before it"
+        ),
+    )
+    why: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Why a routine that is not carried is in its class, in plain words (#1939): each "
+            "failed check with the catalog's reason and fix hint, and each reason; never a "
+            "code, an id (the routines it names are blocked_by) or its text. Rewrites and "
+            "checks that could not run are in check_notes, once; empty for a carried routine"
+        ),
+    )
+    listed: bool = Field(
+        False,
+        description=(
+            "Whether the deliverables list it one by one (#1939): a routine to migrate "
+            "yourself, one that would behave differently, or one with no code collected; "
+            "the carried routines to check roll up into check_notes"
+        ),
+    )
+
+
+class RoutineNoteFact(BaseModel):
+    """A note routines share (#1939, the LOW roll-up): a rewrite rule or a check that
+    could not run, stated once with the routines it applies to."""
+
+    note: Literal["rewrite", "check_not_run"] = Field(..., description="Its kind")
+    rule_id: str = Field(..., min_length=1, description="The rewrite or check rule")
+    label: str = Field(..., description="Its label in plain words")
+    text: str = Field("", description="The catalog's reason, once")
+    note_count: int = Field(..., ge=1, description="The routines it applies to")
+    routines: list[RoutineRefFact] = Field(
+        default_factory=list, description="The first of them by kind and id, in deploy order"
+    )
+    more_count: int = Field(0, ge=0, description="How many more than routines lists")
 
 
 class RoutineFacts(BaseModel):
@@ -3276,6 +3321,24 @@ class RoutineFacts(BaseModel):
     line: str = Field(..., description="The headline sentence, with no routine or table name")
     routines: list[RoutineFactRow] = Field(
         default_factory=list, description="Every routine with a risk class, in deploy order"
+    )
+    others_line: str | None = Field(
+        None,
+        description=(
+            "The routines with no row, once (#1939): each is carried and every check on it "
+            "passed; None when every routine has a row"
+        ),
+    )
+    to_do_routines: list[RoutineRefFact] = Field(
+        default_factory=list,
+        description="The routines to migrate yourself (#1939), by kind and id, in deploy order",
+    )
+    check_notes: list[RoutineNoteFact] = Field(
+        default_factory=list,
+        description=(
+            "What routines share, rolled up (#1939): each rewrite and each check that could "
+            "not run once, with its count and the first routine ids"
+        ),
     )
     rules: list[RoutineRuleFact] = Field(
         default_factory=list, description="Every rule the rows name, by id"
@@ -3836,7 +3899,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.91",
+        default="1.92",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

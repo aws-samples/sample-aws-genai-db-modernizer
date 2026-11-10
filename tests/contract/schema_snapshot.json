@@ -32230,6 +32230,91 @@
                               "type": "integer"
                             }
                           },
+                          "check_notes": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "label": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "more_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "note": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "check_not_run",
+                                        "rewrite"
+                                      ]
+                                    }
+                                  },
+                                  "note_count": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "routines": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "routine_id": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "minLength": 1,
+                                              "type": "string"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "rule_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "text": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
                           "counts_by_kind": {
                             "required": false,
                             "schema": {
@@ -32325,6 +32410,22 @@
                               "kind": "scalar",
                               "minimum": 0,
                               "type": "integer"
+                            }
+                          },
+                          "others_line": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
                             }
                           },
                           "proof": {
@@ -32439,6 +32540,13 @@
                                       "type": "string"
                                     }
                                   },
+                                  "listed": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
                                   "notes": {
                                     "required": false,
                                     "schema": {
@@ -32518,6 +32626,22 @@
                                       "type": "string"
                                     }
                                   },
+                                  "status_text": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
                                   "tables": {
                                     "required": false,
                                     "schema": {
@@ -32529,6 +32653,16 @@
                                     }
                                   },
                                   "unknown_checks": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "why": {
                                     "required": false,
                                     "schema": {
                                       "items": {
@@ -32623,6 +32757,32 @@
                             "schema": {
                               "kind": "scalar",
                               "type": "string"
+                            }
+                          },
+                          "to_do_routines": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "kind": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "routine_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
                             }
                           },
                           "unknown_checks_count": {
@@ -39422,8 +39582,8 @@
         }
       }
     },
-    "schema_hash": "4d969812d7bd2ce25352a51246d1d88d76675e39070b12336778fca799b597b0",
-    "version": "1.91"
+    "schema_hash": "8dd0bb3d21d6f9ec51c74e84cc15fe9a97e41c02265d480882ea1be1d119ace7",
+    "version": "1.92"
   },
   "transformation_contract.StepContract": {
     "fields": {

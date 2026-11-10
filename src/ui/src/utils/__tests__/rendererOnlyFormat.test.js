@@ -144,6 +144,7 @@ const GUARDED_UI_FILES = [
   'utils/queryRouting.js',
   'utils/migrationWaves.js',
   'components/MigrationWavePlan.js',
+  'components/RoutineMigrationSection.js',
   'components/ExecutiveSummaryStats.js',
   'components/DeliverablesPanel.js',
   'components/SourcesOfTruthCallout.js',
