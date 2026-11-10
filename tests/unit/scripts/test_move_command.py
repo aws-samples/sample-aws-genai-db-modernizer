@@ -280,7 +280,8 @@ def test_resume_maps_every_status_phase_to_a_stage() -> None:
     resume = _flat(_section("Step 0: The job and the step"))
     phases = {"no_stack", "stack_in_progress", "stack_failed", "connections_not_tested",
               "connections_testing", "connections_failed", "ready_to_start", "loading",
-              "validating", "validation_stalled", "caught_up", "task_stopped"}  # fmt: skip
+              "validating", "validation_stalled", "caught_up", "task_stopped",
+              "stack_create_failed", "stack_in_review"}  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
     for phase in phases:
         assert f'"{phase}"' in source, phase
@@ -617,3 +618,61 @@ def test_a_credentials_error_says_refresh_and_run_again() -> None:
     creds = _flat(_section("Credentials and secrets"))
     assert '`"kind": "credentials"`' in creds
     assert "refresh their credentials" in creds and "run `/move step-1` again" in creds
+
+
+def test_a_failed_stack_shows_its_first_failure_and_the_way_on_and_is_never_redeployed_here() -> (
+    None
+):
+    """#2063: a rolled-back create is ended by a later /move run, never deleted or redeployed
+    by this one or by --auto; a rolled-back update still goes on to Prove."""
+    move = _flat(_section("Stage 3: Move"))
+    failed = move.split("**Failed stack.**", 1)[1]
+    for needle in ("`stack_create_failed`", "`stack_failed`", "`stack_failure`",
+                   "`hint` verbatim", "`stack_action` verbatim", "never guess one",
+                   "ask `/move step-1` to end the step",
+                   "This run never deletes, rolls back or redeploys a failed stack, and neither "
+                   "does `--auto` (`--approve-deploy` covers only the normal deploy path, never a "
+                   "redeploy after a failed create)",
+                   "`MOVE_RESULT: stopped stage=move reason=stack <stack_status>: <stack_failure "
+                   "reason, or stack_reason>`",
+                   "`UPDATE_ROLLBACK_COMPLETE` is no failed stack"):  # fmt: skip
+        assert needle in failed, needle
+    assert (
+        '`"kind": "stack_not_updatable"`' in move and "handle it as step 3's failed stack" in move
+    )
+    for command in _bash_commands(_section("Stage 3: Move")):
+        assert run_dms_step._parser().parse_args(_helper_argv(command)).command != "teardown"
+    resume = _flat(_section("Step 0: The job and the step"))
+    assert (
+        "`stack_in_review` (a change set was created and never executed) → Move at step 1" in resume
+    )
+
+
+def test_ending_a_failed_create_needs_this_jobs_tag_and_never_touches_termination_protection() -> (
+    None
+):
+    ending = _flat(_section("Ending the step"))
+    assert "A stack whose create failed (`stack_create_failed`)" in ending
+    assert "only when its own `modernizer:job-id` tag names this job" in ending
+    assert (
+        "Termination protection is the customer's: never turn it off, and never offer to" in ending
+    )
+
+
+def test_the_stack_wait_after_execute_names_the_change_set_and_handles_stack_in_review() -> None:
+    move = _section("Stage 3: Move")
+    after = move.split("**3. Wait for the stack.**", 1)[1]
+    args = run_dms_step._parser().parse_args(_helper_argv(_bash_commands(after)[0]))
+    assert (
+        args.command == "status" and args.until == "stack" and args.change_set == "change_set_name"
+    )
+    flat = _flat(after)
+    assert (
+        "When Resume brought you here (no change set in this run), leave out `--change-set" in flat
+    )
+    assert "A `phase` of `stack_in_review` means the change set was never executed" in flat
+    assert "Go back to step 1 once in this run" in flat
+    assert (
+        "`MOVE_RESULT: stopped stage=move reason=stack REVIEW_IN_PROGRESS: change set not executed`"
+        in flat
+    )

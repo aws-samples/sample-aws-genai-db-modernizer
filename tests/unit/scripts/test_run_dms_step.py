@@ -8,6 +8,7 @@ Every AWS call goes to a botocore Stubber: nothing is sent."""
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -1431,11 +1432,15 @@ def _refused(tmp_path, capsys, cred, command, *needles):
     _no_pending(cred)  # no stop_replication_task or delete_stack was queued or made
 
 
+@pytest.mark.passes_on_main  # an empty stack whose create completed stays refused
 @pytest.mark.parametrize("command", OWNED)
 def test_an_empty_stack_is_refused(tmp_path, capsys, command):
+    """An empty stack whose create completed is no step stack. An empty one whose create rolled
+    back is ended only with this job's own stack tag (#2063):
+    test_a_failed_create_without_this_jobs_stack_tag_is_refused."""
     _job(tmp_path)
     cred = StubbedCredMgr()
-    _stack(cred, status="ROLLBACK_COMPLETE", outputs={})
+    _stack(cred, status="CREATE_COMPLETE", outputs={})
     _resources(cred, resources={})
     _refused(tmp_path, capsys, cred, command, "missing: ReplicationInstance")
 
@@ -2878,3 +2883,562 @@ def test_an_aws_error_that_is_not_about_credentials_has_no_kind(tmp_path, capsys
     code, out = _cli(tmp_path, capsys, cred, "restart-validation")
     assert code == 1 and "kind" not in out and "InvalidResourceStateFault" in out["message"]
     _no_pending(cred)
+
+
+# --- A stack that rolled back or is stuck: deploy, status and teardown (#2063) ----------------
+
+CAPACITY = ("Resource handler returned message: \"There are not enough resources available to "
+            "create a replication instance of class dms.r6i.large in us-east-1a\" "
+            "(HandlerErrorCode: InsufficientResourceCapacityFault)")  # fmt: skip
+NOT_UPDATABLE = "delete the failed stack first (`/move step-1` can end it)"
+# Deploy and status per CloudFormation status, as #2063 changes them. Every other status keeps
+# what it did: ``UNCHANGED`` below.
+FAILED_CREATE = ("CREATE_FAILED", "ROLLBACK_FAILED", "ROLLBACK_COMPLETE")
+STUCK = ("DELETE_FAILED", "UPDATE_FAILED", "UPDATE_ROLLBACK_FAILED", "IMPORT_ROLLBACK_FAILED")
+UNCHANGED_DEPLOYED = ("CREATE_COMPLETE", "UPDATE_COMPLETE", "IMPORT_COMPLETE")
+ROLLED_BACK_UPDATE = ("UPDATE_ROLLBACK_COMPLETE", "IMPORT_ROLLBACK_COMPLETE")
+
+
+def _all_statuses():
+    from tests.unit.tools.aws.aws_stubs import make_client
+
+    return make_client("cloudformation").meta.service_model.shape_for("StackStatus").enum
+
+
+def _changing():
+    return [x for x in _all_statuses() if x.endswith("_IN_PROGRESS") and x != "REVIEW_IN_PROGRESS"]
+
+
+def test_the_status_groups_below_cover_every_cloudformation_status():
+    groups = [*FAILED_CREATE, *STUCK, *UNCHANGED_DEPLOYED, *ROLLED_BACK_UPDATE,
+              "REVIEW_IN_PROGRESS", "DELETE_COMPLETE", *_changing()]  # fmt: skip
+    assert sorted(groups) == sorted(_all_statuses())
+    from src.tools.data_movement.stack_states import stack_kind
+
+    assert {x: stack_kind(x) for x in FAILED_CREATE} == dict.fromkeys(
+        FAILED_CREATE, "create_failed"
+    )
+
+
+def _failed_stack(cred, status, *, job_tag="job1", outputs=None, protected=None, reason=None):
+    stack = {"StackName": STACK, "StackId": STACK_ID, "CreationTime": "2026-11-04T00:00:00Z",
+             "StackStatus": status,
+             "Outputs": [{"OutputKey": k, "OutputValue": v} for k, v in (outputs or {}).items()]}  # fmt: skip
+    if job_tag is not None:
+        stack["Tags"] = [{"Key": "modernizer:job-id", "Value": job_tag}]
+    if protected is not None:
+        stack["EnableTerminationProtection"] = protected
+    if reason:
+        stack["StackStatusReason"] = reason
+    cred.stub("cloudformation").add_response("describe_stacks", {"Stacks": [stack]},
+                                             {"StackName": STACK})  # fmt: skip
+
+
+def _cfn_event(logical, status, reason=None, seconds=0):
+    kind = ("AWS::CloudFormation::Stack" if logical == STACK
+            else STEP_RESOURCES.get(logical, "AWS::DMS::ReplicationInstance"))  # fmt: skip
+    return {"StackId": STACK_ID, "EventId": f"{logical}-{status}", "StackName": STACK,
+            "LogicalResourceId": logical, "ResourceType": kind, "ResourceStatus": status,
+            "Timestamp": datetime(2026, 11, 9, tzinfo=UTC) + timedelta(seconds=seconds),
+            **({"ResourceStatusReason": reason} if reason else {})}  # fmt: skip
+
+
+def _events(cred, *events, pages=1):
+    """describe_stack_events by the stack id, newest first, in ``pages`` pages."""
+    rows = list(events)
+    size = -(-len(rows) // pages) if rows else 0
+    chunks = [rows[i * size : (i + 1) * size] for i in range(pages)] if rows else [[]]
+    for i, chunk in enumerate(chunks):
+        response: dict = {"StackEvents": chunk}
+        if i + 1 < len(chunks):
+            response["NextToken"] = f"e{i + 1}"
+        cred.stub("cloudformation").add_response(
+            "describe_stack_events", response,
+            {"StackName": STACK_ID, **({"NextToken": f"e{i}"} if i else {})})  # fmt: skip
+
+
+def _capacity_events(cred, operation="CREATE", pages=1):
+    _events(cred, _cfn_event(STACK, "ROLLBACK_COMPLETE", seconds=40),
+            _cfn_event("ReplicationInstance", f"{operation}_FAILED", CAPACITY, seconds=20),
+            _cfn_event("SubnetGroup", f"{operation}_COMPLETE", seconds=10),
+            _cfn_event(STACK, f"{operation}_IN_PROGRESS", "User Initiated", seconds=0),
+            pages=pages)  # fmt: skip
+
+
+@pytest.mark.parametrize("status", FAILED_CREATE)
+def test_deploy_after_a_failed_create_says_delete_it_first_and_sends_no_change_set(
+    tmp_path, capsys, status
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status)
+    _capacity_events(cred)
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 1 and out["status"] == "error" and out["kind"] == "stack_not_updatable"
+    assert NOT_UPDATABLE in out["message"] and CAPACITY in out["message"]
+    assert out["stack_status"] == status
+    assert out["stack_failure"]["logical_id"] == "ReplicationInstance"
+    assert "instance_class" in out["stack_failure"]["hint"]
+    _no_pending(cred)  # and no create_change_set was queued or made
+
+
+@pytest.mark.parametrize("status", STUCK)
+def test_deploy_on_a_stuck_stack_says_what_the_customer_can_do_and_sends_nothing(
+    tmp_path, capsys, status
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS)
+    _events(cred)  # no events at all: the line still says what to do
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 1 and out["kind"] == "stack_not_updatable" and out["stack_failure"] is None
+    assert out["stack_action"] and out["stack_action"] in out["message"]
+    _no_pending(cred)
+
+
+def _change_set(cred, kind):
+    cfn = cred.stub("cloudformation")
+    cfn.add_response("create_change_set", {"Id": "cs"}, {"StackName": STACK, "ChangeSetName": ANY,
+        "ChangeSetType": kind, "TemplateBody": ANY, "Capabilities": ["CAPABILITY_IAM"],
+        "Parameters": ANY, "Tags": script.stack_tags("job1")})  # fmt: skip
+    cfn.add_response("describe_change_set", {"Status": "CREATE_COMPLETE", "Changes": []},
+                     {"StackName": STACK, "ChangeSetName": ANY})  # fmt: skip
+
+
+@pytest.mark.passes_on_main  # a rolled-back update keeps taking updates, as before
+@pytest.mark.parametrize("status", ROLLED_BACK_UPDATE)
+def test_deploy_after_an_update_rolled_back_updates_the_stack_again(tmp_path, capsys, status):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS)
+    _change_set(cred, "UPDATE")
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["status"] == "change_set_ready" and out["change_set_type"] == "UPDATE"
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # a deployed, missing or never-executed stack deploys as before
+@pytest.mark.parametrize("status, kind", [*((x, "UPDATE") for x in UNCHANGED_DEPLOYED),
+                                          ("REVIEW_IN_PROGRESS", "CREATE")])  # fmt: skip
+def test_deploy_on_a_deployed_or_never_executed_stack_is_unchanged(tmp_path, capsys, status, kind):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS if kind == "UPDATE" else None)
+    _change_set(cred, kind)
+    code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["change_set_type"] == kind
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # a stack still changing is waited on, as before
+def test_deploy_refuses_every_status_still_changing(tmp_path, capsys):
+    for status in _changing():
+        _job(tmp_path)
+        cred = StubbedCredMgr()
+        _failed_stack(cred, status)
+        code, out = _run(tmp_path, "deploy", "--approve", clients=_clients(cred), capsys=capsys)
+        assert code == 1 and status in out["message"] and "wait for it" in out["message"]
+        _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", FAILED_CREATE)
+def test_status_after_a_failed_create_names_the_failed_resource_and_the_way_on(status):
+    cred = StubbedCredMgr()
+    _failed_stack(
+        cred, status, reason="The following resource(s) failed to create: [ReplicationInstance]."
+    )
+    _capacity_events(cred, pages=2)
+    out = script.status(_clients(cred), STACK)
+    assert out["phase"] == "stack_create_failed"
+    assert out["stack_failure"] == {"logical_id": "ReplicationInstance",
+                                    "resource_type": "AWS::DMS::ReplicationInstance",
+                                    "status": "CREATE_FAILED", "reason": CAPACITY,
+                                    "hint": out["stack_failure"]["hint"]}  # fmt: skip
+    assert "another instance_class" in out["stack_failure"]["hint"]
+    assert NOT_UPDATABLE in out["stack_action"]
+    _no_pending(cred)  # read-only: describe_stacks and describe_stack_events only
+
+
+def test_status_after_a_failed_create_with_no_events_keeps_cloudformations_reason():
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_COMPLETE", reason="The following resource(s) failed to create")
+    _events(cred)
+    out = script.status(_clients(cred), STACK)
+    assert out["phase"] == "stack_create_failed" and out["stack_failure"] is None
+    assert out["stack_reason"] == "The following resource(s) failed to create"
+    assert NOT_UPDATABLE in out["stack_action"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", STUCK)
+def test_status_of_a_stuck_stack_is_stack_failed_with_what_to_do(status):
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS)
+    _capacity_events(cred, operation="UPDATE")
+    out = script.status(_clients(cred), STACK)
+    assert out["phase"] == "stack_failed" and STACK in out["stack_action"]
+    assert out["stack_failure"]["status"] == "UPDATE_FAILED"
+    _no_pending(cred)
+
+
+def test_a_change_set_never_executed_is_not_a_stack_still_changing():
+    """A declined change set leaves an empty REVIEW_IN_PROGRESS stack: the wait ends at once."""
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _change_sets(cred, "AVAILABLE")  # created, never executed
+    clock = iter([0, 0, 30])
+    out = script.wait_status(_clients(cred), STACK, "stack", 540, 30, sleep=lambda _s: None,
+                             clock=lambda: next(clock))  # fmt: skip
+    assert out["phase"] == "stack_in_review" and out["reached"] is True
+    assert "never executed" in out["stack_action"]
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", ROLLED_BACK_UPDATE)
+def test_an_update_that_rolled_back_still_judges_the_task_so_prove_stays_reachable(status):
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS)
+    _capacity_events(cred, operation="UPDATE")
+    _connections(cred)
+    _prove_task(cred)
+    cred.stub("dms").add_response("describe_table_statistics",
+                                  {"TableStatistics": _rows(validated=2, pending_records=0)})  # fmt: skip
+    out = script.status(_clients(cred), STACK)
+    assert out["phase"] == "caught_up" and out["task_status"] == "running"
+    assert out["stack_failure"]["status"] == "UPDATE_FAILED"
+    assert "earlier settings" in out["stack_action"]
+    _no_pending(cred)
+
+
+@pytest.mark.passes_on_main  # a stack that deployed cleanly reads no events
+@pytest.mark.parametrize("status", UNCHANGED_DEPLOYED)
+def test_a_cleanly_deployed_stack_reads_no_events_and_names_no_action(status):
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, outputs=OUTPUTS)
+    _connections(cred)
+    _task(cred)
+    out = script.status(_clients(cred), STACK)
+    assert out["phase"] == "ready_to_start" and "stack_action" not in out
+    _no_pending(cred)
+
+
+def test_test_and_start_accept_a_stack_whose_update_rolled_back(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "UPDATE_ROLLBACK_COMPLETE", outputs=OUTPUTS)
+    for ep in (SOURCE_EP, TARGET_EP):
+        cred.stub("dms").add_response(
+            "test_connection", {}, {"ReplicationInstanceArn": INSTANCE, "EndpointArn": ep}
+        )
+    code, out = _run(tmp_path, "test", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["status"] == "testing"
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("status", FAILED_CREATE)
+def test_the_until_waits_end_on_a_failed_create(status):
+    for until in ("running", "caught_up"):
+        cred = StubbedCredMgr()
+        _failed_stack(cred, status)
+        _events(cred)
+        ticks = iter([0, 0, 30])
+        out = script.wait_status(_clients(cred), STACK, until, 540, 30, sleep=lambda _s: None,
+                                 clock=functools.partial(next, ticks))  # fmt: skip
+        assert out["reached"] is True and out["phase"] == "stack_create_failed", until
+        _no_pending(cred)
+
+
+# teardown of this job's own stack whose create failed or never ran
+
+
+def _rolled_back_rows(cred, live=()):
+    """list_stack_resources of a failed create: every resource deleted but those in ``live``."""
+    rows = [_summary(k, v, "DELETE_FAILED" if k in live else "DELETE_COMPLETE")
+            for k, v in STEP_RESOURCES.items() if k != "ReplicationTask"]  # fmt: skip
+    cred.stub("cloudformation").add_response(
+        "list_stack_resources", {"StackResourceSummaries": rows}, {"StackName": STACK}
+    )
+
+
+def _teardown(tmp_path, capsys, cred):
+    return _run(tmp_path, "teardown", "--approve", clients=_clients(cred), capsys=capsys)
+
+
+def _deleted(cred):
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(cred, "DELETE_COMPLETE")
+
+
+@pytest.mark.parametrize("status", FAILED_CREATE)
+def test_teardown_ends_this_jobs_stack_whose_create_failed(tmp_path, capsys, status):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status)
+    _rolled_back_rows(cred)
+    _deleted(cred)
+    code, out = _teardown(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "deleted" and out["reached"] is True
+    assert out["dms_reports"] == GONE
+    _no_pending(cred)
+
+
+def test_teardown_ends_a_failed_create_whose_rollback_left_this_jobs_instance(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance", "SecretsAccessRole"))
+    _dms_tags(cred, arns=(INSTANCE,))  # the instance still exists, and carries this job's tag
+    _deleted(cred)
+    code, out = _teardown(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "deleted"
+    _no_pending(cred)
+
+
+def test_teardown_ends_an_empty_stack_a_declined_change_set_left(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _resources(cred, resources={})
+    _deleted(cred)
+    code, out = _teardown(tmp_path, capsys, cred)
+    assert code == 0 and out["status"] == "deleted"
+    _no_pending(cred)
+
+
+def test_stop_on_this_jobs_failed_create_has_no_task_to_stop(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_COMPLETE")
+    _rolled_back_rows(cred)
+    code, out = _run(tmp_path, "stop", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["status"] == "no_task" and out["dms_reports"] == GONE
+    _no_pending(cred)
+
+
+@pytest.mark.parametrize("command", OWNED)
+@pytest.mark.parametrize("status", [*FAILED_CREATE, "REVIEW_IN_PROGRESS"])
+def test_a_failed_create_without_this_jobs_stack_tag_is_refused(tmp_path, capsys, command, status):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, status, job_tag=None)
+    _refused(tmp_path, capsys, cred, command, f"its own {script.JOB_TAG} tag names this job")
+
+
+@pytest.mark.passes_on_main  # another job's failed create stays refused
+@pytest.mark.parametrize("command", OWNED)
+def test_a_failed_create_of_another_job_is_refused(tmp_path, capsys, command):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_COMPLETE", job_tag="otherjob")
+    _refused(tmp_path, capsys, cred, command, "['otherjob']")
+
+
+@pytest.mark.passes_on_main  # a foreign resource still refuses a failed create
+@pytest.mark.parametrize("command", OWNED)
+def test_a_failed_create_holding_a_resource_the_step_never_makes_is_refused(
+    tmp_path, capsys, command
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_FAILED")
+    _resources(cred, resources={"SubnetGroup": STEP_RESOURCES["SubnetGroup"],
+                                "Cluster": "AWS::RDS::DBCluster"})  # fmt: skip
+    _refused(tmp_path, capsys, cred, command, "Cluster (AWS::RDS::DBCluster)")
+
+
+def test_a_failed_create_whose_leftover_instance_is_another_jobs_is_refused(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _dms_tags(cred, job_tag="otherjob", arns=(INSTANCE,))
+    _refused(tmp_path, capsys, cred, "teardown", "ReplicationInstance's modernizer:job-id tag")
+
+
+@pytest.mark.parametrize("status", ["ROLLBACK_COMPLETE", "CREATE_COMPLETE"])
+def test_teardown_respects_termination_protection_and_never_turns_it_off(tmp_path, capsys, status):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    if status == "ROLLBACK_COMPLETE":
+        _failed_stack(cred, status, protected=True)
+        _rolled_back_rows(cred)
+    else:
+        _failed_stack(cred, status, outputs=OUTPUTS, protected=True)
+        _resources(cred)
+        _task_by_arn(cred, "stopped")
+    seen = []
+    for client in (cred.client("cloudformation"), cred.client("dms")):
+        client.meta.events.register("before-call", lambda model, **_k: seen.append(model.name))
+    code, out = _teardown(tmp_path, capsys, cred)
+    assert code == 1 and "termination protection" in out["message"]
+    assert "never turns it off" in out["message"]
+    assert "DeleteStack" not in seen and "UpdateTerminationProtection" not in seen
+    _no_pending(cred)
+
+
+def test_credentials_that_expire_mid_teardown_of_a_failed_create_say_the_delete_was_sent(
+    tmp_path, capsys
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_COMPLETE")
+    _rolled_back_rows(cred)
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    cred.stub("cloudformation").add_client_error("describe_stacks", "ExpiredToken", "expired")
+    code, out = _teardown(tmp_path, capsys, cred)
+    assert code == 1 and out["kind"] == "credentials"
+    assert "this run already called DeleteStack" in out["message"]
+    _no_pending(cred)
+
+
+# A change set just executed: the stack may still read REVIEW_IN_PROGRESS (#2063 review)
+
+
+def _change_sets(cred, *statuses):
+    cred.stub("cloudformation").add_response("list_change_sets", {"Summaries": [
+        {"ChangeSetName": f"cs{i}", "ExecutionStatus": s, "Status": "CREATE_COMPLETE"}
+        for i, s in enumerate(statuses)]}, {"StackName": STACK_ID})  # fmt: skip
+
+
+def _named_change_set(cred, execution):
+    cred.stub("cloudformation").add_response("describe_change_set", {
+        "ChangeSetName": "move-step-1-x", "Status": "CREATE_COMPLETE", "ExecutionStatus": execution},
+        {"StackName": STACK_ID, "ChangeSetName": "move-step-1-x"})  # fmt: skip
+
+
+@pytest.mark.parametrize("execution", ["AVAILABLE", "EXECUTE_IN_PROGRESS"])
+def test_the_stack_wait_after_execute_keeps_waiting_while_the_create_starts(execution):
+    cred = StubbedCredMgr()
+    for _ in range(3):
+        _failed_stack(cred, "REVIEW_IN_PROGRESS")
+        _named_change_set(cred, execution)
+    ticks = iter([0, 0, 30, 60])
+    out = script.wait_status(_clients(cred), STACK, "stack", 60, 30, sleep=lambda _s: None,
+                             clock=functools.partial(next, ticks), change_set="move-step-1-x")  # fmt: skip
+    assert out["phase"] == "stack_in_progress" and out["reached"] is False
+    _no_pending(cred)  # the executed change set was read on every poll
+
+
+def test_the_cli_stack_wait_reads_the_change_set_it_is_given(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _named_change_set(cred, "EXECUTE_IN_PROGRESS")
+    code, out = _run(tmp_path, "status", "--until", "stack", "--change-set", "move-step-1-x",
+                     "--wait-seconds", "0", clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["phase"] == "stack_in_progress"
+    _no_pending(cred)
+
+
+def test_the_stack_wait_after_execute_ends_once_the_change_set_failed_to_execute(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _named_change_set(cred, "EXECUTE_FAILED")
+    code, out = _run(tmp_path, "status", "--until", "stack", "--change-set", "move-step-1-x",
+                     "--wait-seconds", "60", clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["phase"] == "stack_in_review" and out["reached"] is True
+    _no_pending(cred)
+
+
+def test_without_a_change_set_name_any_change_set_executing_keeps_the_wait():
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _change_sets(cred, "AVAILABLE", "EXECUTE_IN_PROGRESS")
+    assert script.status(_clients(cred), STACK)["phase"] == "stack_in_progress"
+    _no_pending(cred)
+
+
+def test_a_declined_change_set_reads_stack_in_review_at_once(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "REVIEW_IN_PROGRESS")
+    _change_sets(cred, "AVAILABLE")
+    code, out = _run(tmp_path, "status", "--until", "stack", "--wait-seconds", "540",
+                     clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["phase"] == "stack_in_review" and out["reached"] is True
+    _no_pending(cred)
+
+
+# A delete that failed after a failed create (#2063 review)
+
+
+def _history(cred, *, completed: bool, pages=1):
+    events = [_cfn_event(STACK, "DELETE_FAILED", "The following resource(s) failed to delete: "
+                         "[ReplicationInstance].", seconds=90),
+              _cfn_event("ReplicationInstance", "DELETE_FAILED", "still in use", seconds=80),
+              _cfn_event(STACK, "DELETE_IN_PROGRESS", "User Initiated", seconds=70)]  # fmt: skip
+    if completed:
+        events += [_cfn_event(STACK, "CREATE_COMPLETE", seconds=20)]
+    else:
+        events += [_cfn_event(STACK, "ROLLBACK_FAILED", seconds=60),
+                   _cfn_event("ReplicationInstance", "CREATE_FAILED", CAPACITY, seconds=20)]  # fmt: skip
+    events += [_cfn_event(STACK, "CREATE_IN_PROGRESS", "User Initiated", seconds=0)]
+    _events(cred, *events, pages=pages)
+
+
+def test_a_failed_create_whose_delete_failed_can_be_ended_again(tmp_path, capsys):
+    """ROLLBACK_FAILED, teardown, DELETE_FAILED, then a second teardown deletes it."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "ROLLBACK_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _dms_tags(cred, arns=(INSTANCE,))
+    cred.stub("cloudformation").add_response("delete_stack", {}, {"StackName": STACK_ID})
+    _poll(
+        cred, "DELETE_FAILED", "The following resource(s) failed to delete: [ReplicationInstance]."
+    )
+    code, first = _teardown(tmp_path, capsys, cred)
+    assert code == 0 and first["status"] == "delete_failed"
+    _no_pending(cred)
+
+    _failed_stack(cred, "DELETE_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _history(cred, completed=False, pages=2)
+    _dms_tags(cred, arns=(INSTANCE,))
+    _deleted(cred)
+    code, second = _teardown(tmp_path, capsys, cred)
+    assert code == 0 and second["status"] == "deleted" and second["reached"] is True
+    _no_pending(cred)
+    # The DELETE_FAILED way on points at a step that runs: ending the step again.
+    from src.tools.data_movement.stack_states import stack_action
+
+    assert "end the step again" in stack_action("DELETE_FAILED", STACK, protected=False)
+
+
+@pytest.mark.parametrize("command", OWNED)
+def test_a_delete_failed_stack_whose_create_completed_must_still_hold_all_six(
+    tmp_path, capsys, command
+):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "DELETE_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _history(cred, completed=True)
+    _refused(tmp_path, capsys, cred, command, "missing: ReplicationTask")
+
+
+def test_a_delete_failed_failed_create_without_this_jobs_tag_is_refused(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "DELETE_FAILED", job_tag=None)
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _history(cred, completed=False)
+    _refused(tmp_path, capsys, cred, "teardown", f"its own {script.JOB_TAG} tag names this job")
+
+
+def test_a_delete_failed_stack_with_a_history_too_long_to_read_counts_as_created(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(script, "MAX_EVENT_PAGES", 2)
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _failed_stack(cred, "DELETE_FAILED")
+    _rolled_back_rows(cred, live=("ReplicationInstance",))
+    _events(cred, *(_cfn_event("SubnetGroup", "DELETE_FAILED", "x", seconds=i) for i in range(3)),
+            pages=3)  # fmt: skip
+    code, out = _run(tmp_path, "teardown", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 1 and "missing: ReplicationTask" in out["message"]
+    # the third page was never read
+    with pytest.raises(AssertionError):
+        cred.stub("cloudformation").assert_no_pending_responses()
