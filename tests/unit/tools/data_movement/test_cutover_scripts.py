@@ -218,6 +218,29 @@ def test_exact_letters_need_no_hand_check(tmp_path):
     assert "(source state O)" in _read(tmp_path, CUTOVER_FILE)
 
 
+@pytest.mark.parametrize(
+    "letters, says",
+    [
+        (("R", "D"), "sets the 2 triggers step 1 created disabled to their source state; "
+                     "1 of them stay disabled"),
+        (("enabled", "disabled"), "sets the 2 triggers step 1 created disabled enabled or "
+                                  "disabled as the collection records; 1 of them stay disabled"),
+        (("A", "disabled"), "sets the 2 triggers step 1 created disabled: 1 to their source "
+                            "state, 1 enabled or disabled as the collection records; 1 of them "
+                            "stay disabled"),
+    ],
+)  # fmt: skip
+def test_the_header_claims_the_source_state_only_for_exact_letters(tmp_path, letters, says):
+    names = ("t_x", "t_y")
+    states = {f"public.orders.{n}": s for n, s in zip(names, letters, strict=True)}
+    store, contract = _pg_case(tmp_path, triggers=names, states=states)
+    _cut(tmp_path, store, contract)
+    head = _read(tmp_path, CUTOVER_FILE).split("BEGIN;", 1)[0]
+    assert f"-- This script {says}; 2 expected" in head
+    if "enabled" in letters or "disabled" in letters:
+        assert "to their source state;" not in head
+
+
 def test_a_postgresql_trigger_whose_source_state_is_unknown_is_left_out_never_guessed(tmp_path):
     store, contract = _pg_case(tmp_path, states={"public.orders.trg_b": None})
     scripts = _cut(tmp_path, store, contract)

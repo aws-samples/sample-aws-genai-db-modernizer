@@ -30,7 +30,8 @@ artifact's deploy order:
    disabled.
 
 A trigger also carries what the cutover script needs of it, from the collection (#1948):
-a PostgreSQL trigger's source state (``source_state``), a MySQL trigger's timing and
+a PostgreSQL trigger's source state (``source_state``: its ``tgenabled`` letter, or only
+``enabled`` / ``disabled`` from a collection that predates the letter), a MySQL trigger's timing and
 event (``fires``) and ``ACTION_ORDER``.
 
 The section holds ids, names, signatures and reason codes, never a routine's text.
@@ -59,6 +60,8 @@ VIEW_DEPENDENCY = "depends_on_view"  # reason "depends_on_view:<schema.view>"
 NOT_CARRIED_DEPENDENCY = "depends_on_not_carried"
 NOT_CARRIABLE = "status_not_carried"
 ENGINE_DIFFERS = "target_engine_differs"
+#: The PostgreSQL ``tgenabled`` letters a collection's ``enabled_mode`` may give (#2071).
+TRIGGER_MODES = ("O", "A", "R", "D")
 
 
 def step_tables(contract: StepContract) -> set[str]:
@@ -84,12 +87,15 @@ def _trigger_key(schema: str | None, table: str | None, name: str, engine: str) 
 
 
 def _source_state(found: dict[str, Any]) -> str | None:
-    """The collection's state of a PostgreSQL trigger. The collection records only whether
-    it fires for ordinary sessions (``is_enabled``: O or A reads enabled, D or R disabled),
-    so the state is ``enabled`` or ``disabled``, never a ``tgenabled`` letter it does not
-    have; None when the collection does not say."""
-    # #2099: once the collection keeps the tgenabled letter, carry it as it is (O, A, R or
-    # D); the cutover script and its check already set and verify an exact letter.
+    """The collection's state of a PostgreSQL trigger: its ``tgenabled`` letter
+    (``enabled_mode``: O, A, R or D, #2099) when the collection keeps it, carried as it is.
+    A collection that predates the letter (or gives none) records only whether the trigger
+    fires for ordinary sessions (``is_enabled``: O or A reads enabled, D or R disabled), so
+    the state is then ``enabled`` or ``disabled``, never a letter it does not have; None
+    when the collection says neither."""
+    mode = found.get("enabled_mode")
+    if mode in TRIGGER_MODES:
+        return str(mode)
     enabled = found.get("is_enabled")
     if enabled is True:
         return "enabled"
