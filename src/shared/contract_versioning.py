@@ -568,6 +568,11 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         r"data-movement/step-\d+/routines-check\.json",
         "src.contracts.routine_check:RoutineCheckResult",
     ),
+    # #1948: what the customer's run of the cutover routine check script shows.
+    (
+        r"data-movement/step-\d+/cutover-check\.json",
+        "src.contracts.cutover_check:CutoverCheckResult",
+    ),
     (r"data-movement/hub/plan\.json", "src.contracts.data_movement_plan:HubPlan"),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),
     (r"[^/]+/answers\.json", "src.contracts.agent_interaction_models:AgentAnswers"),

@@ -229,6 +229,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the routine kinds each Aurora target's check output may name: plumbing for reading "
         "step 1's routine check, no routing rule (#1947)",
     ),
+    "src/tools/data_movement/cutover_scripts.py": (
+        frozenset({"CUTOVER_KINDS"}),
+        "the routine kinds the cutover script acts on per Aurora target (ADR-034 Decision 6): "
+        "plumbing for the customer's cutover script, no routing rule (#1948)",
+    ),
     "src/tools/data_movement/dms_preflight.py": (
         frozenset({"_VERSION_ENGINE"}),
         "the source-engine name the version parser takes for each Aurora engine: plumbing "

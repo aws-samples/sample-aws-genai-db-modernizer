@@ -290,3 +290,63 @@ def test_a_routine_body_the_customer_opted_out_of_is_not_carried_with_its_reason
                                     contract.model_copy(update={"routines": section}), "a" * 64,
                                     tmp_path / "step")  # fmt: skip
     assert scripts.status == "nothing_to_deploy" and not (tmp_path / "step").exists()
+
+
+def _trigger_rows(engine: str) -> list[dict]:
+    schema = "public" if engine == "postgresql" else "shop"
+    return [row(f"{schema}.orders.{n}", "trigger", schema=schema, name=n, table=f"{schema}.orders",
+                specific=f"orders.{n}", status="as_is" if engine == "postgresql" else "rewritten")
+            for n in ("t_on", "t_off", "t_unknown")]  # fmt: skip
+
+
+def test_a_postgresql_trigger_carries_its_source_state_from_the_collection():
+    from src.tools.data_movement.step1_routines import _collection_triggers
+
+    collection = {"triggers": [
+        {"trigger_name": "t_on", "schema_name": "public", "table_id": "orders", "is_enabled": True},
+        {"trigger_name": "t_off", "schema_name": "public", "table_id": "public.orders",
+         "is_enabled": False},
+        {"trigger_name": "t_unknown", "schema_name": "public", "table_id": "orders"},
+    ]}  # fmt: skip
+    section = build_step_routines(
+        migration(_trigger_rows("postgresql")), make_contract("aurora_postgresql"), version=2,
+        triggers=_collection_triggers(collection, "aurora_postgresql"),
+    )  # fmt: skip
+    states = {r.name: r.source_state for r in section.routines}
+    # The collection records only whether a trigger fires (O or A reads enabled, D or R
+    # not): that is what is carried, never a tgenabled letter it does not have (#2099).
+    assert states == {"t_on": "enabled", "t_off": "disabled", "t_unknown": None}
+    assert "source_state" not in section.routines[2].model_dump(mode="json")  # bytes kept
+
+
+def test_a_mysql_trigger_carries_its_timing_event_and_action_order_from_the_collection():
+    from src.tools.data_movement.step1_routines import _collection_triggers
+
+    collection = {"triggers": [
+        {"trigger_name": "T_ON", "schema_name": "SHOP", "table_id": "orders", "timing": "before",
+         "event_type": "insert", "action_order": 2},
+        {"trigger_name": "t_off", "schema_name": "shop", "table_id": "orders", "timing": "BEFORE",
+         "event_type": "INSERT", "action_order": None},
+    ]}  # fmt: skip
+    section = build_step_routines(
+        migration(_trigger_rows("mysql"), "mysql"), make_contract("aurora_mysql"), version=2,
+        triggers=_collection_triggers(collection, "aurora_mysql"),
+    )  # fmt: skip
+    got = {r.name: (r.carry, r.fires, r.action_order) for r in section.routines}
+    assert got == {"t_on": ("deferred_to_cutover", "BEFORE INSERT", 2),
+                   "t_off": ("deferred_to_cutover", "BEFORE INSERT", None),
+                   "t_unknown": ("deferred_to_cutover", None, None)}  # fmt: skip
+
+
+def test_a_section_written_before_the_trigger_fields_still_loads():
+    from src.contracts.transformation_contract import StepRoutines
+
+    old = {"source": "routine_migration", "routine_migration_version": 2, "total": 1, "carried": 1,
+           "not_carried": 0, "deferred": 0, "routines": [
+               {"routine_id": "public.orders.t", "kind": "trigger", "schema_name": "public",
+                "name": "t", "table": "public.orders", "carry": "carried", "order": 1,
+                "migration_status": "as_is", "enabled_as": "disabled", "reasons": []}]}  # fmt: skip
+    section = StepRoutines.model_validate(old)
+    assert section.routines[0].source_state is None
+    assert section.model_dump(mode="json") == {**old, "routines": [
+        {**old["routines"][0], "specific_name": None, "signature": None, "returns": None}]}  # fmt: skip

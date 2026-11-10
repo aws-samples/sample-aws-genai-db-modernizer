@@ -26,6 +26,9 @@ Version History:
 - 1.3 (2026-11-09, #1947): Added optional ``StepContract.routines`` (``StepRoutines``,
   ``StepRoutine``): the routines step 1 carries in its deploy script, in order, and why
   each other one is not carried; left out of the dump when None.
+- 1.4 (2026-11-10, #1948): Added optional ``StepRoutine.source_state``, ``fires`` and
+  ``action_order`` (a PostgreSQL trigger's source state; a MySQL trigger's timing, event
+  and ACTION_ORDER), which the cutover script reads; left out of the dump when None.
 """
 
 from typing import Literal
@@ -221,6 +224,32 @@ class StepRoutine(BaseModel):
         default_factory=list,
         description="Why it is not carried: rule ids and reason codes, never text",
     )
+    # #1948: what the cutover script needs of a trigger, from the collection; each is left
+    # out of the dump when None, so a section written before them keeps its bytes.
+    source_state: Literal["O", "A", "R", "D", "enabled", "disabled"] | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "PostgreSQL trigger: its state on the source, which the cutover script sets: as "
+            "pg_trigger.tgenabled spells it (O origin, A always, R replica, D disabled) when the "
+            "collection gives the letter; enabled or disabled when it records only that (an "
+            "always or replica-only trigger is then not told apart); None when not reported"
+        ),
+    )
+    fires: str | None = Field(
+        None,
+        exclude_if=lambda value: value is None,
+        description="MySQL trigger: its timing and event, such as BEFORE INSERT",
+    )
+    action_order: int | None = Field(
+        None,
+        ge=1,
+        exclude_if=lambda value: value is None,
+        description=(
+            "MySQL trigger: its place among its table's triggers of one timing and event "
+            "(information_schema ACTION_ORDER), the order the cutover script creates them in"
+        ),
+    )
 
     @model_validator(mode="after")
     def _carry_fits(self) -> "StepRoutine":
@@ -289,7 +318,7 @@ class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(
