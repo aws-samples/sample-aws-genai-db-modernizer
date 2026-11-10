@@ -406,3 +406,18 @@ class TestEngineeringReportEscaping:
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
+
+
+def test_md_text_with_ids_quotes_access_pattern_ids_only_when_asked() -> None:
+    """#2084: a review target names an access pattern in its own words."""
+    md_text_with_ids = escaping.md_text_with_ids
+
+    qid = "7ead756f" + "0" * 56
+    text = "DDB-AP-15 / wp_x (query 7ead756f), as `DOC-AP-2` said; not XDDB-AP-1x"
+    assert md_text_with_ids(text, {qid}, pattern_ids=True) == (
+        "`DDB-AP-15` / wp\\_x \\(query `7ead756f`\\), as `DOC-AP-2` said; not XDDB-AP-1x"
+    )
+    # Without the flag only the report's query ids are quoted, as before.
+    assert md_text_with_ids(text, {qid}).startswith("DDB-AP-15 / wp\\_x \\(query `7ead756f`")
+    assert md_text_with_ids("DDB-AP-1", set(), pattern_ids=True) == "`DDB-AP-1`"
+    assert md_text_with_ids("DDB-AP-1", set()) == "DDB-AP-1"

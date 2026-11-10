@@ -338,3 +338,64 @@ def test_a_stored_block_from_before_the_short_line_gets_it_from_the_same_functio
         w.pop("readiness_line_short")
     assert [w["readiness_line_short"] for w in report_facts(report)["waves"]] == expected
     assert table_name_hits_none(_executive_text(report))
+
+
+QID = "7ead756f" + "0" * 56
+
+
+def _with_query(report: dict[str, Any]) -> dict[str, Any]:
+    """The report holding ``QID`` as one of its query ids (a wave's table group)."""
+    report["migration_waves"][1]["table_groups"] = [
+        {"tables": ["shop.b"], "query_count": 1, "kind": "independent", "query_ids": [QID]}
+    ]
+    return report
+
+
+def test_the_readiness_line_quotes_a_warnings_query_and_pattern_ids() -> None:
+    """A warning's target is the review's own text: the engineering report quotes the
+    query and access-pattern ids it names as the report does elsewhere (#2084); the
+    fact stays plain."""
+    from tests.report_concision import bare_ids, known_query_ids, raw_labels
+
+    warning = {
+        "category": "key_design",
+        "target": "DDB-AP-15 / shop.b (query 7ead756f)",
+        "change": "Add a sentinel item for the status lookup",
+    }
+    report = _with_query(_designed(_review(0, [])))
+    report["schema_designs"]["dynamodb"].update(
+        open_review_count=0, reviewed_count=1, review_warnings=[warning]
+    )
+    report["facts"] = compute_report_facts(report)
+    two = report["facts"]["waves"][1]
+    assert two["readiness"] == "suggested"
+    assert "DynamoDB DDB-AP-15 / shop.b (query 7ead756f): Add a sentinel" in (two["readiness_line"])
+    md = render_engineering_report_md(report)
+    line = next(x for x in md.splitlines() if "Add a sentinel item" in x)
+    assert "`DDB-AP-15`" in line and "`7ead756f`" in line
+    assert bare_ids(md, known_query_ids(report)) == []
+    assert raw_labels(md) == []
+    assert line.count("`") == 4  # nothing else became a code span
+
+
+def test_a_failed_redesign_reason_quotes_the_query_it_names() -> None:
+    """A held wave's line quotes a failed round's reason, free text: a query id in it
+    is quoted in the engineering report too (#2084)."""
+    from tests.report_concision import bare_ids, known_query_ids
+
+    report = _with_query(_report("HIGH"))
+    report["wave_redesign"] = {
+        "rounds": [
+            {
+                "round": 1,
+                "engines": ["dynamodb"],
+                "outcome": {"dynamodb": "failed"},
+                "failed": {"dynamodb": f"redesign round 1 failed on query {QID[:8]}"},
+            }
+        ]
+    }
+    report["facts"] = compute_report_facts(report)
+    assert f"query {QID[:8]}" in report["facts"]["waves"][1]["readiness_line"]
+    md = render_engineering_report_md(report)
+    assert f"query `{QID[:8]}`" in md
+    assert bare_ids(md, known_query_ids(report)) == []
