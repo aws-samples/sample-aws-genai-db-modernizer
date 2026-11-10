@@ -3,7 +3,8 @@
 
 """Step 1 verify (#1998): the scripts' shape, the strict reading of the customer's output
 files (untrusted input), the per-table result and its contract. No engine here: the real
-engines run in ``test_verify_scripts_engine.py``."""
+engines run in ``test_verify_scripts_engine.py`` (PostgreSQL) and
+``tests/integration/test_verify_scripts_mysql.py`` (MySQL)."""
 
 from __future__ import annotations
 
