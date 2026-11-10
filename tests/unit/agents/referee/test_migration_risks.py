@@ -807,7 +807,7 @@ def test_a_table_total_over_the_limit_spread_over_many_keys_is_low() -> None:
     # The maintainer's decision on #2001: the per-key figure first, the total second.
     assert risk["description"] == (
         "[dynamodb] The DynamoDB design's busiest estimated partition key value (writes) is at "
-        "0.0061% of its limit at the design rate (spread evenly over 50,000 distinct key values; skew "
+        "0.0061% of its limit at the collected traffic (spread evenly over 50,000 distinct key values; skew "
         "across values not measured), and no estimated key value is above it. 1 design table "
         "has a table or index total above 80% of one key value's limit, an upper bound "
         "reached only if every request used the same key value (the highest at 303%)."
@@ -857,10 +857,29 @@ def test_a_constant_key_over_the_limit_is_high() -> None:
     assert risk["severity"] == "HIGH"
     assert risk["description"] == (
         "[dynamodb] 1 design table has a partition key value whose estimated load is above "
-        "its throughput limit at the design rate (the highest at 120% of the limit, every "
+        "its throughput limit at the collected traffic (the highest at 120% of the limit, every "
         "request uses the same key value)."
     )
     assert "Spread the load on these key values" in risk["mitigation"]
+
+
+@pytest.mark.parametrize(
+    ("pct", "tables"),
+    [
+        (303.0, _keyed("id")),
+        (150.0, _keyed("customer_id")),
+        (120.0, _keyed(None, constant=True)),
+        (600.0, _keyed("status")),
+    ],
+)
+def test_the_hot_partition_text_uses_no_internal_rate_wording(
+    pct: float, tables: list[dict[str, Any]]
+) -> None:
+    """#2104: the description and the mitigation say "the collected traffic", never the
+    model's own name for it ("design rate")."""
+    risk = _hot_risk(pct, tables)
+    for text in (risk["description"], risk["mitigation"], *risk["details"]):
+        assert "design rate" not in text.lower() and "design-rate" not in text.lower(), text
 
 
 def test_a_few_distinct_values_over_the_limit_are_high() -> None:
@@ -1505,7 +1524,7 @@ def test_an_upper_bound_per_key_figure_over_the_limit_is_not_measured() -> None:
     assert risk["severity"] == "LOW"
     assert risk["description"] == (
         "[dynamodb] 1 design table has a table or index total above 80% of one partition key "
-        "value's throughput limit at the design rate (the highest at 600%: an upper bound, "
+        "value's throughput limit at the collected traffic (the highest at 600%: an upper bound, "
         "reached only if every request used the same key value). Per-key load not measured: "
         "the collection counts distinct values for only part of its partition key, so the "
         "load spread over them (the highest at 150% of the limit) is an upper bound on the "

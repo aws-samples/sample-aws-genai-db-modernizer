@@ -374,13 +374,13 @@ describe('assumptionLinesOf (#1990)', () => {
     const synthesis = {
       facts: {
         assumptions: { assumptions: [], lines: ['Growth: 5× (default)', 'Peak: not measured (default)'] },
-        growth_scenarios: { rows: [], lines: ['Growth scenario: 1× $10.00/mo (the headline)'] },
+        growth_scenarios: { rows: [], lines: ['Growth scenario: 1× $10.00/mo (the collected traffic)'] },
       },
     };
     expect(assumptionLinesOf(synthesis)).toEqual([
       'Growth: 5× (default)',
       'Peak: not measured (default)',
-      'Growth scenario: 1× $10.00/mo (the headline)',
+      'Growth scenario: 1× $10.00/mo (the collected traffic)',
     ]);
   });
 

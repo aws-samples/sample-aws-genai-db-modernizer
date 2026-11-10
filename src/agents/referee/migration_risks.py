@@ -65,7 +65,7 @@ rule                       severity  raised when
                                      engine for a homogeneous source: it carries over with
                                      the schema and is tested after cutover (#1642)
 ``design.hot_partition``   HIGH      a partition key value's estimated load is above its
-                                     throughput limit at the design rate (#1989,
+                                     throughput limit at the collected traffic (#1989,
                                      ``partition_load``: every request on one key value, or the
                                      total spread evenly over the key's collected distinct
                                      values)
@@ -1101,13 +1101,13 @@ def _hot_partition_risks(
             how = _spread(worst)
             description = (
                 f"{_n(len(over_tables), 'design table has', 'design tables have')} a partition "
-                "key value whose estimated load is above its throughput limit at the design "
-                f"rate (the highest at {_pct(worst['per_key_pct_of_limit'])} of the limit, "
+                "key value whose estimated load is above its throughput limit at the collected "
+                f"traffic (the highest at {_pct(worst['per_key_pct_of_limit'])} of the limit, "
                 f"{how})."
             )
             mitigation = by_gate(
                 "Spread the load on these key values (write sharding or a different "
-                "partition key), and load-test them at the design rate",
+                "partition key), and load-test them at the collected traffic",
                 wave,
             )
             severity = "HIGH"
@@ -1133,7 +1133,7 @@ def _hot_partition_risks(
             n = len(tables)
             total_sentence = (
                 f"{_n(n, 'design table has', 'design tables have')} a table or index total "
-                "above 80% of one partition key value's throughput limit at the design rate "
+                "above 80% of one partition key value's throughput limit at the collected traffic "
                 f"({upper})."
             )
             per_key_sentence = None
@@ -1153,7 +1153,7 @@ def _hot_partition_risks(
                     f"value ({busiest['operation']}s) is at "
                     f"{_pct(busiest['per_key_pct_of_limit'])} "
                     "of its limit at the "
-                    f"design rate ({_spread(busiest)}), and no estimated key value is above it.",
+                    f"collected traffic ({_spread(busiest)}), and no estimated key value is above it.",
                     f"{_n(n, 'design table has', 'design tables have')} a table or index total "
                     "above 80% of one key value's limit, an upper bound reached only if every "
                     "request used the same key value (the highest at "
@@ -1180,7 +1180,7 @@ def _hot_partition_risks(
                     "value, not on the busiest one, and never sets the severity."
                 )
             description = " ".join(sentences)
-            step = "Watch the busiest key values of these tables in a load test at the design rate"
+            step = "Watch the busiest key values of these tables in a load test at the collected traffic"
             if unmeasured:
                 step += ", and check how many distinct values the keys not measured take"
             mitigation = by_gate(step, wave)

@@ -132,7 +132,9 @@ def test_every_assumption_states_its_origin() -> None:
         ("rate_window", "collected"),
         ("pricing", "default"),
     ]
-    assert items[0]["line"].startswith("Growth: 5× (default), stated as a separate scenario")
+    assert items[0]["line"].startswith(
+        "Growth: 5× (default), shown as a separate what-if scenario."
+    )
     assert items[1]["line"].startswith("Peak: 3× peak-to-average ratio")
     assert items[3]["line"] == (
         "Region and prices: us-east-1, on-demand prices from the AWS Price List retrieved "
@@ -174,10 +176,10 @@ def test_a_scenario_reprices_the_scaled_rates_and_one_times_is_the_headline() ->
         (10.0, 130.0, 20.0),
     ]
     assert facts["lines"] == [
-        "Growth scenario: 1× $103.00/mo (the headline), 5× $115.00/mo (the default growth), "
-        "10× $130.00/mo; not in the headline cost or the risks",
+        "Growth scenario: 1× $103.00/mo (the collected traffic), 5× $115.00/mo (the default "
+        "growth), 10× $130.00/mo; a what-if only, not part of the costs and risks in this report",
         "Busiest estimated partition key value (reads), share of its limit: 1× 2%, "
-        "5× 10%, 10× 20%; that key value can take 50× its design-rate load before it reaches its "
+        "5× 10%, 10× 20%; that key value can take 50× its collected traffic before it reaches its "
         "limit",
     ]
     # The input is never changed.
@@ -252,3 +254,57 @@ def test_the_growth_lines_name_no_table() -> None:
     text = " ".join(facts["lines"])
     assert "wp_wc_tax_rate_classes" not in text and "ByScope" not in text
     assert facts["busiest_key"]["table_name"] == "wp_wc_tax_rate_classes"  # kept as data
+
+
+#: Internal terms a customer does not know (#2103): a guard phrased as a negative, and the
+#: model's own names for the rates and the cost the reader sees.
+INTERNAL_PHRASES = ("design rate", "design-rate", "headline cost", "never applied")
+
+
+@pytest.mark.parametrize("origin", ["default", "flag", "file", "ui", "customer"])
+def test_the_customer_facing_assumption_lines_use_no_internal_wording(origin: Any) -> None:
+    """The assumptions block and the growth scenario read in the customer's words: growth
+    is a what-if scenario and the costs and risks use the collected traffic."""
+    windows: dict[str, Any] = {
+        "statement": "execution counts are divided by each statement's own window",
+        "window_statement": "27.5 minutes; a short window overstates traffic",
+        "check_statement": "not representative: under a day",
+        "representative": False,
+        "flags": ["short_window"],
+        "typical_window_seconds": 1650.0,
+    }
+    items = assumption_items(
+        _cw(7.0),
+        growth=3.0,
+        growth_origin=origin,
+        price_basis={
+            "region": "us-east-1",
+            "retrieved_on": "2026-11-04",
+            "source": "AWS Price List",
+        },
+        rate_window_statement=windows["statement"],
+        rate_windows=windows,
+    )
+    scenario = growth_scenario_facts(
+        _cw(7.0),
+        growth=3.0,
+        origin=origin,
+        headline_cost=10.0,
+        price=lambda _scaled: 12.0,
+        busiest_key={
+            "engine": "dynamodb",
+            "table_name": "t",
+            "gsi_name": None,
+            "operation": "read",
+            "per_key_pct_of_limit": 2.0,
+        },
+    )
+    lines = [i["line"] for i in items] + scenario["lines"] + gate_assumption_lines(_cw(7.0), None)
+    assert len(lines) >= 7
+    for line in lines:
+        for phrase in INTERNAL_PHRASES:
+            assert phrase not in line.lower(), (phrase, line)
+    assert items[0]["line"].endswith(
+        "shown as a separate what-if scenario. The costs and risks in this report use the "
+        "collected traffic"
+    )

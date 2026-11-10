@@ -171,7 +171,7 @@ def _coverage_days(points: float, period: float, window: float | None) -> float:
 def peak_assumption(
     collector: Mapping[str, Any] | None, context: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
-    """The peak factor the design rates take, its basis and the sentence stating it.
+    """The peak factor the rates take, its basis and the sentence stating it.
 
     ``ratio`` is the factor a long-window rate is multiplied by (1.0 unless the peak is
     measured or the customer set it); ``coverage_days`` the days the metrics cover."""
@@ -397,9 +397,8 @@ def assumption_items(
             "origin": growth_origin,
             "basis": None,
             "line": (
-                f"Growth: {_times(growth)} {said('growth', growth_origin)}, stated as a separate "
-                "scenario; "
-                "never applied to the design rates, the risks or the headline cost"
+                f"Growth: {_times(growth)} {said('growth', growth_origin)}, shown as a separate "
+                "what-if scenario. The costs and risks in this report use the collected traffic"
             ),
         },
         {
@@ -565,11 +564,13 @@ def growth_scenario_facts(
         )
     costs = ", ".join(
         f"{_times(r['growth'])} {_usd(r['monthly_cost_usd'])}/mo"
-        + (" (the headline)" if r["growth"] == 1.0 else "")
+        + (" (the collected traffic)" if r["growth"] == 1.0 else "")
         + (_growth_said(origin) if r["growth"] == growth and growth != 1.0 else "")
         for r in rows
     )
-    lines = [f"Growth scenario: {costs}; not in the headline cost or the risks"]
+    lines = [
+        f"Growth scenario: {costs}; a what-if only, not part of the costs and risks in this report"
+    ]
     if busiest_key and busiest_key.get("per_key_pct_of_limit") is not None:
         shares = ", ".join(
             f"{_times(r['growth'])} {_share(r['busiest_key_pct_of_limit'])}" for r in rows
@@ -585,7 +586,7 @@ def growth_scenario_facts(
             f"Busiest estimated partition key value ({busiest_key['operation']}s), "
             f"share of its limit: {shares}"
             + (
-                f"; that key value can take {headroom:,.0f}× its design-rate load before it reaches its limit"
+                f"; that key value can take {headroom:,.0f}× its collected traffic before it reaches its limit"
                 if headroom
                 else ""
             )
