@@ -1066,6 +1066,7 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
                 [w for w in report.get("migration_waves") or [] if isinstance(w, dict)],
                 rows,
                 facts.get("rate_windows"),
+                facts.get("routines"),
             )
             out["wave_readiness_notes"] = wave_readiness_notes(rows)
     no_migration = facts.get("no_migration")
@@ -3583,14 +3584,28 @@ def _designs(report: Mapping[str, Any]) -> Mapping[str, Any]:
     return designs if isinstance(designs, Mapping) else {}
 
 
+def routine_to_dos(routines: Mapping[str, Any] | None) -> dict[int, list[str]]:
+    """wave -> the routine to-do its line lists (#1938): ``facts.routines``'
+    ``migrate_yourself_line``, in the wave that brings in the routines' target."""
+    if not isinstance(routines, Mapping):
+        return {}
+    wave, line = routines.get("wave"), routines.get("migrate_yourself_line")
+    return {int(wave): [str(line)]} if isinstance(wave, int) and wave >= 1 and line else {}
+
+
 def wave_readiness_rows(
     report: dict[str, Any],
     waves: list[dict[str, Any]],
     rate_windows: Mapping[str, Any] | None = None,
+    routines: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Whether the plan suggests each wave (#1992, ``src.shared.wave_readiness``), from
     the report's open risks, its designs' unserved access patterns and open reviews, the
-    rate window's check and the costs."""
+    rate window's check and the costs. ``routines`` is ``facts.routines`` (#1938, the
+    stored block when None): its to-do is listed in its wave's line."""
+    if routines is None:
+        stored = report.get("facts")
+        routines = stored.get("routines") if isinstance(stored, Mapping) else None
     opened = open_risks(report)
     engine_of: list[str | None] = []
     for r in opened:
@@ -3689,6 +3704,7 @@ def wave_readiness_rows(
         window_representative=(rate_windows or {}).get("representative"),
         projected_cost=projected_monthly_cost(report) if source_cost is not None else None,
         source_cost=source_cost,
+        to_dos_by_wave=routine_to_dos(routines),
     )
 
 
@@ -3697,10 +3713,11 @@ def apply_wave_readiness(
     waves: list[dict[str, Any]],
     wave_rows: list[dict[str, Any]],
     rate_windows: Mapping[str, Any] | None = None,
+    routines: Mapping[str, Any] | None = None,
 ) -> None:
     """Set each wave row's ``readiness``, ``suggested``, ``holds``, ``next_steps`` and
     ``readiness_line`` (#1992), matched by wave number."""
-    by_wave = {r["wave"]: r for r in wave_readiness_rows(report, waves, rate_windows)}
+    by_wave = {r["wave"]: r for r in wave_readiness_rows(report, waves, rate_windows, routines)}
     for row in wave_rows:
         found = by_wave.get(int(row.get("wave") or 0))
         if found is not None:
@@ -3723,6 +3740,7 @@ def compute_report_facts(
     assumptions: Iterable[Mapping[str, Any]] | None = None,
     growth_scenarios: Mapping[str, Any] | None = None,
     readiness: bool = True,
+    routines: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3759,7 +3777,9 @@ def compute_report_facts(
     #1990: growth, peak source, rate window, region and prices, each with its origin) and
     ``growth_scenarios`` the cost and busiest partition key value at 1×, 5× and 10× growth
     (``growth_scenario_facts``), which need the collection and the TCO: synthesis passes
-    them, and a report rebuilt later has None.
+    them, and a report rebuilt later has None. ``routines`` is the routine-migration facts
+    (``src.shared.routine_facts.read_routine_facts``, #1938), read from the job's artifact:
+    synthesis passes it, and a report rebuilt later keeps the block it stored.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3809,7 +3829,7 @@ def compute_report_facts(
     # #1992: whether the plan suggests each wave, and what holds it. A report rebuilt
     # without a facts block (written before the check) states none.
     if readiness:
-        apply_wave_readiness(report, waves, wave_rows, rate_windows)
+        apply_wave_readiness(report, waves, wave_rows, rate_windows, routines)
     # The engines that need no data migration (the retained relational core and
     # the cache layer): the deck's "no-migration step" card and summary footer.
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
@@ -3890,6 +3910,9 @@ def compute_report_facts(
         "table_owner_lines": table_ownership_facts(report, waves),
         # #471: the relational move's version and feature gaps.
         "relational_gaps": dict(relational_gaps) if relational_gaps is not None else None,
+        # #1938: the routine-migration headline and the routines behind its risks
+        # (``src.shared.routine_facts``), which synthesis reads from the artifact.
+        "routines": dict(routines) if routines is not None else None,
         # #1146: the queries and the distinct query patterns they make.
         "query_pattern_counts": query_pattern_facts(report, engines),
         # #1328: the customer's engine scope, in the order the deliverables name it.

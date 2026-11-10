@@ -381,6 +381,9 @@ ID_FIELD_PATHS = frozenset(
         # each gap's evidence ids (tables, queries, objects). feature, reason and docs
         # are the catalog's sentences and are scanned.
         ("relational_gaps", "target_engine"),
+        # facts.routines (RoutineFacts, #1938): the source and target engine ids.
+        ("routines", "source_engine"),
+        ("routines", "target_engine"),
         ("gaps", "tables"),
         ("gaps", "queries"),
         ("objects", "id"),

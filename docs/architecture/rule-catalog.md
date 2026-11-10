@@ -1910,7 +1910,7 @@ Documentation: MySQL 8.0 Reference Manual, CREATE PROCEDURE and CREATE FUNCTION 
 
 Dynamic SQL the checks cannot read: behaves differently. The routine prepares and runs SQL held in a user variable, so the statement checks cannot see what it runs on the target; the string literals the routine assigns to that variable are checked, but it may hold other text at run time.
 
-Fix: Review the SQL the routine builds and run it on the target before cutover, or replace the dynamic SQL with static statements the checks can read.
+Fix: Review the SQL the routine builds and run it on the target, or replace the dynamic SQL with static statements the checks can read.
 
 Documentation: MySQL 8.0 Reference Manual, Prepared Statements.
 

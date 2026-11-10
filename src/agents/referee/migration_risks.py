@@ -93,6 +93,15 @@ rule                       severity  raised when
                            MEDIUM    gaps that behave differently (results change silently);
                                      one risk per impact, in Wave 1, only for a gap check
                                      against wave 1's engine
+``routines.migrate_yourself``
+                           HIGH      routines the pipeline could not translate automatically
+                                     (``facts.routines``, #1938): a to-do that holds no wave
+``routines.behaves_differently``
+                           MEDIUM    routines whose only failed checks behave differently
+``routines.opted_out``     MEDIUM    routines with no code collected (information)
+``routines.carried``       LOW       carried routines with a header rewrite or a check that
+                                     could not run, one risk with the counts; every routine
+                                     risk is in the wave of the routines' Aurora target
 =========================  ========  ==========================================================
 
 Design trade-offs are model-written prose with no validated category
@@ -153,6 +162,7 @@ from src.shared.migration_risk_rules import (
     make_risk,
     number_risks,
     relational_gap_risks,
+    routine_risks,
     scope_unservable_risks,
     wave_gate_strategies,
     wave_of_engine,
@@ -1516,6 +1526,7 @@ def build_migration_risks(
     copy_lines: Iterable[Mapping[str, Any]] | None = None,
     hot_partitions: list[dict[str, Any]] | None = None,
     busiest_partition_key: Mapping[str, Any] | None = None,
+    routines: Mapping[str, Any] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -1544,7 +1555,8 @@ def build_migration_risks(
     ``facts.hot_partitions``; without them they are computed from ``schema_designs``
     alone, so a key's distinct values read as not measured); ``busiest_partition_key`` the
     design entry whose estimated key value is the busiest
-    (``partition_load.busiest_key``, ``facts.busiest_partition_key``);
+    (``partition_load.busiest_key``, ``facts.busiest_partition_key``); ``routines`` the
+    routine facts ``facts.routines`` stores (``src.shared.routine_facts``, #1938);
     ``source_engine`` is the
     dialect the queries' text is read in.
     """
@@ -1578,6 +1590,9 @@ def build_migration_risks(
         # #1329: the queries no engine in the customer's scope can serve, last, as the
         # render-time backfill (``report_fact_risks``) orders them.
         *scope_unservable_risks({"scope_unservable": scope_unservable or []}),
+        # #1938: the routines that cannot be carried as they are, last, as the backfill
+        # orders them.
+        *routine_risks(routines, ctx.waves),
     ]
     return number_risks(risks, start_id)
 
