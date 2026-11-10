@@ -1222,11 +1222,11 @@ def phase_wave_redesign(store, job_id: str, db: str, llm_mode: str) -> dict:
     check again, for at most ``MAX_REDESIGN_ROUNDS`` rounds (#1992). The engine stays.
     Claude Code runs the same rounds from ``/modernize``; without a model there is no
     design, so no round."""
-    from src.agents.schema_design.wave_redesign import latest_report, run_rounds
+    from src.agents.schema_design.wave_redesign import SKIPPED, latest_report, run_rounds
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
 
     if llm_mode != "bedrock":
-        status = {"status": "skipped", "reason": f"llm_mode={llm_mode}: no in-process design"}
+        status = {"status": SKIPPED, "reason": f"llm_mode={llm_mode}: no in-process design"}
         _output("wave_redesign", status)
         return status
     _banner("WAVE REDESIGN")

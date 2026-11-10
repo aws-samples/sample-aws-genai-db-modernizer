@@ -82,6 +82,16 @@ FIXED, IMPROVED, DID_NOT_IMPROVE, FAILED, STOPPED, NOT_REVIEWED = (
 #: An engine whose last round ended so is not sent back again.
 _FINAL = frozenset({DID_NOT_IMPROVE, FAILED, STOPPED, NOT_REVIEWED})
 
+#: The status lines the loop ends on when it ran as designed (#2085): nothing a redesign
+#: can fix is held (``complete``), rounds ran and a wave stays held (``exhausted``), or a
+#: run ceiling stopped the next round (``stopped``, with its ``reason``). A design that
+#: raised ends it ``failed`` instead.
+COMPLETE, EXHAUSTED = "complete", "exhausted"
+LOOP_ENDINGS = frozenset({COMPLETE, EXHAUSTED, STOPPED})
+#: The status line of a run with no in-process design (no model): no round, with its
+#: ``reason``.
+SKIPPED = "skipped"
+
 
 def log_key(db: str, job_id: str, version: int) -> str:
     return f"{db}/{job_id}/wave-redesign/v{version}/rounds.json"
@@ -537,8 +547,8 @@ def plan_round(
         _clear_requests(store, db, job_id, version, log)
         store.write_json(log_key(db, job_id, version), log)
         if not held:
-            return {"status": "complete", **base}
-        return {"status": "exhausted", **base, "held": sorted(held)}
+            return {"status": COMPLETE, **base}
+        return {"status": EXHAUSTED, **base, "held": sorted(held)}
     reason = budget() if budget is not None else None
     if reason:
         log["rounds"].append(
@@ -552,7 +562,7 @@ def plan_round(
             }
         )
         store.write_json(log_key(db, job_id, version), log)
-        return {"status": "stopped", "reason": reason, **base}
+        return {"status": STOPPED, "reason": reason, **base}
     n = len(log["rounds"]) + 1
     affected: dict[str, list[int] | None] = {}
     for engine, request in sorted(requests.items()):
@@ -626,7 +636,7 @@ def run_rounds(
         if status["status"] == "awaiting_synthesis":
             synthesize()
             continue
-        if status["status"] == "stopped":
+        if status["status"] == STOPPED:
             synthesize()
             return status
         if status["status"] != "awaiting_redesign":
@@ -642,7 +652,7 @@ def run_rounds(
                 failed = fail_round(store, db, job_id, version, reason)
                 synthesize()
                 _write_report_log(store, db, job_id, version, read_log(store, db, job_id, version))
-                return {**failed, "status": "failed", "reason": reason}
+                return {**failed, "status": FAILED, "reason": reason}
         synthesize()
 
 
