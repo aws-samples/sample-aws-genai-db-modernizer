@@ -1107,5 +1107,16 @@
       "unread"
     ],
     "version": "1.2"
+  },
+  "verify_result.VerifyStatus": {
+    "module": "verify_result",
+    "values": [
+      "changing",
+      "differ",
+      "match",
+      "missing",
+      "not_compared"
+    ],
+    "version": "1.0"
   }
 }

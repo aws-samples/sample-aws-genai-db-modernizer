@@ -42,6 +42,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `data-movement/step-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`), one per migration step (#1797) |
 | `data-movement/step-\d+/gate\.json` | `DmsGate` (`src.contracts.dms_gate`) |
 | `data-movement/step-\d+/preflight\.json` | `DmsPreflight` (`src.contracts.dms_preflight`), the read-only checks before step 1 deploys (#1799) |
+| `data-movement/step-\d+/verify\.json` | `VerifyResult` (`src.contracts.verify_result`): the customer's runs of step 1's optional read-only verify scripts on the source and on Aurora, compared per moved table (match, changing, differ or missing) with row counts, never a value or a checksum; it never changes the gate (#1998) |
 | `data-movement/hub/plan\.json` | `HubPlan` (`src.contracts.data_movement_plan`), one per job (#1797) |
 | `data-movement/wave-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`) (the layout written before #1797) |
 | `[^/]+/questions\.json` | `AgentQuestions` (`src.contracts.agent_interaction_models`) |

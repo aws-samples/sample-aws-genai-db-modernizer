@@ -38729,6 +38729,232 @@
     "schema_hash": "70c4fb2ccfe556f9275365a49656b18d55647878191d730f661862a1c22ff443",
     "version": "1.4"
   },
+  "verify_result.VerifyResult": {
+    "fields": {
+      "checked_at": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "contract_sha256": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "database_name": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "gate_effect": {
+        "required": false,
+        "schema": {
+          "kind": "const",
+          "value": "none"
+        }
+      },
+      "job_id": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "not_checked": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "const",
+                  "value": "unsafe_name"
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "second_run": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "boolean"
+        }
+      },
+      "source_engine": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "mysql",
+            "postgresql"
+          ]
+        }
+      },
+      "status": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "changing",
+            "differ",
+            "match",
+            "missing",
+            "not_compared"
+          ]
+        }
+      },
+      "step": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "tables": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "dms_validated": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "boolean"
+                }
+              },
+              "missing_on": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "enum",
+                    "values": [
+                      "source",
+                      "target"
+                    ]
+                  },
+                  "kind": "array"
+                }
+              },
+              "source_rows": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "status": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "changing",
+                    "differ",
+                    "match",
+                    "missing",
+                    "not_compared"
+                  ]
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "target_rows": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "unhashed_on": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "enum",
+                    "values": [
+                      "source",
+                      "target"
+                    ]
+                  },
+                  "kind": "array"
+                }
+              }
+            }
+          },
+          "kind": "array",
+          "minItems": 1
+        }
+      },
+      "target_engine": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "aurora_mysql",
+            "aurora_postgresql"
+          ]
+        }
+      }
+    },
+    "schema_hash": "dc468431538fe3d473ca90d6e90f86407a6dfb5e77abc4b0fa393b89f7dc0385",
+    "version": "1.0"
+  },
   "wave_edit_decision.WaveEditDecision": {
     "fields": {
       "accepted": {
