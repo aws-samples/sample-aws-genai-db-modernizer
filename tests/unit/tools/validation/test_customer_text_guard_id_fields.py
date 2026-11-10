@@ -253,3 +253,33 @@ def test_the_engine_scope_is_an_id_field() -> None:
     assert guard.undeclared_engine_fields(report) == []
     # The same name elsewhere is still scanned.
     assert guard.scan_json({"other": {"engine_scope": ["aurora_postgresql"]}})
+
+
+class TestReviewWarningTargetIsAnId:
+    """#2110: a design review warning's ``target`` is a reference to the designed object
+    (``table.column``), an identifier. Its prose fields are still scanned."""
+
+    @staticmethod
+    def _report(**warning: str) -> dict[str, Any]:
+        base = {
+            "target": "wp_wc_reserved_stock.expires",
+            "category": "etl_lineage",
+            "change": "Add a time to live on the expiry attribute.",
+            "rationale": "Reservations expire on their own.",
+        }
+        base.update(warning)
+        return {"schema_designs": {"dynamodb": {"all_review_warnings": [base]}}}
+
+    @pytest.mark.parametrize(
+        "target", ["wp_wc_reserved_stock.expires", "wp_posts.opensearch", "wp_posts"]
+    )
+    def test_a_table_column_target_passes_the_guard(self, target: str) -> None:
+        # ``wp_posts.opensearch`` reads as a raw engine id to the scanner: it fails on main.
+        assert guard.scan_json(self._report(target=target)) == []
+
+    @pytest.mark.passes_on_main  # guards behaviour main already has: prose stays scanned
+    def test_internal_wording_in_the_change_text_is_still_flagged(self) -> None:
+        report = self._report(change="Moved by rule_id exclusion_rule_x per ADR-031.")
+        findings = guard.scan_json(report)
+        assert findings
+        assert all(f.path.endswith(".change") for f in findings)
