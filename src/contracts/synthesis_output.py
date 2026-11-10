@@ -679,6 +679,8 @@ Version History:
   None, False or empty.
 - 1.93 (2026-11-10, #2081): WaveRedesignRound.reviewed_before marked legacy: no longer
   written or read; a redesign is kept only once its own review ran
+- 1.94 (2026-11-10, #2107): Added optional facts.cutover_responsibility: the one
+  sentence every wave plan says about the cutover
 """
 
 from datetime import datetime
@@ -3835,6 +3837,13 @@ class ReportFacts(BaseModel):
             "report written before it"
         ),
     )
+    cutover_responsibility: str | None = Field(
+        None,
+        description=(
+            "The one sentence every deliverable's wave plan says about the cutover: it is "
+            "the customer's (#2107); None for a report written before it"
+        ),
+    )
     price_list: PriceListFacts | None = Field(
         None,
         description=(
@@ -3902,7 +3911,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.93",
+        default="1.94",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

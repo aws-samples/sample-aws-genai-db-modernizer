@@ -197,7 +197,11 @@ class TestMigrationNotes:
         mitigation = out["risks"][0]["mitigation"]
         assert mitigation is not None
         assert "sales report aggregation" in mitigation
-        assert "before cutover" in mitigation
+        # #2107: the step stays, with no timing criterion; the cutover is the customer's.
+        assert "before cutover" not in mitigation
+        assert mitigation.endswith(
+            "logic in the application for ElastiCache. The cutover is your responsibility."
+        )
 
 
 @pytest.mark.parametrize(

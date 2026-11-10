@@ -16,7 +16,13 @@ from . import escaping
 from .engine_roles import _RELATIONAL_ENGINES
 from .facts import report_facts
 from .facts import wave_facts_by_number as _facts_by_wave
-from .formatting import _completed_designs, fmt_num, plural_noun, report_query_ids
+from .formatting import (
+    _completed_designs,
+    cutover_responsibility_text,
+    fmt_num,
+    plural_noun,
+    report_query_ids,
+)
 from .relational_gaps import impact_label, wave_gaps
 from .risks import filtered_risks
 from .waves import (  # noqa: F401 -- re-exported for renderers
@@ -286,6 +292,9 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         f"## Migration roadmap ({n_waves} {plural_noun(n_waves, 'wave')})",
         "",
         f"*{_SUGGESTED_PATH_NOTE.format(pointer=pointer)}*",
+        "",
+        # #2107: the cutover is the customer's, said once next to the plan.
+        f"*{escaping.md_text(cutover_responsibility_text(report_facts(report)))}*",
         "",
     ]
     unresolved = report.get("unresolved_names") or {}

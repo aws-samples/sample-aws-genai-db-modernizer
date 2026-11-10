@@ -635,6 +635,10 @@ def test_results_page_shows_the_reports_wave_plan(
                 assert shown_line.count() == 0, (r.db, n)
         rules = section.locator("[data-figure=wave-readiness-rule]").count()
         assert rules == (1 if any(line for _, line in readiness.values()) else 0), r.db
+        # #2107: the cutover is the customer's, said once, in the facts layer's words.
+        cutover = section.locator("[data-figure=cutover-responsibility]")
+        assert cutover.count() == 1, r.db
+        assert cutover.inner_text() == report["facts"]["cutover_responsibility"], r.db
         count = report["facts"]["migration_wave_count"]
         assert f"Migration roadmap ({count} waves)" in section.inner_text(), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)

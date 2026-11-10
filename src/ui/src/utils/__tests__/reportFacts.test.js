@@ -341,6 +341,23 @@ describe('cost label and caveat', () => {
   });
 });
 
+// #2107: the one sentence the wave plan says about the cutover (facts.cutover_responsibility);
+// a report written before it gets the same words.
+describe('cutover responsibility', () => {
+  const { cutoverResponsibilityOf, CUTOVER_RESPONSIBILITY } = require('../reportFacts');
+
+  test('prints the stored words', () => {
+    expect(cutoverResponsibilityOf({ facts: { cutover_responsibility: 'Yours to run.' } })).toBe('Yours to run.');
+  });
+
+  test('an older report gets the same words', () => {
+    [null, {}, { facts: {} }, { facts: { cutover_responsibility: null } }].forEach((synthesis) => {
+      expect(cutoverResponsibilityOf(synthesis)).toBe(CUTOVER_RESPONSIBILITY);
+    });
+    expect(CUTOVER_RESPONSIBILITY).toBe('The cutover is your responsibility.');
+  });
+});
+
 describe('derivedCopySyncOf (#1527)', () => {
   const sync = (riskId, extra = {}) => ({
     risk_id: riskId,

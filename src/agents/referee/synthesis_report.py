@@ -69,6 +69,7 @@ from src.contracts.executive_summary_response import (
 from src.contracts.model_flag import validation_error_note
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.design_text import severe_risk_strategy
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import (
@@ -1869,7 +1870,8 @@ def build_risk_assessment(
                         else (
                             f"Review {object_label or 'this object'} "
                             f"({mn.get('object_type') or 'migration note'}) and implement its "
-                            f"logic in the application before cutover to {display_name(engine)}."
+                            f"logic in the application for {display_name(engine)}. "
+                            f"{CUTOVER_MESSAGE}"
                         )
                     ),
                     "object_type": str(mn.get("object_type") or ""),
@@ -2610,8 +2612,8 @@ def _assigned_engine_mitigation(
             "misses the target."
         )
     return (
-        f"Load-test {count} on {name} with production-scale data before "
-        "cutover and tune indexes or query plans where the measured latency misses the target."
+        f"Load-test {count} on {name} with production-scale data and tune indexes or query "
+        f"plans where the measured latency misses the target. {CUTOVER_MESSAGE}"
     )
 
 
@@ -2736,7 +2738,7 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
                     head,
                     label,
                     _risk_scope(r),
-                    "no mitigation recorded; define one before cutover.",
+                    f"no mitigation recorded; define one. {CUTOVER_MESSAGE}",
                 )
             )
     if labelled:
@@ -2761,7 +2763,7 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
         strategies.append(
             f"Load-test the queries behind {_join_and([r['risk_id'] for r in perf])} on "
             f"{_join_and(_engines_of(perf)) or 'the target databases'} with "
-            "production-scale data before cutover."
+            f"production-scale data. {CUTOVER_MESSAGE}"
         )
 
     complexity = by_type.get("MIGRATION_COMPLEXITY", [])

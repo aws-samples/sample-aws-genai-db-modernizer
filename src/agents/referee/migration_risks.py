@@ -52,7 +52,7 @@ rule                       severity  raised when
                            HIGH      no engine in the customer's engine scope can serve queries
                                      (``scope_unservable``, #1329): they have no engine, no wave
                                      and no design, and are never forced onto one; one risk,
-                                     at cutover (no wave)
+                                     in no wave
 ``cache.dropped``          MEDIUM    the cache safety net dropped reads the plan cached
 ``cache.unsupported``      MEDIUM    the cache layer's design lists unsupported patterns (an
                                      engine that only fronts reads is never raised by the
@@ -89,7 +89,7 @@ rule                       severity  raised when
                                      one risk per engine, each statement in its details
 ``relational.gaps``        HIGH      the relational gap check finds gaps that block the move to
                                      wave 1's engine (``facts.relational_gaps``, #1149)
-                           MEDIUM    gaps that need a rewrite before cutover
+                           MEDIUM    gaps that need a rewrite for the target
                            MEDIUM    gaps that behave differently (results change silently);
                                      one risk per impact, in Wave 1, only for a gap check
                                      against wave 1's engine

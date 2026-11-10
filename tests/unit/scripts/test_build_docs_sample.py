@@ -307,7 +307,7 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
 
 # Facts added after the recorded run's release, which the reader fills in for it until
 # the next release re-records the sample (CONTRIBUTING's Releases, step 1).
-_NEWER_THAN_THE_RECORDING = ("trade_off_topics",)  # #1221
+_NEWER_THAN_THE_RECORDING = ("trade_off_topics", "cutover_responsibility")  # #1221, #2107
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {"cache_layer": ("role_sentence",)}
 

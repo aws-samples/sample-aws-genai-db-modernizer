@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.report_facts import (  # noqa: F401  (#1403: one rule)
@@ -266,6 +267,11 @@ def price_list_text(facts: dict[str, Any]) -> str:
 def cost_scope_text(facts: dict[str, Any]) -> str:
     """The full-modernization label every cost figure carries (#1474), as the facts state it."""
     return str(facts.get("cost_scope_label") or COST_SCOPE_LABEL)
+
+
+def cutover_responsibility_text(facts: dict[str, Any]) -> str:
+    """The one sentence each wave plan says about the cutover (#2107), as the facts state it."""
+    return str(facts.get("cutover_responsibility") or CUTOVER_MESSAGE)
 
 
 def cost_caveat_text(facts: dict[str, Any]) -> str:

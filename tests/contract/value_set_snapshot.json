@@ -860,7 +860,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.93"
+    "version": "1.94"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -868,7 +868,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.93"
+    "version": "1.94"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -1108,7 +1108,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.93"
+    "version": "1.94"
   },
   "synthesis_output.RoutineCategory": {
     "module": "synthesis_output",
@@ -1122,7 +1122,7 @@
       "repaired",
       "rewritten"
     ],
-    "version": "1.93"
+    "version": "1.94"
   },
   "synthesis_output.RoutineRiskClass": {
     "module": "synthesis_output",
@@ -1132,7 +1132,7 @@
       "migrate_yourself",
       "opted_out"
     ],
-    "version": "1.93"
+    "version": "1.94"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",
@@ -1140,7 +1140,7 @@
       "collector",
       "step-1"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.RoutineCarry": {
     "module": "transformation_contract",
@@ -1149,7 +1149,7 @@
       "deferred_to_cutover",
       "not_carried"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.RoutineEnabledAs": {
     "module": "transformation_contract",
@@ -1158,7 +1158,7 @@
       "disabled",
       "enabled"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.RuleStatus": {
     "module": "transformation_contract",
@@ -1166,7 +1166,7 @@
       "blocked",
       "valid"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.Severity": {
     "module": "transformation_contract",
@@ -1174,7 +1174,7 @@
       "error",
       "warning"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.StepStatus": {
     "module": "transformation_contract",
@@ -1184,7 +1184,7 @@
       "staged_move_pending",
       "valid"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "transformation_contract.TableClass": {
     "module": "transformation_contract",
@@ -1194,7 +1194,7 @@
       "stays",
       "unread"
     ],
-    "version": "1.4"
+    "version": "1.5"
   },
   "verify_result.VerifyStatus": {
     "module": "verify_result",

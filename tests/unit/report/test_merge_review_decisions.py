@@ -40,6 +40,7 @@ from src.report import escaping
 from src.report.facts import report_facts
 from src.report.merge_reviews import MERGE_REVIEWS_PDF_NOTE, MERGE_REVIEWS_TITLE
 from src.report.renderers import render_engineering_report_md
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import (
     RECONSTRUCTED_NOTE,
     compute_report_facts,
@@ -58,6 +59,8 @@ OLD_REPORT = (
 )
 EN = ROOT / "src/ui/src/locales/en.json"
 MD_HEADING = f"## {MERGE_REVIEWS_TITLE}"
+
+SAID = "cutover_responsibility"
 
 
 def _fixture() -> dict[str, Any]:
@@ -397,7 +400,9 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
 
     # Read back unchanged, but for the trade-off topic groups a block written before
     # #1221 gains from the same function.
-    assert {k: v for k, v in facts.items() if k != "trade_off_topics"} == (
+    # #2107: and the cutover sentence, which a block written before it reads back with.
+    assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
+    assert {k: v for k, v in facts.items() if k not in ("trade_off_topics", SAID)} == (
         with_cache_role_sentence(stored)
     )
     assert facts["trade_off_topics"] == trade_off_topic_facts(

@@ -580,6 +580,18 @@ def test_mitigation_follows_the_concern_of_the_catalog_entry(pattern_type, expec
     assert not any(n in text for n in _OTHER_ENGINE_NAMES)
 
 
+def test_the_load_test_mitigation_keeps_the_step_and_gives_no_cutover_timing() -> None:
+    """#2107: the cutover is the customer's, so the step names no timing criterion."""
+    entry = next(
+        e for e in AURORA_COMMON_ANTI_PATTERNS if e.pattern_type == "single-access-pattern-table"
+    )
+    assert _assigned_engine_mitigation(entry.guidance, "aurora_mysql", 3) == (
+        "Load-test the 3 flagged queries on Aurora MySQL with production-scale data and tune "
+        "indexes or query plans where the measured latency misses the target. The cutover is "
+        "your responsibility."
+    )
+
+
 class TestCoverageGapWithoutASchemaDesign:
     """#949: with no schema design for the engine the queries moved to, every one of
     them "has no in-scope access pattern" only because the design did not run. The

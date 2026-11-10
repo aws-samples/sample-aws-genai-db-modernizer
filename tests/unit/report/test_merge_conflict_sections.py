@@ -34,6 +34,7 @@ from src.report.merge_conflicts import (
     NOT_RECORDED_TEXT,
 )
 from src.report.renderers import render_engineering_report_md
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import (
     compute_report_facts,
     dynamodb_merge_conflict_facts,
@@ -53,6 +54,8 @@ OLD_REPORT = (
     ROOT / "tests/fixtures/old_jobs/v0.4.0-beta.2/wordpress/aa4e840a/synthesis/v2/report.json"
 )
 MD_HEADING = f"## {MERGE_CONFLICTS_TITLE}"
+
+SAID = "cutover_responsibility"
 
 
 def _fixture() -> dict[str, Any]:
@@ -307,7 +310,9 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     assert facts.get("dynamodb_merge_conflicts") is None
     # Read back unchanged, but for the trade-off topic groups a block written before
     # #1221 gains from the same function.
-    rest = {k: v for k, v in facts.items() if k != "trade_off_topics"}
+    # #2107: and the cutover sentence, which a block written before it reads back with.
+    assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
+    rest = {k: v for k, v in facts.items() if k not in ("trade_off_topics", SAID)}
     assert rest == with_cache_role_sentence(old["facts"])
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, old["facts"]["reality_check_trade_offs"]

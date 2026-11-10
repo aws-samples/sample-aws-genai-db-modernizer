@@ -29,6 +29,8 @@ Version History:
 - 1.4 (2026-11-10, #1948): Added optional ``StepRoutine.source_state``, ``fires`` and
   ``action_order`` (a PostgreSQL trigger's source state; a MySQL trigger's timing, event
   and ACTION_ORDER), which the cutover script reads; left out of the dump when None.
+- 1.5 (2026-11-10, #2107): Rule.moves_rows description no longer says when to rebuild
+  (no cutover timing)
 """
 
 from typing import Literal
@@ -142,7 +144,7 @@ class Rule(BaseModel):
         description=(
             "False when the step creates the target table but does not move its rows: a "
             "column of a type the mover does not migrate (DMS and tsvector, #1918); a "
-            "not_moved warning finding says why and what to rebuild after cutover"
+            "not_moved warning finding says why and what to rebuild"
         ),
     )
 
@@ -318,7 +320,7 @@ class StepContract(BaseModel):
     """The transformation contract of one migration step."""
 
     contract_version: str = Field(
-        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The assessment job this contract belongs to")
     assignment_version: int = Field(

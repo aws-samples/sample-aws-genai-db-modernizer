@@ -22,6 +22,7 @@ from src.agents.referee.migration_wave_tables import (
     _table_ids,
     _table_owners_for_served,
 )
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.engine_names import (
     SOURCE_ENGINE_DISPLAY_NAMES,
     display_engine,
@@ -51,6 +52,15 @@ _MYSQL_COMPATIBLE_SOURCES = {"mariadb"}
 def _join_names(names: list[str]) -> str:
     """``[a]`` -> ``a``; ``[a, b]`` -> ``a and b``; ``[a, b, c]`` -> ``a, b and c``."""
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _decommission_after_cutover(source_name: str, target_name: str) -> str:
+    """Wave 1's gate on the source (#2107): retire it once the customer's own cutover is
+    done, with no timing criterion of ours, and say whose the cutover is."""
+    return (
+        f"Decommission the source {source_name} database once you have completed your "
+        f"cutover: later waves move from {target_name}, not from it. {CUTOVER_MESSAGE}"
+    )
 
 
 def _aurora_wave(
@@ -162,10 +172,10 @@ def _aurora_wave(
         )
         # The discourse judge read "decommission the legacy source" as happening before
         # wave 2's dual-write: name the database it retires and where later waves start.
+        # #2107: the cutover is the customer's, so the gate sets no time for it.
         gate = (
-            "Schema and data parity validated against the source database before cutover. "
-            f"Once replication to {target_name} has caught up, decommission the source "
-            f"{source_name} database: later waves move from {target_name}, not from it."
+            "Schema and data parity validated against the source database. "
+            f"{_decommission_after_cutover(source_name, target_name)}"
         )
         title = f"Move to {target_name}"
         engines: list[str] = [retained_engine]
@@ -222,8 +232,8 @@ def _aurora_wave(
         )
         gate = (
             f"Cross-engine move: validate the schema and query translation to {target_name} "
-            "(SQL dialect and data types converted, with the current data model) before "
-            "cutover."
+            "(SQL dialect and data types converted, with the current data model). "
+            f"{_decommission_after_cutover(source_name, target_name)}"
         )
         title = f"Move off {source_name} to {target_name} (cross-engine)"
         engines = [retained_engine]

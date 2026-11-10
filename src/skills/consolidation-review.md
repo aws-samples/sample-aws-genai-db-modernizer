@@ -71,6 +71,8 @@ The reality check's own summary, written into the same response's `executive_sum
 - None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
 - Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
 
+Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "in sync", "proven" or "ready" as readiness wording. A copy that CDC keeps in sync from its owner is a table role and may be named so.
+
 ## Engine Capabilities
 
 ### dynamodb

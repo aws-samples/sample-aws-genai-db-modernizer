@@ -393,6 +393,16 @@ export function costCaveatOf(synthesis) {
   return typeof caveat === 'string' && caveat ? caveat : COST_CAVEAT;
 }
 
+// #2107: the one sentence every wave plan says about the cutover (facts.cutover_responsibility).
+// A report written before it gets the same words (the Python constant CUTOVER_MESSAGE in src/shared/cutover_message.py;
+// a test keeps them equal).
+export const CUTOVER_RESPONSIBILITY = 'The cutover is your responsibility.';
+
+export function cutoverResponsibilityOf(synthesis) {
+  const line = factsOf(synthesis) && factsOf(synthesis).cutover_responsibility;
+  return typeof line === 'string' && line ? line : CUTOVER_RESPONSIBILITY;
+}
+
 // #1195: the TCO's assumption lines (facts.cost_assumptions), as every deliverable
 // states them; a hand-built report with no facts block shows its own list.
 export function costAssumptionsOf(synthesis) {
