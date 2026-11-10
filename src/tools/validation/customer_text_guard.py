@@ -197,6 +197,10 @@ ID_FIELD_PATHS = frozenset(
         ("holds", "flagged_by"),  # WaveHold.flagged_by (#1992): the raising engine's id
         ("requests", "engine"),  # WaveRedesignRequest.engine (#1992): the engine sent back
         ("review_warnings", "engine"),  # ReviewWarning.engine (#1992): the design's engine
+        (
+            "all_review_warnings",
+            "engine",
+        ),  # the same ReviewWarning, as report.json lists it (#2110)
         # #2067: the same ReviewWarning, as the customer accepted or rejected it.
         ("accepted_warnings", "engine"),
         ("rejected_warnings", "engine"),
@@ -255,6 +259,9 @@ ID_FIELD_PATHS = frozenset(
         ("trade_offs", "target_tables"),  # TradeOff.target_tables (schema_design_output.py)
         ("optimizations", "target"),  # Aurora Optimization.target: table/column/cluster name(s)
         ("review_warnings", "target"),  # ReviewWarning.target: the reviewed table/index name
+        # #2110: the report's per-engine projection lists a design's warnings under this key;
+        # ``table.column`` there is a reference to the designed object, not prose.
+        ("all_review_warnings", "target"),
         ("accepted_warnings", "target"),  # the same ReviewWarning.target (#2067)
         ("rejected_warnings", "target"),
         ("warning", "target"),
