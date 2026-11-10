@@ -1385,8 +1385,8 @@ def main() -> None:
         metavar="N",
         help=(
             "The growth multiple the deliverables' scenario line uses (#1990; default 5). "
-            "Recorded as the job's decisions/assumptions.json; never applied to the design "
-            "rates, the risks or the headline cost"
+            "Recorded as the job's decisions/assumptions.json; shown as a separate what-if "
+            "scenario, while the costs and risks use the collected traffic"
         ),
     )
     parser.add_argument(
@@ -1396,7 +1396,7 @@ def main() -> None:
         help=(
             'A JSON file of the assumptions to set, for example {"growth": 3, "peak": 2} '
             "(#1991): growth (above 0, at most 100) and peak, the peak-to-average ratio "
-            "the DynamoDB, DocumentDB and OpenSearch design rates take (1 to 100). "
+            "the DynamoDB, DocumentDB and OpenSearch designs apply to the collected rates (1 to 100). "
             "Recorded with origin file in the job's "
             "decisions/assumptions.json; an unknown key or a value out of range is refused"
         ),

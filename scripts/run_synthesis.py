@@ -204,8 +204,8 @@ def main() -> None:
         metavar="N",
         help=(
             "The growth multiple the deliverables' scenario line uses (#1990; default 5). "
-            "Recorded as the job's decisions/assumptions.json; never applied to the design "
-            "rates, the risks or the headline cost"
+            "Recorded as the job's decisions/assumptions.json; shown as a separate what-if "
+            "scenario, while the costs and risks use the collected traffic"
         ),
     )
     args = parser.parse_args()

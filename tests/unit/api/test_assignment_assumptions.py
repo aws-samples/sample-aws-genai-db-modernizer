@@ -14,7 +14,7 @@ from tests.unit.api.test_assignment_cache_reads import DB, JOB, _store, _url, cl
 def test_the_gate_response_states_each_assumption_and_its_origin(tmp_path, monkeypatch) -> None:
     _store(tmp_path, monkeypatch, cached=False)
     lines = client.get(_url()).json()["assumptions"]
-    assert lines[0].startswith("Growth: 5× (default), stated as a separate scenario")
+    assert lines[0].startswith("Growth: 5× (default), shown as a separate what-if scenario.")
     assert lines[1].startswith("Peak: not measured")
     assert lines[-1].startswith("Region and prices: ") and lines[-1].endswith("(default)")
 

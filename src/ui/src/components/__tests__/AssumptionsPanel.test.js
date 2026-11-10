@@ -41,7 +41,7 @@ const ROWS = [
   {
     name: 'growth', key: 'growth_multiplier', min: 0, min_included: false, max: 100,
     reruns: ['synthesis', 'report'], value: 5, origin: 'default', origin_label: 'default',
-    line: 'Growth: 5× (default), stated as a separate scenario', available: true,
+    line: 'Growth: 5× (default), shown as a separate what-if scenario', available: true,
     unavailable_reason: null, notes: [],
   },
   {
@@ -104,7 +104,7 @@ test('states each assumption with the line the report states', async () => {
   mockApi({ success: true });
   await render();
   const lines = [...container.querySelectorAll('[data-figure="assumption-line"]')].map((n) => n.textContent);
-  expect(lines).toEqual(['Growth: 5× (default), stated as a separate scenario.', 'Peak: not measured.']);
+  expect(lines).toEqual(['Growth: 5× (default), shown as a separate what-if scenario.', 'Peak: not measured.']);
 });
 
 test('a change unavailable here shows the server reason and offers no input', async () => {

@@ -33,5 +33,8 @@ def test_every_deliverable_states_the_assumptions_once(run: PipelineResult) -> N
     # report and the gate, and prints the scenario label instead.
     detail = {a["line"] for a in block["assumptions"] if a["key"] in RATE_WINDOW_DETAIL_KEYS}
     for line in [*block["lines"], *scenario["lines"]]:
+        # #2103: the customer's words, not the model's names for its rates and its cost.
+        for phrase in ("design rate", "design-rate", "headline cost", "never applied"):
+            assert phrase not in line.lower(), line
         assert md.count(f"{line}.") == 1, line
         assert pdf.count(" ".join(f"{line}.".split())) == (0 if line in detail else 1), line

@@ -2916,9 +2916,7 @@ def build_wave_checks(
             text += f" (weighted average {fmt_num(baseline, 2)} ms)"
         rps = _wave_design_rps(ids, query_groups, None if cutover else engines, cache_engines)
         if rps > 0:
-            text += (
-                f" and check the engine sustains the design rate of {fmt_num(rps, 1)} requests/s"
-            )
+            text += f" and check the engine sustains the collected traffic of {fmt_num(rps, 1)} requests/s"
         checks.append(text + f"{gate}.")
     return checks
 

@@ -124,11 +124,11 @@ async function render(assumptions) {
 
 test('states each assumption line, as the chat gate prints it', async () => {
   const list = await render([
-    'Growth: 5× (default), stated as a separate scenario',
+    'Growth: 5× (default), shown as a separate what-if scenario',
     'Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days)',
   ]);
   expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
-    'Growth: 5× (default), stated as a separate scenario.',
+    'Growth: 5× (default), shown as a separate what-if scenario.',
     'Peak: not measured (the collection has no CloudWatch metrics covering 7 to 14 days).',
   ]);
 });

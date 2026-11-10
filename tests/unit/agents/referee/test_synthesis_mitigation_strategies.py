@@ -255,15 +255,21 @@ def test_one_check_per_wave_from_report_facts() -> None:
     assert checks == [
         # 3 in-scope queries (a, b, c) share the cutover; baseline and rate cover those
         "After wave 1 (Aurora MySQL): compare the latency of 4 queries with their source "
-        "baseline (weighted average 11.67 ms) and check the engine sustains the design rate "
+        "baseline (weighted average 11.67 ms) and check the engine sustains the collected traffic "
         "of 6 requests/s before starting wave 2.",
         "After wave 2 (ElastiCache): track the cache hit rate for the 2 hot reads it fronts "
         "on Aurora MySQL (70.4% of calls, 185.1 calls/s) and compare their latency with the "
         "source before starting wave 3.",
         "After wave 3 (DynamoDB): compare the latency of 1 query with their source baseline "
-        "(weighted average 5 ms) and check the engine sustains the design rate of "
+        "(weighted average 5 ms) and check the engine sustains the collected traffic of "
         "4 requests/s.",
     ]
+
+
+def test_the_wave_checks_use_no_internal_rate_wording() -> None:
+    """#2104: a wave check states the requests/s as the collected traffic."""
+    for check in build_wave_checks(WAVES, GROUPS, ASSIGNED, OVERLAY):
+        assert "design rate" not in check.lower(), check
 
 
 def test_a_zero_baseline_is_not_printed() -> None:
