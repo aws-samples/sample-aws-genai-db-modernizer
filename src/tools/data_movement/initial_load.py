@@ -1299,7 +1299,7 @@ def check_readiness(
     barrier: Barrier,
     now_ms: int,
 ) -> Readiness:
-    """Whether CDC has caught up after the load, from source positions and counts only.
+    """Whether CDC has passed the barrier after the load, from source positions and counts only.
 
     The caller reads a barrier (``read_barrier``) and polls this check. While the
     connector has not passed the barrier it is not ready; once it has, its lag was at

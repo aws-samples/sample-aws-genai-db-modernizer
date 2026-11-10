@@ -28,7 +28,7 @@ from . import gate_stubs as g
 from .dms_step_fixtures import make_contract, make_ddl, make_plan, rewrite_contract, write_pg_job
 
 WHY = (
-    "DMS does not migrate tsvector; rebuild it after cutover (e.g. the application's search "
+    "DMS does not migrate tsvector; rebuilding it is yours (e.g. the application's search "
     "reindex): step 1 creates orders and does not move its rows (search is tsvector)"
 )
 

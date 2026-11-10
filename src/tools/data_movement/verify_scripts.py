@@ -69,6 +69,7 @@ from typing import Literal
 
 from src.contracts.lineage_ops import UnsupportedOp
 from src.contracts.transformation_contract import Rule, StepContract
+from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.tools.data_movement.dms_step import contract_tables
 from src.tools.data_movement.source_retention import FAMILY, family_of
 
@@ -453,6 +454,8 @@ def _instructions(fam: str, tables: int, left: int, step_dir: Path) -> str:
                 f"--batch --skip-column-names --force < {SCRIPTS[side]} > {out}")  # fmt: skip
 
     lines = [
+        CUTOVER_DISCLAIMER,
+        "",
         "# Step 1 verify (optional)",
         "",
         "An independent, read-only comparison of the source and Aurora: for each table step 1 "
@@ -513,13 +516,12 @@ def _instructions(fam: str, tables: int, left: int, step_dir: Path) -> str:
         "made one).",
         "- `changing`: the two sides differ, and the source or Aurora changed between your two "
         "runs (writes were still arriving, or DMS was still applying them), so the comparison "
-        "cannot settle. Run both again when the table is quiet, or after you stop writes for "
-        "cutover.",
+        "cannot settle. Run both again when the table is quiet.",
         "- `differ`: the two sides differ and neither changed between the runs (or you made one "
         "run only: a second run tells a changing table apart). A write that lands between your "
         "second source run and your second Aurora run is seen on neither side's change, so a "
         "quiet table that took one write in that window shows `differ`: run both again. Look at "
-        "the table's DMS validation and table statistics before cutover.",
+        "the table's DMS validation and table statistics too.",
         "- `not_compared`: a script counted rows whose hash came out NULL (a value the server "
         "could not put in canonical form, such as a MySQL text value over `max_allowed_packet` "
         "once converted to `utf8mb4`): those rows were not compared, so the table is never "

@@ -4,7 +4,7 @@
 """What step 1 leaves behind (#1905) and the extensions its DDL needs (#1906).
 
 DMS moves table rows only: it never advances an identity column's sequence on Aurora
-PostgreSQL (``step-1.sequences.sql`` does, at cutover), and it moves no procedure,
+PostgreSQL (``step-1.sequences.sql`` does), and it moves no procedure,
 function, trigger, view or event (the DDL header and ``run_dms_step.py summary`` count
 them from the collection). A moved column whose type comes from an extension (pgvector's
 ``vector``/``halfvec``, ``citext``) needs that extension before its table."""
@@ -98,7 +98,8 @@ def test_a_postgresql_job_gets_one_setval_per_moved_identity_column(tmp_path):
     # Sorted by table id then column; audit_log has no identity column, so no line.
     assert _setvals(files[SEQUENCES_FILE]) == [SETVAL_ORDERS, SETVAL_TAGS]
     head = _flat(files[SEQUENCES_FILE])
-    assert "at cutover" in head and "Identity columns: 2." in head
+    assert "The cutover is your responsibility." in head and "Identity columns: 2." in head
+    assert "at cutover" not in head and "applied the last change" not in head
     assert "YOUR RESPONSIBILITY" in head and "never advances" in head
 
 
@@ -137,13 +138,14 @@ def test_a_mysql_target_gets_no_sequences_file_and_the_header_says_why():
         render_sequences(inputs)
 
 
-def test_the_postgresql_ddl_tells_the_customer_to_run_the_sequences_file_at_cutover():
+def test_the_postgresql_ddl_tells_the_customer_what_the_sequences_file_does_never_when():
     flat = _flat(render_ddl(bundle_inputs(_pg_bundle(identity_columns=[("public.orders", "id")]))))
     assert (
-        f"6. At cutover, once writes to the source stopped and DMS applied the last change, run {SEQUENCES_FILE}"
-        in flat
+        f"6. {SEQUENCES_FILE} sets the identity columns' sequences, which DMS never advances: run it "
+        "the same way." in flat
     )
-    assert f"- sequence values: 1 (run {SEQUENCES_FILE} at cutover)." in flat
+    assert f"- sequence values: 1 ({SEQUENCES_FILE} sets them)." in flat
+    assert "At cutover" not in flat and "until the step is cut over" not in flat
 
 
 def test_the_delivery_writes_the_sequences_file_and_counts_it(tmp_path):
@@ -167,7 +169,7 @@ def test_the_ddl_header_counts_what_step_1_does_not_move_from_the_collection(tmp
                  "- functions: 3 (recreate them on Aurora yourself).",
                  "- triggers: 1 (recreate them on Aurora yourself).",
                  "- views: 1 (recreate them on Aurora yourself).",
-                 f"- sequence values: 2 (run {SEQUENCES_FILE} at cutover)."):  # fmt: skip
+                 f"- sequence values: 2 ({SEQUENCES_FILE} sets them)."):  # fmt: skip
         assert line in flat, line
     assert "- events:" not in flat  # a PostgreSQL source has no events
 

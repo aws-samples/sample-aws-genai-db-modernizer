@@ -58,7 +58,7 @@ A deterministic validator checks every rule against the collector and the design
 
 Step 1's rules mirror every source table and column into Aurora, with a type conversion only where the Aurora design delta or the Aurora type map changes a type, and are checked against the generated DDL. Mirroring whole tables keeps Aurora a complete copy for the later steps to read. A table with no primary key or unique index needs declared key columns, both for Debezium's message key (`message.key.columns`) and because DMS data validation skips such tables. Step 1 covers homogeneous sources (MySQL, MariaDB, PostgreSQL into the source-compatible Aurora engine); cross-engine and heterogeneous sources wait for their staged relational move (#1702).
 
-### 8. Later steps build only on proven earlier steps
+### 8. Later steps build only on earlier steps whose gates passed
 
 A later step's rules are rebased from legacy columns to the columns step 1 produced. A column that a later rule reads and that step 1 drops, renames without a mapping or converts lossily is a finding that blocks the rule. On the same synthetic rows, step 1 followed by the rebased rule must equal the designer's lineage on the legacy rows. At run time a step deploys only after the steps it depends on have passed their gates.
 
@@ -70,7 +70,7 @@ In the first delivery pipeline keys have no TTL. Under ElastiCache's default `ma
 
 ### 10. Data movement: Debezium on MSK Connect into compacted topics, with DMS for step 1
 
-DMS moves the source into Aurora for step 1 (full load, then CDC). DMS is used for step 1 because it is a proven, managed path for a same-engine move, with full load, CDC and built-in validation. Replacing it with Debezium is a possible future direction; doing so would first have to solve how the hub's source switches from the legacy database to Aurora at the step 1 cutover. Every later step reads Aurora through Debezium source connectors on MSK Connect, one compacted, primary-key-keyed topic per source table, tombstones on, so the stream holds the latest value of every row and a target can be rebuilt without reading the source again. Without a step 1, Debezium reads the source database (MySQL or PostgreSQL only, as the connector generator supports today).
+DMS moves the source into Aurora for step 1 (full load, then CDC). DMS is used for step 1 because it is an established, managed path for a same-engine move, with full load, CDC and built-in validation. Replacing it with Debezium is a possible future direction; doing so would first have to solve how the hub's source switches from the legacy database to Aurora at the step 1 cutover. Every later step reads Aurora through Debezium source connectors on MSK Connect, one compacted, primary-key-keyed topic per source table, tombstones on, so the stream holds the latest value of every row and a target can be rebuilt without reading the source again. Without a step 1, Debezium reads the source database (MySQL or PostgreSQL only, as the connector generator supports today).
 
 Prerequisites, from the Aurora and Debezium documentation: on Aurora MySQL, a cluster parameter group with `binlog_format=ROW` (a writer reboot) and `binlog_row_image=FULL`, read from the writer only, since binary logs are not available on replicas; on Aurora PostgreSQL, `rds.logical_replication=1` with the `pgoutput` plugin and the `rds_replication` role, again from the writer, since Aurora PostgreSQL does not support logical decoding from replicas. Binary logging adds write I/O on Aurora. Topics are created compacted before the connectors start: MSK Serverless allows compaction only at topic creation, and Debezium's auto-created topics would otherwise use deletion.
 
@@ -91,7 +91,7 @@ This release is one-way: data flows from the engine that holds the writes to the
 | 5. Joins from a precomputed catalog of join paths | none yet -- #1765 |
 | 6. Our code validates and compiles | none yet -- #1763 |
 | 7. Step 1 needs no model | `tests/unit/tools/transformation_contract/test_step1.py::test_cross_engine_and_no_anchor_get_no_rules`<br>`tests/unit/tools/transformation_contract/test_write.py::test_two_runs_write_the_same_bytes`<br>`tests/unit/tools/transformation_contract/test_validate_step1.py::test_no_key_is_a_warning_not_an_error` |
-| 8. Later steps build only on proven earlier steps | none yet -- #1768 |
+| 8. Later steps build only on earlier steps whose gates passed | none yet -- #1768 |
 | 9. The cache step | none yet -- #1770 |
 | 10. Debezium on MSK Connect into compacted topics, DMS for step 1 | `tests/unit/tools/data_movement/test_plan.py::test_wave_one_is_dms_from_the_legacy_source_with_no_hub`<br>`tests/unit/tools/data_movement/test_plan.py::test_later_waves_are_debezium_from_the_aurora_engine`<br>`tests/unit/tools/data_movement/test_debezium_connector.py::test_every_table_topic_is_created_compacted_with_its_partitions` |
 | 11. Release limits | by design -- a scope limit of this release (one-way, no source schema changes during the migration window); the deliverables state it with #1426 |

@@ -15,11 +15,14 @@ from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.cutover_message import CUTOVER_MESSAGES
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.dms_gate import (
+    ValidatedTables,
     lag_check,
     load_check,
+    load_validated,
     parity_check,
     read_task,
     run_gate,
+    save_validated,
     task_resource_id,
     write_gate,
 )
@@ -378,10 +381,131 @@ def test_suspended_records_fail_even_when_the_state_reads_validated():
     assert _gate(stats=_cust(suspended=2)).checks[2].status == "fail"
 
 
-def test_pending_records_keep_a_validated_state_from_passing():
+def test_a_validated_table_with_records_waiting_for_validation_passes():
+    """#2062: records DMS validates as changes arrive never hold the gate back."""
     stats = _cust()
-    stats[1]["ValidationPendingRecords"] = 4
-    assert _gate(stats=stats).checks[2].status == "pending"
+    stats[1]["ValidationPendingRecords"] = 3944
+    gate = _gate(stats=stats)
+    assert gate.status == "pass" and gate.checks[2].reasons == []
+    assert next(t for t in gate.tables if t.table == "shop.customers").reason is None
+
+
+def _seen(*stats):
+    seen = ValidatedTables()
+    seen.observe(stats)
+    return seen
+
+
+def _gate_seen(seen, **kwargs):
+    cred = StubbedCredMgr()
+    g.queue(cred, INPUTS.contract_sha256, **kwargs)
+    return run_gate(INPUTS, g.request(), g.clients(cred), now=g.NOW, seen=seen)
+
+
+def _stat(table="shop.customers", **kw):
+    """A table statistic with its full load end time (a mark needs one)."""
+    return {**g.stat(table, **kw), "FullLoadEndTime": g.NOW.replace(hour=1)}
+
+
+def _cust_at(**kw):
+    return [g.stat("shop.audit_log"), _stat(**kw), g.stat("shop.orders")]
+
+
+def test_a_table_validated_since_its_full_load_passes_with_a_non_zero_backlog():
+    """A table back to pending records under writes, after DMS validated it, has been
+    validated: the gate passes and never names the backlog."""
+    seen = _seen(_stat())
+    stats = _cust_at(validation="Pending records")
+    stats[1]["ValidationPendingRecords"] = 15
+    gate = _gate_seen(seen, stats=stats)
+    assert gate.status == "pass" and all(c.reasons == [] for c in gate.checks)
+    assert not any("pending" in k for k in gate.checks[2].evidence)
+    assert gate.checks[2].evidence["validated_since_full_load"] == "1"
+
+
+def _verdict(seen, **kw):
+    from src.tools.data_movement.dms_gate import _table_verdict
+
+    stat = _stat(**kw)
+    seen.observe([stat])
+    return _table_verdict(stat, seen)[0]
+
+
+def test_a_table_whose_mismatches_were_cleared_outside_move_must_validate_again():
+    """The review's sequence: Validated (recorded), Mismatched records, then a revalidation
+    started outside /move resets the counters. It passes only after a fresh Validated."""
+    seen = _seen(_stat())
+    assert _verdict(seen, validation="Mismatched records", failed=3) == "fail"
+    assert seen.marks == {}
+    assert _verdict(seen, validation="Pending revalidation") == "pending"
+    assert _verdict(seen, validation="Pending records") == "pending"
+    assert _verdict(seen, validation="Validated") == "pass"
+    assert _verdict(seen, validation="Pending records") == "pass"
+
+
+@pytest.mark.parametrize("reading", [
+    {"validation": "Suspended records", "suspended": 1},
+    {"validation": "Error"},
+    {"validation": "Table error"},
+    {"validation": "Pending records", "failed": 1},
+    {"validation": "Validated", "suspended": 2},
+    {"validation": "Pending revalidation"},
+    {"validation": "Pending records", "state": "Before load"},
+])  # fmt: skip
+def test_any_reading_that_is_not_clean_or_revalidates_drops_the_record(reading):
+    seen = _seen(_stat())
+    seen.observe([_stat(**reading)])
+    assert seen.marks == {}
+    assert _verdict(seen, validation="Pending records") == "pending"
+
+
+def test_the_gate_drops_a_record_for_a_mismatch_prove_never_saw():
+    """The gate applies the same drops to its own read: a recorded table now revalidating
+    after a mismatch is never credited."""
+    seen = _seen(_stat())
+    gate = _gate_seen(seen, stats=_cust_at(validation="Pending revalidation"))
+    assert gate.checks[2].status == "pending"
+
+
+def test_a_table_with_no_full_load_end_time_is_never_recorded():
+    seen = _seen(g.stat("shop.customers"))
+    assert seen.marks == {}
+    assert _gate_seen(seen, stats=_cust(validation="Pending records")).checks[2].status == "pending"
+
+
+def test_a_table_still_loading_is_never_validated():
+    seen = _seen(_stat())
+    assert not seen.validated(_stat(state="Full load", validation="Validated"))
+
+
+def test_a_table_whose_first_validation_has_not_finished_keeps_the_gate_pending():
+    stats = _cust(validation="Pending records")
+    stats[1]["ValidationPendingRecords"] = 936_599
+    gate = _gate_seen(ValidatedTables(), stats=stats)
+    assert gate.checks[2].status == "pending"
+    assert gate.checks[2].reasons == [
+        "shop.customers: validation Pending records: the first validation has not finished"
+    ]
+
+
+def test_a_reloaded_table_is_validated_again_before_it_passes():
+    """A reload gives the table a new full load end time: what was validated before no
+    longer counts."""
+    seen = _seen(_stat())
+    stats = _cust_at(validation="Pending records")
+    stats[1]["FullLoadEndTime"] = g.NOW.replace(hour=2)
+    assert _gate_seen(seen, stats=stats).checks[2].status == "pending"
+
+
+def test_a_table_validated_once_that_now_has_mismatches_fails():
+    seen = _seen(_stat())
+    gate = _gate_seen(seen, stats=_cust(validation="Mismatched records", failed=2))
+    assert gate.status == "fail"
+
+
+def test_a_failed_table_is_never_recorded_as_validated():
+    seen = _seen(_stat(failed=1))
+    assert seen.marks == {}
 
 
 def test_a_keyed_table_missing_from_the_statistics_is_pending_in_parity():
@@ -601,17 +725,40 @@ def test_the_listed_metrics_dimensions_are_passed_unchanged():
     assert dims == [extra, {"Name": "ReplicationTaskIdentifier", "Value": "TASKRESOURCEID01"}]
 
 
-def test_pending_record_totals_are_parity_evidence():
+def test_records_waiting_for_validation_are_not_parity_evidence():
+    """#2062: the backlog is never reported as a signal, so the evidence does not carry it."""
     stats = _cust()
     stats[1]["ValidationPendingRecords"] = 4
     stats[2]["ValidationPendingRecords"] = 3
     check = _gate(stats=stats).checks[2]
-    assert check.status == "pending"
-    assert (
-        check.evidence["pending_records"] == "7"
-        and check.evidence["tables_with_pending_records"] == "2"
+    assert check.status == "pass"
+    assert set(check.evidence) == {"keyed_tables", "validated", "validated_since_full_load",
+                                   "exceptions"}  # fmt: skip
+
+
+def test_the_gate_reads_the_tables_prove_recorded_as_validated(tmp_path):
+    b = make_bundle()
+    store = LocalArtifactStore(str(tmp_path))
+    store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))
+    store.write_bytes(
+        "shop/job1/transformation-contract/v2/step-1.json", canonical_json(b.contract)
     )
-    assert _gate().checks[2].evidence["pending_records"] == "0"
+    save_validated(store, "shop", "job1", _seen(_stat(), _stat("shop.orders")))
+    stats = [g.stat("shop.audit_log", rows=12, validation="No primary key"),
+             _stat(validation="Pending records"),
+             _stat("shop.orders", validation="Pending records")]  # fmt: skip
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256, stats=stats)
+    _, gate = write_gate(store, "shop", "job1", g.request(), g.clients(cred), now=g.NOW)
+    assert gate.status == "pass"
+
+
+def test_an_unreadable_validated_tables_file_reads_as_none(tmp_path):
+    store = LocalArtifactStore(str(tmp_path))
+    path = tmp_path / "shop/job1/data-movement/step-1"
+    path.mkdir(parents=True)
+    (path / "validation-seen.json").write_text("not json")
+    assert load_validated(store, "shop", "job1").marks == {}
 
 
 def test_the_exception_count_names_distinct_tables():

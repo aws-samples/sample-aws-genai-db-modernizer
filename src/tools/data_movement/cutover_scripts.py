@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT-0
 
 """The routine cutover scripts (#1948, ADR-034 Decision 6): generated here, run by the
-customer at their own cutover.
+customer.
 
-Cutover is the customer's (ADR-033 Decision 11, the maintainer decision of 2026-11-06 on
-#1948): the modernizer never runs these scripts, never signals the cutover and never
-connects to the customer's databases. ``scripts/run_dms_step.py cutover-scripts`` writes
+The cutover is the customer's responsibility (ADR-033 Decision 11, the maintainer decisions
+of 2026-11-06 on #1948 and 2026-11-10 on #2062): the modernizer never runs these scripts,
+gives no cutover advice and never connects to the customer's databases. ``scripts/run_dms_step.py cutover-scripts`` writes
 three files into ``data-movement/step-1/``, from the step contract's routines section:
 
 - ``cutover-routines.sql``: on Aurora PostgreSQL, each trigger step 1's deploy script
@@ -16,7 +16,7 @@ three files into ``data-movement/step-1/``, from the step contract's routines se
   (#2099) gets ``ENABLE TRIGGER`` or stays disabled, and the files say so: an always or
   replica-only trigger is then not told apart, so ``cutover.md`` gives the read-only source
   query that lists them for the customer to check by hand. On Aurora MySQL, the ``CREATE TRIGGER`` and ``CREATE EVENT``
-  of each routine step 1 left to cutover (``deferred_to_cutover``), in the
+  of each routine step 1 left to this script (``deferred_to_cutover``), in the
   routine-migration artifact's dependency order, triggers of one table, timing and event
   in their source ``ACTION_ORDER`` (creation order is firing order), each the exact text
   from the routine sources with the routine-migration rewrites applied again for the user
@@ -27,9 +27,10 @@ three files into ``data-movement/step-1/``, from the step contract's routines se
 - ``cutover-check.sql``: read-only, the same catalog ``SELECT``\\s as step 1's routine
   check, asking only for those triggers and events, under its own header and end lines;
   on Aurora MySQL with events, also ``@@GLOBAL.event_scheduler``.
-- ``cutover.md``: when to run them (only once the applications have stopped writing to
-  the source and DMS has applied the last change), in what order, and where the check's
-  output goes (``cutover-check.tsv``, which ``run_dms_step.py cutover-check`` reads).
+- ``cutover.md``: what each file does, how to run them, in what order, and where the
+  check's output goes (``cutover-check.tsv``, which ``run_dms_step.py cutover-check``
+  reads). It says nothing about when: it opens with ``CUTOVER_DISCLAIMER``, its only word
+  on the cutover.
 
 There is no rollback section: nothing here disables a trigger again or drops a routine.
 
@@ -59,6 +60,7 @@ from typing import Any
 from src.contracts.routine_migration import RoutineMigrationContract
 from src.contracts.routine_sources import RoutineSource
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
+from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.tools.data_movement.routine_scripts import (
     PG_LOCK_TIMEOUT,
     CheckScript,
@@ -206,7 +208,7 @@ def expected_rows(section: StepRoutines, engine: str) -> list[StepRoutine]:
 
 def excluded_rows(section: StepRoutines, engine: str) -> list[StepRoutine]:
     """The triggers (and MySQL events) step 1 does not carry: the cutover cannot act on
-    them, and each blocks a complete cutover until its reasons are settled."""
+    them, and each fails the check until its reasons are settled."""
     kinds = CUTOVER_KINDS.get(engine, ())
     return [r for r in section.routines if r.carry == "not_carried" and r.kind in kinds]
 
@@ -295,19 +297,16 @@ def _ordered(rows: list[StepRoutine], migration: RoutineMigrationContract) -> li
     return out
 
 
-_PG_WAIT = (
-    "Run it only after your applications have stopped writing to the source and DMS has "
-    "applied the last change (the gate passes again): once the triggers are on, application "
-    "writes to Aurora and DMS's apply must not overlap. DMS applies its changes with "
-    "session_replication_role = replica, so an O trigger does not fire for DMS's own writes, "
-    "but an ALWAYS (A) or REPLICA (R) trigger does."
+# What the script's triggers do once they are on: facts about the files, never when to run them.
+_PG_EFFECT = (
+    "Triggers fire once they are on.",
+    "DMS applies its changes with session_replication_role = replica, so an O trigger does not "
+    "fire for DMS's own writes, but an ALWAYS (A) or REPLICA (R) trigger does.",
 )
-_MYSQL_WAIT = (
-    "Run it only after your applications have stopped writing to the source and DMS has "
-    "applied the last change (the gate passes again): a MySQL trigger fires for DMS's writes "
-    "too, so one created while DMS still applies source changes applies the source "
-    "trigger's effects a second time, and application writes to Aurora must not overlap "
-    "DMS's apply."
+_MYSQL_EFFECT = (
+    "A MySQL trigger fires for DMS's writes too.",
+    "While DMS applies source changes, a trigger this script created on Aurora applies the "
+    "source trigger's effects a second time.",
 )
 
 
@@ -317,15 +316,15 @@ def _header(engine: str, contract_sha: str, scripts: CutoverScripts, resume: boo
         f"sets the {scripts.in_script} triggers step 1 created disabled to their source state, "
         f"of which {scripts.stays_disabled} stay disabled"
         if pg
-        else f"creates the {scripts.in_script} MySQL triggers and events step 1 left to cutover"
+        else f"creates the {scripts.in_script} MySQL triggers and events step 1 left to this script"
     )
     lines = [
-        "-- Cutover routines: generated by the modernizer; you run it at your cutover. The "
-        "modernizer never runs it, never signals your cutover and never connects to your "
+        f"-- {CUTOVER_DISCLAIMER}",
+        "-- Cutover routines: generated by the modernizer, which never connects to your "
         "databases.",
         f"-- Step contract SHA-256: {contract_sha}",
         f"-- This script {what}; {scripts.expected} expected, in dependency order.",
-        f"-- {_PG_WAIT if pg else _MYSQL_WAIT}",
+        f"-- {' '.join(_PG_EFFECT if pg else _MYSQL_EFFECT)}",
     ]
     if pg and scripts.state_folded:
         lines.append(
@@ -417,26 +416,27 @@ def _instructions(engine: str, scripts: CutoverScripts, output: str) -> str:
         "`ENABLE REPLICA` where the collection gives that state)"
         if pg
         else f"creates {scripts.in_script} of the {scripts.expected} MySQL triggers and events "
-        "step 1 left to cutover; triggers of one table, timing and event in their source order"
+        "step 1 left to this script; triggers of one table, timing and event in their source order"
     )
+    effect = _PG_EFFECT if pg else _MYSQL_EFFECT
     lines = [
+        CUTOVER_DISCLAIMER,
+        "",
         "# Cutover routines",
         "",
-        "Cutover is yours. The modernizer never runs these scripts, never signals your "
-        "cutover and never connects to your databases: you run them on your Aurora writer, "
-        "with your own credentials, as part of your own cutover.",
+        "The modernizer never connects to your databases: you run these scripts on your Aurora "
+        "writer, with your own credentials.",
         "",
         f"- `{CUTOVER_FILE}` {what}, in dependency order.",
         f"- Left out: {len(scripts.excluded)} (`run_dms_step.py cutover-scripts` and the "
         "script's header name each one and why). A trigger or event left out, or one step 1 "
-        "does not carry, blocks a complete cutover until its reasons are settled: the check "
-        "fails on it.",
+        "does not carry, fails the check until its reasons are settled.",
         "- No rollback: there is no script that disables the triggers again or drops what "
-        "this one creates. Going back is part of your own cutover plan.",
+        "this one creates.",
         "",
         "## Warnings",
         "",
-        f"- **{(_PG_WAIT if pg else _MYSQL_WAIT).replace(' (the gate', '** (the gate', 1)}",
+        f"- **{effect[0]}** {effect[1]}",
     ]
     if pg and scripts.state_folded:
         lines.append(
@@ -455,15 +455,9 @@ def _instructions(engine: str, scripts: CutoverScripts, output: str) -> str:
             "ON REPLICA`), as the source shows them (usually a collection read from a replica): "
             "they never run on Aurora; enable each one yourself if it should."
         )
-    steps = [
-        "Stop your applications' writes to the source, and wait until the gate passes again "
-        "(DMS applied the last change).",
-    ]
+    steps: list[str] = []
     if pg:
-        steps.append(
-            "Run `step-1.sequences.sql` first, as the cutover steps in the data-movement "
-            "README say."
-        )
+        steps.append("Run `step-1.sequences.sql` first, as the data-movement README says.")
     elif scripts.events_enabled:
         steps.append(
             "Make sure the cluster's event scheduler is ON: `event_scheduler` is a parameter "
@@ -487,14 +481,10 @@ def _instructions(engine: str, scripts: CutoverScripts, output: str) -> str:
             "table, timing and event is not). Run it the same way "
             f"(`{mysql(RESUME_FILE)}`), then the check again; repeat until the check passes."
         )
-    steps += [
-        "Recreate on Aurora what step 1 does not move (the views, and the routines its "
-        "routines section does not carry), as the README's cutover steps say.",
-        "Only then point your applications at Aurora.",
-    ]
     lines += ["", "## Order", ""]
     lines += [f"{i}. {text}" for i, text in enumerate(steps, start=1)]
-    lines.append("")
+    lines += ["", "Step 1 does not move the views, or the routines its routines section does not "
+              "carry: recreating them on Aurora is yours.", ""]  # fmt: skip
     if pg:
         lines.append(
             "The cutover script runs in one transaction: if a statement fails, no trigger "

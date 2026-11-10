@@ -2,16 +2,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Read step 1's DMS gate: load, lag and validation evidence for the cutover decision (#1800).
+"""Read step 1's DMS gate: the full load, lag and validation evidence (#1800, #2062).
 
 On demand, read-only (DMS, CloudWatch and CloudFormation describe, get and list calls), writes
 ``<db>/<job>/data-movement/step-1/gate.json`` and prints one JSON status line with the
-contract hash, ``cutover_decision: "customer"`` and the fixed cutover message, and, when records
-did not validate, ``validation_failures`` (the tables, with their counts) and
+contract hash, ``result`` (``REPLICATING_MESSAGE`` on a pass, else None),
+``cutover_decision: "customer"`` and the fixed cutover message, and, when records did not
+validate, ``validation_failures`` (the tables, with their counts) and
 ``validation_failures_check`` (DMS's failure table on Aurora, the read-only SQL for the
-customer to run there, and hints; #2064), in the shape ``run_dms_step.py status`` uses. When to cut
-over is the customer's decision. Use read-only credentials (``AWS_PROFILE``). Exit 1 only
-when the gate could not run.
+customer to run there, and hints; #2064), in the shape ``run_dms_step.py status`` uses. Use
+read-only credentials (``AWS_PROFILE``). Exit 1 only when the gate could not run.
 
 Usage:
     uv run python scripts/check_dms_step_gate.py --job-id <id> --db <db> --region <region> \\
@@ -36,6 +36,7 @@ from src.shared.cutover_message import cutover_message_text  # noqa: E402
 from src.tools.data_movement.dms_gate import (  # noqa: E402
     DEFAULT_STALE_SECONDS,
     DEFAULT_WINDOW_MINUTES,
+    REPLICATING_MESSAGE,
     GateClients,
     GateRequest,
     write_gate,
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None, *, clients: GateClients | None = None) -
     except (DmsStepError, FileNotFoundError, ClientError, BotoCoreError) as exc:
         return error(str(exc))
     print(json.dumps({"status": gate.status, "gate": path, "contract_sha256": gate.contract_sha256,
+                      "result": REPLICATING_MESSAGE if gate.status == "pass" else None,
                       "cutover_decision": gate.cutover_decision,
                       "cutover_message": cutover_message_text(gate.cutover_message_id),
                       "reasons": [f"{c.id}: {r}" for c in gate.checks for r in c.reasons],

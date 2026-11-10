@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Step 1's DMS gate: the evidence the customer decides the cutover on (#1800).
+"""Step 1's DMS gate: the evidence that the full load is complete and replication is in
+progress (#1800, #2062).
 
 On demand, as often as needed, read-only: the stack's ``ReplicationTaskArn`` output
 (CloudFormation), the task, its tags and table statistics (DMS), and its CDC latency
@@ -11,24 +12,28 @@ On demand, as often as needed, read-only: the stack's ``ReplicationTaskArn`` out
   in the table statistics without errors, and the task carries this contract's hash tag;
 - **lag**: every ``CDCLatencySource`` and ``CDCLatencyTarget`` datapoint of the window is
   under the plan's ``max_lag_seconds``;
-- **parity**: every table with a key DMS can validate on is ``Validated``; one still
-  validating keeps the gate ``pending``; a validation failure fails it. Tables whose key DMS
-  cannot validate on (none, a unique index that allows NULLs, a LOB or unbounded key column:
-  the contract's key rule, ``validation_key``, #2042) and views are named exceptions, with
-  their DMS row counts and the reason;
+- **parity**: every table with a key DMS can validate on has been validated with no
+  mismatches: ``Validated`` now, or validated since its full load and now holding records
+  DMS validates as changes arrive (``ValidatedTables``, #2062). Records waiting for
+  validation are never a finding: on a source that keeps taking writes they rise and fall
+  with the write rate. A table whose first validation has not finished keeps the gate
+  ``pending``; a validation failure fails it. Tables whose key DMS cannot validate on
+  (none, a unique index that allows NULLs, a LOB or unbounded key column: the contract's
+  key rule, ``validation_key``, #2042) and views are named exceptions, with their DMS row
+  counts and the reason;
 - **routines** (#1947): every routine step 1 carries is confirmed by the customer's run of
   the read-only check script (``routines-check.json``, read locally, never from the
   databases); a routine step 1 does not carry fails it, named, as a mismatch does.
 
 The result, ``pass``, ``pending`` or ``fail``, goes to ``data-movement/step-1/gate.json``
-with ``cutover_decision: "customer"`` and the fixed cutover message's id: the gate never
-recommends. It writes nothing else and changes nothing in AWS.
+with ``cutover_decision: "customer"`` and the fixed cutover message's id. A ``pass`` says
+only ``REPLICATING_MESSAGE``. The gate writes nothing else and changes nothing in AWS.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -55,6 +60,8 @@ from src.tools.data_movement.dms_step import (
 )
 from src.tools.data_movement.validation_key import gate_reason, key_type_message, key_type_problem
 
+# What step 1 shows once the gate passes, word for word (#2062): never more.
+REPLICATING_MESSAGE = "Full load complete. Replication is in progress."
 LAG_METRICS = ("CDCLatencySource", "CDCLatencyTarget")
 DEFAULT_WINDOW_MINUTES = 15
 PERIOD_SECONDS = 60
@@ -364,23 +371,129 @@ def _count(stat: Mapping[str, Any], key: str) -> int:
     return int(stat.get(key) or 0)
 
 
-def _table_verdict(s: Mapping[str, Any]) -> tuple[GateStatus, str | None]:
-    """One keyed table's verdict from its DMS statistics; a pass only on a clean ``Validated``."""
+def table_id_of(stat: Mapping[str, Any]) -> str:
+    """A table statistic's ``schema.table`` id."""
+    return f"{stat.get('SchemaName')}.{stat.get('TableName')}"
+
+
+def _full_load_mark(stat: Mapping[str, Any]) -> str:
+    """The table's full load end time, as DMS reports it: a reload gives a new one."""
+    end = stat.get("FullLoadEndTime")
+    return end.isoformat() if isinstance(end, datetime) else str(end or "")
+
+
+PENDING_CHANGES = "pending records"  # the only pending state a validated table is credited in
+REVALIDATING = "pending revalidation"  # DMS validates the table again from the start
+
+
+def table_loaded(stat: Mapping[str, Any]) -> bool:
+    """The table's load is done: ``Table completed``, or no state reported at all."""
+    state = stat.get("TableState")
+    return state is None or state == TABLE_COMPLETED
+
+
+def _clean(stat: Mapping[str, Any]) -> bool:
+    return not (_count(stat, "ValidationFailedRecords") or _count(stat, "ValidationSuspendedRecords")
+                or validation_state(stat) in VALIDATION_FAILED)  # fmt: skip
+
+
+@dataclass
+class ValidatedTables:
+    """The tables DMS has reported cleanly ``Validated`` since their full load (#2062).
+
+    After its first validation, a table that keeps receiving changes goes back to
+    ``Pending records`` while DMS validates those changes, and returns to ``Validated`` when
+    it has: on a source that keeps taking writes, every table is rarely ``Validated`` at the
+    same moment. A table counts as validated when it is ``Validated`` now, or was since its
+    full load (the same ``FullLoadEndTime``) and now holds only ``Pending records``, with no
+    failed or suspended record, its load ``Table completed``. A mark is dropped whenever a
+    read shows the table not clean (failed or suspended records, a failed state) or in
+    ``Pending revalidation`` (DMS validates it again from the start), and when Move reloads
+    it; the table counts again only after a fresh clean ``Validated``. A table with no
+    ``FullLoadEndTime`` is never marked. Prove's polls record them in ``SEEN_FILE``; the gate
+    reads that file and applies the same drops to what it reads."""
+
+    marks: dict[str, str] = field(default_factory=dict)
+
+    def observe(self, tables: Any) -> bool:
+        """Record each table cleanly ``Validated`` now, and drop each one read not clean or
+        revalidating; True when something changed."""
+        changed = False
+        for stat in tables:
+            key, mark, folded = table_id_of(stat), _full_load_mark(stat), validation_state(stat)
+            if not _clean(stat) or folded == REVALIDATING or not table_loaded(stat):
+                changed = self.marks.pop(key, None) is not None or changed
+            elif folded == VALIDATED and mark:
+                changed = changed or self.marks.get(key) != mark
+                self.marks[key] = mark
+        return changed
+
+    def forget(self, table_ids: Any) -> None:
+        for table_id in table_ids:
+            self.marks.pop(table_id, None)
+
+    def clear(self) -> None:
+        self.marks.clear()
+
+    def validated(self, stat: Mapping[str, Any]) -> bool:
+        """Validated with no mismatch: cleanly ``Validated`` now, or since its full load and
+        now holding only records DMS validates as changes arrive."""
+        if not _clean(stat) or not table_loaded(stat):
+            return False
+        folded = validation_state(stat)
+        return folded == VALIDATED or self.recorded(stat)
+
+    def recorded(self, stat: Mapping[str, Any]) -> bool:
+        """Credited from the record, not from the state now: ``Pending records`` on a table
+        cleanly ``Validated`` since this full load."""
+        mark = _full_load_mark(stat)
+        return (validation_state(stat) == PENDING_CHANGES and _clean(stat) and table_loaded(stat)
+                and bool(mark) and self.marks.get(table_id_of(stat)) == mark)  # fmt: skip
+
+
+SEEN_FILE = "validation-seen.json"
+
+
+def seen_key(db: str, job_id: str) -> str:
+    return f"{db}/{job_id}/data-movement/step-1/{SEEN_FILE}"
+
+
+def load_validated(store: Any, db: str, job_id: str) -> ValidatedTables:
+    """The recorded tables; none for a missing or unreadable file (the gate then judges each
+    table by its state now, as before #2062)."""
+    key = seen_key(db, job_id)
+    try:
+        raw = store.read_json(key) if store.exists(key) else {}
+    except (OSError, ValueError):
+        raw = {}
+    tables = raw.get("tables") if isinstance(raw, dict) else None
+    if not isinstance(tables, dict):
+        return ValidatedTables()
+    return ValidatedTables({str(k): str(v) for k, v in tables.items()})
+
+
+def save_validated(store: Any, db: str, job_id: str, seen: ValidatedTables) -> None:
+    store.write_json(f"{db}/{job_id}/data-movement/step-1/validation-seen.json",
+                     {"tables": dict(sorted(seen.marks.items()))})  # fmt: skip
+
+
+def _table_verdict(
+    s: Mapping[str, Any], seen: ValidatedTables | None = None
+) -> tuple[GateStatus, str | None]:
+    """One keyed table's verdict from its DMS statistics: a pass once it has been validated
+    with no mismatch, whatever records still wait for validation (#2062)."""
     state = s.get("ValidationState")
     folded = validation_state(s)
     failed = _count(s, "ValidationFailedRecords")
     suspended = _count(s, "ValidationSuspendedRecords")
-    pending = _count(s, "ValidationPendingRecords")
-    if failed or suspended or folded in VALIDATION_FAILED:
+    if not _clean(s):
         return "fail", (
             f"validation {state or 'failed'}: {failed} failed and {suspended} suspended records"
         )
-    if folded == VALIDATED:
-        if pending:
-            return "pending", f"validated, with {pending} records still pending validation"
+    if (seen or ValidatedTables()).validated(s):
         return "pass", None
     if folded in VALIDATION_PENDING:
-        return "pending", f"validation {state}"
+        return "pending", f"validation {state}: the first validation has not finished"
     return "pending", f"DMS reports the validation state {state or 'none'}, not Validated"
 
 
@@ -407,13 +520,12 @@ def _not_validated(inputs: Step1Inputs, table_id: str) -> str | None:
 
 
 def parity_check(
-    inputs: Step1Inputs, view: TaskView
+    inputs: Step1Inputs, view: TaskView, seen: ValidatedTables | None = None
 ) -> tuple[GateCheck, list[GateTable], list[GateException]]:
     reasons: list[tuple[GateStatus, str]] = []
     tables: list[GateTable] = []
     exceptions: list[GateException] = []
-    keyed = validated = 0
-    pending_records = pending_tables = 0
+    keyed = validated = recorded = 0
     replication = inputs.plan.replication
     lob_tables = {t.table for t in replication.lob_tables} if replication else set()
 
@@ -436,13 +548,11 @@ def parity_check(
         else:
             keyed += 1
             status, why = (
-                ("pending", "not in the table statistics yet") if not s else _table_verdict(s)
+                ("pending", "not in the table statistics yet") if not s else _table_verdict(s, seen)
             )
             if status == "pass":
                 validated += 1
-            if _count(s, "ValidationPendingRecords"):
-                pending_records += _count(s, "ValidationPendingRecords")
-                pending_tables += 1
+                recorded += int(seen is not None and validation_state(s) != VALIDATED)
             if status != "exception" and why:
                 reasons.append((status, f"{t.table_id}: {why}"))
         tables.append(GateTable(table=t.table_id, rows_loaded=rows, table_state=s.get("TableState"),
@@ -472,9 +582,8 @@ def parity_check(
             "No table has a key DMS can validate with: nothing was validated; see the exceptions."
         )
     check = _check("parity", reasons, summary, {"keyed_tables": keyed, "validated": validated,
-                                                "exceptions": len(exceptions),
-                                                "pending_records": pending_records,
-                                                "tables_with_pending_records": pending_tables})  # fmt: skip
+                                                "validated_since_full_load": recorded,
+                                                "exceptions": len(exceptions)})  # fmt: skip
     return check, tables, exceptions
 
 
@@ -531,10 +640,13 @@ def run_gate(
     *,
     now: datetime,
     routines: RoutineCheckResult | None = None,
+    seen: ValidatedTables | None = None,
 ) -> DmsGate:
     view = read_task(clients, request, now=now)
     max_lag = inputs.plan.gates.max_lag_seconds
-    parity, tables, exceptions = parity_check(inputs, view)
+    seen = ValidatedTables(dict(seen.marks) if seen else {})
+    seen.observe(view.statistics.values())  # this read's drops apply too; the file is unchanged
+    parity, tables, exceptions = parity_check(inputs, view, seen)
     checks = [
         load_check(inputs, view),
         lag_check(view, max_lag, request.window_minutes, request.stale_seconds),
@@ -560,7 +672,8 @@ def write_gate(store: Any, db: str, job_id: str, request: GateRequest, clients: 
     check_key = f"{db}/{job_id}/data-movement/step-1/routines-check.json"
     if inputs.contract.routines is not None and store.exists(check_key):
         routines = load_contract(RoutineCheckResult, store.read_json(check_key), artifact=check_key)
-    gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines)
+    gate = run_gate(inputs, request, clients, now=now or datetime.now(UTC), routines=routines,
+                    seen=load_validated(store, db, job_id))  # fmt: skip
     path = f"{db}/{job_id}/data-movement/step-1/gate.json"
     store.write_json(path, gate.model_dump(mode="json"))
     return path, gate
