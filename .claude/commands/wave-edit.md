@@ -102,6 +102,7 @@ uv run python scripts/run_wave_edit.py --job-id {job_id} --db {database_name} --
 ```
 
 - `"status": "awaiting_synthesis"`: the round's design was no better (or missing), and the earlier design is back (`restored`). Run step 5 again.
+- `"status": "awaiting_review"`: `missing_reviews` lists the round's designs whose review is not recorded yet. Review them as step 4 does (`run_pe_review.py`, then `--merge` again for a DynamoDB part), then run step 5. The round stays open until its reviews are in.
 - `"status": "awaiting_redesign"`: the kept design still has a blocker a redesign can fix; round `round` sends exactly `engines` back. Run step 4, then step 5.
 - `"status": "complete"`: tell the user wave `{wave}`'s new `readiness_line` as printed, each entry of `engines` with its `summary` as printed (for example "redesigned; the new review lists 1 design review warning to accept"), and that the deliverables in `./artifacts/{database_name}/{job_id}/deliverables/` were rendered again. Never say a warning the customer rejected is fixed: a new review's warnings are a new list, for the customer to accept by approving the wave or to decide on in another `/wave-edit`. Stop.
 - `"status": "error"`: present its `message` and stop.

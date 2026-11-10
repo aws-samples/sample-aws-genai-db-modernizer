@@ -115,6 +115,7 @@ class TestPrepare:
     def test_one_request_per_design_and_per_dynamodb_group(self, store) -> None:
         prepared = pe.prepare_pe_review_llm_input(store, DB, JOB, V)
         assert [(r["engine"], r["group"]) for r in prepared["reviews"]] == [
+            ("aurora_mysql", None),
             ("documentdb", None),
             ("dynamodb", 0),
             ("dynamodb", 1),
@@ -141,14 +142,41 @@ class TestPrepare:
             assert first == "untrusted_data_notice"
             assert request[first] == getattr(prompt_framing, "REQUEST_FILE_NOTICE", None)
 
-    def test_engines_whose_review_cannot_flag_are_skipped_with_a_reason(self, store) -> None:
+    def test_every_engine_is_reviewed_whether_or_not_its_review_can_flag(self, store) -> None:
+        """#2081: an Aurora or ElastiCache review carries no routing flags, but its
+        blockers hold a wave and its warnings are listed to accept, so it is asked too."""
         prepared = pe.prepare_pe_review_llm_input(store, DB, JOB, V)
-        [skip] = prepared["skipped"]
-        assert skip["engine"] == "aurora_mysql" and "routing_flags" in skip["reason"]
+        assert prepared["skipped"] == []
+        request = store.read_json(f"{PREFIX}/llm_requests/pe_review_aurora_mysql.json")
+        assert request["skill_prompt"] == "src/skills/aurora_mysql-pe-review.md"
+        assert request["query_ids"] == ["q6"]
+        assert request["output_schema"] == pe.review_contract("aurora_mysql").model_json_schema()
+        assert "routing_flags" not in request["output_schema"]["properties"]
+        assert "flag_contract" not in request  # only a contract that can flag gets its shape
         for engine in ("aurora_mysql", "aurora_postgresql", "elasticache"):
             assert not pe.can_flag(engine)
         for engine in ("dynamodb", "documentdb", "opensearch"):
             assert pe.can_flag(engine)
+
+    @pytest.mark.parametrize(
+        ("engine", "design"),
+        [
+            ("aurora_postgresql", {"table_definitions": [{"table_name": "orders"}]}),
+            ("elasticache", {"key_designs": [{"key_pattern": "cart:{id}"}]}),
+        ],
+    )
+    def test_aurora_postgresql_and_elasticache_designs_get_their_own_skill(
+        self, store, engine: str, design: dict
+    ) -> None:
+        store.write_json(f"{PREFIX}/schema-{engine}/v{V}/schema_output.json", design)
+        prepared = pe.prepare_pe_review_llm_input(store, DB, JOB, V, [engine])
+        [review] = prepared["reviews"]
+        assert (review["engine"], review["group"]) == (engine, None)
+        assert review["skill_prompt"] == f"src/skills/{engine}-pe-review.md"
+        assert review["finalize"].endswith(f"--engine {engine} --finalize")
+        request = store.read_json(f"{PREFIX}/llm_requests/pe_review_{engine}.json")
+        assert request["design"] == design and "evidence" not in request
+        assert pe.missing_reviews(store, DB, JOB, V, [engine]) == [engine]
 
     def test_an_undesigned_engine_and_a_skipped_design_are_not_reviewed(self, store) -> None:
         store.write_json(
@@ -168,6 +196,7 @@ class TestPrepare:
         )
         again = pe.prepare_pe_review_llm_input(store, DB, JOB, V)
         assert [(r["engine"], r["group"]) for r in again["reviews"]] == [
+            ("aurora_mysql", None),
             ("dynamodb", 0),
             ("dynamodb", 1),
         ]
@@ -262,8 +291,8 @@ class TestScript:
     def test_prepare_then_finalize_print_one_line_each(self, store, monkeypatch, capsys) -> None:
         root = str(store.base_dir)
         code, line = _script(run_pe_review, monkeypatch, capsys, root, "--assignment-version", "2")
-        assert code == 0 and line["status"] == "awaiting_llm" and len(line["reviews"]) == 3
-        documentdb = line["reviews"][0]
+        assert code == 0 and line["status"] == "awaiting_llm" and len(line["reviews"]) == 4
+        documentdb = line["reviews"][1]
         assert documentdb["finalize"] == (
             f"uv run python scripts/run_pe_review.py --job-id {JOB} --db {DB} "
             "--engine documentdb --finalize"
@@ -284,6 +313,7 @@ class TestScript:
         )
         assert code == 0 and done["status"] == "complete" and done["verdict"] == "APPROVED"
 
+    @pytest.mark.passes_on_main  # an engine with no design has nothing to review (#2081 moved it off Aurora)
     def test_nothing_to_review_is_complete(self, store, monkeypatch, capsys) -> None:
         code, line = _script(
             run_pe_review,
@@ -293,7 +323,7 @@ class TestScript:
             "--assignment-version",
             "2",
             "--engine",
-            "aurora_mysql",
+            "opensearch",
         )
         assert code == 0 and line["status"] == "complete" and line["reviews"] == []
 
@@ -372,6 +402,7 @@ class TestShapeAndFailedReviews:
             "dynamodb group 0",
             "dynamodb group 1",
             "documentdb",
+            "aurora_mysql",
         ]
         status = pe.apply_pe_review_llm_output(store, DB, JOB, V, "dynamodb", 1, failed=True)
         assert status["status"] == "complete" and status["review_failed"] is True
@@ -383,3 +414,206 @@ class TestShapeAndFailedReviews:
     def test_failed_needs_finalize(self, store, monkeypatch, capsys) -> None:
         code, line = _script(run_pe_review, monkeypatch, capsys, str(store.base_dir), "--failed")
         assert code == 1 and line["status"] == "error"
+
+
+class TestEveryEngineIsReviewed:
+    """#2081: Aurora and ElastiCache designs are reviewed headless too, with the skill
+    and contract the Bedrock reviewer uses; their review carries no routing flags."""
+
+    def _aurora_review(self, **extra) -> dict:
+        return {
+            "verdict": "CHANGES_REQUESTED",
+            "summary": "One hot read scans.",
+            "change_requests": [
+                {
+                    "category": "indexing",
+                    "severity": "blocker",
+                    "target": "orders",
+                    "requested_change": "add an index on customer_id",
+                    "rationale": "the hot read by customer scans the table",
+                },
+                {
+                    "category": "integrity",
+                    "severity": "warning",
+                    "target": "orders.customer_id",
+                    "requested_change": "keep the foreign key",
+                    "rationale": "the application would enforce it",
+                },
+            ],
+            "strengths": ["keeps the source keys"],
+            "pe_notes": [],
+            **extra,
+        }
+
+    def test_its_blockers_and_warnings_are_recorded_for_wave_readiness(self, store) -> None:
+        from src.shared.wave_readiness import (
+            open_review_count,
+            review_warnings,
+            reviewed_count,
+        )
+
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["aurora_mysql"])
+        store.write_json(
+            f"{PREFIX}/llm_responses/pe_review_aurora_mysql.json", self._aurora_review()
+        )
+        status = pe.apply_pe_review_llm_output(store, DB, JOB, V, "aurora_mysql")
+        assert status["status"] == "complete" and status["routing_flags"] == 0
+        trace = store.read_json(f"{PREFIX}/schema-aurora_mysql/v{V}/design_trace.json")
+        [entry] = trace["trace"]
+        assert (entry["type"], entry["blockers"], len(entry["warnings"])) == ("pe_review", 1, 1)
+        assert (reviewed_count(trace), open_review_count(trace)) == (1, 1)
+        assert review_warnings(trace) == []  # a review with a blocker holds the wave
+        assert pe.missing_reviews(store, DB, JOB, V, ["aurora_mysql"]) == []
+
+    def test_nothing_new_routes_even_when_the_answer_carries_flags(self, store) -> None:
+        """The Aurora contract has no routing_flags: a flag in the answer is dropped, so
+        the router reads none from the trace and no query moves."""
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["aurora_mysql"])
+        stray = [_flag(["q6"], "aurora_mysql")]
+        store.write_json(
+            f"{PREFIX}/llm_responses/pe_review_aurora_mysql.json",
+            self._aurora_review(routing_flags=stray),
+        )
+        status = pe.apply_pe_review_llm_output(store, DB, JOB, V, "aurora_mysql")
+        assert status["status"] == "complete" and status["routing_flags"] == 0
+        trace = store.read_json(f"{PREFIX}/schema-aurora_mysql/v{V}/design_trace.json")
+        assert "routing_flags" not in trace and "routing_flags" not in trace["pe_review"]
+        assert routing_flags_from_trace(trace) == []
+
+    def test_an_aurora_review_reads_the_delta_and_evidence_the_bedrock_reviewer_reads(
+        self, store
+    ) -> None:
+        """The Aurora skill reviews a delta against the deterministic draft, with the
+        residual types, hot queries and touched tables as evidence (pe_review_prompt)."""
+        import hashlib
+
+        from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
+        from src.tools.schema.aurora_common.bedrock_delta import pe_review_evidence
+
+        delta = {"delta_version": "1.0", "tables": [{"table_name": "orders"}]}
+        view = {
+            "migration_strategy": "homogeneous",
+            "residual_types": [{"source_type": "geometry"}],
+            "hot_queries": [{"query_id": "q6"}],
+            "tables": [{"table_name": "orders"}, {"table_name": "items"}],
+        }
+        output_key = f"{PREFIX}/schema-aurora_mysql/v{V}/schema_output.json"
+        response_key = f"{PREFIX}/llm_responses/schema_design_aurora_mysql.json"
+        store.write_json(response_key, delta)
+        store.write_json(
+            f"{PREFIX}/llm_requests/schema_design_aurora_mysql.json", {"design_view": view}
+        )
+
+        def digest(key: str) -> str:
+            return hashlib.sha256(store.read_bytes(key)).hexdigest()
+
+        store.write_json(
+            f"{PREFIX}/schema-aurora_mysql/v{V}/finalize_record.json",
+            {
+                "status": "complete",
+                "response_sha256": digest(response_key),
+                "output_sha256": digest(output_key),
+            },
+        )
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["aurora_mysql"])
+        request = store.read_json(f"{PREFIX}/llm_requests/pe_review_aurora_mysql.json")
+        assert request["design"] == AuroraDesignDeltaContract.model_validate(delta).model_dump(
+            mode="json"
+        )
+        expected = pe_review_evidence(AuroraDesignDeltaContract.model_validate(delta), view)
+        assert request["evidence"] == json.loads(json.dumps(expected))
+        assert request["evidence"]["touched_tables"] == [{"table_name": "orders"}]
+
+    def test_a_delta_that_is_not_this_designs_falls_back_to_the_full_design(self, store) -> None:
+        """A delta written after the design (a redesign round that was put back) is not
+        the design under review: the reviewer reads the full design instead."""
+        store.write_json(
+            f"{PREFIX}/llm_responses/schema_design_aurora_mysql.json",
+            {"delta_version": "1.0", "tables": [{"table_name": "orders"}]},
+        )
+        store.write_json(
+            f"{PREFIX}/schema-aurora_mysql/v{V}/finalize_record.json",
+            {"status": "complete", "response_sha256": "0" * 64, "output_sha256": "0" * 64},
+        )
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["aurora_mysql"])
+        request = store.read_json(f"{PREFIX}/llm_requests/pe_review_aurora_mysql.json")
+        assert request["design"] == {"tables": []} and "evidence" not in request
+
+
+class TestTheVerdictRuleHoldsEveryNewAnswer:
+    """#2081 review: the verdict rule DynamoDB's contract enforces holds every engine's
+    new headless answer, as a validation error the reviewer fixes within its attempts."""
+
+    @pytest.mark.parametrize(
+        ("engine", "verdict", "severities"),
+        [
+            ("aurora_mysql", "APPROVED", ["blocker"]),
+            ("aurora_mysql", "CHANGES_REQUESTED", []),
+            ("documentdb", "APPROVED", ["blocker"]),
+        ],
+    )
+    def test_a_verdict_its_change_requests_contradict_is_refused(
+        self, store, engine: str, verdict: str, severities: list[str]
+    ) -> None:
+        pe.prepare_pe_review_llm_input(store, DB, JOB, V, [engine])
+        response = f"{PREFIX}/llm_responses/pe_review_{engine}.json"
+        body = {**_review(), "verdict": verdict}
+        body["change_requests"] = [_change_request(engine, s) for s in severities]
+        store.write_json(response, body)
+        status = pe.apply_pe_review_llm_output(store, DB, JOB, V, engine)
+        assert status["status"] == "validation_failed"
+        assert all(e.startswith("verdict: ") for e in status["errors"])
+        assert not store.exists(f"{PREFIX}/schema-{engine}/v{V}/design_trace.json")
+        # Fixed within the attempts: a verdict its change requests agree with records.
+        body["verdict"] = "CHANGES_REQUESTED"
+        body["change_requests"] = body["change_requests"] or [_change_request(engine, "warning")]
+        store.write_json(response, body)
+        assert pe.apply_pe_review_llm_output(store, DB, JOB, V, engine)["status"] == "complete"
+
+
+def _change_request(engine: str, severity: str) -> dict:
+    """A change request with a category the engine's contract accepts."""
+    import typing
+
+    change = typing.get_args(pe.review_contract(engine).model_fields["change_requests"].annotation)[
+        0
+    ]
+    category = next(iter(change.model_fields["category"].annotation)).value
+    return {
+        "category": category,
+        "severity": severity,
+        "target": "orders",
+        "requested_change": "add the index",
+        "rationale": "the hot read scans",
+    }
+
+
+@pytest.mark.parametrize(
+    ("engine", "request_body", "design"),
+    [
+        (
+            "elasticache",
+            {"collector_output": {"tables": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}},
+            {"key_designs": [{"key_pattern": "cart:{id}"}]},
+        ),
+        (
+            "aurora_postgresql",
+            {
+                "design_view": {
+                    "tables": [{"table_name": "a"}, {"table_name": "b"}, {"table_name": "c"}]
+                }
+            },
+            {"table_definitions": [{"table_name": "a"}]},
+        ),
+    ],
+)
+def test_the_review_is_told_the_sources_table_count_as_on_bedrock(
+    store, engine: str, request_body: dict, design: dict
+) -> None:
+    """#2081 review: the Bedrock Aurora and ElastiCache reviewers are told how many source
+    tables the design serves, not how many tables the design lists."""
+    store.write_json(f"{PREFIX}/schema-{engine}/v{V}/schema_output.json", design)
+    store.write_json(f"{PREFIX}/llm_requests/schema_design_{engine}.json", request_body)
+    pe.prepare_pe_review_llm_input(store, DB, JOB, V, [engine])
+    request = store.read_json(f"{PREFIX}/llm_requests/pe_review_{engine}.json")
+    assert request["source_summary"]["table_count"] == 3

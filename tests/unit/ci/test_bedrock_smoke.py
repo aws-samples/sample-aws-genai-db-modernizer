@@ -161,13 +161,14 @@ def test_the_file_the_ci_job_reads(tmp_path: Path, capsys: pytest.CaptureFixture
 
 def test_every_status_the_loop_returns_is_an_ending_a_failure_or_a_step() -> None:
     """A status a later change adds to ``plan_round`` or ``run_rounds`` must be placed:
-    a normal ending (``LOOP_ENDINGS``, which the smoke accepts), ``failed``, or a step
-    ``run_rounds`` continues from. The per-engine round outcomes (``not_reviewed`` and
-    the like, #2077) are not status lines."""
+    a normal ending (``LOOP_ENDINGS``, which the smoke accepts), ``failed``, or a step a
+    caller continues from (``LOOP_STEPS``: ``awaiting_review`` only on a headless check,
+    #2081). The per-engine round outcomes (``not_reviewed`` and the like, #2077) are not
+    status lines."""
     import ast
     import inspect
 
-    steps = {"awaiting_synthesis", "awaiting_redesign"}
+    steps = wr.LOOP_STEPS
     found: set[str] = set()
     for fn in (wr.plan_round, wr.run_rounds):
         for node in ast.walk(ast.parse(inspect.getsource(fn).lstrip())):

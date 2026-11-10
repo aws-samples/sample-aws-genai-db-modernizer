@@ -677,6 +677,8 @@ Version History:
   why in plain words, the routines to migrate yourself, each rewrite and check that
   could not run once with its routines, the routines with no row). Backward compatible: default to
   None, False or empty.
+- 1.93 (2026-11-10, #2081): WaveRedesignRound.reviewed_before marked legacy: no longer
+  written or read; a redesign is kept only once its own review ran
 """
 
 from datetime import datetime
@@ -1532,8 +1534,9 @@ class WaveRedesignRound(BaseModel):
     reviewed_before: dict[str, bool] | None = Field(
         None,
         description=(
-            "Per engine, whether the design the round replaced had a review that ran "
-            "(#2067): a new design is then kept only once its own review ran"
+            "Legacy (#2067; not written or read since #2081): per engine, whether the "
+            "design the round replaced had a review that ran. A new design is now kept "
+            "only once its own review ran, whatever the replaced design had"
         ),
     )
     before: dict[str, list[int]] | None = Field(
@@ -3899,7 +3902,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.92",
+        default="1.93",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

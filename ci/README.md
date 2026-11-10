@@ -494,6 +494,9 @@ docstring for the confirmed stream-json shapes (aggregation across all
 `tests/unit/ci/fixtures/real-chat-wordpress-failed.jsonl` for a trimmed copy
 of that transcript.
 
+Since #2081 a run reviews each Aurora and ElastiCache design too: two or three
+more review calls per run, not measured yet.
+
 **Denials**: `check-transcript` splits each denied Bash command on pipes, `&&`, `||`, `;` and subshells. A denial of one of the pipeline's own allowlisted commands on its own means the allowlist is broken and fails the run. A compound command that contains an allowlisted part but was denied for the rest is a tool-use rule violation by the model: it also fails the run, because the commands forbid chaining and post-processing, but it is reported as `rule_violations` (count and commands) in `summary.json` and `results.json` and the error names the violation, not the allowlist. A denied allowlisted command the shell would expand (`$name`) warns (`expansion_denials`), as does any other (`denials`, the model exploring). <!-- claim: tests/unit/ci/test_llm_run.py::test_shell_expansion_denial_warns_and_does_not_fail --> Every entry is named `<Tool>: <target>` (Bash: the command, Skill: the skill name, Read/Write/Edit: the path, WebFetch: the URL, other tools: the tool name and its compact input). A denied non-Bash call that matches an allow rule and no deny rule counts as a broken allowlist; one outside the allowlist (for example a `Skill` that is not listed) only warns and is recorded as `unlisted_tool_denials`, so you can tell an allowlist gap from a model misstep. File paths are matched the way Claude Code does: tool inputs carry absolute paths, relative rules such as `Write(artifacts/**)` resolve against the session's cwd (from the transcript's `init` record), `..` is normalised first, and a path a deny rule blocks (for example `artifacts/.local-ui/`) is never counted as allowlisted.
 
 ### `ci/llm/aggregate_notes.py`

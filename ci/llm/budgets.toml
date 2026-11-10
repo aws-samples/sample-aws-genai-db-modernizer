@@ -13,6 +13,8 @@
 # Claude Sonnet 5.5 (2026-10-28 to 2026-11-03): wordpress $3.58-3.91 over 24
 # runs, discourse $40-41 for most runs and about $60 when the DynamoDB merge needs
 # a fix round. A scoped run (E2E_LLM_TARGET_DATABASES) is held to the same figure.
+# Since #2081 a run also reviews each Aurora and ElastiCache design (two or three
+# more review subagents per run); these figures predate it and are not re-measured.
 
 [wordpress]
 max_total_cost_usd = 4.50

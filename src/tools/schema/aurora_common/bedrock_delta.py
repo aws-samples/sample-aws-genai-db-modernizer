@@ -70,17 +70,22 @@ def _touched_tables(delta: BaseModel, view: dict) -> list[dict]:
     return [t for t in view.get("tables", []) if t.get("table_name", "").lower() in names]
 
 
-def pe_review_prompt(engine: str, delta: BaseModel, input_summary: dict) -> str:
-    """The PE reviewer sees the delta plus the evidence it is judged against:
-    the residual types, the hot queries and the view entries of the touched tables."""
-    label = _ENGINE_LABELS[engine]
-    view = input_summary.get("design_view") or {}
-    evidence = {
+def pe_review_evidence(delta: BaseModel, view: dict) -> dict:
+    """What a delta is judged against: the residual types, the hot queries and the
+    view entries of the touched tables. Both LLM modes give the reviewer this (#2081)."""
+    return {
         "migration_strategy": view.get("migration_strategy"),
         "residual_types": view.get("residual_types", []),
         "hot_queries": view.get("hot_queries", []),
         "touched_tables": _touched_tables(delta, view),
     }
+
+
+def pe_review_prompt(engine: str, delta: BaseModel, input_summary: dict) -> str:
+    """The PE reviewer sees the delta plus the evidence it is judged against
+    (:func:`pe_review_evidence`)."""
+    label = _ENGINE_LABELS[engine]
+    evidence = pe_review_evidence(delta, input_summary.get("design_view") or {})
     return (
         f"Review the following {label} schema design. It is a delta against the "
         "deterministic draft: tables, columns and DDL not listed carry over unchanged.\n\n"

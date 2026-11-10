@@ -156,16 +156,61 @@ def test_an_unreviewed_design_is_never_kept(store: LocalArtifactStore) -> None:
     )
 
 
-@pytest.mark.passes_on_main  # guards #1992's keep when no review exists in this mode
-def test_a_design_with_no_review_in_this_mode_can_still_be_kept(
+def test_a_redesign_with_no_review_is_never_kept_even_when_none_was_before(
     store: LocalArtifactStore,
 ) -> None:
-    # An engine never reviewed here (Claude Code reviews no Aurora or ElastiCache
-    # design): its earlier design was not reviewed either, so the better one is kept.
+    """#2081: every design is reviewed in both modes now, so the score-only keep for a
+    design whose earlier one had no review either is gone: no review, no keep."""
     plan_round(store, DB, JOB, _report([_hold()], reviewed=0), V)
+    assert "reviewed_before" not in read_log(store, DB, JOB, V)["rounds"][0]
+    _design(store, "second")
+    status = plan_round(store, DB, JOB, _report([], reviewed=0), V)
+    assert status == {"status": "awaiting_synthesis", "restored": ["dynamodb"], "rounds": 1}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "not_reviewed"}
+    assert store.read_json(DESIGN) == {"design": "first"}
+
+
+def test_an_old_round_saved_by_the_score_only_rule_closes_on_the_new_rule(
+    store: LocalArtifactStore,
+) -> None:
+    """A job saved mid-round before #2081 (its round records ``reviewed_before: false``
+    for an engine Claude Code did not review then) still loads and closes: a new design
+    with no review is put back, one whose review ran and is better is kept."""
+    log = {
+        "max_rounds": MAX_REDESIGN_ROUNDS,
+        "rounds": [
+            {
+                "round": 1,
+                "assignment_version": V,
+                "engines": ["dynamodb"],
+                "requests": [{"engine": "dynamodb", "checks": []}],
+                "before": {"dynamodb": [1, 0]},
+                "reviewed_before": {"dynamodb": False},
+                "parts": {"dynamodb": None},
+                "outcome": None,
+            }
+        ],
+    }
+    WaveRedesignLog.model_validate(log)
+    store.write_json(wr.log_key(DB, JOB, V), log)
+    archived = f"{DB}/{JOB}/wave-redesign/v{V}/round_1/schema-dynamodb/schema_output.json"
+    store.write_json(archived, {"design": "first"})
     _design(store, "second")
     plan_round(store, DB, JOB, _report([], reviewed=0), V)
-    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "improved"}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "not_reviewed"}
+    assert store.read_json(DESIGN) == {"design": "first"}
+
+
+@pytest.mark.passes_on_main  # guards that an unreviewed earlier design never blocks a keep
+def test_a_reviewed_better_redesign_replaces_an_unreviewed_earlier_design(
+    store: LocalArtifactStore,
+) -> None:
+    # An old saved job whose earlier design has no review: its redesign is reviewed now,
+    # and kept when it is better.
+    plan_round(store, DB, JOB, _report([_hold()], reviewed=0), V)
+    _design(store, "second")
+    plan_round(store, DB, JOB, _report([]), V)
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "fixed"}
     assert store.read_json(DESIGN) == {"design": "second"}
 
 
@@ -475,3 +520,54 @@ def test_assess_runs_the_rounds_after_synthesis(
     monkeypatch.setattr(wr, "run_rounds", fake_rounds)
     runner._synthesise(SimpleNamespace(store=store, database_name=DB, job_id=JOB))  # type: ignore[arg-type]
     assert calls == ["synthesis", "dynamodb", "synthesis"]
+
+
+CACHE = f"{DB}/{JOB}/schema-elasticache/v{V}/schema_output.json"
+
+
+def _cache_round(store: LocalArtifactStore) -> dict:
+    """Round 1 sends ElastiCache back, and its new design is written; no review yet."""
+    store.write_json(CACHE, {"key_designs": ["first"]})
+    held = _report([_hold("open_review", "elasticache")], designed=("elasticache",))
+    held["facts"]["waves"][1]["engines"] = ["elasticache"]
+    assert plan_round(store, DB, JOB, held, V)["engines"] == ["elasticache"]
+    store.write_json(CACHE, {"key_designs": ["second"]})
+    after = _report([], designed=("elasticache",), reviewed=0)
+    after["facts"]["waves"][1]["engines"] = ["elasticache"]
+    return after
+
+
+def test_a_headless_round_waits_for_its_redesigns_review(store: LocalArtifactStore) -> None:
+    """#2081 review: synthesis ran before the redesign's review was recorded. A headless
+    check keeps the round open (``awaiting_review``) instead of closing it
+    ``not_reviewed``, and keeps the new design in place."""
+    after = _cache_round(store)
+    status = plan_round(store, DB, JOB, after, V, wait_for_reviews=True)
+    assert status["status"] == wr.AWAITING_REVIEW == "awaiting_review"
+    assert status["missing_reviews"] == ["elasticache"]
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] is None
+    assert store.read_json(CACHE) == {"key_designs": ["second"]}
+    assert wr.AWAITING_REVIEW in wr.LOOP_STEPS
+
+
+def test_a_review_that_failed_still_closes_not_reviewed(store: LocalArtifactStore) -> None:
+    from src.agents.schema_design import pe_review_external as pe
+
+    after = _cache_round(store)
+    pe.prepare_pe_review_llm_input(store, DB, JOB, V, ["elasticache"])
+    assert pe.apply_pe_review_llm_output(store, DB, JOB, V, "elasticache", failed=True)[
+        "review_failed"
+    ]
+    after["schema_designs"]["elasticache"]["failed_review_count"] = 1
+    status = plan_round(store, DB, JOB, after, V, wait_for_reviews=True)
+    assert status == {"status": "awaiting_synthesis", "restored": ["elasticache"], "rounds": 1}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"elasticache": "not_reviewed"}
+    assert store.read_json(CACHE) == {"key_designs": ["first"]}
+
+
+@pytest.mark.passes_on_main  # the in-process loop reviews inside the design: no wait
+def test_the_in_process_loop_never_waits_for_a_review(store: LocalArtifactStore) -> None:
+    after = _cache_round(store)
+    status = plan_round(store, DB, JOB, after, V)
+    assert status["status"] == "awaiting_synthesis"
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"elasticache": "not_reviewed"}

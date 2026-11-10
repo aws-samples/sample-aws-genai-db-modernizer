@@ -49,6 +49,7 @@ from typing import Any
 from src.agents.schema_design import wave_redesign
 from src.agents.schema_design.wave_redesign import (
     _FINAL,
+    AWAITING_REVIEW,
     FIXED,
     MAX_REDESIGN_ROUNDS,
     REJECTED_WARNING,
@@ -56,11 +57,11 @@ from src.agents.schema_design.wave_redesign import (
     _close,
     _designed,
     _open_round,
-    _review_ran,
     _set_aside,
     engine_score,
     fixable_requests,
     log_key,
+    pending_reviews,
     read_log,
     request_key,
     review_warnings_of,
@@ -249,7 +250,6 @@ def _start(
                 e: [*engine_score(report, e), len(review_warnings_of(report, e))]
                 for e in sorted(requests)
             },
-            "reviewed_before": {e: _review_ran(report, e) for e in sorted(requests)},
             "parts": affected,
             "outcome": None,
             "wave_edit": wave,
@@ -413,6 +413,10 @@ def check(
             "status": "error",
             "message": f"redesign round {running.get('round')} is not this wave edit's",
         }
+    pending = pending_reviews(store, db, job_id, version, log)
+    if pending:
+        # The redesign's review is its own step here (#2081): never close without it.
+        return {"status": AWAITING_REVIEW, "missing_reviews": pending, "wave": wave}
     restored = _close(store, db, job_id, version, log, report)
     edit = [
         r for r in log["rounds"] if r.get("wave_edit") == wave and r.get("decision_version") == k
