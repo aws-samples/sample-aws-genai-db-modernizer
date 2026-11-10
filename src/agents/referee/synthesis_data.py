@@ -23,6 +23,7 @@ from src.agents.referee.cache_overlay import (
     safety_net_note,
 )
 from src.agents.referee.synthesis_prose import clean_schema_design_prose
+from src.agents.referee.synthesis_report import collected_first
 from src.agents.schema_design.design_trace import read_design_trace
 from src.contracts.schema_design_trace import DesignTrace
 from src.shared.engine_names import PLACEHOLDER_ENGINES
@@ -286,6 +287,8 @@ def load_synthesis_data(
             engine,
             _read_artifact(store, schema_key, required=False, missing_level=design_missing),
             collector_identifiers(data.collector),
+            # #1914: a trade-off's fallback sentence names its tables in its "Affects" order.
+            order_source_tables=collected_first(data),
         )
         data.prose_style_rejections.extend(rejections)
 

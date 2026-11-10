@@ -78,10 +78,19 @@ def _names(values: Any, limit: int = 3) -> str:
     return ", ".join(names)
 
 
-def _trade_off_fallback(engine: str, field: str, trade_off: dict[str, Any]) -> str:
+def _trade_off_fallback(
+    engine: str,
+    field: str,
+    trade_off: dict[str, Any],
+    order: Callable[[Iterable[Any]], list[Any]] | None = None,
+) -> str:
     name = display_engine(engine)
     if field == "description":
-        source = _names(trade_off.get("source_tables"))
+        tables = trade_off.get("source_tables")
+        if order is not None and isinstance(tables, list):
+            # #1914: the sentence names the tables its "Affects" line starts with.
+            tables = order([t for t in tables if t])
+        source = _names(tables)
         target = _names(trade_off.get("target_tables"))
         if source and target:
             return f"{name} design trade-off: {source} maps to {target}."
@@ -114,7 +123,12 @@ def _optimization_fallback(field: str, opt: dict[str, Any]) -> str:
 
 
 def clean_schema_design_prose(
-    engine: str, schema: dict[str, Any] | None, identifiers: Iterable[str] = ()
+    engine: str,
+    schema: dict[str, Any] | None,
+    identifiers: Iterable[str] = (),
+    # #1914: the order of the tables a trade-off's fallback sentence names, as synthesis
+    # lists them; without it they keep the design's order.
+    order_source_tables: Callable[[Iterable[Any]], list[Any]] | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """A copy of ``schema`` with its model-written customer prose cleaned, and
     one line per field sent back to deterministic text. ``None`` stays ``None``."""
@@ -162,7 +176,9 @@ def clean_schema_design_prose(
                     f"trade_offs[{i}]", t, lambda: _trade_off_fallback(engine, "description", {})
                 )
     each_field(
-        "trade_offs", ("description", "impact"), lambda f, t: _trade_off_fallback(engine, f, t)
+        "trade_offs",
+        ("description", "impact"),
+        lambda f, t: _trade_off_fallback(engine, f, t, order_source_tables),
     )
     for key, fields in _EMPTY_FALLBACK_FIELDS:
         each_field(key, fields, lambda f, e: "")

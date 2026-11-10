@@ -22,6 +22,7 @@ from src.agents.referee.synthesis_handler import (
     run_synthesis_deterministic,
 )
 from src.contracts.synthesis_output import SynthesisOutputContract
+from src.report.engineering_report import render_engineering_report_md
 from src.storage.local_store import LocalArtifactStore
 
 DB = "shop"
@@ -209,3 +210,80 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
     assert report["table_sources"] == result["table_sources"]
     assert report["facts"]["table_sources"]["replicated_table_count"] == 1
+
+
+def test_a_migration_risk_lists_collected_tables_before_other_names(store) -> None:
+    """#1914: a tied query also reads a catalog relation, whose name sorts before ``users``."""
+    collector = store.read_json(f"{DB}/{JOB}/collector/output.json")
+    collector["queries"]["query_patterns"].append(
+        {**_query("tie1", "users"), "tables_accessed": ["information_schema.tables", "users"]}
+    )
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+    assignment = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+    assignment["query_assignments"].append(
+        {**_qa("tie1", "dynamodb", "users"), "tied_engines": ["aurora_mysql", "dynamodb"]}
+    )
+    store.write_json(f"{DB}/{JOB}/assignment/v2/assignment.json", assignment)
+
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+
+    tie = next(r for r in result["risk_assessment"]["risks"] if r.get("rule") == "routing.tie_open")
+    assert tie["affected_tables"] == ["users", "information_schema.tables"]
+
+
+def test_a_trade_off_lists_collected_tables_before_other_names(store) -> None:
+    """#1914: a design's trade-off names its tables as the model wrote them. ``shop.orders``
+    and ``Users`` are the collected ``orders`` and ``users``, sorted by those ids whatever
+    their spelling; the catalog relation and the view are not collected tables, sorted
+    without regard to case. The engineering report prints the stored order, for the
+    trade-off and for its risk."""
+    trade_off = {
+        "description": "Orders are copied into the user item.",
+        "impact": "Two writes per order.",
+        "source_tables": [
+            "Recent_orders",
+            "Users",
+            "information_schema.tables",
+            "sessions",
+            "shop.orders",
+        ],
+    }
+    store.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json", {"trade_offs": [trade_off]}
+    )
+
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+
+    [listed] = [t for t in result["trade_offs"] if t["engine"] == "dynamodb"]
+    assert listed["source_tables"] == [
+        "shop.orders",
+        "sessions",
+        "Users",
+        "information_schema.tables",
+        "Recent_orders",
+    ]
+    _write_synthesis_report(store, result, assignment_version=2)
+    report = render_engineering_report_md(store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json"))
+    trade_off_line = "`shop.orders`, `sessions`, `Users`, `information_schema.tables`"
+    risk_line = "`orders`, `sessions`, `users`, `information_schema.tables`"
+    assert f"- Affects: {trade_off_line}, `Recent_orders`" in report
+    assert f"- Affects: {risk_line}, `Recent_orders`" in report
+
+
+def test_a_trade_off_fallback_sentence_names_the_tables_its_list_starts_with(store) -> None:
+    """#1914: a trade-off whose description fails the plain-prose check gets a sentence
+    built from its first three source tables, in the order its "Affects" line lists them."""
+    trade_off = {
+        "description": "A seamless copy of each order into the user item.",
+        "impact": "Two writes per order.",
+        "source_tables": ["information_schema.tables", "users", "active_orders", "Orders"],
+    }
+    store.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json", {"trade_offs": [trade_off]}
+    )
+
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+
+    [listed] = [t for t in result["trade_offs"] if t["engine"] == "dynamodb"]
+    assert listed["source_tables"][:3] == ["Orders", "users", "active_orders"]
+    assert listed["description"] == "DynamoDB design trade-off for Orders, users, active_orders."
