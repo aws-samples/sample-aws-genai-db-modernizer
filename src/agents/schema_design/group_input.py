@@ -131,7 +131,8 @@ _AGGREGATE_FIELDS = set(AgentAggregateRecommendation.model_fields) | set(
     AggregateRecommendation.model_fields
 )
 _TABLE_REC_FIELDS = set(TableRecommendation.model_fields)
-_TRIGGER_FIELDS = set(Trigger.model_fields)
+# #2071: the enable mode is for the cutover, not the design: the model input leaves it out.
+_TRIGGER_FIELDS = set(Trigger.model_fields) - {"enabled_mode"}
 _VIEW_FIELDS = {
     "view_id",
     "view_name",

@@ -116,6 +116,8 @@ _TRIGGERS_SQL = """
       CASE t.tgtype & 66 WHEN 2 THEN 'BEFORE' WHEN 64 THEN 'INSTEAD OF' ELSE 'AFTER' END
         AS timing,
       CASE WHEN t.tgtype & 1 <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS for_each,
+      -- the raw tgenabled letter (O, D, R, A): the collector keeps it as enabled_mode
+      -- and folds it into is_enabled (#2071)
       t.tgenabled::text AS is_enabled,
       t.tgfoid::regprocedure::text AS function_signature,
       length(pg_get_triggerdef(t.oid)) AS body_chars,
@@ -141,6 +143,8 @@ _EVENT_TRIGGERS_SQL = """
       quote_ident(e.evtname) AS quoted_name,
       e.evtevent AS event,
       coalesce(to_json(e.evttags), '[]'::json) AS tags,
+      -- the raw evtenabled letter (O, D, R, A): the collector keeps it as enabled_mode
+      -- and folds it into is_enabled (#2071)
       e.evtenabled::text AS is_enabled,
       pg_get_userbyid(e.evtowner) AS owner,
       e.evtfoid::regprocedure::text AS function_signature,

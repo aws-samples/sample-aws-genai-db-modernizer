@@ -19,7 +19,10 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from src.contracts.collector_output import TriggerEnabledMode
 
 EVENTS = ("INSERT", "UPDATE", "DELETE")
 _STATS_STATUSES = ("tracked", "not_tracked", "offline")
@@ -173,6 +176,33 @@ def trigger_enabled(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
     return str(value).strip().upper() in ("1", "TRUE", "YES", "ENABLED", "O", "A")
+
+
+_ENABLED_MODES = frozenset("ODRA")
+
+
+def trigger_enabled_mode(value: object) -> TriggerEnabledMode | None:
+    """A PostgreSQL trigger's exact enable mode (#2071): the ``tgenabled`` (or
+    ``evtenabled``) letter, O (origin), D (disabled), R (replica only) or A (always), as
+    the collection reads it into ``is_enabled`` (or a DDL upload into ``enabled_mode``).
+    None for any other value.
+
+    The check reads the value, not the engine: it relies on no other engine's script or
+    live query giving a lone O, D, R or A (MySQL and MariaDB give no state, SQL Server a 0
+    or 1, Oracle ENABLED or DISABLED). A collector that does must leave this out."""
+    if not isinstance(value, str):
+        return None
+    letter = value.strip()
+    if len(letter) != 1 or letter not in _ENABLED_MODES:
+        return None
+    return cast("TriggerEnabledMode", letter)
+
+
+def trigger_mode_source(row: Mapping[str, Any]) -> object:
+    """What a raw trigger row's mode is read from: its ``enabled_mode`` when it has one
+    (a DDL upload, where None means the file does not settle it), else its
+    ``is_enabled`` (the collection scripts and live reads give the letter there)."""
+    return row["enabled_mode"] if "enabled_mode" in row else row.get("is_enabled")
 
 
 def _number(value: object) -> float | None:

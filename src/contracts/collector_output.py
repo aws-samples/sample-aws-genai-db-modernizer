@@ -127,6 +127,10 @@ Version History:
   VIEW_DEFINITION; the SQL Server and Oracle collections record routine_capture, and
   each routine's body_status, body_status_reason and body_chars. Backward compatible: no
   field added or removed
+- 5.17 (2026-11-10, #2071): Trigger and NonDmlTrigger gain optional enabled_mode:
+  PostgreSQL's exact tgenabled / evtenabled letter (O, D, R, A), next to is_enabled,
+  which keeps its meaning; None for a collection that predates it and for engines with
+  no such mode (#2071)
 """
 
 import re
@@ -1030,6 +1034,11 @@ class TriggerExecutionStats(BaseModel):
     )
 
 
+# #2071: PostgreSQL's trigger enable modes, as pg_trigger.tgenabled and
+# pg_event_trigger.evtenabled spell them.
+TriggerEnabledMode = Literal["O", "D", "R", "A"]
+
+
 class Trigger(BaseModel):
     trigger_id: str = Field(..., description="Unique identifier for this trigger")
     trigger_name: str = Field(..., description="Trigger name")
@@ -1055,6 +1064,20 @@ class Trigger(BaseModel):
         ),
     )
     is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
+    enabled_mode: TriggerEnabledMode | None = Field(
+        None,
+        description=(
+            "PostgreSQL: the trigger's exact enable mode, the pg_trigger.tgenabled (or, for "
+            "an event trigger, pg_event_trigger.evtenabled) letter (#2071): O fires in "
+            "origin and local sessions, D is disabled, R (ENABLE REPLICA) fires only when "
+            "session_replication_role is replica, A (ENABLE ALWAYS) fires in both. "
+            "is_enabled keeps its meaning (O and A true, D and R false). A PostgreSQL DDL "
+            "upload gives it from pg_dump's ALTER TABLE ... ENABLE / DISABLE TRIGGER lines "
+            "(O when none follows the CREATE TRIGGER). None means unknown, never O: a "
+            "collection that predates the field, a DDL upload whose statements do not settle "
+            "it, or MySQL, MariaDB, SQL Server and Oracle, which have no such mode"
+        ),
+    )
     sql_mode: str | None = Field(
         None,
         max_length=4096,
@@ -1183,6 +1206,20 @@ class NonDmlTrigger(BaseModel):
         None, description="Whether a table trigger fires per row or per statement"
     )
     is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
+    enabled_mode: TriggerEnabledMode | None = Field(
+        None,
+        description=(
+            "PostgreSQL: the trigger's exact enable mode, the pg_trigger.tgenabled (or, for "
+            "an event trigger, pg_event_trigger.evtenabled) letter (#2071): O fires in "
+            "origin and local sessions, D is disabled, R (ENABLE REPLICA) fires only when "
+            "session_replication_role is replica, A (ENABLE ALWAYS) fires in both. "
+            "is_enabled keeps its meaning (O and A true, D and R false). A PostgreSQL DDL "
+            "upload gives it from pg_dump's ALTER TABLE ... ENABLE / DISABLE TRIGGER lines "
+            "(O when none follows the CREATE TRIGGER). None means unknown, never O: a "
+            "collection that predates the field, a DDL upload whose statements do not settle "
+            "it, or MySQL, MariaDB, SQL Server and Oracle, which have no such mode"
+        ),
+    )
     function_id: str | None = Field(
         None, description="PostgreSQL: the name of the function the trigger executes"
     )
@@ -1784,7 +1821,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.16",
+        default="5.17",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -43,6 +43,7 @@ from src.agents.collector import mysql_routine_create as mysql_create
 from src.agents.collector.routine_rows import (
     other_trigger_events,
     trigger_enabled,
+    trigger_enabled_mode,
     trigger_for_each,
     trigger_function_name,
     trigger_timing,
@@ -744,6 +745,7 @@ def _non_dml_trigger(row: Mapping[str, Any], events: list[str], *, qualified: bo
         timing=trigger_timing(row.get("timing")),  # type: ignore[arg-type]
         for_each=trigger_for_each(row.get("for_each")),  # type: ignore[arg-type]
         is_enabled=trigger_enabled(row.get("is_enabled")),
+        enabled_mode=trigger_enabled_mode(row.get("is_enabled")),
         function_id=trigger_function_name(
             f"EXECUTE FUNCTION {signature}" if signature else row.get("definition")
         ),
@@ -774,6 +776,7 @@ def _event_trigger(row: Mapping[str, Any]) -> Any:
         events=[event] if isinstance(event, str) and _EVENT_NAME.fullmatch(event) else [],
         tags=_event_trigger_tags(row) or [],
         is_enabled=trigger_enabled(row.get("is_enabled")),
+        enabled_mode=trigger_enabled_mode(row.get("is_enabled")),
         function_id=trigger_function_name(f"EXECUTE FUNCTION {signature}") if signature else None,
         owner=_text(row.get("owner")),
         depends_on=(
