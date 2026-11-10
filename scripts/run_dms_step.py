@@ -63,6 +63,17 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   ``verify.md``) for the customer to run; read their output files strictly and write
   ``verify.json`` (per table match, changing, differ, not_compared or missing). It never
   changes the gate.
+- A stack that is not plainly deployed (#2063, ``src/tools/data_movement/stack_states.py``):
+  ``status`` reads ``stack_create_failed`` for a create that failed or rolled back,
+  ``stack_in_review`` for a change set never executed (``--change-set`` names the one Move just
+  executed, which is waited on while CloudFormation starts it) and ``stack_failed`` for a stuck stack,
+  each with ``stack_failure`` (the first resource that failed, from ``DescribeStackEvents``,
+  read-only, with a fix ``hint`` for a common cause) and ``stack_action`` (what the customer
+  can do). A stack whose update rolled back (``UPDATE_ROLLBACK_COMPLETE``) is still deployed:
+  its task is judged as usual. ``deploy`` sends no change set to a stack CloudFormation cannot
+  update (``"kind": "stack_not_updatable"``); ``teardown`` also ends this job's stack whose
+  create never completed, only with this job's own stack tag; no write ever turns termination
+  protection off, and ``teardown`` sends no delete while it is on.
 - Every line about the task carries ``hint`` (the fix for a failure DMS describes in a known
   way, ``src/tools/data_movement/dms_failures.py``; None for any other). ``status``'s line
   carries ``recovery``: ``resume`` or ``retry`` only when that command would run, by the same
@@ -336,7 +347,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--artifact-root", default=os.environ.get("ARTIFACT_DIR", "./artifacts"))
     p.add_argument("--inputs", help="the inputs file (default: the step's inputs.json)")
     p.add_argument("--approve", action="store_true", help="the customer approved this AWS write")
-    p.add_argument("--change-set", help="execute: the change set deploy created")
+    p.add_argument("--change-set", help="execute: the change set deploy created; status: the "
+                   "change set just executed, so a stack still in review is waited on")  # fmt: skip
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
                    help="preflight: a 'confirm' row the customer checked (repeatable)")  # fmt: skip
     p.add_argument(
@@ -561,22 +573,29 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
 
 def status(clients: MoveClients, name: str, lag: LagReader | None = None,
            retention: RetentionReader | None = None,
-           steps: StepsContext | None = None) -> dict[str, Any]:  # fmt: skip
+           steps: StepsContext | None = None, change_set: str | None = None) -> dict[str, Any]:  # fmt: skip
     """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
     with a ``lag`` reader, its capture lag; with a ``retention`` reader, once the task has run,
     the source's change-log retention (#2060)."""
+    from src.tools.data_movement.stack_states import stack_kind
+
     stack = _stack(clients, name)
-    if stack is None:
+    kind = stack_kind(None if stack is None else stack["StackStatus"])
+    if stack is None or kind == "gone":
         return {"status": "complete", "phase": "no_stack", "stack_name": name}
     out: dict[str, Any] = {"status": "complete", "stack_name": name,
                            "stack_status": stack["StackStatus"],
                            "stack_reason": stack.get("StackStatusReason")}  # fmt: skip
-    if stack["StackStatus"].endswith("_IN_PROGRESS"):
+    if kind == "changing" or (kind == "not_created" and _executing(clients, stack, change_set)):
         return {**out, "phase": "stack_in_progress"}
+    out.update(_stack_failure(clients, name, stack))
+    if kind in ("not_created", "create_failed"):
+        return {
+            **out,
+            "phase": "stack_in_review" if kind == "not_created" else "stack_create_failed",
+        }
     outputs = _outputs(stack)
-    if stack["StackStatus"] not in ("CREATE_COMPLETE", "UPDATE_COMPLETE") or not outputs.get(
-        "ReplicationTaskArn"
-    ):
+    if kind != "deployed" or not outputs.get("ReplicationTaskArn"):
         return {**out, "phase": "stack_failed"}
     instance = outputs["ReplicationInstanceArn"]
     endpoints = {"source": outputs["SourceEndpointArn"], "target": outputs["TargetEndpointArn"]}
@@ -639,6 +658,47 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
     phase = "caught_up" if loaded and not pending_tables and not pending_records else (
         "validating" if loaded else "loading")  # fmt: skip
     return _source_retention(_judge_validation({**out, "phase": phase}, task, loaded), retention)
+
+
+def _executing(clients: MoveClients, stack: dict[str, Any], change_set: str | None) -> bool:
+    """A ``REVIEW_IN_PROGRESS`` stack that is about to be created (#2063): the change set Move
+    just executed (``change_set``) reads ``AVAILABLE`` or ``EXECUTE_IN_PROGRESS``, CloudFormation
+    starting its create asynchronously; without one, any of the stack's change sets reads
+    ``EXECUTE_IN_PROGRESS``. Any other: the change set was never executed. Read-only."""
+    name = stack.get("StackId") or stack["StackName"]
+    if change_set:
+        found = clients.cloudformation.describe_change_set(StackName=name, ChangeSetName=change_set)
+        return found.get("ExecutionStatus") in ("AVAILABLE", "EXECUTE_IN_PROGRESS")
+    pages = clients.cloudformation.get_paginator("list_change_sets").paginate(StackName=name)
+    return any(s.get("ExecutionStatus") == "EXECUTE_IN_PROGRESS"
+               for page in pages for s in page.get("Summaries") or [])  # fmt: skip
+
+
+MAX_EVENT_PAGES = 10  # DescribeStackEvents pages read for one failure, newest first
+
+
+def _stack_events(clients: MoveClients, stack: dict[str, Any]) -> Any:
+    """The stack's events, newest first, page by page and only as far as they are read."""
+    pages = clients.cloudformation.get_paginator("describe_stack_events").paginate(
+        StackName=stack.get("StackId") or stack["StackName"],
+        PaginationConfig={"MaxItems": MAX_EVENT_PAGES * 100},
+    )
+    for page in pages:
+        yield from page.get("StackEvents") or []
+
+
+def _stack_failure(clients: MoveClients, name: str, stack: dict[str, Any]) -> dict[str, Any]:
+    """``stack_failure`` (the first resource that failed in the latest operation, with its fix
+    ``hint``; read-only) and ``stack_action`` (what the customer can do) for a stack that is not
+    plainly deployed (#2063); nothing for one that is."""
+    from src.tools.data_movement import stack_states as st
+
+    state = stack["StackStatus"]
+    action = st.stack_action(state, name, protected=bool(stack.get("EnableTerminationProtection")))
+    if action is None:
+        return {}
+    failure = st.first_failure(_stack_events(clients, stack)) if st.reads_failure(state) else None
+    return {"stack_failure": failure, "stack_action": action}
 
 
 def _recovery_fields(
@@ -799,13 +859,15 @@ def _count(values: Any) -> dict[str, int]:
     return dict(sorted(out.items()))
 
 
+# The phases where no task runs and none will until the customer acts on the stack (#2063).
+NO_TASK = ("stack_failed", "stack_create_failed", "stack_in_review", "no_stack")
 UNTIL: dict[str, Callable[[dict[str, Any]], bool]] = {
     "stack": lambda s: s["phase"] != "stack_in_progress",
     "connections": lambda s: s["phase"] not in ("stack_in_progress", "connections_testing"),
     "running": lambda s: s.get("task_status") == "running"
-    or s["phase"] in ("task_stopped", "stack_failed", "no_stack"),
+    or s["phase"] in ("task_stopped", *NO_TASK),
     "caught_up": lambda s: s["phase"]
-    in ("caught_up", "validation_stalled", "task_stopped", "stack_failed", "no_stack"),
+    in ("caught_up", "validation_stalled", "task_stopped", *NO_TASK),
 }
 
 
@@ -822,13 +884,14 @@ def wait_status(
     lag: LagReader | None = None,
     retention: RetentionReader | None = None,
     steps: StepsContext | None = None,
+    change_set: str | None = None,
 ) -> dict[str, Any]:
     """Poll until ``until`` holds or the time is up. Under ``caught_up``, ``on_poll`` gets each
     poll's progress line but the last one (the result line carries it), a validation with
     no progress over the window ends the wait as ``validation_stalled``, and a ``critical``
     source retention ends it with ``stopped_for`` ``source_retention`` (#2060)."""
     read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(
-        status, lag=lag, retention=retention, steps=steps
+        status, lag=lag, retention=retention, steps=steps, change_set=change_set
     )
     done = UNTIL.get(until or "")
     if until == "task_stopped":
@@ -911,13 +974,18 @@ def deploy(
         raise MoveError(f"{TEMPLATE} is {plan['template_bytes']} bytes, above CloudFormation's "
                         f"{MAX_TEMPLATE_BODY}-byte inline limit: set template_bucket in the inputs "
                         "file to an S3 bucket you own in the stack's region, and deploy again")  # fmt: skip
+    from src.tools.data_movement.stack_states import stack_kind
+
     name = plan["stack_name"]
     stack = _stack(clients, name)
-    if stack is not None and stack["StackStatus"].endswith("_IN_PROGRESS"):
+    state = stack_kind(None if stack is None else stack["StackStatus"])
+    if stack is not None and state == "changing":
         raise MoveError(
             f"stack {name} is {stack['StackStatus']}: wait for it with status --until stack"
         )
-    kind = "CREATE" if stack is None or stack["StackStatus"] == "REVIEW_IN_PROGRESS" else "UPDATE"
+    if stack is not None and state in ("create_failed", "stuck"):
+        return _not_updatable(clients, name, stack)
+    kind = "CREATE" if state in ("gone", "not_created") else "UPDATE"
     change_set = f"move-step-1-{now().strftime('%Y%m%d%H%M%S')}"
     template: dict[str, str] = {"TemplateBody": body}
     if large:
@@ -951,6 +1019,20 @@ def deploy(
             "change_set_type": kind, "parameters": plan["parameters"], "changes": changes}  # fmt: skip
 
 
+def _not_updatable(clients: MoveClients, name: str, stack: dict[str, Any]) -> dict[str, Any]:
+    """deploy's refusal of a stack CloudFormation cannot update as it is (#2063): no change set
+    is sent; the line names the first failure and what the customer can do."""
+    found = _stack_failure(clients, name, stack)
+    failure, state = found["stack_failure"], stack["StackStatus"]
+    reason = (failure or {}).get("reason") or stack.get("StackStatusReason")
+    why = f" ({failure['logical_id']} {failure['status']}: {reason})" if failure else (
+        f" ({reason})" if reason else "")  # fmt: skip
+    return {"status": "error", "kind": "stack_not_updatable", "stack_name": name,
+            "stack_status": state, "stack_reason": stack.get("StackStatusReason"), **found,
+            "message": f"stack {name} is {state}{why}; deploy sends no change set. "
+                       f"{found['stack_action']}"}  # fmt: skip
+
+
 def _upload(clients: MoveClients, inputs: MoveInputs, name: str, body: str) -> str:
     """Put the template, and nothing else, in the customer's bucket; return its URL."""
     bucket, key = str(inputs.template_bucket), f"{name}/{TEMPLATE}"
@@ -970,10 +1052,12 @@ def execute(clients: MoveClients, name: str, change_set: str) -> dict[str, Any]:
 
 
 def _deployed(clients: MoveClients, name: str) -> dict[str, str]:
+    from src.tools.data_movement.stack_states import stack_kind
+
     stack = _stack(clients, name)
-    if stack is None or stack["StackStatus"] not in ("CREATE_COMPLETE", "UPDATE_COMPLETE"):
+    if stack is None or stack_kind(stack["StackStatus"]) != "deployed":
         state = "missing" if stack is None else stack["StackStatus"]
-        raise MoveError(f"stack {name} is {state}: deploy it first")
+        raise MoveError(f"stack {name} is {state}: deploy it first (status says what to do)")
     outputs = _outputs(stack)
     if not outputs.get("ReplicationTaskArn"):
         raise MoveError(f"stack {name} has no ReplicationTaskArn output")
@@ -1018,7 +1102,7 @@ def _step_stack(clients: MoveClients, name: str) -> dict[str, Any] | None:
     if (
         stack is not None
         and stack["StackStatus"].endswith("_IN_PROGRESS")
-        and (stack["StackStatus"] != "DELETE_IN_PROGRESS")
+        and (stack["StackStatus"] not in ("DELETE_IN_PROGRESS", "REVIEW_IN_PROGRESS"))
     ):
         raise MoveError(
             f"stack {name} is {stack['StackStatus']}: wait for it with status --until stack"
@@ -1040,17 +1124,33 @@ def _not_the_step(name: str, why: str) -> MoveError:
                      "stack yourself; restart-validation, resume and retry act on that stack's task only)")  # fmt: skip
 
 
-def _step_resources(clients: MoveClients, name: str) -> dict[str, dict[str, Any]]:
-    """Every resource of the stack, page by page; exactly the six ``dms-step-1.yaml`` creates."""
+def _step_resources(
+    clients: MoveClients, name: str, *, partial: bool = False
+) -> dict[str, dict[str, Any]]:
+    """Every resource of the stack, page by page; exactly the six ``dms-step-1.yaml`` creates or,
+    ``partial`` (a create that never completed), only some of them and nothing else."""
+    return _check_resources(name, _list_resources(clients, name), partial=partial)
+
+
+def _list_resources(clients: MoveClients, name: str) -> dict[str, dict[str, Any]]:
     found: dict[str, dict[str, Any]] = {}
     pages = clients.cloudformation.get_paginator("list_stack_resources").paginate(StackName=name)
     for page in pages:
         for r in page.get("StackResourceSummaries") or []:
             found[r["LogicalResourceId"]] = r
+    return found
+
+
+def _check_resources(
+    name: str, found: dict[str, dict[str, Any]], *, partial: bool
+) -> dict[str, dict[str, Any]]:
     kinds = {logical: r["ResourceType"] for logical, r in found.items()}
-    if kinds != STEP_RESOURCES:
+    expected = (
+        {k: v for k, v in STEP_RESOURCES.items() if k in kinds} if partial else STEP_RESOURCES
+    )
+    if kinds != expected:
         extra = sorted(f"{k} ({v})" for k, v in kinds.items() if STEP_RESOURCES.get(k) != v)
-        missing = sorted(k for k in STEP_RESOURCES if kinds.get(k) != STEP_RESOURCES[k])
+        missing = sorted(k for k in expected if kinds.get(k) != expected[k])
         parts = [f"unexpected: {', '.join(extra)}"] if extra else []
         parts += [f"missing: {', '.join(missing)}"] if missing else []
         raise _not_the_step(
@@ -1097,9 +1197,10 @@ def _check_task_is_this_jobs(
 def _live_task(
     clients: MoveClients, name: str, resources: dict[str, dict[str, Any]], job_id: str
 ) -> dict[str, Any] | None:
-    """The stack's task, checked to be this job's; None once the task is gone."""
-    resource = resources["ReplicationTask"]
-    if resource.get("ResourceStatus") == "DELETE_COMPLETE":
+    """The stack's task, checked to be this job's; None once the task is gone (or, in a create
+    that never completed, was never made)."""
+    resource = resources.get("ReplicationTask")
+    if resource is None or resource.get("ResourceStatus") == "DELETE_COMPLETE":
         return None
     arn = resource.get("PhysicalResourceId")
     if not arn:
@@ -1118,8 +1219,58 @@ def _this_jobs_task(
     stack = _step_stack(clients, name)
     if stack is None:
         return None, None
-    _stack_tag_is_this_jobs(name, stack, job_id)
-    return stack, _live_task(clients, name, _step_resources(clients, name), job_id)
+    _, resources = _owned_resources(clients, name, stack, job_id)
+    return stack, _live_task(clients, name, resources, job_id)
+
+
+def _owned_resources(
+    clients: MoveClients, name: str, stack: dict[str, Any], job_id: str
+) -> tuple[bool, dict[str, dict[str, Any]]]:
+    """(tagged, resources): no other job's tag on the stack, and its resources exactly the six
+    of ``dms-step-1.yaml``. A stack whose create never completed (rolled back, failed, or a
+    change set never executed; #2063) may hold fewer, never another, and only with this job's
+    own stack tag: the task and the instance and endpoints left are checked as usual."""
+    from src.tools.data_movement.stack_states import NEVER_CREATED
+
+    tagged = _stack_tag_is_this_jobs(name, stack, job_id)
+    never = stack["StackStatus"] in NEVER_CREATED
+    if never and not tagged:
+        raise _untagged_failed_create(name, stack)
+    found = _list_resources(clients, name)
+    if (
+        not never
+        and stack["StackStatus"] == "DELETE_FAILED"
+        and ({k: r["ResourceType"] for k, r in found.items()} != STEP_RESOURCES)
+    ):
+        # A delete that failed after a failed create (#2063): the stack's own events tell
+        # whether its create ever completed; read-only, and only for a stack that is not whole.
+        never = _create_never_completed(clients, stack)
+    if not never:
+        return tagged, _check_resources(name, found, partial=False)
+    if not tagged:
+        raise _untagged_failed_create(name, stack)
+    return tagged, _check_resources(name, found, partial=True)
+
+
+def _untagged_failed_create(name: str, stack: dict[str, Any]) -> MoveError:
+    return _not_the_step(name, f"its create never completed ({stack['StackStatus']}), and such a "
+                               f"stack is ended only when its own {JOB_TAG} tag names this job")  # fmt: skip
+
+
+def _create_never_completed(clients: MoveClients, stack: dict[str, Any]) -> bool:
+    """True only when every event of the stack was read (at most ``MAX_EVENT_PAGES`` pages) and
+    none says the stack reached a deployed status; a longer history counts as completed."""
+    from src.tools.data_movement.stack_states import create_never_completed
+
+    events: list[dict[str, Any]] = []
+    pages = clients.cloudformation.get_paginator("describe_stack_events").paginate(
+        StackName=stack.get("StackId") or stack["StackName"]
+    )
+    for count, page in enumerate(pages, start=1):
+        events += page.get("StackEvents") or []
+        if count >= MAX_EVENT_PAGES and page.get("NextToken"):
+            return False
+    return create_never_completed(events)
 
 
 def _wait_task(
@@ -1468,7 +1619,7 @@ def _resources_are_this_jobs(
 
     proven = False
     for logical in ("ReplicationInstance", "SourceEndpoint", "TargetEndpoint"):
-        resource = resources[logical]
+        resource = resources.get(logical) or {}
         arn = resource.get("PhysicalResourceId")
         if resource.get("ResourceStatus") == "DELETE_COMPLETE" or not arn:
             continue
@@ -1525,8 +1676,7 @@ def _delete_step_stack(
     stack = _step_stack(clients, name)
     if stack is None:
         return {"status": "deleted", "stack_name": name, "already_deleted": True}
-    tagged = _stack_tag_is_this_jobs(name, stack, job_id)
-    resources = _step_resources(clients, name)
+    tagged, resources = _owned_resources(clients, name, stack, job_id)
     task = _live_task(clients, name, resources, job_id)
     if task is None and not (_resources_are_this_jobs(clients, name, resources, job_id) or tagged):
         raise _not_the_step(name, "its task is gone and no replication instance, endpoint or "
@@ -1537,6 +1687,10 @@ def _delete_step_stack(
     # The stack checked above, by its id: a stack re-created under the same name is not it.
     stack_id = stack.get("StackId") or name
     if stack["StackStatus"] != "DELETE_IN_PROGRESS":
+        if stack.get("EnableTerminationProtection"):
+            from src.tools.data_movement.stack_states import protection_message
+
+            raise MoveError(f"teardown sends no delete: {protection_message(name)}")
         clients.cloudformation.delete_stack(StackName=stack_id)
     waited, state = 0, "DELETE_IN_PROGRESS"
     # What DMS reported for the task when the delete was decided (gone: no such task).
@@ -1782,7 +1936,7 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             return emit(wait_status(clients, name, args.until, args.wait_seconds,
                                     args.interval_seconds, sleep=sleep, on_poll=_print_progress,
                                     lag=None if cloudwatch is None else LagReader(cloudwatch),
-                                    retention=retention,
+                                    retention=retention, change_set=args.change_set,
                                     steps=StepsContext(inputs.region, source_family(
                                         args.artifact_root, db, job_id))))  # fmt: skip
         if args.command == "deploy":
