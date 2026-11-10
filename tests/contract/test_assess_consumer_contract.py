@@ -43,14 +43,18 @@ from jsonschema import Draft202012Validator
 
 from scripts import render_contract_schemas as rcs
 from src.assessment import (
-    CONTRACT_VERSION,
     SUPPORTED_RUN_THROUGH,
     AssessmentResult,
     RunThrough,
     assess,
     load_collection,
 )
-from src.assessment.models import LABEL_BY_PHASE, MODEL_PHASES, result_label
+from src.assessment.models import (
+    LABEL_BY_PHASE,
+    MODEL_PHASES,
+    default_contract_version,
+    result_label,
+)
 from tests.assess_models import MODEL_ENTRY_POINTS, models_patched
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures" / "assess_consumer_fixtures.json"
@@ -341,7 +345,7 @@ def test_the_fixtures_cover_a_sql_server_source_and_an_engine_scope() -> None:
 @pytest.mark.parametrize("name", sorted(FIXTURES))
 def test_every_fixture_is_pinned_to_1_3_and_gets_1_3(name: str) -> None:
     """The fixtures pin the only version this release supports (#1641)."""
-    assert FIXTURES[name]["contract_version"] == CONTRACT_VERSION == "1.3"
+    assert FIXTURES[name]["contract_version"] == default_contract_version() == "1.3"
     assert _run(name, "analysis", True)["contract_version"] == "1.3"
 
 

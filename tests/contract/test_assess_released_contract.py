@@ -9,7 +9,7 @@ Two snapshots, one per era (#1641):
   release recorded before contract 1.3: v0.4.0-beta.1's contract 1.1 (v0.4.0-beta.2
   shipped 1.2, but its release step never recorded it). It is kept
   exactly as it was and never re-recorded. Every version it records is retired: this
-  release supports contract 1.3 only, so a request or a result naming one is refused.
+  code reads 1.3 and 1.4 only, so a request or a result naming one is refused.
 - ``tests/contract/assess_released_since_1_3.json`` (``RELEASED_SNAPSHOT_PATH``) is the
   released surface from 1.3 on. A change that breaks a caller -- a field removed or
   renamed, a type changed, an enum value removed or changed -- fails here unless
@@ -93,7 +93,10 @@ def test_every_version_the_historical_snapshot_records_is_now_refused(key: str) 
     assert entry["version"] in named and named == ["1.0", "1.1"]
     assert set(named) <= set(RETIRED_CONTRACT_VERSIONS)
     for version in named:
-        with pytest.raises(RetiredContractVersionError, match="supports contract 1.3 only"):
+        with pytest.raises(
+            RetiredContractVersionError,
+            match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)",
+        ):
             AssessmentRequest.model_validate(
                 {"contract_version": version, "database_name": "shop", "collection": {"a": 1}}
             )

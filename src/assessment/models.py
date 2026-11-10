@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The typed request and result of :func:`src.assessment.assess` (contract 1.3).
+"""The typed request and result of :func:`src.assessment.assess` (contracts 1.3 and 1.4).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,
 ``statements[]`` and ``groups[]``. It is versioned on its own (``contract_version``,
@@ -23,7 +23,10 @@ validates them; the result carries them as plain strings.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+import json
+from functools import cache
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
 
 from pydantic import (
     BaseModel,
@@ -31,6 +34,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -38,13 +42,71 @@ from pydantic import (
 from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_name
 from src.shared.target_databases import normalize_target_databases
 
-#: The version of this public surface (not of any internal contract).
-CONTRACT_VERSION: Literal["1.3"] = "1.3"
+#: The newest version of this public surface (not of any internal contract) this code
+#: reads and writes. A request naming no version gets :func:`default_contract_version`,
+#: the newest one a release has recorded, which can be older.
+CONTRACT_VERSION: Literal["1.4"] = "1.4"
 
-#: The ``contract_version`` values the models read and write: 1.3 only. Any other value
-#: is refused; the retired ones (:data:`RETIRED_CONTRACT_VERSIONS`) with
-#: :class:`RetiredContractVersionError`.
-ContractVersion = Literal["1.3"]
+#: The ``contract_version`` values the models read and write. A result is written for its
+#: request's version. Any other value is refused; the retired ones
+#: (:data:`RETIRED_CONTRACT_VERSIONS`) with :class:`RetiredContractVersionError`.
+ContractVersion = Literal["1.3", "1.4"]
+
+#: :data:`ContractVersion`'s values, oldest first.
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.3", "1.4")
+
+#: The newest contract version a release recorded: written by the release step with the
+#: released snapshot (``scripts/contract_schema_snapshot.py --write-released <tag>``,
+#: which writes ``tests/contract/assess_released_since_1_3.json`` and this file), never
+#: by hand. A version newer than it is not in a release yet: it is read only when a
+#: request pins it. Once the next release records it, it is the default, with no code
+#: change (CONTRIBUTING.md, "The public assess() contract").
+RELEASED_VERSION_PATH = Path(__file__).with_name("released_contract.json")
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+@cache
+def released_contract_version() -> str:
+    """The version :data:`RELEASED_VERSION_PATH` records (read once per process)."""
+    loaded = json.loads(RELEASED_VERSION_PATH.read_text(encoding="utf-8"))
+    return str(loaded["contract_version"])
+
+
+def default_contract_version() -> ContractVersion:
+    """The version a request naming none gets: the newest supported version that is in a
+    release (the released one; the oldest supported version if a release recorded none
+    this code reads)."""
+    released = _version_tuple(released_contract_version())
+    in_a_release = [v for v in SUPPORTED_CONTRACT_VERSIONS if _version_tuple(v) <= released]
+    chosen = in_a_release[-1] if in_a_release else SUPPORTED_CONTRACT_VERSIONS[0]
+    return cast(ContractVersion, chosen)
+
+
+def unreleased_contract_versions() -> tuple[str, ...]:
+    """The supported versions newer than the released one: not in a release yet, read
+    only when pinned."""
+    released = _version_tuple(released_contract_version())
+    return tuple(v for v in SUPPORTED_CONTRACT_VERSIONS if _version_tuple(v) > released)
+
+
+def _versions_note() -> str:
+    """How the supported versions read in a message, each unreleased one marked."""
+    unreleased = set(unreleased_contract_versions())
+    named = [
+        f"{v} (not in a release yet)" if v in unreleased else v for v in SUPPORTED_CONTRACT_VERSIONS
+    ]
+    return " and ".join(named)
+
+
+def _not_released_note(version: str) -> str:
+    return " (not in a release yet)" if version in unreleased_contract_versions() else ""
+
+
+#: The request fields 1.4 added: a request pinned to 1.3 that sets one is refused.
+REQUEST_FIELDS_ADDED_IN_1_4: tuple[str, ...] = ("routine_sources",)
 
 #: The contract versions this release refuses by name (#1641): 1.0, 1.1 and 1.2 were
 #: initial development versions during the beta, removed in :data:`RETIRED_IN`.
@@ -57,17 +119,19 @@ RETIRED_IN = "v0.4.0-beta.3"
 class RetiredContractVersionError(ValueError):
     """A request or a result names a retired contract version (1.0, 1.1 or 1.2).
 
-    This release supports contract 1.3 only: the earlier versions were beta development
-    versions, removed in v0.4.0-beta.3. Pin ``contract_version`` "1.3" (or send none);
+    This code reads contracts 1.3 and 1.4 (1.4 is not in a release yet until the next
+    release records it): the earlier versions were beta development versions, removed in
+    v0.4.0-beta.3. Pin ``contract_version`` "1.3" or "1.4" (or send none, for the newest
+    released version);
     docs/contracts/assess.md's "Removed: 1.0, 1.1 and 1.2" says how to migrate. An
     unknown version is refused as any invalid field is (``pydantic.ValidationError``)."""
 
     def __init__(self, version: str) -> None:
         self.version = version
         super().__init__(
-            f"contract_version {version!r} is no longer supported: this release supports "
-            f'contract {CONTRACT_VERSION} only (pin contract_version "{CONTRACT_VERSION}", '
-            "or send none). Versions "
+            f"contract_version {version!r} is no longer supported: this code reads contracts "
+            f'{_versions_note()}. Pin contract_version "{default_contract_version()}", or '
+            "send none. Versions "
             f"{', '.join(RETIRED_CONTRACT_VERSIONS[:-1])} and {RETIRED_CONTRACT_VERSIONS[-1]} "
             f"were beta development versions, removed in {RETIRED_IN}; to migrate, see "
             "docs/contracts/assess.md, 'Removed: 1.0, 1.1 and 1.2'."
@@ -183,17 +247,61 @@ else:
     _ModelMetaclass = type(BaseModel)
 
 
+class RoutineSourcesError(ValueError):
+    """A request whose ``routine_sources`` (contract 1.4, #2022) is not valid.
+
+    Raised in place of the ``pydantic.ValidationError`` when any error lies under
+    ``routine_sources``, built from each error's location and message only: the entries
+    are routine code, so no part of an input is kept, and nothing is chained
+    (``__cause__`` and ``__context__`` are None). :meth:`errors` lists ``loc`` and
+    ``msg`` per error."""
+
+    def __init__(self, details: list[dict[str, Any]]) -> None:
+        self._details = details
+        super().__init__(
+            "invalid request: "
+            + "; ".join(f"{'.'.join(str(p) for p in d['loc'])}: {d['msg']}" for d in details)
+        )
+
+    def errors(self) -> list[dict[str, Any]]:
+        """Each error's ``loc`` and ``msg``, as :meth:`pydantic.ValidationError.errors`
+        gives them, with no input."""
+        return [dict(d) for d in self._details]
+
+
+def _routine_sources_error(exc: ValidationError) -> RoutineSourcesError | None:
+    """The :class:`RoutineSourcesError` for ``exc`` when any of its errors lies under
+    ``routine_sources``; None otherwise."""
+    errors = exc.errors(include_url=False, include_context=False, include_input=False)
+    if not any(e.get("loc", ())[:1] == ("routine_sources",) for e in errors):
+        return None
+    return RoutineSourcesError([{"loc": tuple(e["loc"]), "msg": e["msg"]} for e in errors])
+
+
+def _validating(call: Any) -> Any:
+    """Run a pydantic validation ``call``: a retired version raises
+    :class:`RetiredContractVersionError`, an invalid ``routine_sources`` a
+    :class:`RoutineSourcesError` with no input and no chained exception."""
+    try:
+        return call()
+    except ValidationError as exc:
+        _raise_if_retired(exc)
+        hidden = _routine_sources_error(exc)
+        if hidden is None:
+            raise
+    # Raised outside the except block, so the ValidationError (which holds the input)
+    # is neither the cause nor the context.
+    raise hidden
+
+
 class _RefusesRetiredVersions(_ModelMetaclass):
     """Building a model (``Model(...)``) raises :class:`RetiredContractVersionError` for
-    a retired version. It wraps the call rather than ``__init__``: a custom ``__init__``
-    makes pydantic run ``model_validate`` through it, which drops its ``context``."""
+    a retired version (and :class:`RoutineSourcesError` for invalid routine sources). It
+    wraps the call rather than ``__init__``: a custom ``__init__`` makes pydantic run
+    ``model_validate`` through it, which drops its ``context``."""
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
-        try:
-            return super().__call__(*args, **kwargs)
-        except ValidationError as exc:
-            _raise_if_retired(exc)
-            raise
+        return _validating(lambda: super(_RefusesRetiredVersions, cls).__call__(*args, **kwargs))
 
 
 class _VersionChecked(_Strict, metaclass=_RefusesRetiredVersions):
@@ -203,7 +311,8 @@ class _VersionChecked(_Strict, metaclass=_RefusesRetiredVersions):
     ``model_validate_strings`` raise :class:`RetiredContractVersionError` itself. Any
     other path pydantic validates by (a ``TypeAdapter``, a model holding this one) raises
     a ``pydantic.ValidationError`` whose ``contract_version`` error carries the same
-    message, with the error itself in its ``ctx``."""
+    message, with the error itself in its ``ctx``. The same four paths raise
+    :class:`RoutineSourcesError` for an invalid ``routine_sources``."""
 
     @field_validator("contract_version", mode="before", check_fields=False)
     @classmethod
@@ -214,27 +323,24 @@ class _VersionChecked(_Strict, metaclass=_RefusesRetiredVersions):
 
     @classmethod
     def model_validate(cls, obj: Any, *args: Any, **kwargs: Any) -> Self:
-        try:
-            return super().model_validate(obj, *args, **kwargs)
-        except ValidationError as exc:
-            _raise_if_retired(exc)
-            raise
+        validated: Self = _validating(
+            lambda: super(_VersionChecked, cls).model_validate(obj, *args, **kwargs)
+        )
+        return validated
 
     @classmethod
     def model_validate_json(cls, json_data: Any, *args: Any, **kwargs: Any) -> Self:
-        try:
-            return super().model_validate_json(json_data, *args, **kwargs)
-        except ValidationError as exc:
-            _raise_if_retired(exc)
-            raise
+        validated: Self = _validating(
+            lambda: super(_VersionChecked, cls).model_validate_json(json_data, *args, **kwargs)
+        )
+        return validated
 
     @classmethod
     def model_validate_strings(cls, obj: Any, *args: Any, **kwargs: Any) -> Self:
-        try:
-            return super().model_validate_strings(obj, *args, **kwargs)
-        except ValidationError as exc:
-            _raise_if_retired(exc)
-            raise
+        validated: Self = _validating(
+            lambda: super(_VersionChecked, cls).model_validate_strings(obj, *args, **kwargs)
+        )
+        return validated
 
 
 def _raise_if_retired(exc: ValidationError) -> None:
@@ -249,16 +355,29 @@ def _raise_if_retired(exc: ValidationError) -> None:
 
 
 def check_contract_version(version: Any) -> None:
-    """Refuse a ``contract_version`` other than :data:`CONTRACT_VERSION`, for a request
-    that skipped validation (``model_construct``, ``model_copy(update=...)``, a field set
-    after it was built): :class:`RetiredContractVersionError` for a retired one, else a
-    ``ValueError``."""
+    """Refuse a ``contract_version`` this release does not support
+    (:data:`SUPPORTED_CONTRACT_VERSIONS`), for a request that skipped validation
+    (``model_construct``, ``model_copy(update=...)``, a field set after it was built):
+    :class:`RetiredContractVersionError` for a retired one, else a ``ValueError``."""
     if isinstance(version, str) and version in RETIRED_CONTRACT_VERSIONS:
         raise RetiredContractVersionError(version)
-    if version != CONTRACT_VERSION:
+    if version not in SUPPORTED_CONTRACT_VERSIONS:
         raise ValueError(
-            f"contract_version {version!r} is not supported: this release supports "
-            f"contract {CONTRACT_VERSION} only"
+            f"contract_version {version!r} is not supported: this code reads contracts "
+            f"{_versions_note()}"
+        )
+
+
+def check_request_fields(request: AssessmentRequest) -> None:
+    """Refuse a request pinned to 1.3 that sets a field 1.4 added
+    (:data:`REQUEST_FIELDS_ADDED_IN_1_4`), also for one that skipped validation."""
+    if request.contract_version != "1.3":
+        return
+    named = [name for name in REQUEST_FIELDS_ADDED_IN_1_4 if getattr(request, name) is not None]
+    if named:
+        raise ValueError(
+            f"{', '.join(named)} is a field of contract 1.4{_not_released_note('1.4')}: pin "
+            'contract_version "1.4" to pass it, or leave it out for 1.3'
         )
 
 
@@ -392,11 +511,18 @@ class WorkloadScope(_Strict):
 class AssessmentRequest(_VersionChecked):
     """One assessment: a database's raw collection and the options to run it with."""
 
+    # No validation error quotes its input: a raw collection and routine sources hold
+    # the customer's code and literals (#2022).
+    model_config = ConfigDict(**_Strict.model_config, hide_input_in_errors=True)
+
     contract_version: ContractVersion = Field(
-        CONTRACT_VERSION,
+        default_factory=default_contract_version,
         description=(
-            "The contract version the caller builds on: 1.3, the only version this "
-            "release reads (with none, 1.3). The retired 1.0, 1.1 and 1.2 are refused with "
+            "The contract version the caller builds on: 1.3 or 1.4; the result is written "
+            "for it. With none, the newest version a release recorded "
+            "(src/assessment/released_contract.json): a version newer than that is not in "
+            "a release yet and is read only when pinned. A 1.3 request cannot set a field "
+            "1.4 added (routine_sources). The retired 1.0, 1.1 and 1.2 are refused with "
             "RetiredContractVersionError; any other value is refused as invalid"
         ),
     )
@@ -421,6 +547,29 @@ class AssessmentRequest(_VersionChecked):
     )
     options: AssessmentOptions = Field(default_factory=AssessmentOptions)
     scope: WorkloadScope | None = None
+    routine_sources: list[dict[str, Any]] | None = Field(
+        None,
+        # The entries are routine code: never in the request's repr, nor in what the
+        # request serializes to (model_dump and model_dump_json leave the field out).
+        repr=False,
+        exclude=True,
+        description=(
+            "Contract 1.4 (pin contract_version 1.4): each routine's CREATE "
+            "statement, in the routine-sources format: RoutineSource entries (kind, "
+            "routine_id, schema_name, specific_name, create_statement, origin, and "
+            "optionally exact, inexact_reason, session, sha256; an unknown key is "
+            "refused; docs/contracts/assess.md, Routine sources). The run writes them to "
+            "the job's routine sources, its index and chunks, as the collection scripts "
+            "and live collectors do, and nowhere else: never in the result. Only a "
+            "PostgreSQL, MySQL or MariaDB routine the collection lists with its body "
+            "collected gets one, an entry is written exact only when the collection does "
+            "not mark the routine's body not exact, an origin of another engine is "
+            "refused, and a collection made with include_routine_bodies = 0 gets none. "
+            "None (the default) writes none; [] also clears a job's earlier ones. Two "
+            "entries for one routine (kind, schema_name, specific_name) are refused. The "
+            "request never serializes this field"
+        ),
+    )
 
     @field_validator("database_name")
     @classmethod
@@ -433,6 +582,24 @@ class AssessmentRequest(_VersionChecked):
         if not value:
             raise ValueError("collection is empty")
         return value
+
+    @field_validator("routine_sources")
+    @classmethod
+    def _routine_sources_format(
+        cls, value: list[dict[str, Any]] | None, info: ValidationInfo
+    ) -> list[dict[str, Any]] | None:
+        if value is None:
+            return None
+        from src.assessment.routine_sources import check_origins, validate_routine_sources
+
+        validated = validate_routine_sources(value)
+        check_origins(validated, info.data.get("collection"))
+        return validated
+
+    @model_validator(mode="after")
+    def _fields_of_its_version(self) -> AssessmentRequest:
+        check_request_fields(self)
+        return self
 
 
 # --------------------------------------------------------------------------- result
@@ -1333,10 +1500,11 @@ class AssessmentResult(_VersionChecked):
     never stored or reused: a repeat call is a new run."""
 
     contract_version: ContractVersion = Field(
-        CONTRACT_VERSION,
+        default_factory=default_contract_version,
         description=(
-            "The contract version the result is written for: 1.3, the only version "
-            "this release reads and writes. A result naming a retired version (1.0, 1.1 "
+            "The contract version the result is written for: the request's "
+            "contract_version (with none, the newest version a release recorded). This "
+            "code reads and writes 1.3 and 1.4. A result naming a retired version (1.0, 1.1 "
             "or 1.2) is refused with RetiredContractVersionError"
         ),
     )

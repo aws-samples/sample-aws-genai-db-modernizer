@@ -21,7 +21,8 @@ from typing import Any
 
 import pytest
 
-from src.assessment import CONTRACT_VERSION, AssessmentResult, assess
+from src.assessment import AssessmentResult, assess
+from src.assessment.models import default_contract_version
 from src.shared import model_usage
 from src.shared.report_facts import COST_SCOPE_LABEL
 from tests.assess_models import DESIGNER, fake_designer, models_patched
@@ -175,7 +176,7 @@ def check_scope(out: dict[int, list[str]], placed: AssessmentResult) -> None:
 
 def check_json(out: dict[int, list[str]]) -> None:
     assert out[10][0].endswith(
-        f"contract {CONTRACT_VERSION}: valid against "
+        f"contract {default_contract_version()}: valid against "
         "docs/contracts/schemas/assess_result.v1.schema.json"
     )
 

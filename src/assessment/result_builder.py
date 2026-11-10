@@ -52,7 +52,6 @@ from dataclasses import dataclass, field
 from typing import Any, get_args
 
 from src.assessment.models import (
-    CONTRACT_VERSION,
     AntiPatternRef,
     Artifacts,
     AssessmentRequest,
@@ -1499,7 +1498,7 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
     summary = build_summary(state, statements, request.collection)
     label = result_label(state.run_through, summary.designed_engines)
     result = AssessmentResult(
-        contract_version=CONTRACT_VERSION,
+        contract_version=request.contract_version,
         label=label,  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),

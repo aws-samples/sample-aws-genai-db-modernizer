@@ -1,6 +1,6 @@
 # The stable design block of `assess()`
 
-Status: **the published standard** of contract `1.3` (the only version this release supports) for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513), [#1603](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1603)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
+Status: **the published standard** of contract `1.3`, the released version (unchanged in `1.4`) for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513), [#1603](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1603)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
 
 ## What it is for
 

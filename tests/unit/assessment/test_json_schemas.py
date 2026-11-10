@@ -20,6 +20,7 @@ from jsonschema.exceptions import ValidationError as SchemaError
 
 from scripts import render_contract_schemas as rcs
 from src.assessment import CONTRACT_VERSION, AssessmentRequest, AssessmentResult
+from src.assessment.models import default_contract_version
 from tests.unit.assessment.conftest import REPO, assessed
 
 DOC = REPO / "docs" / "contracts" / "assess.md"
@@ -55,7 +56,7 @@ def test_the_committed_schemas_are_current() -> None:
 
 
 def test_one_file_per_model_named_by_the_major_version() -> None:
-    assert CONTRACT_VERSION == "1.3"
+    assert CONTRACT_VERSION == "1.4"
     assert [p.name for p, _ in rcs.render()] == [
         "assess_request.v1.schema.json",
         "assess_result.v1.schema.json",
@@ -144,7 +145,7 @@ def test_the_documented_samples_validate() -> None:
     # And the models agree (the rules a schema does not state, such as the label).
     AssessmentRequest.model_validate(request)
     parsed = AssessmentResult.model_validate(result)
-    assert parsed.contract_version == CONTRACT_VERSION
+    assert parsed.contract_version == default_contract_version()
     assert parsed.label == "recommendation"
 
 
@@ -264,10 +265,11 @@ def test_the_request_schema_refuses(request_: dict[str, Any], what: str) -> None
 # --------------------------------------------------------------------------- required fields
 
 
+@pytest.mark.passes_on_main
 def test_every_always_written_result_field_is_required() -> None:
     """``model_dump_json`` writes every field, so the result schema requires each one
-    (generated types are not all-optional). It describes contract 1.3 only (#1641), so
-    the fields 1.2 and 1.3 added are required too: no earlier version's result is read.
+    (generated types are not all-optional). It describes contracts 1.3 and 1.4 (#1641,
+    #2022), so the fields 1.2 and 1.3 added are required too: no earlier version's result is read.
     The request keeps its defaults optional."""
     from src.assessment.models import StatementResult
 

@@ -29,6 +29,7 @@ _IMPORTERS = {
     "src/tools/database/offline_parser.py",  # body statuses, never a CREATE
     "scripts/run_collect.py",  # writes them
     "scripts/run_assessment.py",  # writes them
+    "src/assessment/routine_sources.py",  # writes the ones an assess() caller passes (#2022)
     "src/tools/routines/migration.py",  # reads them: the routine-migration phase (#1934)
     "src/tools/data_movement/routine_scripts.py",  # writes step 1's deploy script (#1947)
     "src/tools/data_movement/triggers_scripts.py",  # writes the triggers-enable script (#1948)
