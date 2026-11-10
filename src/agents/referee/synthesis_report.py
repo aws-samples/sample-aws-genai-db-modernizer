@@ -1918,6 +1918,8 @@ def build_risk_assessment(
     risks = [_without_repeated_mitigation(r) for r in risks]
     risks = ground_risks(risks, eliminated or {}, query_engine)
     resolved = ground_risks(resolved, eliminated or {}, query_engine)
+    # #1914: before the strategies below name a risk's first tables.
+    sort_collected_first(data, "affected_tables", [*risks, *resolved])
     for r in resolved:
         logger.info(
             "Risk assessment: %s risk from %s resolved on %s (%s)",
@@ -2031,6 +2033,31 @@ def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]
 
 # Public name for the normaliser (#950: the migration risks match tables the same way).
 table_normaliser = _table_normaliser
+
+
+def collected_first(data: SynthesisData) -> Callable[[Iterable[Any]], list[Any]]:
+    """The order an "Affects" line lists table names in (#1914): the collected source tables
+    first, sorted by the id each name resolves to, then the names the collector did not
+    collect as tables (a catalog relation, a view), sorted by name; neither group minds case.
+    Synthesis orders the lists once and the renderers print that order (ADR-032)."""
+    known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+    normalise = _table_normaliser(data)
+
+    def key(name: Any) -> tuple[bool, str, str]:
+        ids = normalise([name]) & known
+        return (not ids, (min(ids) if ids else str(name)).casefold(), str(name))
+
+    return lambda names: sorted(names, key=key)
+
+
+def sort_collected_first(data: SynthesisData, field: str, rows: Iterable[dict]) -> None:
+    """Order each row's ``field`` in place with :func:`collected_first`: a risk's
+    ``affected_tables`` or a trade-off's ``source_tables``, the tables its "Affects" line
+    lists."""
+    order = collected_first(data)
+    for row in rows:
+        if row.get(field):
+            row[field] = order(row[field])
 
 
 def _access_pattern_query_ids(ap: dict) -> list[str]:

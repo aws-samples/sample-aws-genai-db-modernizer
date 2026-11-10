@@ -204,3 +204,78 @@ def test_postgres_migration_note_and_coverage_gap_tables() -> None:
     gap = next(r for r in risks if r.get("coverage_gap"))
     assert note_risk["affected_tables"] == ["public.orders"]
     assert gap["affected_tables"] == ["public.orders"]
+
+
+# #1914: a query can also read names the collector did not collect as tables (a catalog
+# relation, a view), and ``public.<table>`` ids sort after them in one alphabetical list.
+_NAMES = ["pg_class", "public.users", "active_orders", "public.orders"]
+_COLLECTED_FIRST = ["public.orders", "public.users", "active_orders", "pg_class"]
+# A HIGH anti-pattern the DynamoDB analysis found on q1, with no mitigation of its own.
+_AGGREGATION = {
+    "workload_analysis": {
+        "anti_patterns_detected": [
+            {
+                "anti_pattern_type": "complex-aggregation",
+                "description": "Aggregations.",
+                "query_ids": ["q1"],
+                "table_ids": _NAMES,
+                "severity_weight": 0.7,
+            }
+        ]
+    }
+}
+
+
+def _aggregation_data(q1_engine: str) -> SynthesisData:
+    data = _pg_data(
+        {},
+        [
+            {"query_id": "q1", "tables_accessed": _NAMES},
+            {"query_id": "q2", "tables_accessed": ["public.users"]},
+        ],
+        ["public.orders", "public.users"],
+    )
+    data.engines["dynamodb"].analysis = _AGGREGATION
+    data.assignment = {
+        "query_assignments": [
+            {"query_id": "q1", "assigned_engine": q1_engine},
+            {"query_id": "q2", "assigned_engine": "dynamodb"},
+        ]
+    }
+    return data
+
+
+def test_an_open_risk_lists_collected_tables_before_other_names() -> None:
+    data = _pg_data(
+        _unsupported("q1"),
+        [{"query_id": "q1", "tables_accessed": _NAMES}],
+        ["public.orders", "public.users"],
+    )
+    assert build_risk_assessment(data)["risks"][0]["affected_tables"] == _COLLECTED_FIRST
+
+
+def test_a_resolved_risk_lists_collected_tables_before_other_names() -> None:
+    """The anti-pattern's query moved to Aurora, which resolves the risk (#221)."""
+    [resolved] = build_risk_assessment(_aggregation_data("aurora_postgresql"))["resolved_risks"]
+    assert resolved["affected_tables"] == _COLLECTED_FIRST
+
+
+def test_a_strategy_names_a_risks_collected_tables_first() -> None:
+    """A severe risk with no mitigation gets a strategy that names its first three tables."""
+    strategies = build_risk_assessment(_aggregation_data("dynamodb"))["mitigation_strategies"]
+    assert "public.orders, public.users, active_orders and 1 more" in strategies[0]
+
+
+def test_collected_tables_sort_by_their_id_in_any_case() -> None:
+    """#1914: SQL Server ids mix cases (``dbo.Users``, ``dbo.aspnet_Membership``); the
+    collected tables sort by id without regard to case, before the other names."""
+    data = _pg_data(
+        _unsupported("q1"),
+        [{"query_id": "q1", "tables_accessed": ["Users", "aspnet_membership", "sys.objects"]}],
+        ["dbo.Users", "dbo.aspnet_Membership"],
+    )
+    assert build_risk_assessment(data)["risks"][0]["affected_tables"] == [
+        "dbo.aspnet_Membership",
+        "dbo.Users",
+        "sys.objects",
+    ]

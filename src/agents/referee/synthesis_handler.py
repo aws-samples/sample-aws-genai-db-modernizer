@@ -75,6 +75,7 @@ from src.agents.referee.synthesis_report import (
     generate_executive_summary,
     schema_design_case,
     schema_table_defs,
+    sort_collected_first,
     source_database_label,
     source_table_count,
     table_normaliser,
@@ -360,6 +361,7 @@ def run_synthesis_deterministic(
         for r in ranking
     )
     trade_offs = _collect_trade_offs(data)
+    sort_collected_first(data, "source_tables", trade_offs)
 
     say("[synthesis] Building migration waves...")
     cache_overlay = build_cache_overlay(data)
@@ -594,6 +596,8 @@ def run_synthesis_deterministic(
         # #1510: each wave's gate in the roadmap lists the risks to close before it.
         migration_waves,
     )
+    # #1914: the migration risks' tables too, in the order the rest of the register has.
+    sort_collected_first(data, "affected_tables", risk_assessment["risks"])
     # #1076: the removed engines the customer runs today, from the one function the facts
     # block uses, so the summary states them as the deliverables do.
     retired_in_use = retired_in_use_engine_facts(
