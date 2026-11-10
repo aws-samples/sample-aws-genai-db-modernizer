@@ -55,9 +55,15 @@ def _leaking_files(root: Path) -> list[str]:
     )
 
 
-def _sources(count: int, body_chars: int = 1500) -> Iterator[RoutineSource]:
+def _sources(
+    count: int, body_chars: int = 1500, credential_every: int = 0
+) -> Iterator[RoutineSource]:
+    """``count`` functions; with ``credential_every``, every that many holds a password
+    value (built here, so no scanner reads one in this file)."""
     filler = "x" * body_chars
+    pair = "pass" + "word = 'Vq8rT2mz"
     for i in range(count):
+        held = f"  -- {pair}{i}'\n" if credential_every and i % credential_every == 0 else ""
         yield RoutineSource(
             kind="function",
             routine_id=f"f{i}",
@@ -65,7 +71,7 @@ def _sources(count: int, body_chars: int = 1500) -> Iterator[RoutineSource]:
             specific_name=f"f{i}_{16384 + i}",
             create_statement=(
                 f"CREATE OR REPLACE FUNCTION public.f{i}()\n RETURNS text\n LANGUAGE sql\n"
-                f"AS $function$SELECT '{filler}{i}'$function$\n"
+                f"{held}AS $function$SELECT '{filler}{i}'$function$\n"
             ),
             origin="pg_get_functiondef",
         )
@@ -152,24 +158,49 @@ def _peak(fn) -> int:
         tracemalloc.stop()
 
 
+# A body short enough that scanning 25,000 of them stays a unit test (#2098); one
+# chunk of them still holds far more than the writer keeps per routine (a 12-byte
+# digest of its key, and the kinds of what the scan flags).
+_BODY_CHARS = 200
+_CREDENTIAL_EVERY = 1000
+
+
+@pytest.mark.passes_on_main  # main meets it too, slowly: the guard is its time (#2098)
 def test_twenty_thousand_routines_are_carried_in_bounded_memory(tmp_path):
-    """Writing and reading hold one chunk at a time: four times the routines takes
-    about the memory of one chunk, never four times it (a relative check, #1652)."""
+    """Writing (with the credential scan of every body) and reading hold one chunk at a
+    time: four times the routines takes about the memory of one chunk, never four times
+    it (a relative check, #1652, #2098)."""
+
+    def sources(count: int) -> Iterator[RoutineSource]:
+        return _sources(count, _BODY_CHARS, _CREDENTIAL_EVERY)
+
+    # Warm up first: the first write and read import and compile what every later one
+    # reuses, which would count against whichever is measured first.
+    warm = LocalArtifactStore(base_dir=str(tmp_path / "warm"))
+    write_routine_sources(warm, "db", "j", _OUTPUT, sources(10))
+    assert sum(1 for _ in read_routine_sources(warm, "db", "j")) == 10
     one = LocalArtifactStore(base_dir=str(tmp_path / "one"))
     many = LocalArtifactStore(base_dir=str(tmp_path / "many"))
     small = _peak(
-        lambda: write_routine_sources(one, "db", "j", _OUTPUT, _sources(MAX_CHUNK_SOURCES))
+        lambda: write_routine_sources(one, "db", "j", _OUTPUT, sources(MAX_CHUNK_SOURCES))
     )
-    large = _peak(lambda: write_routine_sources(many, "db", "j", _OUTPUT, _sources(20_000)))
+    large = _peak(lambda: write_routine_sources(many, "db", "j", _OUTPUT, sources(20_000)))
     assert large < 1.5 * small, (small, large)
 
     index = RoutineSourcesContract.model_validate(
         many.read_json("db/j/collector/routine_sources.json")
     )
     assert (index.total, len(index.parts)) == (20_000, 4)
+    # Every body was scanned, and each flag keeps only the kinds found.
+    assert index.secret_scan is not None
+    assert [f.specific_name for f in index.secret_scan.flagged] == [
+        f"f{i}_{16384 + i}" for i in range(0, 20_000, _CREDENTIAL_EVERY)
+    ]
+    assert {(tuple(f.credential_kinds), tuple(f.address_kinds))
+            for f in index.secret_scan.flagged} == {(("password value",), ())}  # fmt: skip
 
     count = 0
-    expected = _sources(20_000)
+    expected = sources(20_000)
 
     def read_all() -> None:
         nonlocal count

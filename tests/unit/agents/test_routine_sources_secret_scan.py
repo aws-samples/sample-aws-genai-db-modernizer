@@ -105,7 +105,7 @@ def test_the_dev_extra_adds_detect_secrets_on_top():
 
 
 def test_an_unknown_finding_kind_is_recorded_as_other(tmp_path, monkeypatch):
-    monkeypatch.setattr(secret_scan, "secret_findings", lambda text: ["new/kind! at line 1"])
+    monkeypatch.setattr(secret_scan, "secret_kinds", lambda text: {"new/kind!"})
     _write(tmp_path, _source("sync", _LEAKY))
     assert _index(tmp_path)["secret_scan"]["flagged"][0]["credential_kinds"] == ["other"]
 
@@ -114,10 +114,40 @@ def test_a_failing_scan_never_stops_the_write(tmp_path, monkeypatch):
     def boom(text):
         raise RuntimeError("scanner broke")
 
-    monkeypatch.setattr(secret_scan, "secret_findings", boom)
+    monkeypatch.setattr(secret_scan, "secret_kinds", boom)
     store = _write(tmp_path, _source("sync", _LEAKY))
     assert _index(tmp_path)["secret_scan"]["flagged"] == []
     assert len(list(read_routine_sources(store, "shop", "j"))) == 1
+
+
+@pytest.mark.passes_on_main
+def test_a_scan_session_that_cannot_start_never_stops_the_write(tmp_path, monkeypatch):
+    """detect-secrets' settings that fail to build are a failed scan of each body, as
+    when each scan built its own (#2098): the write goes on."""
+
+    def broken(config):
+        raise RuntimeError("settings broke")
+
+    monkeypatch.setattr(secret_scan, "_transient_settings", broken)
+    store = _write(tmp_path, _source("sync", _LEAKY), _source("one", _CLEAN))
+    assert _index(tmp_path)["secret_scan"]["flagged"] == []
+    assert len(list(read_routine_sources(store, "shop", "j"))) == 2
+
+
+def test_one_write_builds_the_scan_settings_once(tmp_path, monkeypatch):
+    """Building detect-secrets' settings costs more than scanning a short body: a write
+    builds them once for all its bodies, not once per body (#2098)."""
+    built = []
+    transient = secret_scan._transient_settings
+
+    def counting(config):
+        built.append(config)
+        return transient(config)
+
+    monkeypatch.setattr(secret_scan, "_transient_settings", counting)
+    _write(tmp_path, *(_source(f"r{i}", _LEAKY) for i in range(5)))
+    assert len(built) == 1
+    assert len(_index(tmp_path)["secret_scan"]["flagged"]) == 5
 
 
 def test_the_ci_private_scan_and_the_collector_share_one_definition():

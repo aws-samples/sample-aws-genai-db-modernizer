@@ -25,6 +25,8 @@ from __future__ import annotations
 import contextlib
 import importlib
 import re
+import threading
+from collections.abc import Iterator
 from typing import Any
 
 from src.shared.example_values import (
@@ -62,16 +64,80 @@ def rule_set() -> str:
 
 
 def _detect_secrets_line(line: str) -> list[Any]:
-    return list(_scan_line(line)) if _scan_line is not None else []
+    if _scan_line is None:
+        return []
+    if _denylist is not None and not any(rx.search(line) for rx in _denylist):
+        return []
+    return list(_scan_line(line))
 
 
-def _detect_secrets_settings() -> contextlib.AbstractContextManager[Any]:
-    if _transient_settings is None:
-        return contextlib.nullcontext()
-    settings: contextlib.AbstractContextManager[Any] = _transient_settings(
-        {"plugins_used": _PLUGINS, "filters_used": []}
-    )
-    return settings
+# One entry per open scan session: detect-secrets' settings are entered by the
+# outermost one and kept for every scan inside it (#2098).
+_open_sessions: list[None] = []
+# detect-secrets' settings are process-wide: the thread in a session holds this lock
+# (re-entrant, so its nested sessions and scans go on), and a scan in any other thread
+# waits for the session to end instead of running on settings it may lose mid-scan.
+_session_lock = threading.RLock()
+# Every pattern the session's plugins look for, or ``None`` when a plugin may find a
+# credential some other way: a line none of them matches holds nothing the plugins
+# report, so detect-secrets' per-plugin dispatch is skipped for it (#2098).
+_denylist: tuple[re.Pattern[str], ...] | None = None
+
+
+def _plugin_denylist() -> tuple[re.Pattern[str], ...] | None:
+    """The denylist patterns of the session's plugins, when every plugin reports only
+    what its patterns match: a ``RegexBasedDetector`` with the inherited
+    ``analyze_line``, and the inherited ``analyze_string`` or the JWT plugin's, which
+    only filters those matches. ``None`` (no skip, the full scan) otherwise, and on
+    any failure: the guard never turns a plugin off."""
+    try:
+        base = importlib.import_module("detect_secrets.plugins.base")
+        jwt = importlib.import_module("detect_secrets.plugins.jwt")
+        plugins = importlib.import_module("detect_secrets.settings").get_plugins()
+        own_matches_only = (
+            base.RegexBasedDetector.analyze_string,
+            jwt.JwtTokenDetector.analyze_string,
+        )
+        patterns: list[re.Pattern[str]] = []
+        for plugin in plugins:
+            cls = type(plugin)
+            if not (
+                isinstance(plugin, base.RegexBasedDetector)
+                and cls.analyze_line is base.BasePlugin.analyze_line
+                and any(cls.analyze_string is method for method in own_matches_only)
+            ):
+                return None
+            patterns += plugin.denylist
+        return tuple(patterns)
+    except Exception:  # noqa: BLE001 - a failed guard means the full scan, never less
+        return None
+
+
+@contextlib.contextmanager
+def scan_session() -> Iterator[None]:
+    """Keep detect-secrets' settings for every scan inside: building them costs more
+    than scanning a short text, so a caller that scans many texts (the collector, one
+    scan per routine body) opens one session around them all (#2098). Nested
+    sessions and the scans inside reuse the outermost one's settings; a scan in
+    another thread waits until the session ends (every scan opens a session)."""
+    global _denylist
+    with _session_lock:
+        if _open_sessions or _transient_settings is None:
+            _open_sessions.append(None)
+            try:
+                yield
+            finally:
+                _open_sessions.pop()
+            return
+        with _transient_settings({"plugins_used": _PLUGINS, "filters_used": []}):
+            denylist = _plugin_denylist()
+            _open_sessions.append(None)
+            try:
+                _denylist = denylist
+                yield
+            finally:
+                _denylist = None
+                _open_sessions.pop()
 
 
 # The plugins that find a credential by its shape or its key name. The entropy
@@ -160,6 +226,13 @@ _PAIR_RES = (
     # | key | value |
     re.compile(rf"\|\s*{_KEY_NAME}\s*\|\s*(?P<u>[^|\s][^|]*?)\s*(?=\|)", re.I),
 )
+# A word every credential key name holds (each ``_PASSWORD_WORDS`` word holds ``pass``,
+# ``pwd``, ``secret`` or ``contrase``; each ``_KEY_WORDS`` word ends in ``key``), with the
+# same flags: a line without one has no pair, so the pair patterns are not run on it.
+_KEY_WORD_RE = re.compile(r"pass|pwd|secret|contrase|token|key", re.I)
+# A Markdown table cell that is a credential key name; a separator row.
+_KEY_CELL_RE = re.compile(rf"\s*{_KEY_NAME}\s*", re.I)
+_SEPARATOR_ROW_RE = re.compile(r"[\s|:-]*")
 _JSON_LITERALS = frozenset({"null", "true", "false"})
 # A short integer (a count or a size in a design), never a long number or a float.
 _COUNT_RE = re.compile(r"\d{1,6}")
@@ -223,6 +296,8 @@ def _pair_matches(line: str) -> list[tuple[str, tuple[int, int], str]]:
     short count, a bind parameter, a column note) is left out, and never exempts the
     rest of the line."""
     found: dict[tuple[int, int], tuple[str, str]] = {}
+    if _KEY_WORD_RE.search(line) is None:
+        return []
     for rx in _PAIR_RES:
         for m in rx.finditer(line):
             if _PER_UNIT_RE.search(m.group("key")):
@@ -255,7 +330,6 @@ def _table_hits(lines: list[str]) -> dict[int, list[tuple[str, tuple[int, int], 
     (``| user | password |`` then ``| app | <value> |``), by line index."""
     found: dict[int, list[tuple[str, tuple[int, int], str]]] = {}
     columns: dict[int, tuple[str, str]] = {}
-    key_cell = re.compile(rf"\s*{_KEY_NAME}\s*", re.I)
     for index, line in enumerate(lines):
         if not line.lstrip().startswith("|"):
             columns = {}
@@ -264,13 +338,13 @@ def _table_hits(lines: list[str]) -> dict[int, list[tuple[str, tuple[int, int], 
         cells = [(bars[i] + 1, bars[i + 1]) for i in range(len(bars) - 1)]
         header: dict[int, tuple[str, str]] = {}
         for col, (a, b) in enumerate(cells):
-            m = key_cell.fullmatch(line[a:b])
+            m = _KEY_CELL_RE.fullmatch(line[a:b])
             if m and not _PER_UNIT_RE.search(m.group("key")):
                 header[col] = (_pair_kind(m), m.group("key"))
         if header:
             columns = header
             continue
-        if re.fullmatch(r"[\s|:-]*", line):
+        if _SEPARATOR_ROW_RE.fullmatch(line):
             continue
         for col, (kind, key) in columns.items():
             if col < len(cells):
@@ -286,6 +360,7 @@ def _table_hits(lines: list[str]) -> dict[int, list[tuple[str, tuple[int, int], 
 # A bare AWS secret key: 40 base64 characters with upper, lower and a digit (a hex
 # digest has no upper-case mix; an identifier has underscores).
 _BARE_KEY_RE = re.compile(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])")
+_HEX_RE = re.compile(r"[0-9a-fA-F]+")
 
 
 def _bare_secret_key(token: str) -> bool:
@@ -293,7 +368,7 @@ def _bare_secret_key(token: str) -> bool:
         any(c.isupper() for c in token)
         and any(c.islower() for c in token)
         and any(c.isdigit() for c in token)
-        and not re.fullmatch(r"[0-9a-fA-F]+", token)
+        and not _HEX_RE.fullmatch(token)
     )
 
 
@@ -393,7 +468,7 @@ def _line_hits(line: str, emails: bool) -> list[Hit]:
 def _scan_lines(text: str, key_names: bool, emails: bool = False):
     lines = text.splitlines(keepends=True)
     tables = _table_hits([line.rstrip("\r\n") for line in lines])
-    with _detect_secrets_settings():
+    with scan_session():
         for number, line in enumerate(lines, start=1):
             body = line.rstrip("\r\n")
             table = tables.get(number - 1, [])
@@ -410,3 +485,12 @@ def secret_findings(text: str, key_names: bool = True) -> list[str]:
     for number, _line, _body, hits, _table in _scan_lines(text, key_names):
         found += [f"{kind} at line {number}" for kind in sorted({kind for kind, _ in hits})]
     return found
+
+
+def secret_kinds(text: str, key_names: bool = True) -> set[str]:
+    """The kinds :func:`secret_findings` finds in ``text``, without their lines: what a
+    caller that scans many texts keeps of each (the collector, #2098)."""
+    kinds: set[str] = set()
+    for _number, _line, _body, hits, _table in _scan_lines(text, key_names):
+        kinds.update(kind for kind, _ in hits)
+    return kinds

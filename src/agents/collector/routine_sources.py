@@ -28,6 +28,7 @@ Pure, except :func:`write_routine_sources` and :func:`read_routine_sources`.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import hashlib
 import json
@@ -929,23 +930,20 @@ def _delete_chunks_from(store: Any, prefix: str, number: int) -> None:
         number += 1
 
 
-_FINDING_AT_LINE = re.compile(r"\s+at line \d+$")
-
-
 def _secret_kinds(text: str) -> tuple[list[str], list[str]]:
     """What the repository's credential scan (``src/shared/secret_scan.py``, the one
     the CI private scan uses, #2055) finds in ``text``: its credential kinds and its
-    public-address kinds, each sorted, never a value. A kind the contract cannot name is
-    recorded as ``other``; a scan that fails flags nothing and never stops the write."""
+    public-address kinds, each sorted, never a value or a line. A kind the contract
+    cannot name is recorded as ``other``; a scan that fails flags nothing and never
+    stops the write."""
     from src.contracts.routine_sources import FINDING_KIND
-    from src.shared.secret_scan import IP_KINDS, secret_findings
+    from src.shared.secret_scan import IP_KINDS, secret_kinds
 
     try:
-        found = secret_findings(text)
+        kinds = secret_kinds(text)
     except Exception:  # noqa: BLE001 - a failed scan never stops the write
         logger.warning("The credential scan failed on a routine body; it is not flagged")
         return [], []
-    kinds = {_FINDING_AT_LINE.sub("", f) for f in found}
     named = {k if FINDING_KIND.fullmatch(k) else "other" for k in kinds}
     return sorted(named - IP_KINDS), sorted(named & IP_KINDS)
 
@@ -959,7 +957,7 @@ def _write_chunks(
     sources: Iterable[RoutineSource],
     chunk_size: int,
 ) -> str | None:
-    from src.shared.secret_scan import rule_set
+    from src.shared.secret_scan import rule_set, scan_session
 
     prefix = _job_prefix(database_name, job_id)
     parts: list[RoutineSourcesPart] = []
@@ -980,28 +978,39 @@ def _write_chunks(
         )
         buffer.clear()
 
-    for source in sources:
-        # A short digest of each key, not the key: the check stays small at any size.
-        mark = hashlib.blake2b(repr(source.key()).encode("utf-8"), digest_size=12).digest()
-        if mark in seen:
-            raise ValueError(
-                f"two routine sources for {source.kind} {source.schema_name}.{source.specific_name}"
-            )
-        seen.add(mark)
-        credentials, addresses = _secret_kinds(source.create_statement)
-        if credentials or addresses:
-            flagged.append(
-                RoutineSecretFlag(
-                    kind=source.kind,
-                    schema_name=source.schema_name,
-                    specific_name=source.specific_name,
-                    credential_kinds=credentials,
-                    address_kinds=addresses,
+    session = contextlib.ExitStack()
+    try:  # the scan's settings, built once for every body (#2098)
+        session.enter_context(scan_session())
+    except Exception:  # noqa: BLE001 - a failed scan never stops the write
+        logger.warning(
+            "The credential scan could not start: each body is scanned on its own, "
+            "and a body whose scan fails is not flagged"
+        )
+    with session:
+        for source in sources:
+            # A short digest of each key, not the key: the check stays small at any size.
+            mark = hashlib.blake2b(repr(source.key()).encode("utf-8"), digest_size=12).digest()
+            if mark in seen:
+                raise ValueError(
+                    f"two routine sources for {source.kind} "
+                    f"{source.schema_name}.{source.specific_name}"
                 )
-            )
-        buffer.append(source)
-        if len(buffer) >= chunk_size:
-            flush()
+            seen.add(mark)
+            # Only the kinds found are kept, never a finding's value or line.
+            credentials, addresses = _secret_kinds(source.create_statement)
+            if credentials or addresses:
+                flagged.append(
+                    RoutineSecretFlag(
+                        kind=source.kind,
+                        schema_name=source.schema_name,
+                        specific_name=source.specific_name,
+                        credential_kinds=credentials,
+                        address_kinds=addresses,
+                    )
+                )
+            buffer.append(source)
+            if len(buffer) >= chunk_size:
+                flush()
     if buffer:
         flush()
     _delete_chunks_from(store, prefix, len(parts) + 1)
