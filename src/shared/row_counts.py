@@ -36,7 +36,7 @@ and an estimate for InnoDB, so the older script's ``IFNULL(table_rows, 0)`` neve
 a base table's NULL into 0: an older collection's 0 is the server's own figure, read as a
 new one is. An InnoDB 0 is ambiguous only when the table's data is bigger than one 16 KB
 page (an empty InnoDB table's clustered index is one page): its statistics have not
-caught up, so that 0 is unknown. The scripts round ``data_size_mb`` to 2 decimals, so one
+been refreshed yet, so that 0 is unknown. The scripts round ``data_size_mb`` to 2 decimals, so one
 page reads 0.02 (:data:`ONE_PAGE_MB`). With a larger ``innodb_page_size`` an empty table
 reads as unknown, the harmless direction. A collector output written before #1636 holds
 only the total size (data plus indexes), so there its 0 is kept as the server's figure.

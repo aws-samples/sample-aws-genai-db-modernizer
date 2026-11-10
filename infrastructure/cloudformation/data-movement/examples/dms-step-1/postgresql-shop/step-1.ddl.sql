@@ -27,10 +27,10 @@
 -- 4. Start the DMS task only after this file has run: deploy dms-step-1.yaml once every table
 -- below exists. The task creates no table (TargetTablePrepMode DO_NOTHING) and loads into these
 -- exactly as declared.
--- 5. Do not change these tables or the source's tables until the step is cut over: this release
--- does not carry schema changes during the migration window.
--- 6. At cutover, once writes to the source stopped and DMS applied the last change, run
--- step-1.sequences.sql the same way: DMS never advances the identity columns' sequences.
+-- 5. This release does not carry schema changes: a change to these tables or to the source's
+-- tables while the task runs is not applied by step 1.
+-- 6. step-1.sequences.sql sets the identity columns' sequences, which DMS never advances: run
+-- it the same way.
 --
 -- About this DDL:
 -- - Keep the declared column names: DMS matches columns by name, not by position, so the column
@@ -42,7 +42,7 @@
 -- when you choose.
 -- - The DMS target endpoint sets session_replication_role = replica to skip foreign keys and
 -- triggers during the load, which needs rds_superuser (or, if your Aurora version allows it,
--- GRANT SET ON PARAMETER session_replication_role); drop that grant after the cutover.
+-- GRANT SET ON PARAMETER session_replication_role); drop that grant when you end the step.
 --
 -- LOB columns: 2 moved tables have LOB columns (text, json, jsonb, arrays and the like). The
 -- DMS task runs in limited LOB mode at 64 KB (LobMaxSize) on dms.t3.medium: from a PostgreSQL
@@ -63,7 +63,7 @@
 -- - functions: 0 (none in the collection).
 -- - triggers: 0 (none in the collection).
 -- - views: 1 (recreate them on Aurora yourself).
--- - sequence values: 2 (run step-1.sequences.sql at cutover).
+-- - sequence values: 2 (step-1.sequences.sql sets them).
 --
 -- Tables left out: none.
 -- Unsupported fields: none.

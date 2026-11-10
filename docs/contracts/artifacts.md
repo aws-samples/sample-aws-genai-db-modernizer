@@ -91,6 +91,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `schema-[^/]+/v\d+/carried_forward\.json` | the parts a post-schema reroute version kept from the version before, with their designs (#1650): an audit record the --split line reads |
 | `post-schema-router/external_run\.json` | external-mode post-schema routing pass record (depth, engines to design again) |
 | `transformation-contract/v\d+/findings\.json` | a step's validation and shape-check findings flattened for the report (#1764): derived from the step contract beside it; a view for the report, not a pin or an input |
+| `data-movement/step-\d+/validation-seen\.json` | the tables DMS reported Validated since their full load (#2062): written by Prove's status polls and read by the gate; a missing or unreadable file only means each table is judged by its state now |
 | `load-test-[^/]+/v\d+/config\.json` | the load test's configuration as run |
 | `load-test-[^/]+/v\d+/result\.json` | the load test runner's raw result |
 | `load-test-[^/]+/v\d+/k6_diagnostics\.json` | the load test runner's diagnostics |

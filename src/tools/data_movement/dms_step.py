@@ -14,8 +14,8 @@ of every table the contract moves, this module renders:
 - ``step-1.ddl.sql``: the tables' DDL with instructions to run it, the extensions its column
   types need (Aurora PostgreSQL) and what the source has that step 1 does not move (on Aurora
   PostgreSQL, a commented ``REPLICA IDENTITY FULL`` recommendation per table);
-- ``step-1.sequences.sql`` (Aurora PostgreSQL only): one ``setval`` per identity column, run
-  at cutover, since DMS writes the ids but never advances their sequences;
+- ``step-1.sequences.sql`` (Aurora PostgreSQL only): one ``setval`` per identity column, for
+  the customer to run, since DMS writes the ids but never advances their sequences;
 - ``dms-step-1.yaml``: our stack: a replication subnet group, a provisioned replication
   instance, source and target endpoints on Secrets Manager ARNs, one full-load-and-CDC task.
 
@@ -55,6 +55,7 @@ from src.contracts.lineage_ops import CopyOp, UnsupportedOp
 from src.contracts.transformation_contract import NOT_MOVED, Rule, StepContract
 from src.shared.catalog.dms_sizing import EngineRules, dms_sizing
 from src.shared.contract_versioning import load_contract
+from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.shared.engine_names import display_engine
 from src.tools.data_movement.dms_sizing import (
     DMS_MAX_LOB_KB,
@@ -1438,7 +1439,7 @@ def not_moved(inputs: Step1Inputs) -> list[NotMoved]:
                             "SHOW EVENTS and recreate them on Aurora yourself"))  # fmt: skip
     if inputs.contract.target.engine == "aurora_postgresql":
         n = len(moved_identity_columns(inputs))
-        out.append(NotMoved("sequence values", n, f"run {SEQUENCES_FILE} at cutover"))
+        out.append(NotMoved("sequence values", n, f"{SEQUENCES_FILE} sets them"))
     else:
         out.append(NotMoved("sequence values", None, "none to set: an AUTO_INCREMENT counter moves past "
                             "every value inserted into its column, so it follows the loaded ids"))  # fmt: skip
@@ -1476,6 +1477,8 @@ def render_sequences(inputs: Step1Inputs) -> str:
     run = (f'psql "host=<writer endpoint> dbname={plan.source.database} user=<admin user> '
            f'sslmode=verify-full sslrootcert=<RDS CA bundle>" -f {SEQUENCES_FILE}')  # fmt: skip
     head = [
+        CUTOVER_DISCLAIMER,
+        "",
         "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
         "SPDX-License-Identifier: MIT-0",
         "",
@@ -1488,9 +1491,8 @@ def render_sequences(inputs: Step1Inputs) -> str:
         "so after the load every sequence still starts at 1 and the first insert without an explicit "
         "id collides with a loaded row. The gate compares rows only and cannot see this.",
         "",
-        "When to run it: at cutover, after your applications stopped writing to the source and DMS "
-        "applied the last change, and before anything writes to Aurora. Each statement sets the "
-        "sequence so the next value is the column's maximum plus one; running it again is safe.",
+        "Each statement sets the sequence so the next value is the column's maximum plus one; "
+        "running it again is safe.",
         f"How: {run}",
         "",
         f"Identity columns: {len(columns)}.",
@@ -1553,7 +1555,7 @@ def _not_moved_table_lines(inputs: Step1Inputs) -> list[str]:
     """The tables this file creates that the DMS task does not move (#1918)."""
     if not inputs.not_moved:
         return []
-    return ["Tables created but not moved (the DMS task leaves them out; rebuild their rows after cutover):",
+    return ["Tables created but not moved (the DMS task leaves them out; rebuilding their rows is yours):",
             *(f"- {s.table_id}: {s.reason}" for s in inputs.not_moved)]  # fmt: skip
 
 
@@ -1607,12 +1609,12 @@ def render_ddl(inputs: Step1Inputs) -> str:
         "4. Start the DMS task only after this file has run: deploy dms-step-1.yaml once every table below "
         "exists. The task creates no table (TargetTablePrepMode DO_NOTHING) and loads into these exactly "
         "as declared.",
-        "5. Do not change these tables or the source's tables until the step is cut over: this release does "
-        "not carry schema changes during the migration window.",
+        "5. This release does not carry schema changes: a change to these tables or to the source's tables "
+        "while the task runs is not applied by step 1.",
     ]
     if pg:
-        head.append(f"6. At cutover, once writes to the source stopped and DMS applied the last change, run "
-                    f"{SEQUENCES_FILE} the same way: DMS never advances the identity columns' sequences.")  # fmt: skip
+        head.append(f"6. {SEQUENCES_FILE} sets the identity columns' sequences, which DMS never advances: "
+                    "run it the same way.")  # fmt: skip
     head += [
         "",
         "About this DDL:",
@@ -1626,8 +1628,8 @@ def render_ddl(inputs: Step1Inputs) -> str:
     if pg:
         head.append("- The DMS target endpoint sets session_replication_role = replica to skip foreign keys "
                     "and triggers during the load, which needs rds_superuser (or, if your Aurora version "
-                    "allows it, GRANT SET ON PARAMETER session_replication_role); drop that grant after "
-                    "the cutover.")  # fmt: skip
+                    "allows it, GRANT SET ON PARAMETER session_replication_role); drop that grant when "
+                    "you end the step.")  # fmt: skip
     else:
         head.append("- The DMS target endpoint turns foreign key checks off for its own sessions during "
                     "the load (SET FOREIGN_KEY_CHECKS=0).")  # fmt: skip
@@ -1702,7 +1704,7 @@ def _enum_header_lines(inputs: Step1Inputs) -> list[str]:
                   "PostgreSQL enum as a string (up to 64 bytes; its documentation lists ENUM among the types "
                   "it does not migrate when it creates the target tables itself). Here the tables exist, so "
                   "it writes each value as text into the enum column, which accepts only its labels. Test "
-                  "the ongoing replication on a copy before the cutover: if an apply fails with \"is of type "
+                  "the ongoing replication on a copy: if an apply fails with \"is of type "
                   "... but expression is of type character varying\", the commented CREATE CAST after the "
                   "type lets PostgreSQL convert it (YOUR DECISION, as above)."]  # fmt: skip
     fallbacks = [(r.source_table, f) for r in _selected(inputs.contract) for f in r.findings

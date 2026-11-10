@@ -28,8 +28,8 @@
 -- 4. Start the DMS task only after this file has run: deploy dms-step-1.yaml once every table
 -- below exists. The task creates no table (TargetTablePrepMode DO_NOTHING) and loads into these
 -- exactly as declared.
--- 5. Do not change these tables or the source's tables until the step is cut over: this release
--- does not carry schema changes during the migration window.
+-- 5. This release does not carry schema changes: a change to these tables or to the source's
+-- tables while the task runs is not applied by step 1.
 --
 -- About this DDL:
 -- - Keep the declared column names: DMS matches columns by name, not by position, so the column

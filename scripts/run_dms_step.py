@@ -5,7 +5,7 @@
 """Run step 1's AWS DMS stack for ``/move`` from one inputs file (#1886).
 
 Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "error"``); only
-``status --until caught_up`` prints progress lines before it, so the result line is always last:
+``status --until replicating`` prints progress lines before it, so the result line is always last:
 
 - ``steps``, ``summary``, ``plan``: no AWS call. The job's steps; step 1's contract, sizing,
   cost, what it does not move and the customer-responsibility disclaimer; the stack name, the
@@ -17,17 +17,23 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   inputs file's values and print those scripts' own line. The file's optional
   ``confirmed_checks`` (ids the customer checked themselves) become one ``--confirm`` each,
   next to any ``--confirm`` flag; an id that is not a preflight check id is refused.
-- ``status [--until stack|connections|running|caught_up --wait-seconds N]``: read-only; the
-  stack, the endpoint connections, the task, its table statistics and its capture lag, polled
-  until the condition holds or the time is up. ``running`` waits for the task to read running
-  (``/move --until moving``, #1996). ``caught_up`` also stops on ``validation_stalled``: the full
-  load is done but DMS validation is not running (#1995); while it waits it prints one
+- ``status [--until stack|connections|running|replicating --wait-seconds N]``: read-only in
+  AWS; the stack, the endpoint connections, the task, its table statistics and its capture
+  lag, polled until the condition holds or the time is up. ``running`` waits for the task to
+  read running (``/move --until moving``, #1996). ``replicating`` (#2062; the earlier value
+  ``caught_up`` is still accepted, and ``current_phase`` maps an earlier line's phase) holds
+  once the full load is complete, the task is running and every table has finished its first
+  validation; records DMS validates as changes arrive are never waited for. The tables DMS
+  has reported ``Validated`` since their full load are kept in ``validation-seen.json`` next
+  to the inputs file (the gate reads it). ``replicating`` also stops on
+  ``validation_stalled``: the full load is done but DMS validation is not running, or no
+  table's first validation progresses (#1995); while it waits it prints one
   ``"status": "progress"`` line per poll before its result line (#1997). The lag comes from
   CloudWatch's ``ListMetrics`` and ``GetMetricData``, the gate's own read calls; a profile that
   may not make them leaves the lag null. Once the task has run, ``source_retention`` (#2060)
   judges the source's change log and free storage from its RDS metrics (``GetMetricData``
   again; thresholds in ``src/tools/data_movement/source_retention.py``), "not measured" for a
-  self-managed source or a metric with no datapoint; ``caught_up`` also stops when it reads
+  self-managed source or a metric with no datapoint; ``replicating`` also stops when it reads
   ``critical``, and its result line carries ``stopped_for`` whenever the last reading is
   critical, ``reached`` or not; and a ``task_stopped`` line names what the stopped task costs
   the source (``source_retention.stopped_task``).
@@ -50,9 +56,9 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   the cutover script), the read-only ``routines-check.sql`` and ``routines.md``.
   ``routines-check`` (no AWS call): read the customer's ``routines-check.tsv`` strictly and write
   ``routines-check.json``, which the gate's routines check reads. Neither connects to a database.
-- ``cutover-scripts`` (#1948, no AWS call): write the cutover script the customer runs at their own
-  cutover (``cutover-routines.sql``: PostgreSQL ``ENABLE TRIGGER`` for each trigger step 1 created
-  disabled, or the MySQL triggers and events step 1 left to cutover), its read-only
+- ``cutover-scripts`` (#1948, no AWS call): write the cutover script for the customer to run
+  (``cutover-routines.sql``: PostgreSQL ``ENABLE TRIGGER`` for each trigger step 1 created
+  disabled, or the MySQL triggers and events step 1 left to that script), its read-only
   ``cutover-check.sql`` and ``cutover.md``. ``cutover-check`` (no AWS call): read the customer's
   ``cutover-check.tsv`` strictly and write ``cutover-check.json``. ``cutover-scripts --resume``
   (Aurora MySQL): after a cutover script that stopped part way, write ``cutover-resume.sql`` with
@@ -104,7 +110,7 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   task neither may reload, it carries ``recovery_refused``, ``tables_to_empty`` and
   ``customer_steps`` instead. A running task's line carries ``table_problems`` (errored tables
   and validation failures, names and counts only, never a value; ``table_errors.py``); an
-  errored table ends ``caught_up``'s wait as ``table_errors``, with ``table_recovery``
+  errored table ends ``replicating``'s wait as ``table_errors``, with ``table_recovery``
   (``reload-tables`` only when it would run) or ``table_steps``, and validation failures carry
   ``validation_failures_check`` (read-only SQL on DMS's failure table, for the customer). Credentials that are missing or have expired print
   ``"kind": "credentials"``, with what this run had already changed.
@@ -131,17 +137,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import json
 import os
 import shlex
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -152,10 +159,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
 from src.contracts.dms_preflight import CHECK_ORDER  # noqa: E402
 
+if TYPE_CHECKING:
+    from src.tools.data_movement.dms_gate import ValidatedTables
+
 STEP_DIR = "data-movement/step-1"
 TEMPLATE = "dms-step-1.yaml"
 ENDING = ("stop", "teardown")
 RESTART = "restart-validation"  # Prove's stop-and-resume of a stalled validator (#2048)
+# Prove's end: the full load is complete and replication is in progress (#2062). Earlier
+# status lines, and the earlier --until value, named it caught_up.
+REPLICATING = "replicating"
+LEGACY_PHASES = {"caught_up": REPLICATING}
 RESUME, RETRY = "resume", "retry"  # Prove's way on from a stopped or a failed task (#2061)
 RECOVER = (RESUME, RETRY)
 RELOAD_TABLES, REVALIDATE = "reload-tables", "revalidate"  # Prove's per-table writes (#2064)
@@ -183,7 +197,7 @@ STALL_SECONDS = 300
 NOT_ENABLED = "Not enabled"  # as DMS spells it, for messages; compared case-folded (#2042)
 VALIDATION_FIX = ("check the endpoints' secrets and that the validator can connect to both "
                   "databases (the task's CloudWatch log names the validator's errors)")  # fmt: skip
-# One "status": "progress" line per poll of status --until caught_up (#1997), these fields.
+# One "status": "progress" line per poll of status --until replicating (#1997), these fields.
 PROGRESS_FIELDS = ("time", "phase", "full_load_percent", "tables_loaded", "inserts_applied",
                    "updates_applied", "capture_lag_seconds", "apply_lag_seconds",
                    "validated_tables", "pending_tables", "not_enabled_tables",
@@ -388,8 +402,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm", action="append", default=[], metavar="CHECK_ID",
                    help="preflight: a 'confirm' row the customer checked (repeatable)")  # fmt: skip
     p.add_argument(
-        "--until", choices=["stack", "connections", "running", "caught_up", "task_stopped"]
-    )
+        "--until", choices=["stack", "connections", "running", REPLICATING, *LEGACY_PHASES,
+                            "task_stopped"],
+    )  # fmt: skip
     p.add_argument("--wait-seconds", type=int, default=None,
                    help=f"status: default 0; {', '.join(WAITS)}: default {MAX_WAIT_SECONDS}")  # fmt: skip
     p.add_argument("--interval-seconds", type=int, default=30)
@@ -635,10 +650,12 @@ def _table_statistics(clients: MoveClients, task_arn: str) -> list[dict[str, Any
 
 def status(clients: MoveClients, name: str, lag: LagReader | None = None,
            retention: RetentionReader | None = None,
-           steps: StepsContext | None = None, change_set: str | None = None) -> dict[str, Any]:  # fmt: skip
+           steps: StepsContext | None = None, change_set: str | None = None,
+           seen: ValidatedTables | None = None) -> dict[str, Any]:  # fmt: skip
     """Where step 1 stands: the stack, both endpoint connections, the task, its tables and,
     with a ``lag`` reader, its capture lag; with a ``retention`` reader, once the task has run,
-    the source's change-log retention (#2060)."""
+    the source's change-log retention (#2060). ``seen`` (the tables DMS has reported
+    ``Validated`` since their full load, #2062) is updated from the table statistics read."""
     from src.tools.data_movement.stack_states import stack_kind
 
     stack = _stack(clients, name)
@@ -702,14 +719,20 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
     from src.tools.data_movement import dms_gate as gate
 
     tables = _table_statistics(clients, outputs["ReplicationTaskArn"])
+    seen = gate.ValidatedTables() if seen is None else seen
+    seen.observe(tables)
     states = [gate.validation_state(t) for t in tables]  # case-folded, as the gate reads them
-    pending_tables = [s for s in states if s in gate.PENDING_RECORDS]
-    pending_records = sum(int(t.get("ValidationPendingRecords") or 0) for t in tables)
+    validated = [t for t in tables if seen.validated(t)]
+    # The tables whose first validation has not finished: what Prove waits for. Records DMS
+    # validates as changes arrive, on a table validated since its full load, are not (#2062).
+    # A table still loading (a reload of it included) is waited for too.
+    first_pass = [t for t in tables if not seen.validated(t) and (
+                  gate.validation_state(t) in gate.VALIDATION_PENDING or not gate.table_loaded(t))]  # fmt: skip
     out["validation"] = {
         "tables": len(tables),
-        "validated": states.count(gate.VALIDATED),
-        "pending_tables": len(pending_tables),
-        "pending_records": pending_records,
+        "validated": len(validated),
+        "pending_tables": len(first_pass),
+        "first_pass_records": sum(int(t.get("ValidationPendingRecords") or 0) for t in first_pass),
         "not_enabled_tables": states.count(gate.NOT_ENABLED),
         "states": _count(t.get("ValidationState") or "unknown" for t in tables),
     }
@@ -717,7 +740,8 @@ def status(clients: MoveClients, name: str, lag: LagReader | None = None,
                               for kind in ("inserts", "updates", "deletes")}  # fmt: skip
     out.update(_capture_lag(clients, task, lag))
     loaded = task_stats.get("FullLoadProgressPercent") == 100
-    phase = "caught_up" if loaded and not pending_tables and not pending_records else (
+    running = task.get("Status") == "running"
+    phase = REPLICATING if loaded and running and not first_pass else (
         "validating" if loaded else "loading")  # fmt: skip
     judged = _table_problems(_judge_validation({**out, "phase": phase}, task, loaded), task,
                              tables, steps)  # fmt: skip
@@ -861,7 +885,7 @@ def _judge_validation(out: dict[str, Any], task: dict[str, Any], loaded: bool) -
     ):
         pending = out["validation"]["pending_tables"]
         found = f"{not_enabled} tables {NOT_ENABLED}" + (
-            f" and {pending} pending" if pending else ""
+            f" and {pending} not validated yet" if pending else ""
         )
         return {**out, "phase": "validation_stalled", "validation_running": False,
                 "validation_check": f"{found} {since} s after the full load although the task "
@@ -899,7 +923,7 @@ def _capture_lag(
 
 
 def progress_line(current: dict[str, Any]) -> dict[str, Any]:
-    """One compact line per poll of status --until caught_up (#1997)."""
+    """One compact line per poll of status --until replicating (#1997)."""
     validation = current.get("validation") or {}
     applied = current.get("changes_applied") or {}
     retention = current.get("source_retention") or {}
@@ -923,7 +947,10 @@ def progress_line(current: dict[str, Any]) -> dict[str, Any]:
 
 
 class _StallWatch:
-    """No validation progress over STALL_POLLS polls and STALL_SECONDS in a row (#1995)."""
+    """No first validation progressing over STALL_POLLS polls and STALL_SECONDS in a row
+    (#1995): no table newly validated, the same number still on their first validation and
+    their records not falling. Only those tables count: records DMS validates as changes
+    arrive, on a table already validated, rise and fall with the write rate (#2062)."""
 
     def __init__(self) -> None:
         self.last: tuple[Any, int] | None = None
@@ -935,7 +962,7 @@ class _StallWatch:
             self.last = None
             return current
         v = current["validation"]
-        seen = (v["states"], v["pending_records"])
+        seen = ((v["validated"], v["pending_tables"]), v["first_pass_records"])
         moved = self.last is None or seen[0] != self.last[0] or seen[1] < self.last[1]
         self.last = seen
         if moved:
@@ -951,8 +978,8 @@ class _StallWatch:
         ):
             return current
         return {**current, "phase": "validation_stalled", "validation_running": False,
-                "validation_check": f"{v['pending_tables']} tables pending with no validation "
-                                    f"progress for {quiet} s: {VALIDATION_FIX}"}  # fmt: skip
+                "validation_check": f"{v['pending_tables']} tables not validated yet, with no "
+                                    f"validation progress for {quiet} s: {VALIDATION_FIX}"}  # fmt: skip
 
 
 def _count(values: Any) -> dict[str, int]:
@@ -969,9 +996,15 @@ UNTIL: dict[str, Callable[[dict[str, Any]], bool]] = {
     "connections": lambda s: s["phase"] not in ("stack_in_progress", "connections_testing"),
     "running": lambda s: s.get("task_status") == "running"
     or s["phase"] in ("task_stopped", *NO_TASK),
-    "caught_up": lambda s: s["phase"]
-    in ("caught_up", "validation_stalled", "table_errors", "task_stopped", *NO_TASK),
+    REPLICATING: lambda s: s["phase"]
+    in (REPLICATING, "validation_stalled", "table_errors", "task_stopped", *NO_TASK),
 }
+
+
+def current_phase(value: str | None) -> str | None:
+    """A phase or ``--until`` value in today's name: an earlier status line, or the earlier
+    ``--until`` value, says ``caught_up`` for ``replicating`` (#2062)."""
+    return LEGACY_PHASES.get(value or "", value)
 
 
 def wait_status(
@@ -988,14 +1021,20 @@ def wait_status(
     retention: RetentionReader | None = None,
     steps: StepsContext | None = None,
     change_set: str | None = None,
+    seen: ValidatedTables | None = None,
 ) -> dict[str, Any]:
-    """Poll until ``until`` holds or the time is up. Under ``caught_up``, ``on_poll`` gets each
-    poll's progress line but the last one (the result line carries it), a validation with
-    no progress over the window ends the wait as ``validation_stalled``, and a ``critical``
-    source retention ends it with ``stopped_for`` ``source_retention`` (#2060)."""
+    """Poll until ``until`` holds or the time is up. Under ``replicating``, ``on_poll`` gets
+    each poll's progress line but the last one (the result line carries it), a first
+    validation with no progress over the window ends the wait as ``validation_stalled``, and
+    a ``critical`` source retention ends it with ``stopped_for`` ``source_retention`` (#2060).
+    ``seen`` keeps the tables validated since their full load across polls (#2062)."""
+    from src.tools.data_movement.dms_gate import ValidatedTables
+
+    until = current_phase(until)
     read: Callable[[MoveClients, str], dict[str, Any]] = functools.partial(
-        status, lag=lag, retention=retention, steps=steps, change_set=change_set
-    )
+        status, lag=lag, retention=retention, steps=steps, change_set=change_set,
+        seen=ValidatedTables() if seen is None else seen,
+    )  # fmt: skip
     done = UNTIL.get(until or "")
     if until == "task_stopped":
         read, done = task_state, lambda s: s["task_stopped"]
@@ -1008,18 +1047,18 @@ def wait_status(
         return current
     now = clock()
     deadline = now + wait_seconds
-    if until == "caught_up":
+    if until == REPLICATING:
         current = cancels.judge(watch.judge(current, now))
     while (
         not done(current)
         and not _source_critical(current, until)
         and (now := clock()) + interval <= deadline
     ):
-        if on_poll is not None and until == "caught_up":
+        if on_poll is not None and until == REPLICATING:
             on_poll(progress_line(current))
         sleep(interval)
         current = read(clients, name)
-        if until == "caught_up":
+        if until == REPLICATING:
             current = cancels.judge(watch.judge(current, now + interval))  # one interval on
     out = {**current, "until": until, "reached": done(current)}
     if _source_critical(current, until):  # also when reached: a critical reading is never lost
@@ -1028,9 +1067,9 @@ def wait_status(
 
 
 def _source_critical(current: dict[str, Any], until: str | None) -> bool:
-    """Under ``caught_up``, a source retention that reads critical ends the wait (#2060)."""
+    """Under ``replicating``, a source retention that reads critical ends the wait (#2060)."""
     level = (current.get("source_retention") or {}).get("level")
-    return until == "caught_up" and level == "critical"
+    return until == REPLICATING and level == "critical"
 
 
 def task_state(clients: MoveClients, name: str) -> dict[str, Any]:
@@ -1109,7 +1148,9 @@ def deploy(
             break
         sleep(5)
     else:
-        raise MoveError(f"change set {change_set} was not ready after 5 minutes: run deploy again")
+        raise MoveError(
+            f"change set {change_set} was still not available after 5 minutes: run deploy again"
+        )
     if described["Status"] == "FAILED":
         reason = described.get("StatusReason") or ""
         if "didn't contain changes" in reason or "No updates" in reason:
@@ -1788,7 +1829,7 @@ def _resources_are_this_jobs(
     carries this job's tag; refuses one that carries another job's tag or none."""
     from botocore.exceptions import ClientError
 
-    proven = False
+    owned = False
     for logical in ("ReplicationInstance", "SourceEndpoint", "TargetEndpoint"):
         resource = resources.get(logical) or {}
         arn = resource.get("PhysicalResourceId")
@@ -1805,8 +1846,8 @@ def _resources_are_this_jobs(
             raise _not_the_step(
                 name, f"its {logical}'s {JOB_TAG} tag is {values or 'missing'}, not [{job_id!r}]"
             )
-        proven = True
-    return proven
+        owned = True
+    return owned
 
 
 def teardown(
@@ -1838,7 +1879,7 @@ def _delete_step_stack(
 ) -> dict[str, Any]:
     """Delete the step's stack once its task is not running, and wait until it is gone.
 
-    At most one ``DeleteStack`` per run, on the step's own stack only, proven from AWS state and
+    At most one ``DeleteStack`` per run, on the step's own stack only, established from AWS state and
     never from a local file: exactly the six resources of ``dms-step-1.yaml``, no other job's tag
     on the stack, and a task whose identifier and tag name this job or, once the task is gone, a
     replication instance or endpoint carrying this job's tag (or this job's stack tag). A stack
@@ -2026,8 +2067,8 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
 
 def cutover_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
                     *, target_user: str | None = None, resume: bool = False) -> dict[str, Any]:  # fmt: skip
-    """Write the cutover routine scripts (``cutover_scripts``) for the customer to run at
-    their own cutover; with ``resume``, only ``cutover-resume.sql``, without what the
+    """Write the cutover routine scripts (``cutover_scripts``) for the customer to run;
+    with ``resume``, only ``cutover-resume.sql``, without what the
     customer's ``cutover-check.tsv`` (read strictly) shows on the target. No AWS call; it
     never connects to a database and never runs them."""
     from src.storage.local_store import LocalArtifactStore
@@ -2061,7 +2102,7 @@ def cutover_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
     excluded = [{"routine_id": i, "kind": k, "reason": c} for k, i, c in scripts.excluded]
     out: dict[str, Any] = {"status": scripts.status, "expected": scripts.expected,
                            "excluded": len(excluded), "excluded_routines": excluded[:ROUTINES_SHOWN],
-                           "runs_it": "the customer, at their cutover; /move never runs it"}  # fmt: skip
+                           "runs_it": "the customer; /move never runs it"}  # fmt: skip
     if scripts.status == "ready":
         out.update({"in_script": scripts.in_script, "stays_disabled": scripts.stays_disabled,
                     "events_enabled": scripts.events_enabled,
@@ -2138,6 +2179,22 @@ def _track_writes(clients: MoveClients) -> tuple[list[str], Callable[[], None]]:
             client.meta.events.unregister("after-call", record)
 
     return made, stop
+
+
+@contextlib.contextmanager
+def _validated_tables(root: str, db: str, job_id: str) -> Iterator[ValidatedTables]:
+    """The step's recorded validated tables (#2062), saved back when the block ends."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_gate import load_validated, save_validated
+
+    store = LocalArtifactStore(base_dir=root)
+    seen = load_validated(store, db, job_id)
+    before = dict(seen.marks)
+    try:
+        yield seen
+    finally:
+        if seen.marks != before:
+            save_validated(store, db, job_id, seen)
 
 
 def _credential_error(exc: Exception) -> bool:
@@ -2279,12 +2336,14 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             retention = None if cloudwatch is None else RetentionReader(
                 cloudwatch, inputs.source_kind, inputs.source_id,
                 source_family(args.artifact_root, db, job_id))  # fmt: skip
-            return emit(wait_status(clients, name, args.until, args.wait_seconds,
-                                    args.interval_seconds, sleep=sleep, on_poll=_print_progress,
-                                    lag=None if cloudwatch is None else LagReader(cloudwatch),
-                                    retention=retention, change_set=args.change_set,
-                                    steps=_status_context(args.artifact_root, db, job_id,
-                                                          inputs.region)))  # fmt: skip
+            with _validated_tables(args.artifact_root, db, job_id) as seen:
+                return emit(wait_status(clients, name, args.until, args.wait_seconds,
+                                        args.interval_seconds, sleep=sleep,
+                                        on_poll=_print_progress,
+                                        lag=None if cloudwatch is None else LagReader(cloudwatch),
+                                        retention=retention, change_set=args.change_set,
+                                        steps=_status_context(args.artifact_root, db, job_id,
+                                                              inputs.region), seen=seen))  # fmt: skip
         if args.command == ROUTINES:
             return emit(routines(clients, args.artifact_root, db, job_id, inputs, name,
                                  target_user=args.target_user))  # fmt: skip
@@ -2300,6 +2359,9 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
         if args.command == RESTART:
             return emit(restart_validation(clients, name, job_id, args.wait_seconds,
                                            args.interval_seconds, sleep=sleep))  # fmt: skip
+        if args.command == RETRY:  # reloads every table: nothing validated before counts
+            with _validated_tables(args.artifact_root, db, job_id) as seen:
+                seen.clear()
         if args.command in RECOVER:
             command = resume if args.command == RESUME else retry
             context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
@@ -2307,9 +2369,15 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                 steps=context, sleep=sleep))  # fmt: skip
         if args.command == RELOAD_TABLES:
             context = StepsContext(inputs.region, source_family(args.artifact_root, db, job_id))
-            return emit(reload_tables(clients, name, job_id, steps=context))
+            result = reload_tables(clients, name, job_id, steps=context)
+            with _validated_tables(args.artifact_root, db, job_id) as seen:
+                seen.forget(result.get("tables_reloaded") or [])  # loaded and validated again
+            return emit(result)
         if args.command == REVALIDATE:
-            return emit(revalidate(clients, name, job_id))
+            result = revalidate(clients, name, job_id)
+            with _validated_tables(args.artifact_root, db, job_id) as seen:
+                seen.forget(result.get("tables_revalidated") or [])  # validated again from now
+            return emit(result)
         if args.command == "teardown":
             return emit(
                 teardown(clients, name, job_id, args.wait_seconds, args.interval_seconds,

@@ -20,7 +20,9 @@ from src.tools.transformation_contract.validate import validate_step1
 
 from .conftest import col, step1_inputs, table
 
-WHY = "DMS does not migrate tsvector; rebuild it after cutover (e.g. the application's search reindex)"
+WHY = (
+    "DMS does not migrate tsvector; rebuilding it is yours (e.g. the application's search reindex)"
+)
 
 
 def _pg_tables(search_type: str = "tsvector"):

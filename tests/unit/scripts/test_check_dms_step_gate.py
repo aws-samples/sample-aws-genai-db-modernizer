@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 
@@ -89,6 +90,28 @@ def test_stale_seconds_is_passed_to_the_lag_check_and_bounded(tmp_path, capsys):
         == 1
     )
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_a_pass_says_only_that_the_full_load_is_complete_and_replication_is_in_progress(
+    tmp_path, capsys, monkeypatch
+):
+    b = _job(tmp_path)
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256)
+    monkeypatch.setattr(script, "write_gate", functools.partial(script.write_gate, now=g.NOW))
+    assert script.main(_argv(tmp_path), clients=g.clients(cred)) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "pass"
+    assert out["result"] == "Full load complete. Replication is in progress."
+    assert out["cutover_message"] == "The cutover is your responsibility."
+
+
+def test_a_gate_that_does_not_pass_has_no_result_line(tmp_path, capsys):
+    b = _job(tmp_path)
+    cred = StubbedCredMgr()
+    g.queue(cred, b.plan.contract.sha256, progress=70)
+    script.main(_argv(tmp_path), clients=g.clients(cred))
+    assert json.loads(capsys.readouterr().out)["result"] is None
 
 
 def test_the_readme_quotes_the_cutover_message_exactly():

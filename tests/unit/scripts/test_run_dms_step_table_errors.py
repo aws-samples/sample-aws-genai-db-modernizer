@@ -9,6 +9,7 @@ when it is provably safe."""
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 from botocore.stub import ANY
@@ -88,7 +89,7 @@ def test_an_errored_table_ends_the_wait_at_once_and_is_named_on_the_progress_lin
     cred = StubbedCredMgr()
     _running(cred, [_row("shop.orders"), _row("shop.customers")], percent=40)
     _running(cred, [DUPLICATE, _row("shop.customers")], percent=87, errored=1)
-    code, progress, out = _status(tmp_path, capsys, cred, "--until", "caught_up",
+    code, progress, out = _status(tmp_path, capsys, cred, "--until", "replicating",
                                   "--wait-seconds", "540", "--interval-seconds", "60")  # fmt: skip
     _no_pending(cred)  # two reads, not nine: the wait stopped on the errored table
     assert code == 0 and out["phase"] == "table_errors" and out["reached"] is True
@@ -147,10 +148,13 @@ def test_a_table_cancelled_once_does_not_end_the_wait(tmp_path, capsys):
     _running(cred, [_row("shop.orders", state="Table cancelled")], percent=50)
     _running(cred, [_row("shop.orders")], percent=80)
     _running(cred, [done], percent=100)
-    _, progress, out = _status(tmp_path, capsys, cred, "--until", "caught_up",
+    _, progress, out = _status(tmp_path, capsys, cred, "--until", "replicating",
                                "--wait-seconds", "540", "--interval-seconds", "60")  # fmt: skip
     _no_pending(cred)
-    assert out["phase"] == "caught_up" and [p["phase"] for p in progress] == ["loading", "loading"]
+    assert out["phase"] == "replicating" and [p["phase"] for p in progress] == [
+        "loading",
+        "loading",
+    ]
     assert progress[0]["errored_tables"] == ["shop.orders"] and progress[0]["tables_errored"] == 0
 
 
@@ -159,7 +163,7 @@ def test_a_table_cancelled_on_two_polls_in_a_row_ends_the_wait(tmp_path, capsys)
     cred = StubbedCredMgr()
     for _ in range(2):
         _running(cred, [_row("shop.orders", state="Table cancelled")], percent=50)
-    _, _, out = _status(tmp_path, capsys, cred, "--until", "caught_up", "--wait-seconds", "540",
+    _, _, out = _status(tmp_path, capsys, cred, "--until", "replicating", "--wait-seconds", "540",
                         "--interval-seconds", "60")  # fmt: skip
     _no_pending(cred)
     assert out["phase"] == "table_errors" and out["reached"] is True
@@ -325,6 +329,43 @@ def test_reload_tables_reloads_only_errored_tables_dms_never_wrote_to(tmp_path, 
     _no_pending(cred)
     assert code == 0 and out["status"] == "reloading"
     assert out["tables_reloaded"] == ["shop.orders"]
+
+
+def test_a_poll_after_reload_tables_never_reaches_replicating_mid_reload(tmp_path, capsys):
+    """#2062: reload-tables forgets the tables it reloads as it sends the write, so the Poll
+    waits for them to load and validate again, even before DMS gives a new full load end."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_gate import ValidatedTables, load_validated, save_validated
+
+    _job(tmp_path)
+    store = LocalArtifactStore(str(tmp_path))
+    end = "2026-11-09T01:00:00+00:00"
+    save_validated(
+        store, "shop", "job1", ValidatedTables({"shop.orders": end, "shop.customers": end})
+    )
+    cred = StubbedCredMgr()
+    _owned(cred, rows=[_row("shop.orders", state="Table does not exist", FullLoadRows=0),
+                       _row("shop.customers", validation="Validated")])  # fmt: skip
+    cred.stub("dms").add_response("reload_tables", {"ReplicationTaskArn": TASK}, None)
+    code, out = _run(tmp_path, "reload-tables", "--approve", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and out["tables_reloaded"] == ["shop.orders"]
+    assert load_validated(store, "shop", "job1").marks == {"shop.customers": end}
+    # Mid-reload: the old end time, the load done again, a pending validation state.
+    cred = StubbedCredMgr()
+    rows = [_row("shop.orders", FullLoadEndTime=datetime.fromisoformat(end)),
+            _row("shop.customers", FullLoadEndTime=datetime.fromisoformat(end))]  # fmt: skip
+    _running(cred, rows, percent=100)
+    _, _, poll = _status(tmp_path, capsys, cred)
+    assert poll["phase"] == "validating" and poll["validation"]["pending_tables"] == 1
+
+
+def test_a_table_still_reloading_keeps_the_poll_from_replicating(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _running(cred, [_row("shop.orders", state="Full load", validation="Validated"),
+                    _row("shop.customers", validation="Validated")], percent=100)  # fmt: skip
+    _, _, poll = _status(tmp_path, capsys, cred)
+    assert poll["phase"] == "validating"
 
 
 def test_reload_tables_refuses_a_table_that_may_hold_rows_and_writes_nothing(tmp_path, capsys):

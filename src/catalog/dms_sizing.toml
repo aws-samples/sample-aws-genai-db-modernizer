@@ -61,7 +61,7 @@ why = "On the default engine (3.5.4) the data validator can fail to read an endp
 # The step 1 plan's gates.max_lag_seconds: the DMS gate (src/tools/data_movement/dms_gate.py)
 # fails when a CDCLatencySource or CDCLatencyTarget datapoint in its window reaches it.
 max_lag_seconds = 30
-why = "AWS DMS's MySQL source polls the binary log every EventsPollInterval seconds when idle (5 s by default), so an idle, caught-up task reports about 5 s; 30 s leaves room for apply time while still catching a backlog."
+why = "AWS DMS's MySQL source polls the binary log every EventsPollInterval seconds when idle (5 s by default), so an idle task with nothing left to apply reports about 5 s; 30 s leaves room for apply time while still catching a backlog."
 
 [lob]
 # Limited LOB mode needs the largest LOB value; the collector records each column's declared
@@ -195,7 +195,7 @@ postgresql = [
 # Source types DMS does not migrate (AWS DMS User Guide, "Source data types for PostgreSQL":
 # TSVECTOR is not supported; in a live run the source read truncated long tsvector values and
 # the load failed with a tsvector syntax error). Step 1's contract flags a table with such a
-# column as not moved (#1918): its DDL still creates the table, so the application works after
-# cutover, but the DMS task leaves it out and the customer rebuilds its rows.
+# column as not moved (#1918): its DDL still creates the table, but the DMS task leaves it out
+# and the customer rebuilds its rows.
 postgresql = ["tsvector"]
-why = "DMS does not migrate tsvector; rebuild it after cutover (e.g. the application's search reindex)"
+why = "DMS does not migrate tsvector; rebuilding it is yours (e.g. the application's search reindex)"

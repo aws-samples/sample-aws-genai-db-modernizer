@@ -1,3 +1,5 @@
+-- The cutover is your responsibility. The modernizer does not run, schedule or advise on it.
+--
 -- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 -- SPDX-License-Identifier: MIT-0
 --
@@ -17,9 +19,8 @@
 -- so after the load every sequence still starts at 1 and the first insert without an explicit
 -- id collides with a loaded row. The gate compares rows only and cannot see this.
 --
--- When to run it: at cutover, after your applications stopped writing to the source and DMS
--- applied the last change, and before anything writes to Aurora. Each statement sets the
--- sequence so the next value is the column's maximum plus one; running it again is safe.
+-- Each statement sets the sequence so the next value is the column's maximum plus one; running
+-- it again is safe.
 -- How: psql "host=<writer endpoint> dbname=shop user=<admin user> sslmode=verify-full
 -- sslrootcert=<RDS CA bundle>" -f step-1.sequences.sql
 --

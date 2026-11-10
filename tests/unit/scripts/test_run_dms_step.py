@@ -264,7 +264,7 @@ def test_summary_lists_the_sequences_file_and_the_not_moved_counts_on_postgresql
         {"kind": "functions", "count": 1, "note": "recreate them on Aurora yourself"},
         {"kind": "triggers", "count": 0, "note": "none in the collection"},
         {"kind": "views", "count": 1, "note": "recreate them on Aurora yourself"},
-        {"kind": "sequence values", "count": 2, "note": "run step-1.sequences.sql at cutover"},
+        {"kind": "sequence values", "count": 2, "note": "step-1.sequences.sql sets them"},
     ]
 
 
@@ -568,7 +568,7 @@ def test_status_without_a_stack_says_so(tmp_path, capsys):
     assert code == 0 and out["phase"] == "no_stack"
 
 
-def test_status_polls_until_the_full_load_is_done_and_validation_caught_up(tmp_path, capsys):
+def test_status_polls_until_the_full_load_is_done_and_every_table_validated(tmp_path, capsys):
     _job(tmp_path)
     cred = StubbedCredMgr()
     _stack(cred)
@@ -582,9 +582,9 @@ def test_status_polls_until_the_full_load_is_done_and_validation_caught_up(tmp_p
     cred.stub("dms").add_response("describe_table_statistics", {"TableStatistics": [
         {"SchemaName": "shop", "TableName": "customers", "ValidationState": "Validated"}]},
         {"ReplicationTaskArn": TASK, "Marker": "page-2"})  # fmt: skip
-    code, out = _run(tmp_path, "status", "--until", "caught_up", "--wait-seconds", "60",
+    code, out = _run(tmp_path, "status", "--until", "replicating", "--wait-seconds", "60",
                      "--interval-seconds", "30", clients=_clients(cred), capsys=capsys)  # fmt: skip
-    assert code == 0 and out["reached"] is True and out["phase"] == "caught_up"
+    assert code == 0 and out["reached"] is True and out["phase"] == "replicating"
     assert out["validation"]["tables"] == 3 and out["validation"]["validated"] == 2
     assert out["full_load_percent"] == 100
     for stubber in cred.stubbers.values():
@@ -1743,7 +1743,7 @@ def _prove_poll(cred, rows, **task):
 SNAPSHOT = {"not_enabled": 139, "validated": 98, "pending": 64, "no_key": 4}
 
 
-def _wait(cred, until="caught_up", seconds=540, interval=60, polls=10, on_poll=None, lag=None):
+def _wait(cred, until="replicating", seconds=540, interval=60, polls=10, on_poll=None, lag=None):
     clock = iter([0, *(i * interval for i in range(polls + 2))])
     return script.wait_status(_clients(cred), STACK, until, seconds, interval, sleep=lambda _s: None,
                               clock=lambda: next(clock), on_poll=on_poll, lag=lag)  # fmt: skip
@@ -1761,7 +1761,7 @@ def test_tables_not_enabled_long_after_the_full_load_with_validation_on_are_a_st
     assert out["validation"]["not_enabled_tables"] == 139
     assert out["validation"]["pending_tables"] == 64 and out["validation"]["validated"] == 98
     check = out["validation_check"]
-    assert "139 tables Not enabled and 64 pending" in check and "secrets" in check
+    assert "139 tables Not enabled and 64 not validated yet" in check and "secrets" in check
     _no_pending(cred)
 
 
@@ -1834,7 +1834,7 @@ def test_validation_turned_off_in_the_task_settings_is_never_reported_as_stalled
     cred = StubbedCredMgr()
     _prove_poll(cred, _rows(not_enabled=305), validation=False)
     code, out = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
-    assert out["phase"] == "caught_up" and out["validation_enabled"] is False
+    assert out["phase"] == "replicating" and out["validation_enabled"] is False
     assert out["validation_running"] is None and "validation_check" not in out
 
 
@@ -1857,7 +1857,10 @@ def test_pending_validation_with_no_progress_over_the_window_is_a_stalled_valida
     out = _wait(cred)
     assert out["reached"] is True and out["phase"] == "validation_stalled"
     assert out["validation_running"] is False
-    assert "64 tables pending with no validation progress for 300 s" in out["validation_check"]
+    assert (
+        "64 tables not validated yet, with no validation progress for 300 s"
+        in out["validation_check"]
+    )
     _no_pending(cred)  # it stopped polling once it judged the stall
 
 
@@ -1868,6 +1871,148 @@ def test_pending_validation_that_moves_is_not_stalled():
     out = _wait(cred)
     assert out["reached"] is False and out["phase"] == "validating"
     assert out["validation_running"] is True
+
+
+# --- replicating: the full load is complete and replication is in progress (#2062) ----------
+
+
+def _table(name, state, pending=0, failed=0):
+    return {"SchemaName": "public", "TableName": name, "TableState": "Table completed",
+            "FullLoadRows": 10, "FullLoadEndTime": HOUR_AGO, "ValidationState": state,
+            "ValidationPendingRecords": pending, "ValidationFailedRecords": failed,
+            "ValidationSuspendedRecords": 0}  # fmt: skip
+
+
+def test_tables_validated_once_then_back_to_pending_records_under_writes_are_replicating():
+    """A table DMS validated, now holding records it validates as changes arrive, is never
+    waited for: the wait ends at once, with a non-zero backlog."""
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated"), _table("b", "Validated"),
+                       _table("c", "Pending records", pending=936_599)])  # fmt: skip
+    _prove_poll(cred, [_table("a", "Pending records", pending=15), _table("b", "Pending records", pending=2),
+                       _table("c", "Validated")])  # fmt: skip
+    _prove_poll(cred, [_table("a", "Pending records", pending=3944),
+                       _table("b", "Pending records", pending=7), _table("c", "Validated")])  # fmt: skip
+    out = _wait(cred, polls=3)
+    assert out["reached"] is True and out["phase"] == "replicating"
+    assert out["validation"]["validated"] == 3 and out["validation"]["pending_tables"] == 0
+    assert "pending_records" not in out["validation"]
+
+
+def test_a_first_validation_still_running_is_waited_for():
+    cred = StubbedCredMgr()
+    for _ in range(3):
+        _prove_poll(cred, [_table("a", "Validated"), _table("b", "Pending records", pending=50)])
+    out = _wait(cred, seconds=120, polls=3)
+    assert out["reached"] is False and out["phase"] == "validating"
+    assert (
+        out["validation"]["pending_tables"] == 1 and out["validation"]["first_pass_records"] == 50
+    )
+
+
+def test_a_validated_table_whose_backlog_rises_and_never_drains_is_never_a_stall():
+    """Only a first validation that does not progress is a stall, never the records DMS
+    validates as changes arrive on a table it already validated (#2062)."""
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated"), _table("b", "Pending records", pending=50)])
+    for i in range(9):  # a's backlog grows faster than b's first validation shrinks
+        _prove_poll(cred, [_table("a", "Pending records", pending=100 + 50 * i),
+                           _table("b", "Pending records", pending=49 - i)])  # fmt: skip
+    out = _wait(cred)
+    assert out["reached"] is False and out["phase"] == "validating"
+    assert out["validation_running"] is True and "validation_check" not in out
+    _no_pending(cred)
+
+
+def test_a_task_that_is_not_running_is_never_replicating():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated")], status="stopping")
+    out = script.wait_status(_clients(cred), STACK, None, 0, 60)
+    assert out["phase"] == "validating"
+
+
+def test_the_tables_validated_in_one_run_still_count_in_the_next(tmp_path, capsys):
+    """Prove records the tables DMS reported Validated; the next run, under writes, finds
+    them pending records again and still ends replicating."""
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated"), _table("b", "Pending records", pending=9)])
+    code, first = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and first["phase"] == "validating"
+    saved = json.loads(
+        (tmp_path / "shop/job1/data-movement/step-1/validation-seen.json").read_text()
+    )
+    assert list(saved["tables"]) == ["public.a"]
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Pending records", pending=12), _table("b", "Validated")])
+    code, second = _run(tmp_path, "status", clients=_clients(cred), capsys=capsys)
+    assert code == 0 and second["phase"] == "replicating"
+
+
+def test_revalidate_forgets_the_tables_it_asks_dms_to_validate_again(tmp_path, capsys):
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_gate import ValidatedTables, load_validated, save_validated
+
+    _job(tmp_path)
+    store = LocalArtifactStore(str(tmp_path))
+    save_validated(store, "shop", "job1", ValidatedTables({"shop.orders": "x", "shop.ok": "y"}))
+    cred = StubbedCredMgr()
+    script_revalidate = script.revalidate
+    try:
+        script.revalidate = lambda *_a, **_k: {"status": "revalidating",
+                                               "tables_revalidated": ["shop.orders"]}  # fmt: skip
+        code, out = _run(tmp_path, "revalidate", "--approve", clients=_clients(cred), capsys=capsys)
+    finally:
+        script.revalidate = script_revalidate
+    assert code == 0 and out["status"] == "revalidating"
+    assert load_validated(store, "shop", "job1").marks == {"shop.ok": "y"}
+
+
+def test_retry_forgets_every_validated_table_before_it_reloads(tmp_path, capsys, monkeypatch):
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_gate import ValidatedTables, load_validated, save_validated
+
+    _job(tmp_path)
+    store = LocalArtifactStore(str(tmp_path))
+    save_validated(store, "shop", "job1", ValidatedTables({"shop.orders": "x"}))
+    seen_at_call = []
+
+    def fake_retry(*_a, **_k):
+        seen_at_call.append(load_validated(store, "shop", "job1").marks)
+        return {"status": "retried"}
+
+    monkeypatch.setattr(script, "retry", fake_retry)
+    code, _ = _run(
+        tmp_path, "retry", "--approve", clients=_clients(StubbedCredMgr()), capsys=capsys
+    )
+    assert code == 0 and seen_at_call == [{}]  # cleared before the reload is sent
+
+
+def test_the_earlier_until_value_still_works_and_reads_as_replicating():
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated")])
+    out = _wait(cred, until="caught_up", polls=1)
+    assert out["until"] == "replicating" and out["reached"] is True
+    assert out["phase"] == "replicating"
+
+
+def test_a_status_line_saved_before_the_rename_reads_as_replicating():
+    saved = json.loads(
+        '{"status": "complete", "phase": "caught_up", "until": "caught_up", "reached": true}'
+    )
+    assert script.current_phase(saved["phase"]) == "replicating"
+    assert script.current_phase(saved["until"]) == "replicating"
+    assert script.UNTIL[script.current_phase(saved["until"])]({"phase": "replicating"})
+    assert script.current_phase("validating") == "validating" and script.current_phase(None) is None
+
+
+def test_the_cli_accepts_the_earlier_until_value(tmp_path, capsys):
+    _job(tmp_path)
+    cred = StubbedCredMgr()
+    _prove_poll(cred, [_table("a", "Validated")])
+    code, out = _run(tmp_path, "status", "--until", "caught_up", "--wait-seconds", "0",
+                     clients=_clients(cred), capsys=capsys)  # fmt: skip
+    assert code == 0 and out["until"] == "replicating" and out["phase"] == "replicating"
     _no_pending(cred)
 
 
@@ -1894,7 +2039,7 @@ def test_a_stalled_validation_through_the_cli_ends_the_wait_with_its_check(tmp_p
     _job(tmp_path)
     cred = StubbedCredMgr()
     _prove_poll(cred, _rows(**SNAPSHOT))
-    code, out = _run(tmp_path, "status", "--until", "caught_up", "--wait-seconds", "540",
+    code, out = _run(tmp_path, "status", "--until", "replicating", "--wait-seconds", "540",
                      "--interval-seconds", "60", clients=_clients(cred), capsys=capsys)  # fmt: skip
     assert code == 0 and out["reached"] is True and out["phase"] == "validation_stalled"
     _no_pending(cred)
@@ -1940,7 +2085,7 @@ def test_until_running_on_a_task_already_proving_is_reached_at_once(tmp_path, ca
     _prove_poll(cred, _rows(validated=3))
     code, out = _run(tmp_path, "status", "--until", "running", "--wait-seconds", "300",
                      clients=_clients(cred), capsys=capsys)  # fmt: skip
-    assert out["reached"] is True and out["phase"] == "caught_up"
+    assert out["reached"] is True and out["phase"] == "replicating"
 
 
 @pytest.mark.parametrize("command", ["preflight", "gate", "plan", "summary", "start", "stop"])
@@ -1966,7 +2111,7 @@ def _status_cli(tmp_path, cred, *extra, cloudwatch=None):
                        **({"cloudwatch": cloudwatch} if cloudwatch is not None else {}))  # fmt: skip
 
 
-def test_the_caught_up_wait_prints_one_progress_line_per_poll_then_its_result_line(
+def test_the_replicating_wait_prints_one_progress_line_per_poll_then_its_result_line(
     tmp_path, capsys
 ):
     _job(tmp_path)
@@ -1975,7 +2120,7 @@ def test_the_caught_up_wait_prints_one_progress_line_per_poll_then_its_result_li
                 TablesLoading=3)  # fmt: skip
     _prove_poll(cred, _rows(validated=1, pending=1, applied=(7, 2)), percent=90, finished=None)
     _prove_poll(cred, _rows(validated=2, applied=(9, 4)))
-    code = _status_cli(tmp_path, cred, "--until", "caught_up", "--wait-seconds", "540",
+    code = _status_cli(tmp_path, cred, "--until", "replicating", "--wait-seconds", "540",
                        "--interval-seconds", "60")  # fmt: skip
     lines = _lines(capsys)
     assert code == 0 and len(lines) == 3
@@ -2080,7 +2225,7 @@ def test_a_lag_cloudwatch_refuses_to_read_leaves_the_status_as_is():
     _prove_poll(cred, _rows(validated=2))
     cred.stub("cloudwatch").add_client_error("list_metrics", "AccessDenied", "not allowed")
     out = script.status(_clients(cred), STACK, _reader(cred))
-    assert out["phase"] == "caught_up" and out["capture_lag_seconds"] is None
+    assert out["phase"] == "replicating" and out["capture_lag_seconds"] is None
 
 
 def test_no_lag_is_read_before_the_task_runs():
@@ -2178,7 +2323,7 @@ def test_no_source_retention_is_read_before_the_task_runs():
     _no_pending(cred)
 
 
-def test_a_critical_source_retention_ends_the_caught_up_wait_before_it_is_caught_up():
+def test_a_critical_source_retention_ends_the_replicating_wait_before_it_is_reached():
     cred = StubbedCredMgr()
     _prove_poll(cred, _rows(pending=2))
     _source_metrics(cred, HEALTHY_PG)
@@ -2186,7 +2331,7 @@ def test_a_critical_source_retention_ends_the_caught_up_wait_before_it_is_caught
     _source_metrics(cred, CRITICAL_PG)
     seen: list[dict] = []
     clock = iter([0, *(i * 60 for i in range(12))])
-    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+    out = script.wait_status(_clients(cred), STACK, "replicating", 540, 60, sleep=lambda _s: None,
                              clock=lambda: next(clock), on_poll=seen.append,
                              retention=_retention(cred))  # fmt: skip
     assert out["reached"] is False and out["stopped_for"] == "source_retention"
@@ -2205,7 +2350,7 @@ def test_a_warning_source_retention_keeps_polling_and_each_progress_line_carries
     _source_metrics(cred, warning)
     seen: list[dict] = []
     clock = iter([0, *(i * 60 for i in range(12))])
-    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+    out = script.wait_status(_clients(cred), STACK, "replicating", 540, 60, sleep=lambda _s: None,
                              clock=lambda: next(clock), on_poll=seen.append,
                              retention=_retention(cred))  # fmt: skip
     assert out["reached"] is True and "stopped_for" not in out
@@ -2214,21 +2359,22 @@ def test_a_warning_source_retention_keeps_polling_and_each_progress_line_carries
     )
 
 
-def test_a_critical_reading_on_a_caught_up_poll_is_never_lost():
-    """Caught up and critical in the same poll: reached, and stopped_for still says why."""
+def test_a_critical_reading_on_a_replicating_poll_is_never_lost():
+    """Replicating and critical in the same poll: reached, and stopped_for still says why."""
     cred = StubbedCredMgr()
     _prove_poll(cred, _rows(validated=2))
     _source_metrics(cred, CRITICAL_PG)
     clock = iter([0, *(i * 60 for i in range(12))])
-    out = script.wait_status(_clients(cred), STACK, "caught_up", 540, 60, sleep=lambda _s: None,
+    out = script.wait_status(_clients(cred), STACK, "replicating", 540, 60, sleep=lambda _s: None,
                              clock=lambda: next(clock), retention=_retention(cred))  # fmt: skip
-    assert out["phase"] == "caught_up" and out["reached"] is True
+    assert out["phase"] == "replicating" and out["reached"] is True
     assert out["stopped_for"] == "source_retention"
     assert out["source_retention"]["level"] == "critical"
 
 
+@pytest.mark.passes_on_main  # renamed only (#2062): guards existing behaviour
 @pytest.mark.parametrize("until", ["stack", "running"])
-def test_a_critical_source_retention_ends_only_the_caught_up_wait(until):
+def test_a_critical_source_retention_ends_only_the_replicating_wait(until):
     cred = StubbedCredMgr()
     _prove_poll(cred, [], status="starting", percent=0)
     _source_metrics(cred, CRITICAL_PG)
@@ -2728,7 +2874,7 @@ def test_the_prove_task_stopped_line_carries_the_failures_hint(tmp_path, capsys)
     cred = StubbedCredMgr()
     _failed_status(cred, LastFailureMessage="Failed to run load command. Cannot allocate memory",
                    StopReason="Stop Reason FATAL_ERROR", tables=[])  # fmt: skip
-    code = _status_cli(tmp_path, cred, "--until", "caught_up", "--wait-seconds", "0")
+    code = _status_cli(tmp_path, cred, "--until", "replicating", "--wait-seconds", "0")
     out = _lines(capsys)[-1]
     assert code == 0 and out["phase"] == "task_stopped" and "instance_class" in out["hint"]
     # 40% loaded: neither command may reload, so the line carries the customer's steps.
@@ -3104,7 +3250,7 @@ def test_an_update_that_rolled_back_still_judges_the_task_so_prove_stays_reachab
     cred.stub("dms").add_response("describe_table_statistics",
                                   {"TableStatistics": _rows(validated=2, pending_records=0)})  # fmt: skip
     out = script.status(_clients(cred), STACK)
-    assert out["phase"] == "caught_up" and out["task_status"] == "running"
+    assert out["phase"] == "replicating" and out["task_status"] == "running"
     assert out["stack_failure"]["status"] == "UPDATE_FAILED"
     assert "earlier settings" in out["stack_action"]
     _no_pending(cred)
@@ -3137,7 +3283,7 @@ def test_test_and_start_accept_a_stack_whose_update_rolled_back(tmp_path, capsys
 
 @pytest.mark.parametrize("status", FAILED_CREATE)
 def test_the_until_waits_end_on_a_failed_create(status):
-    for until in ("running", "caught_up"):
+    for until in ("running", "replicating"):
         cred = StubbedCredMgr()
         _failed_stack(cred, status)
         _events(cred)

@@ -79,6 +79,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.contracts.routine_migration import REASON_CODES, RoutineMigrationContract
+from src.shared.cutover_message import CUTOVER_MESSAGE
 
 #: What every routine verdict rests on until the load-and-run proof (#1945); the step 1
 #: gate's routines check uses the same label.
@@ -202,7 +203,8 @@ def _line(c: Mapping[str, int], total: int, behaves: int) -> str:
 
 
 #: The one sentence about cutover the texts may say (maintainer rule): no other timing.
-CUTOVER_SENTENCE = "the cutover is your responsibility"
+#: Mid-sentence form of ``src.shared.cutover_message.CUTOVER_MESSAGE``, its one source (#2062).
+CUTOVER_SENTENCE = CUTOVER_MESSAGE[:1].lower() + CUTOVER_MESSAGE[1:].rstrip(".")
 
 
 def migrate_yourself_lines(count: int, wave: int | None) -> tuple[str | None, str | None]:

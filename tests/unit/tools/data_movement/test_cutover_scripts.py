@@ -87,15 +87,24 @@ def test_the_postgresql_cutover_enables_each_carried_trigger_in_one_transaction(
     assert "('public', 'orders', 'trg_a')" in check and "pg_proc" not in check
 
 
-def test_the_instructions_warn_when_to_run_it_and_that_there_is_no_rollback(tmp_path):
+def test_the_instructions_say_what_the_triggers_do_and_that_there_is_no_rollback(tmp_path):
+    """What the files do and how to run them; never when (#2062)."""
     store, contract = _pg_case(tmp_path)
     _cut(tmp_path, store, contract)
     md = _read(tmp_path, CUTOVER_INSTRUCTIONS)
-    assert "stopped writing to the source and DMS has applied the last change" in md
-    assert "session_replication_role = replica" in md and "must not overlap" in md
-    assert "No rollback" in md and "Recreate on Aurora what step 1 does not move" in md
-    assert "never runs these scripts, never signals your cutover" in md
+    assert md.count("The cutover is your responsibility.") == 1
+    assert "session_replication_role = replica" in md and "ALWAYS (A) or REPLICA (R)" in md
+    assert "No rollback" in md and "recreating them on Aurora is yours" in md
+    assert md.startswith(
+        "The cutover is your responsibility. The modernizer does not run, schedule or advise on it.\n"
+    )
+    assert "The modernizer never connects to your databases" in md
     assert "cutover-check.tsv" in md and "run_dms_step.py cutover-check" in md
+    for advice in ("stopped writing", "applied the last change", "the gate passes again",
+                   "point your applications at Aurora", "must not overlap"):  # fmt: skip
+        assert advice not in md, advice
+    sql = _read(tmp_path, CUTOVER_FILE)
+    assert "The cutover is your responsibility." in sql and "applied the last change" not in sql
 
 
 def test_no_trigger_means_nothing_to_do_and_removes_an_earlier_runs_files(tmp_path):

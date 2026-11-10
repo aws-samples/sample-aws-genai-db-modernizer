@@ -17,7 +17,7 @@ import shlex
 from pathlib import Path
 
 from scripts import run_dms_step, validate_skills
-from src.shared.cutover_message import CUTOVER_BODY, CUTOVER_HEADLINE
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.tools.data_movement.dms_step import CUSTOMER_RESPONSIBILITY
 from tests.unit.scripts.test_modernize_command import (
     COMMANDS_WITH_TOOL_USE_RULE,
@@ -129,7 +129,7 @@ def test_ending_the_step_follows_prove_asks_before_each_write_and_never_runs_und
 
 def test_a_run_prints_one_result_line_whether_it_proves_or_ends_the_step() -> None:
     prove = _flat(_section("Stage 4: Prove"))
-    hint = prove.index("when you have cut over, or to abandon the move")
+    hint = prove.index("how the step ends: to end the step, ask `/move step-1`")
     assert hint < prove.index("End with `MOVE_RESULT: complete")  # the hint comes before the line
     ending = _flat(_section("Ending the step"))
     assert "Ending the step is a run of its own" in ending
@@ -216,14 +216,16 @@ def test_the_disclaimer_and_the_cutover_message_are_quoted_from_the_scripts_neve
     None
 ):
     flat = _flat()
-    for text in (CUSTOMER_RESPONSIBILITY, CUTOVER_BODY, CUTOVER_HEADLINE):
+    for text in (CUSTOMER_RESPONSIBILITY,):
         for sentence in re.split(r"(?<=[.:;])\s+", text):
             words = sentence.split()
             for i in range(len(words) - 5):
                 assert " ".join(words[i : i + 6]) not in flat, sentence
     assert "quote the line's `disclaimer` field verbatim" in flat
     assert "quote the line's `cutover_message` field verbatim" in flat
-    assert "never recommend a time to cut over" in flat
+    assert "never give cutover advice" in flat
+    # The one sentence the cutover gets is the script's, and the rule says to say only it.
+    assert f'Wherever the cutover comes up, say only: "{CUTOVER_MESSAGE}"' in flat
 
 
 def test_the_command_never_handles_a_secret_value() -> None:
@@ -266,7 +268,7 @@ def test_preflight_walks_failures_and_confirmations_and_never_confirms_for_the_c
 
 def test_prove_polls_inside_the_script_and_never_ends_the_turn_while_loading() -> None:
     prove = _flat(_section("Stage 4: Prove"))
-    assert "--until caught_up --wait-seconds 540" in prove
+    assert "--until replicating --wait-seconds 540" in prove
     assert "Never end the turn while it is still loading" in prove
     waiting = _flat(_section("Waiting Rule"))
     assert "never a turn that ends with nothing running" in waiting
@@ -284,7 +286,7 @@ def test_resume_maps_every_status_phase_to_a_stage() -> None:
     resume = _flat(_section("Step 0: The job and the step"))
     phases = {"no_stack", "stack_in_progress", "stack_failed", "connections_not_tested",
               "connections_testing", "connections_failed", "ready_to_start", "loading",
-              "validating", "validation_stalled", "table_errors", "caught_up", "task_stopped",
+              "validating", "validation_stalled", "table_errors", "replicating", "task_stopped",
               "stack_create_failed", "stack_in_review"}  # fmt: skip
     source = (REPO_ROOT / "scripts" / "run_dms_step.py").read_text()
     for phase in phases:
@@ -351,9 +353,9 @@ def test_a_stop_that_is_still_stopping_is_waited_on_read_only_and_a_restarted_ta
     assert "needs a new yes" in flat
 
 
-def test_the_delete_question_is_asked_only_once_the_task_is_proven_stopped() -> None:
+def test_the_delete_question_is_asked_only_once_the_task_is_shown_stopped() -> None:
     ending = _flat(_section("Ending the step"))
-    proof = ending.index("Ask the delete question only once that is proven")
+    proof = ending.index("Ask the delete question only once that is shown")
     assert proof < ending.index('"{dms_reports}. Delete the stack {stack_name} in {region} now?"')
     for evidence in ('`"stopped"`, `"no_task"` or `"no_stack"`',
                      "a `status --until task_stopped` line with `reached` true",
@@ -521,14 +523,14 @@ def test_prove_warns_on_the_sources_retention_and_stops_when_it_turns_critical()
         "end with `MOVE_RESULT: stopped stage=prove reason=source retention critical: "
         "<source_retention message>`" in prove
     )
-    # Read before the rerun rule, and whatever `reached` says (a caught-up line can be critical).
+    # Read before the rerun rule, and whatever `reached` says (a replicating line can be critical).
     assert prove.index("Read every result line for `stopped_for` first") < prove.index(
         "Unless the line has `stopped_for`: after a result line with `reached` false"
     )
     assert "(whatever its `reached`)" in prove
     critical = prove.split("a result line with `stopped_for` `source_retention`", 1)[1]
     assert critical.index("show its `source_retention` `message` first") < critical.index(
-        "when its `phase` is `caught_up`, go on to the Gate"
+        "when its `phase` is `replicating`"
     )
     assert "its `check_on_source` when it has one" in prove
     assert "a `task_stopped` line with `stopped_for` ends with this line only" in prove
@@ -680,3 +682,43 @@ def test_the_stack_wait_after_execute_names_the_change_set_and_handles_stack_in_
         "`MOVE_RESULT: stopped stage=move reason=stack REVIEW_IN_PROGRESS: change set not executed`"
         in flat
     )
+
+
+# --- #2062: step 1 shows the full load and replication in progress, never cutover advice ------
+
+
+def test_move_says_only_that_the_full_load_is_complete_and_replication_is_in_progress() -> None:
+    flat = _flat()
+    assert 'once the gate passes, say "Full load complete. Replication is in progress."' in flat
+    gate = _flat(_section("Stage 4: Prove")).split("**Gate.**", 1)[1]
+    assert (
+        'On `pass`, say its `result` verbatim ("Full load complete. Replication is in progress.")'
+        in gate
+    )
+    assert (
+        "never present the records DMS still validates, or the replication lag, as a signal" in flat
+    )
+
+
+def test_prove_waits_for_replicating_never_for_the_earlier_phase() -> None:
+    prove = _flat(_section("Stage 4: Prove"))
+    assert "caught_up" not in _text()
+    assert "when its `phase` is `replicating`" in prove
+    assert "**Gate.** When `phase` is `replicating`" in prove
+    assert "`pending_tables` (the tables whose first validation has not finished)" in prove
+
+
+def test_the_result_line_forms_are_unchanged() -> None:
+    """The renamed phase changes no MOVE_RESULT form: headless callers parse these."""
+    prove = set(re.findall(r"MOVE_RESULT: stopped stage=prove reason=[^`]*", _text()))
+    assert prove == {
+        "MOVE_RESULT: stopped stage=prove reason=<its message>",
+        "MOVE_RESULT: stopped stage=prove reason=source retention critical: <source_retention message>",
+        "MOVE_RESULT: stopped stage=prove reason=still loading: run /move step-1 again to resume",
+        "MOVE_RESULT: stopped stage=prove reason=table errors: <the errored tables>",
+        "MOVE_RESULT: stopped stage=prove reason=task <task_status>: <last_failure or stop_reason>",
+        "MOVE_RESULT: stopped stage=prove reason=task may have written rows to Aurora: empty the "
+        "step's tables on Aurora, then reload (customer_steps)",
+        "MOVE_RESULT: stopped stage=prove reason=validation not running: <validation_check>",
+    }
+    assert "`MOVE_RESULT: complete job_id={job_id} step=1 gate=<the gate line's status>`" in _text()

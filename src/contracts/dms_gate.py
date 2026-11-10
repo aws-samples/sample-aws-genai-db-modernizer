@@ -4,12 +4,13 @@
 """
 DMS Step Gate — Contract Model
 
-The evidence a customer decides a step's cutover on (#1800), written at
+The evidence that a step's full load is complete and replication is in progress (#1800,
+#2062), written at
 ``<db>/<job>/data-movement/step-<k>/gate.json`` by ``src.tools.data_movement.dms_gate``
 from read-only DMS, CloudWatch and CloudFormation calls: load, lag and parity checks,
 each table's DMS statistics, and the named exceptions (tables DMS could not validate,
 keyless tables whose LOB values can be lost, unsupported fields, skipped rules). The
-decision is the customer's (``cutover_decision``), stated by the fixed message
+cutover is the customer's (``cutover_decision``), stated by the fixed message
 ``cutover_message_id`` names (``src.shared.cutover_message``). Later steps deploy only
 on ``pass`` for the same ``contract_sha256``.
 
@@ -23,6 +24,10 @@ Version History:
   NULLs, a key column type DMS cannot validate on); a view keeps the fixed reason.
 - 1.3 (2026-11-09, #1947): Added the ``routines`` check id, after load, lag and parity
   for a contract with a routines section.
+- 1.4 (2026-11-10, #2062): A table validated since its full load passes parity whatever
+  records still wait for validation; the pending-record evidence is gone; the cutover
+  message id is ``cutover-decision-v2`` (a saved ``cutover-decision-v1`` shows the same
+  sentence).
 """
 
 from datetime import datetime
@@ -85,7 +90,7 @@ class GateException(BaseModel):
     ``unsupported_field`` is a moved column no operation can express; ``skipped_rule`` is
     a contract table the step does not move because an error finding blocks it;
     ``not_moved`` is a table the step creates but its task does not move (a type DMS does
-    not migrate, #1918), with the contract's reason and what to rebuild after cutover.
+    not migrate, #1918), with the contract's reason and what to rebuild on Aurora.
     """
 
     table: str = Field(..., description="Source table id (schema.table)")
@@ -117,7 +122,7 @@ class DmsGate(BaseModel):
     """Step 1's gate result (#1800)."""
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(..., description="The assessment job")
     database_name: str = Field(..., description="The source database")
@@ -137,7 +142,7 @@ class DmsGate(BaseModel):
     )
     status: GateStatus = Field(..., description="The worst of the checks")
     cutover_decision: Literal["customer"] = Field(
-        "customer", description="Who decides the cutover: always the customer"
+        "customer", description="Whose the cutover is: always the customer's"
     )
     cutover_message_id: str = Field(
         ..., min_length=1, description="Id of the fixed cutover message"

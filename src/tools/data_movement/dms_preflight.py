@@ -917,16 +917,16 @@ def check_secrets_manager_reachable(inputs: Step1Inputs, req: PreflightRequest, 
     evidence["secretsmanager_endpoints"] = ", ".join(
         f"{e.get('VpcEndpointId')} ({e.get('State')}, private DNS {bool(e.get('PrivateDnsEnabled'))})"
         for e in endpoints) or "none"  # fmt: skip
-    ready = next(
+    usable = next(
         (e for e in endpoints if e.get("State") == "available" and e.get("PrivateDnsEnabled")), None
     )
-    if ready:
+    if usable:
         groups = (
-            ", ".join(str(g.get("GroupId")) for g in ready.get("Groups") or [])
+            ", ".join(str(g.get("GroupId")) for g in usable.get("Groups") or [])
             or "its security groups"
         )
         return _row("secrets_manager_reachable", "pass", f"VPC {vpc} has the Secrets Manager interface endpoint "
-                    f"{ready.get('VpcEndpointId')} with private DNS", evidence,
+                    f"{usable.get('VpcEndpointId')} with private DNS", evidence,
                     checklist=[f"The endpoint's security group ({groups}) allows TCP 443 from the replication "
                                "instance (the endpoint's security group is not read here)"])  # fmt: skip
     routes: dict[str, str] = {}

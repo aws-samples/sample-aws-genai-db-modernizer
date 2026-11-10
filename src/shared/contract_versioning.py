@@ -379,6 +379,13 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "a step's validation and shape-check findings flattened for the report (#1764): "
         "derived from the step contract beside it; a view for the report, not a pin or an input",
     ),
+    # Data movement
+    (
+        r"data-movement/step-\d+/validation-seen\.json",
+        "the tables DMS reported Validated since their full load (#2062): written by Prove's "
+        "status polls and read by the gate; a missing or unreadable file only means each table "
+        "is judged by its state now",
+    ),
     # Load test
     (r"load-test-[^/]+/v\d+/config\.json", "the load test's configuration as run"),
     (r"load-test-[^/]+/v\d+/result\.json", "the load test runner's raw result"),
