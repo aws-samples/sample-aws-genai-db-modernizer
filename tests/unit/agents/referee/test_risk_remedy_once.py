@@ -169,11 +169,11 @@ def test_a_high_risk_strategy_names_it_without_its_remedy() -> None:
     assert remedy_restatements(_report(RISKS, strategies)) == []
 
 
-@pytest.mark.passes_on_main
 def test_a_high_risk_with_no_mitigation_still_says_so() -> None:
     bare = {**HIGH, "mitigation": None}
     assert _build_mitigation_strategies([bare], EFFECTIVE)[0] == (
-        "RISK-001 (HIGH, DynamoDB; db.t): no mitigation recorded; define one before cutover."
+        "RISK-001 (HIGH, DynamoDB; db.t): no mitigation recorded; define one. The cutover is "
+        "your responsibility."
     )
 
 
@@ -245,7 +245,11 @@ def test_each_waves_gate_lists_the_risks_to_close_before_it() -> None:
     # Only the risks with no wave keep a line among the strategies: no gate holds them.
     lines = assessment["mitigation_strategies"]
     assert lines[0] == "Existing line."
-    assert [x.split(",")[0] for x in lines[1:]] == ["Before cutover"]
+    # #2107: no wave, no gate, no timing: the line ends with the cutover sentence.
+    assert lines[1:] == [
+        "Close RISK-021 (queries no engine in the scope can serve). The cutover is your "
+        "responsibility."
+    ]
     assert gate_restatements(_report(assessment["risks"], lines, waves)) == []
 
 
@@ -270,7 +274,9 @@ def test_every_rule_risks_mitigation_points_at_its_waves_gate() -> None:
                 or f"before Wave {r['wave']} starts" in r["mitigation"]
             ), r
         else:
-            assert "before cutover" in r["mitigation"].casefold(), r
+            # #2107: no wave, no gate: no timing either, only the cutover sentence.
+            assert r["mitigation"].endswith("The cutover is your responsibility."), r
+            assert "before cutover" not in r["mitigation"].casefold(), r
 
 
 def test_a_backfilled_old_report_moves_its_gate_lines_into_the_roadmap() -> None:
@@ -330,3 +336,47 @@ def test_any_wording_of_a_load_test_leaves_the_risk_out_of_the_load_test_line(
 def test_the_guard_finds_each_wording_of_a_wave_gate(mitigation: str) -> None:
     report = _report([_risk("RISK-009", "MIGRATION_COMPLEXITY", "MEDIUM", mitigation)], [])
     assert gate_restatements(report) == [mitigation]
+
+
+def _no_wave_risks(n: int) -> list[dict[str, Any]]:
+    return [
+        {"risk_id": f"RISK-{i:03d}", "rule": "routing.no_engine_in_scope", "wave": None}
+        for i in range(1, n + 1)
+    ]
+
+
+@pytest.mark.parametrize("n", [2, GATE_IDS_NAMED + 2])
+def test_a_backfill_over_a_stored_no_wave_line_keeps_one_line(n: int) -> None:
+    """The review of #2111: the no-wave line, by ids or by count ("Close the 7 risks (...).
+    The cutover is your responsibility."), and the line a report written before #2107
+    stored ("Before cutover, close ..."), are each replaced, never kept next to the new one."""
+    from src.shared.migration_risk_rules import _with_gate_lines, wave_gate_strategies
+
+    [line] = wave_gate_strategies(_no_wave_risks(n))
+    assert line.endswith("The cutover is your responsibility.")
+    if n > GATE_IDS_NAMED:
+        assert line.startswith(f"Close the {n} risks (")
+    old = "Before cutover, " + line[0].lower() + line[1:].split(". The cutover", 1)[0] + "."
+    for stored in (line, old):
+        assert _with_gate_lines(["Other strategy.", stored], ["NEW LINE"]) == [
+            "Other strategy.",
+            "NEW LINE",
+        ]
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        "Close RISK-001 before testing.",
+        "Close RISK-001 (HIGH, DynamoDB) first. Then load-test it.",
+        "RISK-001 (HIGH, DynamoDB; 1 query): no mitigation recorded; define one. The cutover is "
+        "your responsibility.",
+        "Load-test the queries behind RISK-001 on DynamoDB with production-scale data. The "
+        "cutover is your responsibility.",
+    ],
+)
+def test_only_the_gate_lines_are_replaced(strategy: str) -> None:
+    from src.shared.migration_risk_rules import _with_gate_lines
+
+    assert _with_gate_lines([strategy], ["NEW LINE"])[0] == strategy

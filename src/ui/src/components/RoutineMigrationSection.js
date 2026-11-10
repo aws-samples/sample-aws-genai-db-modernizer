@@ -21,6 +21,9 @@ import { routineKey, routinesOf, routineToDoText } from "../utils/reportFacts";
  * decision 2 on #1938). It only formats the facts (ADR-032): every count,
  * list and sentence is stored. Never a routine's code: the facts hold none.
  *
+ * The section's sub-headings are h3, under the expandable container's h2 header, so the
+ * page's heading order never skips a level (axe heading-order; a regression from #2108).
+ *
  * Rows are keyed on kind and id (routineKey). Callers pass `t` (the page's own
  * `useTranslation` function).
  */
@@ -80,7 +83,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
           <SpaceBetween size="s">
             {toDo && toDoRoutines.length > 0 && (
               <Box data-figure="routines-to-do">
-                <Box variant="h4">{t('analysis-results.routines.to-do')}</Box>
+                <Box variant="h3">{t('analysis-results.routines.to-do')}</Box>
                 <ul>
                   {toDoRoutines.map(r => (
                     <li key={routineKey(r)}>
@@ -93,7 +96,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
             )}
             {rows.length > 0 && (
               <Box data-figure="routines-table">
-                <Box variant="h4">{t('analysis-results.routines.each')}</Box>
+                <Box variant="h3">{t('analysis-results.routines.each')}</Box>
                 <div>{t('analysis-results.routines.intro')}</div>
                 <Table
                   items={rows}
@@ -107,7 +110,7 @@ const RoutineMigrationSection = memo(({ synthesis, t }) => {
             )}
             {notes.length > 0 && (
               <Box data-figure="routines-notes">
-                <Box variant="h4">{t('analysis-results.routines.carried')}</Box>
+                <Box variant="h3">{t('analysis-results.routines.carried')}</Box>
                 <ul>
                   {notes.map(n => (
                     <li key={`${n.note}:${n.rule_id}`} data-note={n.rule_id}>

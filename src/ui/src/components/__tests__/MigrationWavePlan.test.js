@@ -96,6 +96,19 @@ test('the heading states the facts layer\'s wave count and the one-suggested-pat
   );
 });
 
+// #2107: the cutover is the customer's, said once next to the plan, as both reports do.
+test('the plan states once that the cutover is the customer\'s', () => {
+  render(fixture.synthesis);
+  const lines = container.querySelectorAll('[data-figure="cutover-responsibility"]');
+  expect(lines).toHaveLength(1);
+  expect(lines[0].textContent).toBe('The cutover is your responsibility.');
+});
+
+test('the cutover line prints the facts layer\'s words', () => {
+  render({ ...fixture.synthesis, facts: { ...fixture.synthesis.facts, cutover_responsibility: 'Yours to run.' } });
+  expect(container.querySelector('[data-figure="cutover-responsibility"]').textContent).toBe('Yours to run.');
+});
+
 test('each card shows the wave title, its engines, rationale, gate and tables', () => {
   render(fixture.synthesis);
   const first = container.querySelector('[data-wave="1"]');

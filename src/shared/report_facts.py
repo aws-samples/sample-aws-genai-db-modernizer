@@ -47,6 +47,7 @@ from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.cache_role import cache_role_sentence
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
 from src.shared.catalog.gaps import GAP_IMPACTS
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.engine_names import (
     ENGINE_DISPLAY_NAMES,
     SOURCE_DATABASE,
@@ -3926,6 +3927,8 @@ def compute_report_facts(
         # #1474: what every cost figure is, and the one caveat every deliverable prints.
         "cost_scope_label": COST_SCOPE_LABEL,
         "cost_caveat": COST_CAVEAT,
+        # #2107: the one sentence every wave plan says about the cutover.
+        "cutover_responsibility": CUTOVER_MESSAGE,
         # #1403: what the executive summary states: the risk level, its drivers, the decision.
         "executive_brief": executive_brief_facts(
             report,

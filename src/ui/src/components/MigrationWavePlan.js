@@ -12,6 +12,7 @@ import {
   heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveReadiness,
   waveTitle,
 } from "../utils/migrationWaves";
+import { cutoverResponsibilityOf } from "../utils/reportFacts";
 
 /**
  * "Migration roadmap" (#957): report.json's migration waves, the same ones the
@@ -34,6 +35,9 @@ import {
  *
  * Each card also states whether the plan suggests the wave, with what holds it and the
  * next step (facts.waves[].readiness_line, #1992), and the rule is stated once.
+ *
+ * The plan states once that the cutover is the customer's (facts.cutover_responsibility,
+ * #2107), as both reports do.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryRoutingTable.
@@ -143,6 +147,9 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
         )}
       >
         <SpaceBetween size="l">
+          <Box>
+            <span data-figure="cutover-responsibility">{cutoverResponsibilityOf(synthesis)}</span>
+          </Box>
           {waves.some(w => waveReadiness(synthesis, w)) && (
             <Box fontSize="body-s" color="text-body-secondary">
               <span data-figure="wave-readiness-rule">{t('analysis-results.waves.readiness-rule')}</span>

@@ -107,10 +107,14 @@ def test_one_risk_per_engine_with_each_engines_wave() -> None:
     ]
 
 
-def test_no_wave_reads_as_cutover() -> None:
+def test_no_wave_ends_with_the_cutover_sentence_and_no_timing() -> None:
+    """#2107: a risk in no wave has no gate; its step names no cutover time."""
     [risk] = flagged_unservable_risks({"flagged_unservable": [_row("f1")]}, {}, {})
     assert risk["wave"] is None
-    assert risk["mitigation"].endswith("Then re-run the assignment review before cutover.")
+    assert risk["mitigation"].endswith(
+        "Then re-run the assignment review. The cutover is your responsibility."
+    )
+    assert "before cutover" not in risk["mitigation"]
 
 
 def test_no_risk_without_flagged_queries() -> None:

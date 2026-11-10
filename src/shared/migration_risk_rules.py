@@ -34,10 +34,10 @@ rule                       severity  raised when
                            HIGH      no engine in the customer's engine scope can serve queries
                                      (``scope_unservable``, #1329): they have no engine, no wave
                                      and no design, and are never forced onto one; one risk,
-                                     at cutover (no wave)
+                                     in no wave
 ``relational.gaps``        HIGH      the relational gap check (``facts.relational_gaps``, #1079)
                                      finds gaps that block the move to wave 1's engine
-                           MEDIUM    gaps that need a rewrite before cutover
+                           MEDIUM    gaps that need a rewrite for the target
                            MEDIUM    gaps that behave differently on the target (they change
                                      results without an error); one risk per impact, in Wave 1,
                                      for a cross-engine or a same-engine wave 1; an
@@ -69,6 +69,7 @@ from typing import Any
 
 from src.contracts.synthesis_output import Risk
 from src.shared.capability_labels import FLAG_REDESIGN_HINTS
+from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.flag_reasons import flag_reason_text
 from src.shared.report_facts import (
@@ -204,10 +205,10 @@ def listed_items(items: list[str]) -> str:
 def by_gate(action: str, wave: int | None) -> str:
     """A rule risk's mitigation: ``action`` (no final stop), then a pointer to the gate
     of its ``wave``, which the roadmap states and lists the risk under (#1510); a risk
-    in no wave has no gate, so it is due before cutover."""
+    in no wave has no gate, so no timing: it ends with the cutover sentence (#2107)."""
     if wave:
         return f"{action}. See the Wave {wave} gate in the roadmap."
-    return f"{action} before cutover."
+    return f"{action}. {CUTOVER_MESSAGE}"
 
 
 def wave_number(wave: Mapping[str, Any]) -> int | None:
@@ -373,10 +374,7 @@ def _gap_head(impact: str, k: int, name: str) -> str:
     if impact == "blocks_move":
         return f"{n_of(k, 'relational gap blocks', 'relational gaps block')} the move to {name}"
     if impact == "needs_rewrite":
-        return (
-            f"{n_of(k, 'relational gap needs', 'relational gaps need')} a rewrite before "
-            f"cutover to {name}"
-        )
+        return f"{n_of(k, 'relational gap needs', 'relational gaps need')} a rewrite for {name}"
     return f"{n_of(k, 'relational gap behaves', 'relational gaps behave')} differently on {name}"
 
 
@@ -568,11 +566,9 @@ def _causes(rows: list[Mapping[str, Any]]) -> str:
 
 
 def _routine_mitigation(action: str, wave: int | None) -> str:
-    """A routine risk's next step: with a wave, a pointer to its gate (:func:`by_gate`);
-    without one, no timing advice, only the cutover sentence (maintainer rule)."""
-    if wave:
-        return by_gate(action, wave)
-    return f"{action}. {_cap(CUTOVER_SENTENCE)}."
+    """A routine risk's next step: with a wave, a pointer to its gate; without one, no
+    timing advice, only the cutover sentence (maintainer rule), as :func:`by_gate` says."""
+    return by_gate(action, wave)
 
 
 def routine_risks(
@@ -757,7 +753,12 @@ def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
     to-do (:func:`_to_do_groups`). A wave the roadmap shows carries its lines in its own
     gate instead (:func:`add_gate_lines`)."""
     lines = [
-        f"{f'Before the Wave {wave} gate' if wave else 'Before cutover'}, close {ids} ({labels})."
+        (
+            f"Before the Wave {wave} gate, close {ids} ({labels})."
+            if wave
+            # #2107: no wave, no gate: no timing either, only the cutover sentence.
+            else f"Close {ids} ({labels}). {CUTOVER_MESSAGE}"
+        )
         for wave, ids, labels in _gate_groups(risks)
     ]
     to_dos = _to_do_groups(risks)
@@ -808,7 +809,7 @@ def add_gate_lines(
     """Each wave's :func:`wave_gate_lines` sentence at the end of its gate in ``waves``
     (in place; replacing the one written for the ``stored`` rule risks, if any), and
     the strategy lines left for the risks no wave of ``waves`` holds: those with no
-    wave are due before cutover (:func:`wave_gate_strategies`)."""
+    wave end with the cutover sentence (:func:`wave_gate_strategies`)."""
     by_number = {wave_number(w): w for w in waves or [] if isinstance(w, dict) and wave_number(w)}
     lines = wave_gate_lines(risks)
     old = wave_gate_lines(stored or [])
@@ -878,9 +879,9 @@ def scope_unservable_risks(report: Mapping[str, Any]) -> list[dict[str, Any]]:
         )
     adds = f"adds {names}" if closest else "adds an engine that can serve them"
     mitigation = (
-        f"Before cutover, decide how to serve {these(k, 'query', 'queries')}: start a new "
+        f"Decide how to serve {these(k, 'query', 'queries')}: start a new "
         f"assessment whose engine scope {adds}, or keep {them(k)} on the source database. "
-        "An assessment's scope is fixed once it starts."
+        f"An assessment's scope is fixed once it starts. {CUTOVER_MESSAGE}"
     )
     return [
         make_risk(
@@ -918,9 +919,13 @@ def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     }
 
 
-# A wave-gate strategy line (``wave_gate_strategies``), whatever its labels.
+# A wave-gate strategy line (``wave_gate_strategies``), whatever its labels: a wave's,
+# the no-wave one (by ids or by count, ending with the cutover sentence, #2107), the
+# "Before cutover, close" no-wave line a report written before #2107 stored, and a to-do.
 _GATE_LINE = re.compile(
-    r"^(?:Before (?:the Wave \d+ gate|cutover), close |To do(?: before wave \d+)?: )"
+    r"^(?:Before (?:the Wave \d+ gate|cutover), close "
+    r"|Close (?:RISK-\d+|the \d+ risks)\b.*" + re.escape(f" {CUTOVER_MESSAGE}") + r"$"
+    r"|To do(?: before wave \d+)?: )"
 )
 
 

@@ -30,7 +30,7 @@ Impacts:
 
 - ``blocks_move``: the target cannot run it; the move cannot finish until it is
   replaced outside the database or removed.
-- ``needs_rewrite``: the schema, a query or a routine must change before cutover.
+- ``needs_rewrite``: the schema, a query or a routine must change for the target.
 - ``behaves_differently``: it runs on the target, but results or behaviour can differ;
   test it.
 - ``informational``: worth knowing for the move; no change is expected.

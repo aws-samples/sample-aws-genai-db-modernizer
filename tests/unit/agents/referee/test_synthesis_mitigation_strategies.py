@@ -119,7 +119,7 @@ def test_generic_lines_are_scoped_to_the_risks() -> None:
     strategies = _build_mitigation_strategies(WORDPRESS_LIKE, EFFECTIVE)
     assert (
         "Load-test the queries behind RISK-001 and RISK-005 on ElastiCache and DynamoDB "
-        "with production-scale data before cutover."
+        "with production-scale data. The cutover is your responsibility."
     ) in strategies
     assert (
         "Use blue-green deployment with rollback for the tables behind the critical or high "
@@ -140,7 +140,8 @@ def test_high_risk_without_a_mitigation_says_so() -> None:
     risks = [_risk("RISK-001", "PERFORMANCE_DEGRADATION", "HIGH", "dynamodb", query_ids=["a"])]
     strategies = _build_mitigation_strategies(risks, EFFECTIVE)
     assert strategies[0] == (
-        "RISK-001 (HIGH, DynamoDB; 1 query): no mitigation recorded; define one before " "cutover."
+        "RISK-001 (HIGH, DynamoDB; 1 query): no mitigation recorded; define one. The "
+        "cutover is your responsibility."
     )
 
 

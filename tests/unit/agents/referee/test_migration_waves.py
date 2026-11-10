@@ -176,18 +176,31 @@ class TestOrderAndNumbering:
 
 
 class TestAuroraWave:
-    def test_the_gate_retires_the_source_after_replication_and_names_where_later_waves_start(
+    def test_the_gate_retires_the_source_after_your_cutover_and_names_where_later_waves_start(
         self,
     ):
         """The discourse judge read "decommission the legacy source once replication lag
         is zero" as retiring something before wave 2's dual-write: the gate names the
-        source database it retires and that later waves move from Aurora, not from it."""
+        source database it retires and that later waves move from Aurora, not from it.
+        #2107: the cutover is the customer's, so the gate states no timing criterion."""
         gate = _build()[0]["gate"]
         assert "legacy source" not in gate and "lag is zero" not in gate
+        assert "caught up" not in gate and "before cutover" not in gate
         assert gate == (
-            "Schema and data parity validated against the source database before cutover. "
-            "Once replication to Aurora MySQL has caught up, decommission the source MySQL "
-            "database: later waves move from Aurora MySQL, not from it."
+            "Schema and data parity validated against the source database. Decommission the "
+            "source MySQL database once you have completed your cutover: later waves move "
+            "from Aurora MySQL, not from it. The cutover is your responsibility."
+        )
+
+    def test_the_cross_engine_gate_ends_with_the_same_responsibility_sentence(self):
+        """#2107: the cross-engine wave 1 gate follows the same pattern."""
+        gate = _build(source_engine="sqlserver", known_tables=KNOWN_TABLES)[0]["gate"]
+        assert gate == (
+            "Cross-engine move: validate the schema and query translation to Aurora MySQL "
+            "(SQL dialect and data types converted, with the current data model). "
+            "Decommission the source SQL Server database once you have completed your "
+            "cutover: later waves move from Aurora MySQL, not from it. The cutover is your "
+            "responsibility."
         )
 
     def test_whole_schema_moves_first_and_is_homogeneous(self):

@@ -100,6 +100,7 @@ from .formatting import (
     cost_note_text,
     cost_scope_text,
     cost_sizing_text,
+    cutover_responsibility_text,
     fmt_num,
     plural_noun,
     plural_verb,
@@ -1174,6 +1175,8 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
     flow: list[Flowable] = [_Section(H_WAVES)]
     flow += [
         _para(_SUGGESTED_PATH_NOTE.format(pointer="the target architecture"), st["sub"]),
+        # #2107: the cutover is the customer's, said once next to the plan.
+        _para(cutover_responsibility_text(report_facts(report)), st["sub"]),
         _gap(12),
     ]
     facts_by_wave = {int(w.get("wave") or 0): w for w in report_facts(report).get("waves") or []}

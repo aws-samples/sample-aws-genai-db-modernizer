@@ -30,8 +30,13 @@ jest.mock('@cloudscape-design/components/expandable-section', () => ({
 }));
 jest.mock('@cloudscape-design/components/box', () => ({
   __esModule: true,
-  default: ({ children, ...props }) => (
-    <div {...Object.fromEntries(Object.entries(props).filter(([k]) => k.startsWith('data-')))}>{children}</div>
+  default: ({ children, variant, ...props }) => (
+    <div
+      data-box-variant={variant}
+      {...Object.fromEntries(Object.entries(props).filter(([k]) => k.startsWith('data-')))}
+    >
+      {children}
+    </div>
   ),
 }));
 jest.mock('@cloudscape-design/components/space-between', () => ({
@@ -194,4 +199,18 @@ test('a report without routine facts shows nothing', () => {
   expect(container.innerHTML).toBe('');
   render({});
   expect(container.innerHTML).toBe('');
+});
+
+
+// The page's heading order (axe heading-order on the results page, a regression from #2108):
+// the expandable container's header is an h2, so each sub-heading inside is an h3, never h4.
+test('the sub-headings follow the page heading order: h3 under the h2 section header', () => {
+  render({ facts: { routines } });
+  const section = container.querySelector('#routines-section');
+  const headings = [...section.querySelectorAll('[data-box-variant^="h"]')].map(
+    (el) => el.getAttribute('data-box-variant'),
+  );
+  expect(headings.length).toBeGreaterThan(0);
+  expect(headings.every((v) => v === 'h3')).toBe(true);
+  expect(section.querySelector('[data-figure="routines-to-do"] [data-box-variant="h3"]')).not.toBeNull();
 });

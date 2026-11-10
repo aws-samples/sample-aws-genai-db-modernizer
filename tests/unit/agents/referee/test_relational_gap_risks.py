@@ -100,8 +100,8 @@ def test_one_wave_1_risk_per_impact_with_its_severity() -> None:
     assert blocks["mitigation"].startswith("Replace this feature outside the database ")
     assert blocks["mitigation"].endswith("See the Wave 1 gate in the roadmap.")
     assert rewrite["description"].startswith(
-        "[aurora_postgresql] Wave 1: 2 relational gaps need a rewrite before cutover to Aurora "
-        "PostgreSQL: TOP row limits; T-SQL date and time functions."
+        "[aurora_postgresql] Wave 1: 2 relational gaps need a rewrite for Aurora PostgreSQL: "
+        "TOP row limits; T-SQL date and time functions."
     )
     assert "test them on Aurora PostgreSQL" in rewrite["mitigation"]
     assert "compare their results with the source" in differs["mitigation"]

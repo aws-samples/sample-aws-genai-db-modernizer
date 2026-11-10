@@ -25,6 +25,7 @@ from src.agents.referee.migration_risks import (
     last_risk_number,
     wave_gate_strategies,
 )
+from src.shared.cutover_message import CUTOVER_MESSAGE as CUTOVER
 from src.shared.prose_style import find_style_hits
 from src.shared.report_facts import CLOSE_CALL_MARGIN, close_call_facts
 
@@ -1365,6 +1366,14 @@ def test_every_risk_has_evidence_a_mitigation_and_a_wave() -> None:
         assert r["wave"] in expected, r
 
 
+def test_the_no_engine_in_scope_step_keeps_the_choice_and_sets_no_cutover_time() -> None:
+    """#2107: the risk is in no wave; its step stays, with no timing criterion."""
+    [r] = [r for r in _all_kinds() if r["rule"] == "routing.no_engine_in_scope"]
+    assert r["mitigation"].startswith("Decide how to serve this query: start a new assessment ")
+    assert r["mitigation"].endswith(f"An assessment's scope is fixed once it starts. {CUTOVER}")
+    assert "before cutover" not in r["mitigation"].casefold()
+
+
 def test_the_strategies_name_each_risk_by_wave_gate() -> None:
     risks = _all_kinds()
     lines = wave_gate_strategies(risks)
@@ -1372,8 +1381,8 @@ def test_the_strategies_name_each_risk_by_wave_gate() -> None:
         "Before the Wave 1 gate",
         "Before the Wave 2 gate",
         "Before the Wave 3 gate",
-        # #1329: the queries with no engine in the scope, in no wave.
-        "Before cutover",
+        # #1329: the queries with no engine in the scope, in no wave: no timing (#2107).
+        f"Close RISK-021 (queries no engine in the scope can serve). {CUTOVER}",
         # #1938: the routine to-do, listed as a to-do, not a condition.
         "To do before wave 1: migrate 1 routine yourself (RISK-022).",
     ]

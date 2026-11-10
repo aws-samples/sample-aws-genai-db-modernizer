@@ -1,13 +1,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Step 1 never gives cutover advice and never claims more than it shows (#2062).
+"""The modernizer never gives cutover advice and never claims more than it shows (#2062, #2107).
 
 Step 1 shows that the full load is complete and that replication is in progress. Where the
 cutover comes up, the text says only "The cutover is your responsibility." This guard scans
 the shipped step 1 text: the data-movement README, ``/move``, the help page's step 1
 section, the scripts' and the data-movement tools' source (their messages, comments and
 templates), and every file the generators write, rendered here for both engines.
+
+The assessment's deliverables follow the same rule (#2107), with the same words: the source
+files that write the wave gates and the mitigations, the engineering and executive reports
+rendered from reports the current code built, and the skills whose model text reaches a
+deliverable. There, and only there, "in sync" may name a CDC copy's table role
+(``COPY_PHRASES``). ``tests/e2e/test_no_cutover_advice.py`` runs the same check on the
+samples' real deliverables, a model's included on an e2e-llm run.
 """
 
 from __future__ import annotations
@@ -18,17 +25,20 @@ from pathlib import Path
 import pytest
 
 from scripts import render_dms_step
+from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_DISCLAIMER, CUTOVER_MESSAGE, cutover_message_text
 from src.tools.data_movement.cutover_scripts import CUTOVER_FILE, CUTOVER_INSTRUCTIONS
 from src.tools.data_movement.dms_gate import REPLICATING_MESSAGE
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE, INSTRUCTIONS_FILE
 from src.tools.data_movement.verify_scripts import write_verify_scripts
+from tests.executive_pdf import executive_text, normalize
+from tests.unit.report.test_cutover_responsibility import REPORTS
 
 REPO = Path(__file__).resolve().parents[3]
 
 # Words step 1 never uses, and phrases that tell the customer when or how to cut over.
 BANNED = {
-    "caught up": r"caught[ _-]?up",
+    "caught up": r"\b(?:caught|catch(?:es|ing)?)[ _-]?up\b",
     "in sync": r"\bin\s+sync\b",  # RDS's own apply status `in-sync` is a status value, not a claim
     "proven": r"\bproven\b",
     "ready": r"\bready\b",  # every use, unless READY_FORMS or a pinned line allows it
@@ -37,9 +47,56 @@ BANNED = {
     "freeze writes": r"\bwrite[ -]freeze\b",
     "safe to cut over": r"\bsafe\s+to\s+cut\s*over\b",
     "applied the last change": r"\bapplied\s+the\s+last\s+change\b",
-    "cutover timing": r"\b(?:at|after|before|until|once)\s+(?:the\s+|your\s+|their\s+)?"
-    r"cut\s*over\b(?!-)",
+    "lag is zero": r"\blag\s+(?:is|reaches|hits|drops\s+to|gets\s+to)\s+zero\b",
+    "cutover timing": r"\b(?:at|after|before|until|once|during|prior\s+to|ahead\s+of)\s+"
+    r"(?:the\s+|your\s+|their\s+)?cut\s*over\b(?!-)"
+    r"|\b(?:after|before|once|until|when|as\s+soon\s+as)\s+(?:you|they|the\s+customer)\s+"
+    r"cut\s*over\b",
 }
+# "in sync" is allowed only in the phrases the code writes for a CDC copy of a table another
+# engine owns (a table role, never a readiness claim), and only in a sentence with no timing
+# word outside the phrase. Each phrase spans the "in sync" it allows.
+COPY_PHRASES = re.compile(
+    "|".join(
+        (
+            # "3 tables kept in sync from their owners", "a copy kept in sync from DynamoDB via CDC"
+            r"\bkept\s+in\s+sync\b(?:\s+(?:by\s+CDC\s+)?(?:from|via)\s+[^.;]*)?",
+            # "keep the Aurora PostgreSQL, DocumentDB copy in sync from DynamoDB via CDC until
+            # then" (until the later wave), "keep a DynamoDB copy of all of them in sync via CDC"
+            r"\bkeep\s+(?:the|a)\s+[^.;]{1,200}?\bcop(?:y|ies)\b(?:\s+of\s+[^.;]{1,60}?)?"
+            r"\s+in\s+sync\s+(?:from|via)\s+[^.;]*?(?:\s+until\s+then)?(?=[.;]|$)",
+            # "the consumer that keeps wp_posts and wp_postmeta in sync from DynamoDB",
+            # "copies CDC keeps in sync from a source of truth"
+            r"\bkeeps\s+(?:[^.;]{1,200}?\s+)?in\s+sync\s+from\s+[^.;]*",
+            # "build a dual-write path and keep the copies in sync"
+            r"\bkeep\s+the\s+copies\s+in\s+sync\b",
+        )
+    ),
+    re.I,
+)
+# Timing words the code writes next to a copy phrase about the plan's own waves or CDC, not
+# the cutover: a later wave or its gate ("dual-read by OpenSearch queries until wave 4", "via
+# CDC until then", "before this gate", "Before the Wave 3 gate", "before wave 3 starts",
+# "remain on Aurora MySQL once later waves have moved their share", "once the cache wave has
+# absorbed the read pressure") and replication's own
+# delay ("sees a write only after CDC applies it").
+CDC_TIMING = re.compile(
+    "|".join(
+        (
+            r"\b(?:until|before|after)\s+wave\s+\d+(?:\s+starts)?\b",
+            r"\bbefore\s+(?:this|the\s+Wave\s+\d+)\s+gate\b",
+            r"\bonce\s+(?:every\s+)?later\s+waves?\b",
+            r"\bonce\s+the\s+[\w-]+\s+wave\b",
+            r"\bvia\s+CDC\s+until\s+then\b",
+            r"\bonly\s+after\s+CDC\s+applies\s+it\b",
+        )
+    ),
+    re.I,
+)
+TIMING_WORD = re.compile(r"\b(?:until|once|when|before|after|wait|switch|cut\s*over)\b", re.I)
+# In the deliverables, wave 1's headline counts the whole workload it moves in one cutover ("all 107 queries at
+# cutover"): what the wave moves, not when to cut over.
+WAVE_ONE_COUNT = re.compile(r"\b(?:query|queries) at cutover$", re.I)
 # "ready" is allowed anywhere only in these exact forms, never as a readiness claim; every
 # other use is pinned to its line in ALLOWED below.
 READY_FORMS = (
@@ -92,6 +149,12 @@ ALLOWED = {
         "connector has not passed the barrier it is not ready",
     ),
     ("src/tools/data_movement/initial_load.py", "return Readiness(ready=not reasons"),
+    # The assessment (#2107): a docstring, two comments and the no-wave line a report written
+    # before #2107 stored, recognised so it is replaced.
+    ("src/agents/referee/synthesis_report.py", "reason, ready to sit next to its excerpt."),
+    ("src/agents/referee/synthesis_report.py", 'application change) catches up", the same'),
+    ("src/agents/referee/synthesis_report.py", "story (#393) that keeps this in sync with"),
+    ("src/shared/migration_risk_rules.py", '# "Before cutover, close" no-wave line a report'),
 }
 DOCS = (
     "infrastructure/cloudformation/data-movement/README.md",
@@ -104,10 +167,7 @@ ADRS = (
     "docs/architecture/decisions/ADR-033-data-movement-transformation-contract.md",
     "docs/architecture/decisions/ADR-034-carrying-database-routines-to-aurora.md",
 )
-# Out of scope here, owned elsewhere: the assessment report's wave gates and mitigations
-# (src/agents/referee/, src/report/), the routine rule catalog (src/catalog/routine_checks/,
-# rendered into docs/architecture/rule-catalog.md) and the samples (docs/examples/). They
-# still say "caught up" and "before cutover"; #2107 (the follow-up to #2062) covers them.
+# Out of scope here: the samples (docs/examples/), which #1984 refreshes.
 SOURCES = (
     "scripts/run_dms_step.py",
     "scripts/check_dms_step_gate.py",
@@ -121,9 +181,76 @@ SOURCES = (
 )
 
 
-def _allowed(name: str, label: str, line: str, start: int, end: int) -> bool:
+# The assessment's source files that write the wave gates, the mitigations and the contract
+# text (#2107): scanned with the deliverables' CDC copy phrases allowed.
+ASSESSMENT_SOURCES = (
+    "src/agents/referee/migration_wave_builders.py",
+    "src/report/waves.py",
+    "src/agents/referee/synthesis_report.py",
+    "src/contracts/transformation_contract.py",
+    "src/shared/migration_risk_rules.py",
+)
+
+
+# Model-written design rationale and review text (a designer's note, a PE review, a
+# trade-off) speaks of data, not of the move: "(user_id, name) is not proven unique" is a
+# uniqueness statement. There only the cutover timing and readiness patterns apply:
+# "proven" and "ready" only as a claim about the move, the target or the switch, and
+# "in sync" only next to a timing word (#2107, the discourse e2e-llm run of #2111).
+MODEL_TEXT_LABELS = (
+    "caught up",
+    "lag is zero",
+    "cutover timing",
+    "safe to cut over",
+    "applied the last change",
+    "in sync",
+    "proven",
+    "ready",
+)
+READINESS_CLAIM = re.compile(
+    "|".join(
+        (
+            # "proven to work", "ready to switch", "ready for your applications"
+            r"\b(?:proven|ready)\s+(?:to|for)\s+(?:(?:the|your|a|its|their)\s+)?(?:\w+\s+)?"
+            r"(?:work|works|cut\s*over|cutover|switch|go\s+live|production|migrat\w*|"
+            r"decommission\w*|retire\w*|traffic|applications?|users|use)\b",
+            # "the move is proven.", "Aurora is ready", "is now ready"
+            r"\b(?:is|are|was|were|has\s+been|have\s+been|now)\s+(?:now\s+)?(?:fully\s+)?"
+            r"(?:proven|ready)\s*(?:[.,;:!?)]|$)",
+            r"\b(?:proven|ready)\s+(?:in\s+production|end[- ]to[- ]end)\b",
+        )
+    ),
+    re.I,
+)
+
+
+def _model_text_flags(label: str, line: str, start: int, end: int) -> bool:
+    """Whether a match in model-written design text is a cutover or readiness claim."""
+    if label in ("proven", "ready"):
+        return any(m.start() <= start and end <= m.end() for m in READINESS_CLAIM.finditer(line))
+    if label == "in sync":
+        return bool(TIMING_WORD.search(CDC_TIMING.sub("", _sentence(line, end))))
+    if label == "cutover timing":
+        return not WAVE_ONE_COUNT.search(line[:end])
+    return True
+
+
+def _sentence(line: str, end: int) -> str:
+    starts = [m.end() for m in re.finditer(r"[.!?]\s+", line[:end])]
+    first = starts[-1] if starts else 0
+    stop = re.search(r"[.!?](?:\s|$)", line[end:])
+    return line[first : end + stop.start() + 1 if stop else len(line)]
+
+
+def _allowed(
+    name: str, label: str, line: str, start: int, end: int, deliverable: bool = False
+) -> bool:
     if any(path == name and pinned in line for path, pinned in ALLOWED):
         return True
+    if deliverable and label == "cutover timing":
+        return bool(WAVE_ONE_COUNT.search(line[:end]))
+    if deliverable and label == "in sync":
+        return _a_copy_phrase(line, end)
     return label == "ready" and any(
         m.start() <= start and end <= m.end()
         for pattern in READY_FORMS
@@ -131,16 +258,44 @@ def _allowed(name: str, label: str, line: str, start: int, end: int) -> bool:
     )
 
 
-def _findings(name: str, text: str, skip: tuple[str, ...] = ()) -> list[str]:
+def _a_copy_phrase(line: str, end: int) -> bool:
+    """Whether the "in sync" ending at ``end`` is inside a COPY_PHRASES phrase, in a
+    sentence with no timing word outside that phrase."""
+    starts = [m.end() for m in re.finditer(r"[.!?]\s+", line[:end])]
+    first = starts[-1] if starts else 0
+    stop = re.search(r"[.!?](?:\s|$)", line[end:])
+    sentence = line[first : end + stop.start() + 1 if stop else len(line)]
+    at = end - first
+    if any(m.start() < at <= m.end() for m in COPY_PHRASES.finditer(sentence)):
+        return not TIMING_WORD.search(CDC_TIMING.sub("", sentence))
+    return False
+
+
+def _findings(
+    name: str,
+    text: str,
+    skip: tuple[str, ...] = (),
+    deliverable: bool = False,
+    model_text: bool = False,
+) -> list[str]:
+    """Each banned match in ``text``. ``deliverable``: the assessment's text, where a CDC
+    copy's table role ("kept in sync from its owner") and wave 1's "all N queries at
+    cutover" count are allowed (#2107). ``model_text``: model-written design rationale and
+    review text, where only the cutover timing and readiness claims count
+    (``MODEL_TEXT_LABELS``, ``READINESS_CLAIM``)."""
     found = []
     for label, pattern in BANNED.items():
-        if label in skip:
+        if label in skip or (model_text and label not in MODEL_TEXT_LABELS):
             continue
         for m in re.finditer(pattern, text, re.IGNORECASE):
             first = text.rfind("\n", 0, m.start()) + 1
             last = text.find("\n", m.end())
             line = text[first : None if last < 0 else last]
-            if _allowed(name, label, line, m.start() - first, m.end() - first):
+            start, end = m.start() - first, m.end() - first
+            if model_text:
+                if not _model_text_flags(label, line, start, end):
+                    continue
+            elif _allowed(name, label, line, start, end, deliverable):
                 continue
             number = text.count("\n", 0, m.start()) + 1
             found.append(f"{name}:{number}: {label}: {m.group(0)!r}")
@@ -307,3 +462,203 @@ def test_the_guard_catches_each_kind_of_advice(advice):
 )
 def test_the_guard_lets_the_decided_wording_and_file_names_through(fine):
     assert _findings("sample", fine) == []
+
+
+# ---------------------------------------------------------------------------
+# The assessment's deliverables (#2107)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ASSESSMENT_SOURCES)
+def test_the_assessment_source_files_give_no_cutover_advice(name: str) -> None:
+    assert _findings(name, (REPO / name).read_text(), deliverable=True) == []
+
+
+@pytest.mark.parametrize("name", sorted(REPORTS))
+def test_the_rendered_deliverables_give_no_cutover_advice(name: str) -> None:
+    report = REPORTS[name]()
+    found = _findings(f"{name} engineering", render_engineering_report_md(report), deliverable=True)
+    found += _findings(f"{name} executive", normalize(executive_text(report)), deliverable=True)
+    assert found == []
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "Once replication to Aurora MySQL has caught up, decommission the source.",
+        "Decommission the legacy source once replication lag is zero.",
+        "Aurora MySQL is in sync with the source.",
+        "Wait until the copies are in sync, then switch.",
+        "The move is proven.",
+        "Aurora is ready for your applications.",
+        "Load-test the queries before cutover.",
+        "Rebuild it after cutover.",
+        "Decommission the source once cutover completes.",
+        "Run the sequences script at cutover.",
+        # The review of #2111: readiness wording around "in sync".
+        "Keep writes paused until the copies are in sync.",
+        "Keep the source running until DynamoDB is in sync.",
+        "Switch once Aurora is in sync via CDC.",
+        "Cut over when Aurora MySQL is in sync from the source.",
+        "Keep a DynamoDB copy in sync via CDC, then switch.",
+        "3 tables kept in sync from their owners; cut over when they match.",
+        # The review's timing phrasings.
+        "Decommission the source after you cut over.",
+        "Validate the schema prior to cutover.",
+        "Freeze schema changes during cutover.",
+        "Load-test ahead of the cutover.",
+        "Retire the source when replication lag reaches zero.",
+        "Wait for replication to catch up.",
+    ],
+)
+def test_the_guard_catches_each_kind_of_advice_in_a_deliverable(advice: str) -> None:
+    assert _findings("sample", advice, deliverable=True) != []
+    assert _findings("src/agents/referee/synthesis_report.py", advice, deliverable=True) != []
+    assert _findings("sample", advice) != []  # and in step 1's text
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "fine",
+    [
+        CUTOVER_MESSAGE,
+        "Decommission the source MySQL database once you have completed your cutover.",
+        "3 tables kept in sync from their owners.",
+        "Build the consumer that keeps wp_posts and wp_postmeta in sync from DynamoDB.",
+        "Every other engine that reads a table reads a copy kept in sync from the owner.",
+        "DocumentDB owns them; keep a DynamoDB copy of all of them in sync via CDC.",
+        "DynamoDB owns them, so keep the Aurora PostgreSQL, DocumentDB copy in sync from "
+        "DynamoDB via CDC until then.",
+        "Build the dual-write path and keep the copies in sync.",
+        "The main exposures are the tables kept in sync by change data capture (CDC): test the "
+        "CDC replication before wave 3 starts.",
+        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and close calls).",
+        "Before the Wave 3 gate, close RISK-001 and RISK-002 (tables kept in sync).",
+        "17 source tables: 15 to move, 2 kept in sync from their owners Engines: DynamoDB Why: "
+        "the smallest data migration available once the cache wave has absorbed the reads.",
+        "17 source tables: 15 to move, 2 kept in sync from their owners. 5 queries remain on "
+        "Aurora MySQL once later waves have moved their share.",
+        "1 of the 3 tables stays dual-read by OpenSearch queries until wave 4; DynamoDB owns "
+        "them, so keep the OpenSearch copy in sync from DynamoDB via CDC until then.",
+        "A read on a replica reads a copy kept in sync from DynamoDB via CDC, so it sees a "
+        "write only after CDC applies it.",
+        "The cutover script creates the triggers.",
+        "Wave 1 moves the whole database in one cutover.",
+        "1,234 rows, all 107 queries at cutover; 5 remain on Aurora MySQL at the end.",
+    ],
+)
+def test_the_guard_lets_the_deliverables_decided_wording_through(fine: str) -> None:
+    assert _findings("sample", fine, deliverable=True) == []
+
+
+# ---------------------------------------------------------------------------
+# Model text: the skills that write customer prose carry the rule
+# ---------------------------------------------------------------------------
+
+SKILL_RULE = (
+    "Cutover: the cutover is the customer's. The only sentence about it is \"The cutover is "
+    'your responsibility." Never say when or how to cut over, switch or decommission (no '
+    '"before cutover", "after cutover", "once replication has caught up", "when lag reaches '
+    'zero"), and never use "caught up", "in sync", "proven" or "ready" as readiness wording. '
+    "A copy that CDC keeps in sync from its owner is a table role and may be named so."
+)
+# Each skill whose text reaches a deliverable, and the section that holds the rule (the one
+# its prompt loads).
+CUSTOMER_PROSE_SKILLS = {
+    "executive-summary.md": "Guardrails",
+    "consolidation-review.md": "Executive Summary",
+    **{
+        f"{e}-data-modeling.md": "Customer-facing text"
+        for e in ("aurora_mysql", "aurora_postgresql", "documentdb", "dynamodb", "elasticache")
+    },
+    "opensearch-index-modeling.md": "Customer-facing text",
+    **{
+        f"{e}-pe-review.md": "Output contract"
+        for e in (
+            "aurora_mysql",
+            "aurora_postgresql",
+            "documentdb",
+            "dynamodb",
+            "elasticache",
+            "opensearch",
+        )
+    },
+    "documentdb-analysis-advisor.md": "Rules",
+    "dynamodb-analysis-advisor.md": "Rules",
+}
+
+
+@pytest.mark.parametrize("skill", sorted(CUSTOMER_PROSE_SKILLS))
+def test_each_customer_prose_skill_carries_the_cutover_rule(skill: str) -> None:
+    from src.shared.skill_sections import skill_sections
+
+    assert SKILL_RULE in skill_sections(skill)[CUSTOMER_PROSE_SKILLS[skill]]
+
+
+@pytest.mark.passes_on_main
+def test_every_skill_is_listed() -> None:
+    """A new skill under src/skills/ is placed here, so its prose gets the rule too."""
+    assert sorted(p.name for p in (REPO / "src/skills").glob("*.md")) == sorted(
+        CUSTOMER_PROSE_SKILLS
+    )
+
+
+def test_the_summary_prompts_carry_the_rule() -> None:
+    """The executive summary's and the reality check's prompts, as each model sees them."""
+    from src.agents.referee import synthesis_report
+    from src.agents.referee.consolidation_validator import CONSOLIDATION_REVIEW_SKILL
+    from src.agents.referee.reality_check_handler import REALITY_CHECK_SUMMARY_SECTION
+    from src.shared.skill_sections import skill_sections
+
+    assert SKILL_RULE in synthesis_report.executive_summary_prompt(["dynamodb"], [], {})
+    assert SKILL_RULE in skill_sections(CONSOLIDATION_REVIEW_SKILL)[REALITY_CHECK_SUMMARY_SECTION]
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "advice",
+    [
+        # The review's sentences, and readiness claims a model could write.
+        "Keep writes paused until the copies are in sync.",
+        "Keep the source running until DynamoDB is in sync.",
+        "Switch once Aurora is in sync via CDC.",
+        "Cut over when Aurora MySQL is in sync from the source.",
+        "Once replication to Aurora MySQL has caught up, decommission the source.",
+        "Retire the source when replication lag reaches zero.",
+        "Load-test the queries before cutover.",
+        "The design is proven to work, so the move can go ahead.",
+        "The table is ready to switch.",
+        "Aurora is ready for your applications.",
+        "The move is proven.",
+        "DynamoDB is now ready.",
+    ],
+)
+def test_model_design_text_is_checked_for_cutover_and_readiness_claims(advice: str) -> None:
+    assert _findings("design note", advice, model_text=True) != []
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "fine",
+    [
+        # The discourse e2e-llm run of #2111: a designer's uniqueness statement.
+        "The sort key is the id because the collector shows unique (name, user_id) indexes only "
+        "for single names and the non-unique (user_id, name) index, so (user_id, name) is not "
+        "proven unique and keying on it could overwrite a row.",
+        "The access pattern is not proven by the collected queries alone.",
+        "The GSI is ready-made for this lookup.",
+        "A DynamoDB Streams consumer keeps the summary item in sync with the order items.",
+        "This is a production-ready key design.",
+        "1 of the 3 tables stays dual-read until wave 4.",
+    ],
+)
+def test_model_design_text_keeps_its_data_statements(fine: str) -> None:
+    assert _findings("design note", fine, model_text=True) == []
+
+
+@pytest.mark.passes_on_main
+def test_our_own_text_keeps_every_banned_word() -> None:
+    """The deterministic text is checked strictly: the same uniqueness sentence fails."""
+    note = "so (user_id, name) is not proven unique and keying on it could overwrite a row."
+    assert _findings("ours", note, deliverable=True) != []

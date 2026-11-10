@@ -151,8 +151,9 @@ def test_with_no_wave_the_texts_give_no_cutover_timing() -> None:
         assert "cutover" not in text, r
     numbered = [{**r, "risk_id": f"RISK-{i:03d}"} for i, r in enumerate(risks, start=1)]
     assert wave_gate_strategies(numbered) == [
-        "Before cutover, close RISK-002, RISK-003 and RISK-004 (routines that behave "
-        "differently, routines with no code collected and carried routines to check).",
+        "Close RISK-002, RISK-003 and RISK-004 (routines that behave differently, routines "
+        "with no code collected and carried routines to check). The cutover is your "
+        "responsibility.",
         "To do: migrate 5 routines yourself (RISK-001); the cutover is your responsibility.",
     ]
 

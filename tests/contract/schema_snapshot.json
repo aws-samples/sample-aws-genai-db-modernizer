@@ -29000,6 +29000,22 @@
                     ]
                   }
                 },
+                "cutover_responsibility": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
                 "derived_copy_sync": {
                   "required": false,
                   "schema": {
@@ -39582,8 +39598,8 @@
         }
       }
     },
-    "schema_hash": "8dd0bb3d21d6f9ec51c74e84cc15fe9a97e41c02265d480882ea1be1d119ace7",
-    "version": "1.93"
+    "schema_hash": "1545c962088fff4dd51e30360afece7eb87a5241c42fa469166a3de4cda9510a",
+    "version": "1.94"
   },
   "transformation_contract.StepContract": {
     "fields": {
@@ -40392,7 +40408,7 @@
       }
     },
     "schema_hash": "5f97c8ec8f60f88beca82deb39995d10e58cfe6b5a6982a505e48b8eb171dd4f",
-    "version": "1.4"
+    "version": "1.5"
   },
   "triage_output.TriageOutputContract": {
     "fields": {
