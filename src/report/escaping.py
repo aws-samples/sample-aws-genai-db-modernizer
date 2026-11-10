@@ -132,6 +132,9 @@ def md_code(value: Any) -> str:
 # A word as the report's id checks read one (#1078 review): letters, digits, "_" and "-".
 _ID_WORD = re.compile(r"[0-9A-Za-z_-]+")
 _TICKS = re.compile(r"`+")
+#: An access-pattern id as the schema designs give one (#2084): the engine shorthand,
+#: "AP" and a number (``DDB-AP-15``, ``DOC-AP-2``, ``EC-AP-1``, ``OS-AP-3``).
+ACCESS_PATTERN_ID = re.compile(r"\b[A-Z]{2,5}-AP-\d+\b")
 
 
 def _code_spans(text: str) -> list[tuple[int, int]]:
@@ -151,24 +154,29 @@ def _code_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def md_text_with_ids(value: Any, query_ids: Collection[str]) -> str:
+def md_text_with_ids(value: Any, query_ids: Collection[str], *, pattern_ids: bool = False) -> str:
     """:func:`md_text`, with each of the report's query ids (full, or its 8-character
     prefix, as the report's tables name one) that ``value`` holds as a whole word set
     as a code span, as the report prints every other query id. Only the ids the
     report itself holds count, so a hash or UUID in model prose stays prose; an id
     already in a code span (the schema-design gate writes every cited id as one, #1321)
     is left as written, never quoted twice (#1981); every other part of ``value`` is
-    escaped exactly as :func:`md_text` escapes it."""
+    escaped exactly as :func:`md_text` escapes it. With ``pattern_ids``, each
+    access-pattern id (``DDB-AP-15``, the engine shorthand the design contracts give
+    it, :data:`ACCESS_PATTERN_ID`) is set as a code span too (#2084): a design review's
+    target names one in its own words."""
     text = str(value)
     known = set(query_ids) | {q[:8] for q in query_ids if len(q) >= 8}
-    if not known:
+    if not known and not pattern_ids:
         return md_text(text)
     spans = _code_spans(text)
     out: list[str] = []
     last = 0
     for match in _ID_WORD.finditer(text):
         quoted = any(start < match.start() and match.end() < end for start, end in spans)
-        if match.group(0) in known and not quoted:
+        word = match.group(0)
+        is_id = word in known or (pattern_ids and ACCESS_PATTERN_ID.fullmatch(word))
+        if is_id and not quoted:
             out += [md_text(text[last : match.start()]), f"`{md_code(match.group(0))}`"]
             last = match.end()
     out.append(md_text(text[last:]))

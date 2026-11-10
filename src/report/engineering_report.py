@@ -206,8 +206,11 @@ def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
     paragraphs, withheld = summary_paragraphs(report, trust)
     out = ["## Executive summary", ""]
     if paragraphs:
+        # #2084: the Decision restates a held wave's redesign note, free text that can
+        # name a query: its ids are quoted as the rest of the report quotes them.
+        query_ids = report_query_ids(report)
         for chunk in paragraphs:
-            out += [escaping.md_text(chunk), ""]
+            out += [escaping.md_text_with_ids(chunk, query_ids, pattern_ids=True), ""]
     else:
         out += ["No executive summary was generated for this run.", ""]
     if withheld:
