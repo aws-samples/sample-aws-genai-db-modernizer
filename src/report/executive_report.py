@@ -121,6 +121,7 @@ from .risks import (
 )
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
+from .routines import lists_routines, routine_summary_lines, routine_wave
 from .table_owners import OWNER_RULE_SHORT, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
 from .unservable import (
@@ -197,6 +198,7 @@ L_COST_BREAKDOWN = "Cost by engine"
 L_ASSUMPTIONS = "Assumptions"
 L_ROW_COUNTS = "Row counts"
 L_RATE_WINDOWS = "Call rates"
+L_ROUTINES_POINTER = "The engineering report lists each routine."
 L_TIED_BETWEEN = "Tied between"
 L_PLACED_ON = "Placed on"
 L_NOT_REVIEWED = "Not reviewed"
@@ -1115,6 +1117,19 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         flow += [_gap(6), _para(f"{scenario}.", st["small"])]
     # #1474: the one caveat where the costs are stated.
     flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
+    # #1939: the routines' headline counts, as the facts state them, in the short form
+    # (#2075): no routine or table name. The to-do is printed once: in its wave's
+    # readiness line, or here when no wave brings in the routines' target.
+    routine_lines = [
+        f"{label}: {without_table_names(line, names)}"
+        for label, line in routine_summary_lines(report, to_do=routine_wave(report) is None)
+    ]
+    if routine_lines and lists_routines(report):
+        routine_lines[-1] += f" {L_ROUTINES_POINTER}"
+    if routine_lines:
+        flow.append(_gap(10))
+        for line in routine_lines:
+            flow += [_para(line, st["small"]), _gap(4)]
     return flow
 
 

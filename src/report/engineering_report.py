@@ -93,6 +93,7 @@ from .risks import (
     shared_mitigation_refs,
 )
 from .roadmap import _roadmap_md
+from .routines import routines_md
 from .sources_of_truth import sources_of_truth_md
 from .table_owners import (
     OWNER_RULE,
@@ -1627,6 +1628,8 @@ def render_engineering_report_md(
     out += _risk_posture_md(report)
     out += _risk_register_md(report, said)
     out += _mitigation_strategies_md(report)
+    # #1939: each routine behind a routine risk, which the risks' "And N more" points at.
+    out += routines_md(report)
 
     out += _trade_offs_md(report, facts)
     out += query_traces_md(report)

@@ -464,3 +464,25 @@ export function derivedCopySyncOf(synthesis, riskId) {
     basis: at === 0 ? assumptions.join(' ') : '',
   };
 }
+
+// #1939: how the job's routines migrate (facts.routines, #1938): the headline,
+// the to-do and each routine behind a routine risk with its status and why in
+// plain words. Null when the report has none (no routines, or a report written
+// before them). Read as stored; nothing is counted.
+export function routinesOf(synthesis) {
+  const routines = factsOf(synthesis) && factsOf(synthesis).routines;
+  return routines && typeof routines === 'object' ? routines : null;
+}
+
+// "We could not translate 5 routines automatically; migrate them yourself
+// before wave 1.": the facts' to-do as a sentence (src/report/routines.py
+// to_do_text), or null when no routine needs it.
+export function routineToDoText(routines) {
+  const line = routines && routines.migrate_yourself_line;
+  return line ? `${line.charAt(0).toUpperCase()}${line.slice(1)}.` : null;
+}
+
+// #1939: a routine's key, its kind and id: a function and a procedure may share a name.
+export function routineKey(ref) {
+  return `${ref.kind}:${ref.routine_id}`;
+}

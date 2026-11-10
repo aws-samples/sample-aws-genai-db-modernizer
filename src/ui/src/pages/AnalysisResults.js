@@ -57,6 +57,7 @@ import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
+import RoutineMigrationSection from "../components/RoutineMigrationSection";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
@@ -2131,6 +2132,11 @@ const AnalysisResultsPage = memo(() => {
             {/* Migration roadmap (#957): report.json's waves, the same ones the
                 PDF and the engineering report show. */}
             <MigrationWavePlan synthesis={synthesis} t={t} />
+
+            {/* Routines (#1939): how the job's routines migrate, the to-do and each
+                routine behind a routine risk, from facts.routines, as both reports
+                state them. Collapsed. */}
+            <RoutineMigrationSection synthesis={synthesis} t={t} />
 
             {/* Reality-check moves no model reviewed (#746): one line when any. */}
             <UnreviewedMovesNote synthesis={resultsData?.synthesis} t={t} />
