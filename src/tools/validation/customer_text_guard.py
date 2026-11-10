@@ -197,6 +197,12 @@ ID_FIELD_PATHS = frozenset(
         ("holds", "flagged_by"),  # WaveHold.flagged_by (#1992): the raising engine's id
         ("requests", "engine"),  # WaveRedesignRequest.engine (#1992): the engine sent back
         ("review_warnings", "engine"),  # ReviewWarning.engine (#1992): the design's engine
+        # #2067: the same ReviewWarning, as the customer accepted or rejected it.
+        ("accepted_warnings", "engine"),
+        ("rejected_warnings", "engine"),
+        ("warning", "engine"),  # WaveRedesignCheck.warning
+        ("accepted", "engine"),  # WaveWarningDecision.accepted
+        ("rejected", "engine"),  # WaveWarningDecision.rejected
         ("aurora_engine_choice", "engine"),  # AuroraEngineChoice.engine (assignment_models.py:276)
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
@@ -249,6 +255,11 @@ ID_FIELD_PATHS = frozenset(
         ("trade_offs", "target_tables"),  # TradeOff.target_tables (schema_design_output.py)
         ("optimizations", "target"),  # Aurora Optimization.target: table/column/cluster name(s)
         ("review_warnings", "target"),  # ReviewWarning.target: the reviewed table/index name
+        ("accepted_warnings", "target"),  # the same ReviewWarning.target (#2067)
+        ("rejected_warnings", "target"),
+        ("warning", "target"),
+        ("accepted", "target"),
+        ("rejected", "target"),
         ("app_layer_notes", "feature"),  # Aurora AppLayerNote.feature: a short code, not prose
         ("migration_notes", "object_name"),  # MigrationNote.object_name: a stored-object name
         # RealityCheckOutputContract.flag_decisions (FlagDecision, #647): the

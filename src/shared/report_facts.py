@@ -78,7 +78,7 @@ from src.shared.trade_off_topics import (
     predates_topics,
     trade_off_group,
 )
-from src.shared.wave_readiness import redesign_facts, risk_wave, wave_readiness
+from src.shared.wave_readiness import redesign_facts, risk_wave, wave_edit_facts, wave_readiness
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -3677,6 +3677,15 @@ def wave_readiness_rows(
         ),
         unsupported_by_engine=unsupported,
         review_warnings_by_engine=warnings,
+        # #2067: the customer's /wave-edit decisions on those warnings.
+        wave_edits=wave_edit_facts(
+            [d for d in report.get("wave_warning_decisions") or [] if isinstance(d, Mapping)],
+            (
+                report.get("wave_redesign")
+                if isinstance(report.get("wave_redesign"), Mapping)
+                else None
+            ),
+        ),
         window_representative=(rate_windows or {}).get("representative"),
         projected_cost=projected_monthly_cost(report) if source_cost is not None else None,
         source_cost=source_cost,

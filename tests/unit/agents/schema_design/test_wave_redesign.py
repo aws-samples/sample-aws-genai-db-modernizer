@@ -140,11 +140,33 @@ def test_a_wave_fixed_in_round_one(store: LocalArtifactStore) -> None:
     WaveRedesignLog.model_validate(log)
 
 
-def test_an_unreviewed_design_is_improved_not_fixed(store: LocalArtifactStore) -> None:
+def test_an_unreviewed_design_is_never_kept(store: LocalArtifactStore) -> None:
+    """#2077 review: the redesign's review did not run, so its holds are gone, but a
+    design is never kept unreviewed in place of a reviewed one."""
     plan_round(store, DB, JOB, _report([_hold()]), V)
+    _design(store, "second")
+    status = plan_round(store, DB, JOB, _report([], reviewed=0), V)
+    assert status == {"status": "awaiting_synthesis", "restored": ["dynamodb"], "rounds": 1}
+    assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "not_reviewed"}
+    assert store.read_json(DESIGN) == {"design": "first"}
+    from src.shared.wave_readiness import redesign_facts
+
+    assert redesign_facts(read_log(store, DB, JOB, V))["dynamodb"]["note"] == (
+        "redesign round 1: the review did not run, so the earlier design is kept"
+    )
+
+
+@pytest.mark.passes_on_main  # guards #1992's keep when no review exists in this mode
+def test_a_design_with_no_review_in_this_mode_can_still_be_kept(
+    store: LocalArtifactStore,
+) -> None:
+    # An engine never reviewed here (Claude Code reviews no Aurora or ElastiCache
+    # design): its earlier design was not reviewed either, so the better one is kept.
+    plan_round(store, DB, JOB, _report([_hold()], reviewed=0), V)
     _design(store, "second")
     plan_round(store, DB, JOB, _report([], reviewed=0), V)
     assert read_log(store, DB, JOB, V)["rounds"][0]["outcome"] == {"dynamodb": "improved"}
+    assert store.read_json(DESIGN) == {"design": "second"}
 
 
 def test_still_held_after_the_last_round(store: LocalArtifactStore) -> None:

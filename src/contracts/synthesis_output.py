@@ -654,6 +654,14 @@ Version History:
   readiness_line as the executive report prints it, with design review warnings as a
   count that points to the engineering report and a failed redesign round without its
   reason, so it names no collected table or column.
+- 1.90 (2026-11-10, #2067): Added optional
+  SynthesisOutputContract.wave_warning_decisions (WaveWarningDecision with
+  DecidedWarning: the /wave-edit decisions on a version's design review warnings, each
+  warning by its number and its own text); facts.waves[] accepted_warnings,
+  accepted_warning_count, rejected_warnings, rejected_warning_count and
+  open_warning_count; WaveRedesignCheck.warning; WaveRedesignRound.wave_edit,
+  decision_version and reviewed_before, and its not_reviewed outcome. Backward
+  compatible: every new field defaults to None, 0 or empty.
 """
 
 from datetime import datetime
@@ -1422,6 +1430,15 @@ class WaveNextStep(BaseModel):
     line: str = Field(..., description="The step as every deliverable states it")
 
 
+class ReviewWarning(BaseModel):
+    """One design review change request below blocker severity (#1992)."""
+
+    engine: str
+    category: str = ""
+    target: str = ""
+    change: str = ""
+
+
 class WaveRedesignCheck(BaseModel):
     """One failed check a redesign round sent back to the engine's design (#1992)."""
 
@@ -1432,6 +1449,13 @@ class WaveRedesignCheck(BaseModel):
     detail: str | None = Field(None, description="The risk's own text, as the register states it")
     mitigation: str | None = None
     query_ids: list[str] = Field(default_factory=list)
+    warning: ReviewWarning | None = Field(
+        None,
+        description=(
+            "A rejected_warning check (#2067): the design review warning the customer did "
+            "not accept; None for every other check"
+        ),
+    )
 
 
 class WaveRedesignRequest(BaseModel):
@@ -1446,18 +1470,38 @@ class WaveRedesignRound(BaseModel):
     """One bounded redesign round (#1992): the engines sent back, what each was sent
     back with, and each one's outcome once the checks ran again."""
 
-    round: int = Field(..., ge=1)
+    round: int = Field(
+        ..., ge=1, description="The round's place among every round of the version, both loops"
+    )
     assignment_version: int = Field(0, ge=0)
     engines: list[str] = Field(default_factory=list)
     requests: list[WaveRedesignRequest] = Field(default_factory=list)
     outcome: (
-        dict[str, Literal["fixed", "improved", "did_not_improve", "failed", "stopped"]] | None
-    ) = Field(None, description="Per engine; None while the round is running")
+        dict[
+            str,
+            Literal["fixed", "improved", "did_not_improve", "failed", "stopped", "not_reviewed"],
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "Per engine; None while the round is running. not_reviewed (#2067): the new "
+            "design's review did not run or failed, so the earlier design is kept"
+        ),
+    )
+    reviewed_before: dict[str, bool] | None = Field(
+        None,
+        description=(
+            "Per engine, whether the design the round replaced had a review that ran "
+            "(#2067): a new design is then kept only once its own review ran"
+        ),
+    )
     before: dict[str, list[int]] | None = Field(
         None,
         description=(
             "Per engine, its score before the round: [holds on its waves, assigned queries "
-            "its design marks unsupported]; a round's design is kept only when strictly lower"
+            "its design marks unsupported], plus, for a wave edit, the rejected warnings its "
+            "review still lists; a round's design is kept only when strictly lower"
         ),
     )
     parts: dict[str, list[int] | None] | None = Field(
@@ -1473,6 +1517,21 @@ class WaveRedesignRound(BaseModel):
     stopped: str | None = Field(
         None, description="Why the round did not run (a run ceiling); None when it ran"
     )
+    wave_edit: int | None = Field(
+        None,
+        description=(
+            "The wave a /wave-edit round redesigned (#2067); None for a round of the "
+            "automatic loop"
+        ),
+    )
+    decision_version: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The wave edit decision (decisions/wave-edit/wave-<N>/v<k>.json) the round "
+            "carries out; None for a round of the automatic loop"
+        ),
+    )
 
 
 class WaveRedesignLog(BaseModel):
@@ -1482,13 +1541,35 @@ class WaveRedesignLog(BaseModel):
     rounds: list[WaveRedesignRound] = Field(default_factory=list)
 
 
-class ReviewWarning(BaseModel):
-    """One design review change request below blocker severity (#1992)."""
+class DecidedWarning(ReviewWarning):
+    """A design review warning as the customer decided on it (#2067): its place in that
+    review's list and its own text, never matched to another review's."""
 
-    engine: str
-    category: str = ""
-    target: str = ""
-    change: str = ""
+    n: int = Field(..., ge=1, description="Its number in the list /wave-edit showed")
+
+
+class WaveWarningDecision(BaseModel):
+    """Which of a wave's design review warnings the customer accepted, and which they did
+    not (#2067, ``/wave-edit``): recorded under ``decisions/wave-edit/`` and copied by
+    synthesis into the report for the assignment version it was made on."""
+
+    wave: int = Field(..., ge=0)
+    decision_version: int = Field(
+        ..., ge=1, description="The k of decisions/wave-edit/wave-<N>/v<k>.json"
+    )
+    assignment_version: int = Field(0, ge=0)
+    accepted: list[DecidedWarning] = Field(default_factory=list)
+    rejected: list[DecidedWarning] = Field(
+        default_factory=list, description="Sent back to the design with the wave's blockers"
+    )
+    blockers: list[str] = Field(
+        default_factory=list,
+        description="The holds sent back with them, as the wave's readiness stated them",
+    )
+    auto: bool = Field(
+        False, description="Recorded by an unattended run (--auto), which accepts every warning"
+    )
+    recorded_at: datetime | None = Field(None, description="When it was recorded (UTC)")
 
 
 class WaveReadinessNote(BaseModel):
@@ -1625,6 +1706,35 @@ class WaveFacts(BaseModel):
     )
     review_warning_count: int = Field(
         0, ge=0, description="How many review_warnings the wave lists (#1992)"
+    )
+    accepted_warnings: list[DecidedWarning] = Field(
+        default_factory=list,
+        description=(
+            "The review_warnings the customer accepted with /wave-edit (#2067), as that "
+            "decision recorded them; set only while the review the decision was made on is "
+            "the wave's last (a kept redesign's review is a new list). Empty otherwise"
+        ),
+    )
+    accepted_warning_count: int = Field(
+        0, ge=0, description="How many accepted_warnings the wave lists (#2067)"
+    )
+    open_warning_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "How many of a suggested wave's review_warnings the customer has not decided on "
+            "with /wave-edit: still to accept (#2067)"
+        ),
+    )
+    rejected_warnings: list[DecidedWarning] = Field(
+        default_factory=list,
+        description=(
+            "The review_warnings the customer did not accept with /wave-edit (#2067), as "
+            "that decision recorded them, on the same terms as accepted_warnings"
+        ),
+    )
+    rejected_warning_count: int = Field(
+        0, ge=0, description="How many rejected_warnings the wave lists (#2067)"
     )
     redesign_rounds: int = Field(
         0,
@@ -3510,7 +3620,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.89",
+        default="1.90",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -3715,6 +3825,14 @@ class SynthesisOutputContract(BaseModel):
             "design.carried_writes risk counts them; the detailed engineering report lists "
             "them under their write group (#1364). Empty list when none; None for a report "
             "synthesized before this field existed."
+        ),
+    )
+    wave_warning_decisions: list[WaveWarningDecision] | None = Field(
+        None,
+        description=(
+            "The assignment version's /wave-edit decisions (#2067): which design review "
+            "warnings the customer accepted per wave, in the order recorded; None with "
+            "none, and for a report written before them"
         ),
     )
     wave_redesign: WaveRedesignLog | None = Field(
