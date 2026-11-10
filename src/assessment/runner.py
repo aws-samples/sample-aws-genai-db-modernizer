@@ -27,7 +27,12 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from src.assessment.models import AssessmentRequest, AssessmentResult, check_contract_version
+from src.assessment.models import (
+    AssessmentRequest,
+    AssessmentResult,
+    check_contract_version,
+    check_request_fields,
+)
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
 from src.shared.progress import in_context, to_logger
@@ -51,6 +56,8 @@ class _Job:
     database_name: str
     job_id: str
     request: AssessmentRequest
+    #: The request's routine sources as checked before the run (None: none given).
+    routine_sources: list[dict[str, Any]] | None = None
 
 
 def _collector_input(collection: dict[str, Any]) -> dict[str, Any]:
@@ -80,6 +87,12 @@ def _ingest_and_analyse(job: _Job) -> None:
         job.database_name,
         _collector_input(job.request.collection),
     )
+    if job.routine_sources is not None:
+        # #2022 (contract 1.4): the caller's CREATE statements, in the job's routine
+        # sources under the collectors' rules, never in the collector output.
+        from src.assessment.routine_sources import write_request_routine_sources
+
+        write_request_routine_sources(job.store, job.database_name, job.job_id, job.routine_sources)
     engines = job.request.options.target_engines
     if engines is not None:
         # Triage reads the job's recorded scope (ADR-031 Decision 2 Amendment 14).
@@ -290,6 +303,12 @@ def assess(
     )
     # Before anything runs, also for a request that skipped validation (#1641).
     check_contract_version(req.contract_version)
+    check_request_fields(req)
+    # #2022: the routine sources too, before anything is written, also for a request
+    # that skipped validation.
+    from src.assessment.routine_sources import check_request_routine_sources
+
+    routine_sources = check_request_routine_sources(req.routine_sources, req.collection)
     job_id = validate_job_id(job_id) if job_id is not None else uuid.uuid4().hex[:8]
     run_through = req.options.run_through
     # Before anything runs: a bad ceiling value fails fast (#145).
@@ -329,7 +348,7 @@ def assess(
             with_span_settings(None),
             to_logger(_progress, extra={"job_id": job_id}),
         ):
-            return run_phases(_Job(target_store, req.database_name, job_id, req))
+            return run_phases(_Job(target_store, req.database_name, job_id, req, routine_sources))
 
     # The analyses also write text artifacts (diagrams), which need ``write_text``.
     # With a ceiling set, one run at a time per process: the ceilings are checked

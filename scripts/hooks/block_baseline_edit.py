@@ -40,6 +40,10 @@ PROTECTED: dict[str, str] = {
     "tests/contract/assess_released_since_1_3.json": (
         "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
     ),
+    # The newest assess() contract version a release recorded: the default (#2022).
+    "src/assessment/released_contract.json": (
+        "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
+    ),
     # The last release recorded before 1.3 (#1184): a historical record, never re-recorded.
     "tests/contract/assess_released_snapshot.json": (
         NEVER_REGENERATE

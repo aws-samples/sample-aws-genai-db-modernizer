@@ -745,13 +745,16 @@ def test_no_statement_of_a_whole_collection_has_a_from_query_id() -> None:
 
 @pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
 def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
-    """A cut's request names 1.3 or nothing: 1.0 to 1.2 are retired (#1641)."""
+    """A cut's request names 1.3, 1.4 or nothing: 1.0 to 1.2 are retired (#1641)."""
     cut = cut_collection(
         _whole(),
         table_ids=ORDERS,
         parts=[{"from_query_id": TOP_PRODUCTS, "query_text": ORDERS_PART}],
     )
-    with pytest.raises(RetiredContractVersionError, match="supports contract 1.3 only"):
+    with pytest.raises(
+        RetiredContractVersionError,
+        match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)",
+    ):
         _assess_cut(cut, "analysis", version)
     text = _assess_cut(cut, "analysis", "1.3").model_dump_json()
     document = json.loads(text)
@@ -765,11 +768,12 @@ def test_a_cut_assessed_for_a_retired_version_is_refused(version: str) -> None:
     assert AssessmentResult.model_validate_json(text).model_dump_json() == text
 
 
+@pytest.mark.passes_on_main
 def test_the_published_schemas_carry_the_1_3_additions() -> None:
     result = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
     statement = result["$defs"]["StatementResult"]
     assert "from_query_id" in statement["properties"]
-    # The result schema describes 1.3 only: the library always writes both.
+    # The result schema describes 1.3 and 1.4: the library always writes both.
     assert "from_query_id" in statement["required"]
     scope_def = result["$defs"]["WorkloadScope"]
     assert "unplaced_statements" in scope_def["properties"]

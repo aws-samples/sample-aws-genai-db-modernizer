@@ -23,11 +23,14 @@ import pytest
 from pydantic import BaseModel
 
 from scripts.contract_schema_snapshot import (
+    RELEASED_VERSION_ABOUT,
     build_public_snapshot,
     check_released_against,
     evaluate_against_released,
     public_snapshot_at,
     released_document,
+    released_version_of,
+    surface_version,
     write_released,
 )
 
@@ -121,6 +124,29 @@ def test_an_additive_change_after_a_release_needs_a_minor_bump() -> None:
         contract_version: Literal["1.1"] = "1.1"  # type: ignore[assignment]
 
     assert _problems(_released(Base), AddedAndBumped) == []
+
+
+@pytest.mark.passes_on_main
+def test_the_evaluator_lets_an_unreleased_minor_take_more_additions() -> None:
+    """The evaluator alone, on made-up models: it compares with the last release, never
+    main, so a MINOR not yet recorded takes later additive changes with no further rise,
+    and a recorded one does not. What makes a recorded version the default is
+    ``test_a_recorded_release_makes_its_version_the_default_and_closes_its_shape``."""
+
+    class First(BaseModel):
+        contract_version: Literal["1.1"] = "1.1"
+        engine: str | None = None
+        role: Literal["owner", "cache_layer"]
+        routine_sources: list[str] | None = None
+
+    class Later(First):
+        origin: str | None = None
+        role: Literal["owner", "cache_layer", "routine"]  # type: ignore[assignment]
+
+    assert _problems(_released(Base), First) == []
+    assert _problems(_released(Base), Later) == []
+    # Once a release records 1.1, the same addition needs 1.2.
+    assert _problems(_released(First), Later)
 
 
 def test_an_additive_change_before_the_first_release_needs_no_bump() -> None:
@@ -314,3 +340,74 @@ def test_a_recorded_tag_is_seen_only_where_the_tag_was_fetched(
     path.write_text(json.dumps({"released": "v9.9.9", "contracts": head}))
     problems = check_released_against("HEAD^", clone, path, head)
     assert any("without recording an existing release tag" in p for p in problems)
+
+
+# ------------------------------------------------------- the released version (#2022)
+
+
+def test_the_surface_version_is_the_newest_one_the_model_reads() -> None:
+    """The public snapshot's version is the newest ``contract_version`` a model reads,
+    not its default: so a version not in a release yet counts as its MINOR rise."""
+
+    class WithDraft(BaseModel):
+        contract_version: Literal["1.0", "1.1"] = "1.0"
+        engine: str | None = None
+        role: Literal["owner", "cache_layer"]
+        added: str | None = None
+
+    assert surface_version(WithDraft) == "1.1"
+    assert surface_version(Base) == "1.0"
+    assert _problems(_released(Base), WithDraft) == []
+
+
+_NEXT_MODELS = """from typing import Literal
+
+from pydantic import BaseModel
+
+
+class AssessmentRequest(BaseModel):
+    contract_version: Literal["1.0", "1.1"] = "1.0"
+    database_name: str
+    added: str | None = None{later}
+
+
+class AssessmentResult(BaseModel):
+    contract_version: Literal["1.0", "1.1"] = "1.0"
+    role: Literal["owner", "cache_layer", "consolidated"]
+"""
+
+
+def test_a_recorded_release_makes_its_version_the_default_and_closes_its_shape(
+    toy_repo: Path, tmp_path: Path
+) -> None:
+    """No tag is refused for what it carries. v1.1.0 ships a MINOR (1.1) that no release
+    recorded yet: --write-released records its shape and writes 1.1 as the released
+    version (the default from then on). After that, a further field at 1.1 needs 1.2."""
+    models = toy_repo / "src" / "assessment" / "models.py"
+    models.write_text(_NEXT_MODELS.format(later=""))
+    _git(toy_repo, "add", "-A")
+    _git(toy_repo, "commit", "-q", "-m", "feat: 1.1")
+    _git(toy_repo, "tag", "v1.1.0")
+    record = tmp_path / "released_contract.json"
+    document = write_released(
+        "v1.1.0", repo=toy_repo, path=_snapshot_path(toy_repo), version_path=record
+    )
+    assert json.loads(record.read_text()) == {
+        "about": RELEASED_VERSION_ABOUT,
+        "contract_version": "1.1",
+        "released": "v1.1.0",
+    }
+    assert released_version_of(document) == "1.1"
+    # The same shape at 1.1 passes; one more field at 1.1 needs the next MINOR.
+    assert evaluate_against_released(document, public_snapshot_at("v1.1.0", toy_repo)) == []
+    models.write_text(_NEXT_MODELS.format(later="\n    later: str | None = None"))
+    _git(toy_repo, "add", "-A")
+    _git(toy_repo, "commit", "-q", "-m", "feat: later field")
+    [problem] = evaluate_against_released(document, public_snapshot_at("HEAD", toy_repo))
+    assert "needs a MINOR bump" in problem and "since v1.1.0" in problem
+
+
+def test_an_untagged_recording_writes_no_released_version(toy_repo: Path, tmp_path: Path) -> None:
+    record = tmp_path / "released_contract.json"
+    write_released(None, repo=toy_repo, path=_snapshot_path(toy_repo), version_path=record)
+    assert not record.exists()

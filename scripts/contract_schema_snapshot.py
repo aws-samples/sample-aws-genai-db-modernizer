@@ -72,7 +72,7 @@ same ``field_summary()``, and ``evaluate_against_released()`` applies the same
 classification against ``tests/contract/assess_released_since_1_3.json`` (a breaking
 change needs a MAJOR move of ``CONTRACT_VERSION``; once a release is recorded, an additive
 one needs a MINOR move). The release step records the shipped shape with
-``--write-released <tag>``. That baseline starts at contract 1.3, the only version this
+``--write-released <tag>``. That baseline starts at contract 1.3, the first version this
 release supports (#1641); ``tests/contract/assess_released_snapshot.json`` is the frozen
 record of the last release recorded before 1.3 (v0.4.0-beta.1's contract 1.1; v0.4.0-beta.2
 shipped 1.2, but its shape was never recorded), kept and never re-recorded.
@@ -103,7 +103,7 @@ import tarfile
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from pydantic import BaseModel
 
@@ -120,6 +120,15 @@ RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_since_1_
 #: Its versions are retired.
 HISTORICAL_RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_snapshot.json"
 WRITE_RELEASED_COMMAND = "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
+#: The released-version record: the version a request naming none gets (#2022), written
+#: with the released snapshot by ``--write-released``, never by hand.
+RELEASED_VERSION_PATH = REPO / "src" / "assessment" / "released_contract.json"
+RELEASED_VERSION_ABOUT = (
+    "The newest assess() contract version a release recorded: the version a request naming "
+    "none gets (src/assessment/models.py, default_contract_version). Written with "
+    "tests/contract/assess_released_since_1_3.json by the release step, never by hand: "
+    + WRITE_RELEASED_COMMAND
+)
 
 #: The public contract's models (key -> ``module:Class``), compared with the shape the
 #: last release shipped (``evaluate_against_released``), not with main.
@@ -822,11 +831,22 @@ def build_public_snapshot(
         model = chosen[key]
         fields = field_summary(model)
         snapshot[key] = {
-            "version": model.model_fields["contract_version"].default,
+            "version": surface_version(model),
             "schema_hash": schema_hash(fields),
             "fields": fields,
         }
     return snapshot
+
+
+def surface_version(model: type[BaseModel]) -> str:
+    """The version a public model's shape is: the newest ``contract_version`` it reads
+    (one not in a release yet included, #2022), not the default a request with none gets. A
+    model whose ``contract_version`` is no ``Literal`` of versions gives its default."""
+    field = model.model_fields["contract_version"]
+    values = [v for v in get_args(field.annotation) if isinstance(v, str)]
+    if values and all(re.fullmatch(r"\d+(\.\d+)*", v) for v in values):
+        return max(values, key=_version_tuple)
+    return str(field.default)
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
@@ -952,12 +972,42 @@ def released_document(tag: str | None, repo: Path = REPO) -> dict[str, Any]:
 
 
 def write_released(
-    tag: str | None, repo: Path = REPO, path: Path = RELEASED_SNAPSHOT_PATH
+    tag: str | None,
+    repo: Path = REPO,
+    path: Path = RELEASED_SNAPSHOT_PATH,
+    version_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Write ``path``: the public contract's shape as ``tag`` ships it."""
+    """Write ``path``: the public contract's shape as ``tag`` ships it, and
+    ``version_path``, the version a request naming none gets from then on (#2022): the
+    newest version the tag's models read. A tag is never refused for what it carries:
+    whatever its models read is released, and a later change to that shape needs the
+    next MINOR."""
     document = released_document(tag, repo)
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+    if tag is not None:
+        # The record beside the models it describes: ``repo``'s own.
+        write_released_version(
+            document, version_path or repo / RELEASED_VERSION_PATH.relative_to(REPO)
+        )
     return document
+
+
+def released_version_of(document: Mapping[str, Any]) -> str:
+    """The contract version a released snapshot records (its newest entry's)."""
+    versions = [str(e["version"]) for e in document.get("contracts", {}).values()]
+    return max(versions, key=_version_tuple)
+
+
+def write_released_version(
+    document: Mapping[str, Any], version_path: Path = RELEASED_VERSION_PATH
+) -> None:
+    """Write the released-version record ``src/assessment/released_contract.json``."""
+    record = {
+        "about": RELEASED_VERSION_ABOUT,
+        "contract_version": released_version_of(document),
+        "released": document.get("released"),
+    }
+    version_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
 def check_released_against(

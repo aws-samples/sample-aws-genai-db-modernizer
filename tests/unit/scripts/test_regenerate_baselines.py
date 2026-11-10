@@ -51,6 +51,7 @@ def test_every_baseline_the_edit_hook_protects_is_regenerated_here() -> None:
     # Recorded at a release with --write-released <tag>, never on a rebase; the
     # snapshot before 1.3 is the historical record, never re-recorded at all.
     protected.discard("tests/contract/assess_released_since_1_3.json")
+    protected.discard("src/assessment/released_contract.json")  # with it (#2022)
     protected.discard("tests/contract/assess_released_snapshot.json")
     protected.discard("tests/contract/catalog_format_snapshot.json")
     assert (

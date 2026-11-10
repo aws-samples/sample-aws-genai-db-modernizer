@@ -1,15 +1,17 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Contract versions 1.0, 1.1 and 1.2 are retired (#1641): ``assess()`` supports 1.3 only.
+"""Contract versions 1.0, 1.1 and 1.2 are retired (#1641): ``assess()`` reads 1.3 and
+1.4 (#2022) only.
 
 Those versions were initial development versions during the beta, and the release that
 ships 1.3 (v0.4.0-beta.3) supports 1.3 only. A request naming one is refused, before
 anything runs, with ``RetiredContractVersionError`` (a ``ValueError``), whose message
-names the supported version and says why; so is a result document naming one when it is
-read back. A request with no version gets 1.3, and an unknown version keeps the refusal
-any invalid field gets (``pydantic.ValidationError``). The published schemas describe
-1.3 only.
+names the versions this code reads, and says why; so is a result document naming one when it
+is read back. A request with no version gets 1.3 (1.4 is read only when pinned until
+a release records it), and an unknown version keeps the refusal any invalid field gets
+(``pydantic.ValidationError``). The published schemas describe 1.3 and 1.4
+only.
 """
 
 from __future__ import annotations
@@ -77,7 +79,8 @@ def _schema(name: str) -> dict[str, Any]:
 def _check_message(exc: RetiredContractVersionError, version: str) -> None:
     text = str(exc)
     assert f"contract_version {version!r} is no longer supported" in text
-    assert 'supports contract 1.3 only (pin contract_version "1.3"' in text
+    assert "this code reads contracts 1.3 and 1.4 (not in a release yet)" in text
+    assert 'Pin contract_version "1.3", or send none' in text
     assert "1.0, 1.1 and 1.2 were beta development versions, removed in v0.4.0-beta.3" in text
     assert "docs/contracts/assess.md, 'Removed: 1.0, 1.1 and 1.2'" in text
     assert exc.version == version
@@ -88,7 +91,7 @@ def _check_message(exc: RetiredContractVersionError, version: str) -> None:
 
 def test_the_retired_versions_are_1_0_1_1_and_1_2() -> None:
     assert RETIRED_CONTRACT_VERSIONS == RETIRED
-    assert CONTRACT_VERSION == "1.3"
+    assert CONTRACT_VERSION == "1.4"
     assert issubclass(RetiredContractVersionError, ValueError)
     assert "RetiredContractVersionError" in library.__all__
 
@@ -203,7 +206,9 @@ def test_assess_refuses_an_unvalidated_request_before_anything_runs(
 
 def test_assess_refuses_an_unvalidated_unknown_version() -> None:
     for request in _unvalidated("2.0"):
-        with pytest.raises(ValueError, match="supports contract 1.3 only") as raised:
+        with pytest.raises(
+            ValueError, match=r"this code reads contracts 1\.3 and 1\.4 \(not in a release yet\)"
+        ) as raised:
             assess(request)
         assert not isinstance(raised.value, RetiredContractVersionError)
 
@@ -215,7 +220,8 @@ def test_a_retired_version_is_refused_even_with_other_errors() -> None:
         AssessmentRequest.model_validate({"contract_version": "1.2", "database_name": ""})
 
 
-@pytest.mark.parametrize("version", ["1.4", "2.0", "1", "1.3.0", "", 1.3, None])
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("version", ["1.5", "2.0", "1", "1.3.0", "1.4.0", "", 1.3, 1.4, None])
 def test_an_unknown_version_keeps_the_invalid_field_refusal(version: Any) -> None:
     payload = {"contract_version": version, "database_name": "shop", "collection": {"a": 1}}
     with pytest.raises(ValidationError) as raised:
@@ -224,18 +230,20 @@ def test_an_unknown_version_keeps_the_invalid_field_refusal(version: Any) -> Non
     assert [e["loc"] for e in raised.value.errors()] == [("contract_version",)]
 
 
-@pytest.mark.parametrize("version", ["1.3", None])
-def test_a_1_3_request_or_one_with_no_version_gets_1_3(version: str | None) -> None:
-    assert AssessmentRequest.model_validate(_request(version)).contract_version == "1.3"
+@pytest.mark.parametrize("version", ["1.3", "1.4", None])
+def test_a_supported_request_keeps_its_version_and_none_gets_1_3(version: str | None) -> None:
+    expected = version or "1.3"
+    assert AssessmentRequest.model_validate(_request(version)).contract_version == expected
     if version is None:
         assert json.loads(_result_json())["contract_version"] == "1.3"
 
 
 def test_a_request_with_a_retired_version_is_refused_by_the_published_schema() -> None:
     validator = Draft202012Validator(_schema("assess_request"))
-    assert _schema("assess_request")["properties"]["contract_version"]["const"] == "1.3"
+    assert _schema("assess_request")["properties"]["contract_version"]["enum"] == ["1.3", "1.4"]
     minimal = {"database_name": "shop", "collection": {"a": 1}}
     validator.validate({**minimal, "contract_version": "1.3"})
+    validator.validate({**minimal, "contract_version": "1.4"})
     for version in RETIRED:
         with pytest.raises(SchemaError):
             validator.validate({**minimal, "contract_version": version})
@@ -269,4 +277,4 @@ def test_a_result_is_written_as_1_3_with_every_field() -> None:
     for statement in document["statements"]:
         assert set(statement) == set(type(result.statements[0]).model_fields)
     Draft202012Validator(_schema("assess_result")).validate(document)
-    assert _schema("assess_result")["properties"]["contract_version"]["const"] == "1.3"
+    assert _schema("assess_result")["properties"]["contract_version"]["enum"] == ["1.3", "1.4"]

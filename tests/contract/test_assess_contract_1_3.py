@@ -9,8 +9,8 @@
   own counts on the SQL Server and PostgreSQL samples;
 - an unknown count (-1, NULL or none), an empty parent and an unresolved referenced
   table give ``null``, never an average computed from 0;
-- a request for 1.3, or one that names no version, gets 1.3 (1.3 is the only version
-  this release supports; the retired ones are refused: test_assess_retired_versions.py).
+- a request for 1.3, or one that names no version, gets 1.3 (1.4 only when pinned
+  until a release records it; the retired ones are refused: test_assess_retired_versions.py).
 
 The fields are statistics, never a verdict: no field says how a data model should
 hold the two tables.
@@ -30,6 +30,7 @@ from jsonschema import Draft202012Validator
 
 from scripts import render_contract_schemas as rcs
 from src.assessment import CONTRACT_VERSION, assess, load_collection
+from src.assessment.models import default_contract_version
 
 REPO = Path(__file__).resolve().parents[2]
 #: The foreign key fields 1.3 added.
@@ -310,14 +311,16 @@ def _has_every_1_3_field(document: dict[str, Any]) -> bool:
 
 
 @pytest.mark.parametrize("version", ["1.3", None])
-def test_a_1_3_request_or_one_with_no_version_gets_the_latest(version: str | None) -> None:
+def test_a_1_3_request_or_one_with_no_version_gets_every_1_3_field(version: str | None) -> None:
+    """A 1.3 request, or one with no version, gets a 1.3 result (1.4 is read only when
+    pinned until a release records it: test_assess_contract_1_4.py)."""
     document = json.loads(_sample_json("trailgear", "analysis", version))
-    assert document["contract_version"] == CONTRACT_VERSION == "1.3"
+    assert document["contract_version"] == (version or default_contract_version())
     assert _has_every_1_3_field(document)
     published = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
-    assert published["x-contract-version"] == "1.3"
+    assert published["x-contract-version"] == CONTRACT_VERSION
     Draft202012Validator(published).validate(document)
-    assert published["properties"]["contract_version"]["const"] == "1.3"
+    assert "1.3" in published["properties"]["contract_version"]["enum"]
 
 
 def test_the_fields_carry_no_verdict() -> None:

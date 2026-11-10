@@ -24,8 +24,7 @@ the report are in ``artifacts`` (with ``include_artifacts=True``). The
 deterministic analysis's own data-model guesses are inputs to that design, not
 results, and are never part of the stable surface.
 
-Stable surface (contract ``1.3``, semantic versioning; this release supports 1.3
-only): ``contract_version``,
+Stable surface (contracts ``1.3`` and ``1.4``, semantic versioning): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
 result carries a data model), ``library_version``, ``ruleset_version``/``ruleset_hash``, ``options`` (as applied),
 ``scope`` (echoed), ``summary``, ``statements[]``, ``groups[]`` and ``designs``. Read a statement's
@@ -39,7 +38,10 @@ consolidation's, a table's) are customer-facing sentences: use ``reason_code`` a
 Contract versions 1.0, 1.1 and 1.2 were beta development versions, removed in
 v0.4.0-beta.3: a request (or a result read back) naming one raises a
 ``RetiredContractVersionError`` (a ``ValueError``). Pin ``contract_version="1.3"``, or
-send none.
+send none, for the newest version a release recorded. A version newer than that (1.4
+until the next release records it) is read only when pinned. 1.4 adds ``routine_sources``
+(#2022), refused in a 1.3 request; an invalid one raises ``RoutineSourcesError`` (a
+``ValueError`` that quotes no input).
 
 Not stable: ``artifacts`` (only with ``include_artifacts=True``) carries the pipeline's
 internal contracts verbatim, each with its own internal version, and has no
@@ -119,6 +121,7 @@ from src.assessment.models import (
     RelationalEngine,
     ResultLabel,
     RetiredContractVersionError,
+    RoutineSourcesError,
     RunThrough,
     StatementResult,
     StatementType,
@@ -168,6 +171,7 @@ __all__ = [
     "RelationalEngine",
     "ResultLabel",
     "RetiredContractVersionError",
+    "RoutineSourcesError",
     "RunLimitConfigError",
     "RunThrough",
     "StatementPart",
