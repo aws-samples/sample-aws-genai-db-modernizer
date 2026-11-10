@@ -547,6 +547,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         "src.contracts.engine_scope_decision:EngineScopeDecision",
     ),
     (
+        r"decisions/wave-edit/wave-\d+/v\d+\.json",
+        "src.contracts.wave_edit_decision:WaveEditDecision",
+    ),
+    (
         r"data-movement/wave-\d+/plan\.json",
         "src.contracts.data_movement_plan:DataMovementPlan",
     ),

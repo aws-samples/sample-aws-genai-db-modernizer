@@ -399,11 +399,27 @@ def _warning_sentences(facts: Mapping[str, Any]) -> list[str]:
         if not isinstance(row, dict) or row.get("readiness") != "suggested":
             continue
         n = int(row.get("review_warning_count") or 0)
-        if n:
+        took = int(row.get("accepted_warning_count") or 0)
+        refused = int(row.get("rejected_warning_count") or 0)
+        wave = int(row.get("wave") or 0)
+        if not n:
+            continue
+        if not (took or refused):
             noun = "design review warning" if n == 1 else "design review warnings"
+            out.append(f"Approving wave {wave} accepts its {n} {noun}, listed in the roadmap.")
+        elif not refused:
+            # #2067: the customer accepted every one with /wave-edit.
             out.append(
-                f"Approving wave {int(row.get('wave') or 0)} accepts its {n} {noun}, listed "
-                "in the roadmap."
+                f"The customer accepted wave {wave}'s {n} design review "
+                f"{'warning' if n == 1 else 'warnings'}, listed in the roadmap."
+            )
+        else:
+            # #2067: the customer did not accept some; approving the wave as it stands
+            # accepts them too.
+            out.append(
+                f"The customer accepted {took} of wave {wave}'s {n} design review warnings "
+                f"and did not accept {refused}, which are still open: approving wave {wave} "
+                "as it stands accepts them too. All are listed in the roadmap."
             )
     return out
 

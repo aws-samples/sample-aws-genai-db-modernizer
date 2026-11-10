@@ -1451,6 +1451,17 @@ def _wave_redesign_log(store: ArtifactStore, db: str, job_id: str, version: int)
     return log if log.get("rounds") else None
 
 
+def _wave_warning_decisions(
+    store: ArtifactStore, db: str, job_id: str, version: int
+) -> list[dict] | None:
+    """The ``/wave-edit`` decisions recorded on this assignment version (#2067), in the
+    order recorded, else None."""
+    from src.agents.schema_design.wave_edit import read_decisions
+
+    found = read_decisions(store, db, job_id, version)
+    return [{k: v for k, v in d.items() if k != "contract_version"} for d in found] or None
+
+
 def _report_output_data(store: ArtifactStore, result: dict, assignment_version: int) -> dict:
     """The ``report.json`` fields synthesis writes for ``result``, ``facts`` included
     (ADR-032); the summary fields are the ones ``result`` holds now."""
@@ -1514,6 +1525,10 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
             for r in (data.assignment or {}).get("post_schema_reroutes") or []
             if _engine_of(data.assignment).get(r.get("query_id")) == r.get("to_engine")
         ],
+        # #2067: the customer's /wave-edit decisions on this version's review warnings.
+        "wave_warning_decisions": _wave_warning_decisions(
+            store, result["database_name"], result["job_id"], assignment_version
+        ),
         # #1992: the bounded redesign rounds of held waves, when any ran.
         "wave_redesign": _wave_redesign_log(
             store, result["database_name"], result["job_id"], assignment_version
@@ -1920,6 +1935,7 @@ def _move_waived_to_served(data, summaries, waived) -> None:
 
 def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
     from src.shared.wave_readiness import (
+        all_review_warnings,
         failed_review_count,
         open_review_count,
         review_warnings,
@@ -1954,6 +1970,9 @@ def _engine_schema_summaries(data, hot_partitions: list[dict] | None = None):
             summaries[engine]["reviewed_count"] = reviewed_count(dumped)
             # The warnings of reviews with no blocker: accepted by approving the wave.
             summaries[engine]["review_warnings"] = review_warnings(dumped)
+            # Every warning of the last review, a blocker's included: /wave-edit lists
+            # a held wave's warnings too (#2067).
+            summaries[engine]["all_review_warnings"] = all_review_warnings(dumped)
     return summaries
 
 

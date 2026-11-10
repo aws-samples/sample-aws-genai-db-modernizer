@@ -81,6 +81,7 @@ COMMANDS_WITH_TOOL_USE_RULE = [
     "review-schema.md",
     "explore.md",
     "move.md",
+    "wave-edit.md",
 ]
 
 
@@ -316,7 +317,14 @@ def test_every_command_carries_the_tool_use_rule() -> None:
 _DISPATCH_LINE = re.compile(r"^\s*(?:Run|Follow) /[a-z-]+\b|task text ends with:")
 # Where commands dispatch subagents today, and at least how many task texts each holds, so
 # a site the pattern stops matching fails instead of silently dropping out of the scan.
-_DISPATCH_SITES = {"modernize.md": 6, "design-schema-dynamodb.md": 1, "design-schema.md": 1}
+_DISPATCH_SITES = {
+    "modernize.md": 6,
+    "design-schema-dynamodb.md": 1,
+    "design-schema.md": 1,
+    # #2067: the wave's designs (the DynamoDB parts and merge fix too), their reviews and
+    # the synthesis after them.
+    "wave-edit.md": 5,
+}
 
 
 def _dispatch_lines(path: Path) -> list[tuple[int, str]]:

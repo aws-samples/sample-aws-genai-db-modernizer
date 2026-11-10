@@ -115,6 +115,122 @@ def _warning_phrase(w: Mapping[str, Any]) -> str:
     return f"{display_engine(str(w.get('engine') or ''))}{target}{change}".rstrip(".")
 
 
+_WARNING_FIELDS = ("engine", "category", "target", "change")
+
+
+def _listed(w: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(str(w.get(k) or "") for k in _WARNING_FIELDS)
+
+
+def wave_edit_facts(
+    decisions: Iterable[Mapping[str, Any]] | None, log: Mapping[str, Any] | None
+) -> dict[int, dict[str, Any]]:
+    """Per wave, its latest ``/wave-edit`` decision (#2067) and how many of that decision's
+    redesign rounds kept a new design, or are still open with it in place (``kept_rounds``,
+    from the redesign log)."""
+    out: dict[int, dict[str, Any]] = {}
+    for d in decisions or []:
+        if not isinstance(d, Mapping):
+            continue
+        wave = int(d.get("wave") or 0)
+        if int(d.get("decision_version") or 0) >= int(
+            (out.get(wave) or {}).get("decision", {}).get("decision_version") or 0
+        ):
+            out[wave] = {"decision": d, "kept_rounds": 0}
+    for rnd in (log or {}).get("rounds") or []:
+        if not isinstance(rnd, Mapping) or rnd.get("wave_edit") is None:
+            continue
+        edit = out.get(int(rnd.get("wave_edit") or 0))
+        if not edit or rnd.get("decision_version") != edit["decision"].get("decision_version"):
+            continue
+        outcome = rnd.get("outcome")
+        # A round still open when synthesis ran: the design in place is its new one (a
+        # round that puts it back asks for another synthesis).
+        if outcome is None or (
+            isinstance(outcome, Mapping)
+            and any(v in ("fixed", "improved") for v in outcome.values())
+        ):
+            edit["kept_rounds"] += 1
+    return out
+
+
+def _engines_next_step(engines: Iterable[str]) -> str:
+    return "; ".join(
+        f"revise the {display_engine(e)} schema design in the modernization session and "
+        "review it again"
+        for e in dict.fromkeys(engines)
+    )
+
+
+def _decided_line(
+    warnings: list[dict[str, Any]], edit: Mapping[str, Any] | None
+) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """A suggested wave's line once the customer decided on its warnings with /wave-edit
+    (#2067): ``(line, short line, accepted, rejected)``, or None to state the warnings as
+    to accept (#1992). A decision speaks only for the review it was made on: its warnings,
+    each by its position and its own text, are the review's list exactly (nothing was
+    redesigned since, or the earlier design came back). After a redesign kept a new
+    design, the new review's warnings are a new list for the customer to decide on; they
+    are never matched to the old ones."""
+    if not edit:
+        return None
+    d = edit["decision"]
+    decided = sorted(
+        [*(d.get("accepted") or []), *(d.get("rejected") or [])],
+        key=lambda w: int(w.get("n") or 0),
+    )
+    accepted = [dict(w) for w in d.get("accepted") or []]
+    rejected = [dict(w) for w in d.get("rejected") or []]
+    if decided and [_listed(w) for w in decided] == [_listed(w) for w in warnings]:
+        noun = _plural(len(warnings), "design review warning", "design review warnings")
+        parts = []
+        if accepted:
+            parts.append(
+                f"The customer accepted {len(accepted)}: "
+                + "; ".join(map(_warning_phrase, accepted))
+                + "."
+            )
+        if rejected:
+            parts.append(
+                f"The customer did not accept {len(rejected)}, still open: "
+                + "; ".join(map(_warning_phrase, rejected))
+                + "; the next step is to "
+                + _engines_next_step(str(w.get("engine") or "") for w in rejected)
+                + "."
+            )
+        line = f"Suggested, with {noun}. " + " ".join(parts)
+        short = (
+            f"Suggested, with {noun} ({WARNINGS_LISTED_IN}): the customer accepted "
+            f"{len(accepted)}"
+            + (f" and did not accept {len(rejected)}, still open" if rejected else "")
+            + "."
+        )
+        return line, short, accepted, rejected
+    kept = int(edit.get("kept_rounds") or 0)
+    if not kept or not rejected:
+        return None
+    head = (
+        f"Suggested: redesigned {_times(kept)} after the customer did not accept "
+        f"{_plural(len(rejected), 'design review warning', 'design review warnings')}; "
+    )
+    if not warnings:
+        line = head + "the new review approved it with no warnings."
+        return line, line, [], []
+    lists = (
+        f"the new review lists "
+        f"{_plural(len(warnings), 'design review warning', 'design review warnings')} "
+        "to accept"
+    )
+    then = (
+        " If the customer does not accept them: "
+        + _engines_next_step(str(w.get("engine") or "") for w in warnings)
+        + "."
+    )
+    line = head + lists + ": " + "; ".join(map(_warning_phrase, warnings)) + "." + then
+    short = head + lists + f" ({WARNINGS_LISTED_IN})." + then
+    return line, short, [], []
+
+
 def _times(n: int) -> str:
     return {1: "once", 2: "twice"}.get(n, f"{n} times")
 
@@ -319,6 +435,7 @@ def wave_readiness(
     redesign_by_engine: Mapping[str, Mapping[str, Any]] | None = None,
     unsupported_by_engine: Mapping[str, int] | None = None,
     review_warnings_by_engine: Mapping[str, list[Mapping[str, Any]]] | None = None,
+    wave_edits: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per wave, in order: ``wave``, ``readiness``, ``suggested`` (True when
     suggested, False when held, None otherwise), ``holds``, ``next_steps`` and the
@@ -332,6 +449,8 @@ def wave_readiness(
     source cost is compared only when both costs are given. ``redesign_by_engine`` is
     :func:`redesign_facts` of the redesign log: a wave states the rounds its engines were
     redesigned in, and why no further round ran when a ceiling stopped it.
+    ``wave_edits`` is :func:`wave_edit_facts` (#2067): a suggested wave's line states the
+    customer's decision on its warnings.
     """
     designed = {str(e) for e in designed_engines}
     unserved = unserved_by_engine or {}
@@ -378,6 +497,8 @@ def wave_readiness(
         stopped_short = next(
             (str(r.get("short_note") or r["note"]) for r in redesign if r.get("note")), None
         )
+        accepted: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
         short: str | None = None
         if holds:
             readiness = "held"
@@ -420,7 +541,11 @@ def wave_readiness(
                 if rounds
                 else SUGGESTED_LINE
             )
-            if warnings:
+            decided = _decided_line(warnings, (wave_edits or {}).get(int(wave.get("wave") or 0)))
+            if decided is not None:
+                # The customer decided on the warnings with /wave-edit (#2067).
+                line, short, accepted, rejected = decided
+            elif warnings:
                 # A review with only warnings holds nothing (maintainer decision on
                 # #2051): approving the wave accepts them. Each warning names the
                 # reviewed table and its columns: the short line counts them (#2075).
@@ -455,6 +580,13 @@ def wave_readiness(
                 "readiness_line_short": short or line,
                 "review_warnings": warnings if readiness == "suggested" else [],
                 "review_warning_count": len(warnings) if readiness == "suggested" else 0,
+                "accepted_warnings": accepted,
+                "accepted_warning_count": len(accepted),
+                "rejected_warnings": rejected,
+                "rejected_warning_count": len(rejected),
+                "open_warning_count": (
+                    len(warnings) - len(accepted) - len(rejected) if readiness == "suggested" else 0
+                ),
                 "redesign_rounds": rounds,
                 "redesign_note": stopped,
             }
@@ -591,6 +723,10 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
                     "the earlier design is kept"
                 )
                 row["short_note"] = f"redesign round {n} failed; the earlier design is kept"
+            elif last == "not_reviewed":
+                row["note"] = row["short_note"] = (
+                    f"redesign round {n}: the review did not run, so the earlier design is kept"
+                )
             elif last == "did_not_improve":
                 row["note"] = row["short_note"] = (
                     f"redesign round {n} did not improve it; the earlier design is kept"
@@ -602,6 +738,17 @@ def reviewed_count(trace: Mapping[str, Any] | None) -> int:
     """How many designs (or design groups) a design trace records with a review verdict:
     a redesign round counts as ``fixed`` only for a design that was reviewed."""
     return sum(1 for run in _runs(trace) if (r := _last_review(run)) and r["verdict"] != "FAILED")
+
+
+def all_review_warnings(trace: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The warnings of each design's (or group's) last review that ran, a review with a
+    blocker included: what ``/wave-edit`` lists for a held wave too (#2067)."""
+    out: list[dict[str, Any]] = []
+    for run in _runs(trace):
+        r = _last_review(run)
+        if r and r["verdict"] != "FAILED":
+            out.extend(dict(w) for w in r.get("warnings") or [])
+    return out
 
 
 def review_warnings(trace: Mapping[str, Any] | None) -> list[dict[str, Any]]:

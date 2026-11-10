@@ -76,9 +76,20 @@ The one-step option means adopting the whole target architecture in one cutover 
 | `/design-schema` | Designs target schemas per engine (needs a model) |
 | `/synthesize` | Produces the final report and renders the deliverables into `artifacts/<db>/<job>/deliverables/` (see [Understand the results](understand-the-results.md#the-deliverables)) |
 | `/explore` | Answers a question about an assessed job from its context graph (see [Ask about an assessment](#ask-about-an-assessment-explore)) |
+| `/wave-edit` | Revisits one wave's design and its design review warnings: you say which warnings you do not accept, and only that wave's engines are designed and reviewed again (see [Revisit a wave](#revisit-a-wave-wave-edit)) |
 | `/move` | Moves step 1 (the source into the Aurora engine the assessment chose) with AWS DMS, with your approval before each AWS write (see [Move step 1](#move-step-1-move)) |
 
 Each command is defined in `.claude/commands/` and reads the job state from `.modernizer-state.json`, so you can run them out of order to re-do a single phase after changing an earlier decision.
+
+## Revisit a wave (`/wave-edit`)
+
+A wave can be suggested with design review warnings, which you accept by approving it. To revisit one instead, run `/wave-edit <N>` in your session after `/modernize`:
+
+```text
+/wave-edit 2
+```
+
+It shows wave N's readiness, its engines and queries, and each warning and blocker, numbered (a held wave's warnings too), and asks which warnings you do not accept (it asks nothing when there are none, or under `--auto`, which accepts them). Your answer is recorded under `decisions/wave-edit/`, a new version each time, each warning by its number and its own text. Only that wave's engines go back to their schema design, with the warnings you did not accept and the wave's blockers. A round keeps its design only when its review ran and it is strictly better (fewer holds, unsupported queries or review warnings, and more of none), so a worse or unreviewed design is never kept; each `/wave-edit` gets up to two rounds of its own, apart from `/modernize`'s. Then synthesis runs again, and every deliverable states your decision. The new review's warnings are a new list: they are never matched to the ones you rejected, so the wave says what the new review found ("the new review approved it with no warnings", or the warnings it lists for you to accept), and you decide on them in another `/wave-edit` or accept them by approving the wave. Routing does not change: to move queries, use `/assign`. A job run without a model (`--llm-mode none`) has no design, so no redesign can run. <!-- claim: tests/unit/agents/schema_design/test_wave_edit.py::test_rejected_warnings_reach_the_designer_framed_and_only_wave_n_moves, tests/unit/agents/schema_design/test_wave_edit.py::test_decisions_are_versioned_and_never_overwritten, tests/unit/agents/schema_design/test_wave_edit.py::test_a_held_waves_warnings_can_be_rejected_with_its_blockers, tests/unit/agents/schema_design/test_wave_edit.py::test_an_unreviewed_design_is_never_kept, tests/unit/agents/schema_design/test_wave_edit.py::test_a_reworded_warning_is_never_counted_as_fixed, tests/unit/agents/schema_design/test_wave_edit.py::test_wave_edit_and_the_automatic_loop_keep_separate_round_budgets, tests/unit/agents/schema_design/test_wave_edit.py::test_no_redesign_runs_without_a_model, tests/e2e/test_wave_edit.py::test_one_wave_edit_round_end_to_end_with_a_stub_designer -->
 
 ## Ask about an assessment (`/explore`)
 

@@ -37,6 +37,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | `DesignTrace` (`src.contracts.schema_design_trace`) |
 | `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
 | `decisions/engine_scope\.json` | `EngineScopeDecision` (`src.contracts.engine_scope_decision`) |
+| `decisions/wave-edit/wave-\d+/v\d+\.json` | `WaveEditDecision` (`src.contracts.wave_edit_decision`): the customer's decision on one wave's design review warnings, one version per `/wave-edit`, never overwritten (#2067) |
 | `transformation-contract/v\d+/step-\d+\.json` | `StepContract` (`src.contracts.transformation_contract`) |
 | `data-movement/step-\d+/plan\.json` | `DataMovementPlan` (`src.contracts.data_movement_plan`), one per migration step (#1797) |
 | `data-movement/step-\d+/gate\.json` | `DmsGate` (`src.contracts.dms_gate`) |

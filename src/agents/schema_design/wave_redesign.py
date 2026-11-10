@@ -71,15 +71,16 @@ FIXABLE_RISK_RULES = frozenset({"design.hot_partition"})
 #: At most this many query ids per failed check go back to the designer.
 MAX_QUERY_IDS_PER_CHECK = 50
 
-FIXED, IMPROVED, DID_NOT_IMPROVE, FAILED, STOPPED = (
+FIXED, IMPROVED, DID_NOT_IMPROVE, FAILED, STOPPED, NOT_REVIEWED = (
     "fixed",
     "improved",
     "did_not_improve",
     "failed",
     "stopped",
+    "not_reviewed",
 )
 #: An engine whose last round ended so is not sent back again.
-_FINAL = frozenset({DID_NOT_IMPROVE, FAILED, STOPPED})
+_FINAL = frozenset({DID_NOT_IMPROVE, FAILED, STOPPED, NOT_REVIEWED})
 
 
 def log_key(db: str, job_id: str, version: int) -> str:
@@ -140,11 +141,13 @@ def _hold_fixable(hold: Mapping[str, Any], risk: Mapping[str, Any]) -> bool:
 
 
 def fixable_requests(
-    report: Mapping[str, Any], exclude: set[str] | frozenset[str] = frozenset()
+    report: Mapping[str, Any],
+    exclude: set[str] | frozenset[str] = frozenset(),
+    waves: set[int] | frozenset[int] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Per designed engine (outside ``exclude``), the holds on its waves a redesign can
     fix, as one request: the waves, and each failed check with its risk's text and
-    queries."""
+    queries. ``waves``: only the holds of those waves (``/wave-edit``, #2067)."""
     facts = report.get("facts") or {}
     risks = {
         r.get("risk_id"): r
@@ -155,6 +158,8 @@ def fixable_requests(
     out: dict[str, dict[str, Any]] = {}
     for row in facts.get("waves") or []:
         if not isinstance(row, Mapping) or row.get("readiness") != "held":
+            continue
+        if waves is not None and int(row.get("wave") or 0) not in waves:
             continue
         for hold in row.get("holds") or []:
             engine = hold.get("engine") if isinstance(hold, Mapping) else None
@@ -210,6 +215,38 @@ def engine_score(report: Mapping[str, Any], engine: str) -> list[int]:
     return [holds, int(design.get("unsupported_query_count") or 0)]
 
 
+#: The check a ``/wave-edit`` round sends a design back with for each review warning the
+#: customer did not accept (#2067).
+REJECTED_WARNING = "rejected_warning"
+
+
+def review_warnings_of(report: Mapping[str, Any], engine: str) -> list[dict[str, Any]]:
+    """Every warning of the engine's last design review (or of each design group's), each
+    with its engine, as synthesis lists them: a review with a blocker included
+    (``all_review_warnings``; ``review_warnings`` for a report written before it)."""
+    design = _designs(report).get(engine) or {}
+    listed = design.get("all_review_warnings")
+    if not isinstance(listed, list):
+        listed = design.get("review_warnings") or []
+    return [{**dict(w), "engine": engine} for w in listed if isinstance(w, Mapping)]
+
+
+def _review_ran(report: Mapping[str, Any], engine: str) -> bool:
+    """The engine's design has a recorded review verdict, and no review of it failed."""
+    d = _designs(report).get(engine) or {}
+    return int(d.get("reviewed_count") or 0) > 0 and not int(d.get("failed_review_count") or 0)
+
+
+def _round_score(report: Mapping[str, Any], engine: str, before: list[int]) -> list[int]:
+    """The engine's score after the round, as long as its score before. A wave edit's
+    score adds how many warnings the new review lists on the engine: never matched to
+    the warnings the customer rejected (a review rewords them), only counted."""
+    score = engine_score(report, engine)
+    if len(before) == 3:
+        score.append(len(review_warnings_of(report, engine)))
+    return score
+
+
 def _strictly_better(after: list[int], before: list[int]) -> bool:
     return all(a <= b for a, b in zip(after, before, strict=True)) and after != before
 
@@ -228,17 +265,34 @@ def redesign_input(
     except (OSError, ValueError):
         return None
     checks = [c for c in request.get("checks") or [] if isinstance(c, Mapping)]
-    lines = [
-        f"Round {request.get('round')} of at most {request.get('max_rounds')}: the previous "
-        f"{display_engine(engine)} design failed these deterministic checks. Revise the "
-        "design so that each one passes. The engine and the queries it serves stay as they "
-        "are: routing does not change, and every access pattern stays served."
-    ]
+    if request.get("wave_edit") is not None:
+        # #2067: the customer revisits one wave; the rejected warnings and the wave's
+        # blockers come back together.
+        lines = [
+            f"Wave edit of wave {request.get('wave_edit')}, round {request.get('round')} of "
+            f"at most {request.get('max_rounds')}: the customer asked to revisit the "
+            f"{display_engine(engine)} design. Revise it so that each item below is resolved: "
+            "a blocker passes its check, and the review no longer raises a warning the "
+            "customer does not accept. The engine and the queries it serves stay as they "
+            "are: routing does not change, and every access pattern stays served."
+        ]
+    else:
+        lines = [
+            f"Round {request.get('round')} of at most {request.get('max_rounds')}: the previous "
+            f"{display_engine(engine)} design failed these deterministic checks. Revise the "
+            "design so that each one passes. The engine and the queries it serves stay as they "
+            "are: routing does not change, and every access pattern stays served."
+        ]
     for c in checks:
         lines.append(f"- {c.get('line')}")
         text = " ".join(str(c.get(k)) for k in ("detail", "mitigation") if c.get(k))
         if text:
-            lines.append("  " + frame_untrusted(text, label="the failed check's risk text"))
+            label = (
+                "the design review warning, in the reviewer's words"
+                if c.get("check") == REJECTED_WARNING
+                else "the failed check's risk text"
+            )
+            lines.append("  " + frame_untrusted(text, label=label))
         if c.get("query_ids"):
             lines.append("  Queries: " + ", ".join(str(q) for q in c["query_ids"]))
     return {
@@ -393,14 +447,26 @@ def _close(
     restored: list[str] = []
     for engine in rnd.get("engines") or []:
         before = list((rnd.get("before") or {}).get(engine) or [0, 0])
+        reviewed_before = bool((rnd.get("reviewed_before") or {}).get(engine, True))
         if engine not in designed:
             outcome[engine] = FAILED
             rnd.setdefault("failed", {})[
                 engine
             ] = f"redesign round {n} failed: schema_design_{engine} wrote no design"
-        elif not _strictly_better(engine_score(report, engine), before):
+        elif not _review_ran(report, engine) and (
+            reviewed_before
+            or int((_designs(report).get(engine) or {}).get("failed_review_count") or 0)
+        ):
+            # A design is never kept unreviewed when the one it replaced was reviewed, or
+            # when its review failed (#2067 review): no review, no better.
+            outcome[engine] = NOT_REVIEWED
+        elif not _strictly_better(_round_score(report, engine, before), before):
             outcome[engine] = DID_NOT_IMPROVE
-        elif engine not in still and _reviewed(report, engine):
+        elif (
+            engine not in still
+            and _reviewed(report, engine)
+            and not any(_round_score(report, engine, before)[2:])
+        ):
             outcome[engine] = FIXED
             continue
         else:
@@ -458,15 +524,14 @@ def plan_round(
         return {"status": "awaiting_synthesis", "restored": restored, "rounds": len(log["rounds"])}
     if log["rounds"]:
         _write_report_log(store, db, job_id, version, log)
+    # The automatic loop's own rounds: a /wave-edit round never counts against it (#2067).
+    own = [rnd for rnd in log["rounds"] if rnd.get("wave_edit") is None]
     final = {
-        str(e)
-        for rnd in log["rounds"]
-        for e, out in (rnd.get("outcome") or {}).items()
-        if out in _FINAL
+        str(e) for rnd in own for e, out in (rnd.get("outcome") or {}).items() if out in _FINAL
     }
     held = fixable_requests(report)
     requests = {e: r for e, r in held.items() if e not in final}
-    done = len(log["rounds"])
+    done = len(own)
     base = {"rounds": done, "max_rounds": MAX_REDESIGN_ROUNDS}
     if not requests or done >= MAX_REDESIGN_ROUNDS:
         _clear_requests(store, db, job_id, version, log)
@@ -478,7 +543,7 @@ def plan_round(
     if reason:
         log["rounds"].append(
             {
-                "round": done + 1,
+                "round": len(log["rounds"]) + 1,
                 "assignment_version": version,
                 "engines": sorted(requests),
                 "requests": [requests[e] for e in sorted(requests)],
@@ -488,13 +553,13 @@ def plan_round(
         )
         store.write_json(log_key(db, job_id, version), log)
         return {"status": "stopped", "reason": reason, **base}
-    n = done + 1
+    n = len(log["rounds"]) + 1
     affected: dict[str, list[int] | None] = {}
     for engine, request in sorted(requests.items()):
         affected[engine] = _set_aside(store, db, job_id, version, n, engine, request, parts)
         store.write_json(
             request_key(db, job_id, engine, version),
-            {"round": n, "max_rounds": MAX_REDESIGN_ROUNDS, **request},
+            {"round": done + 1, "max_rounds": MAX_REDESIGN_ROUNDS, **request},
         )
     log["rounds"].append(
         {
@@ -503,6 +568,7 @@ def plan_round(
             "engines": sorted(requests),
             "requests": [requests[e] for e in sorted(requests)],
             "before": {e: engine_score(report, e) for e in sorted(requests)},
+            "reviewed_before": {e: _review_ran(report, e) for e in sorted(requests)},
             "parts": affected,
             "outcome": None,
         }
@@ -510,7 +576,8 @@ def plan_round(
     store.write_json(log_key(db, job_id, version), log)
     return {
         "status": "awaiting_redesign",
-        "round": n,
+        # This loop's own round; the log's ``round`` numbers every round of the version.
+        "round": done + 1,
         "max_rounds": MAX_REDESIGN_ROUNDS,
         "engines": sorted(requests),
         "parts": affected,

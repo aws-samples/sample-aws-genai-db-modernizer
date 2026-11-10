@@ -625,18 +625,6 @@ obvious entries lives here instead:
 - `Edit`/`Write` of `.local-ui/**` (and the old `artifacts/.local-ui/**`) are
   denied: that is `scripts/start_local_ui.py`'s pid file, and `--stop` signals
   the pids it lists.
-- `Bash(uv run python scripts/run_pe_review.py *)` and
-  `Bash(uv run python scripts/run_post_schema_routing.py *)` (#1059): the
-  headless schema-design PE review and post-schema reroute, the steps Bedrock
-  mode runs inside schema design. `run_pe_review.py` writes one review request
-  per design (per group for DynamoDB) under `artifacts/` and, with
-  `--finalize`, records the review subagent's answer in the design trace;
-  `run_post_schema_routing.py` runs the shared router one pass per call
-  (`--rollback` after a failed redesign). Both only read and write the job's
-  own artifacts and print one JSON line.
-- `Bash(uv run python scripts/run_wave_redesign.py *)` (#1992): Phase 7b. It
-  moves the job's design files to `wave-redesign/` and back (`--rollback`),
-  writes the round's checks and log, and prints one JSON line.
 - `Skill(review-schema)`: the PE review subagent `/modernize` Phase 6c
   dispatches, one per design (#1059), allowed by exact name like the others
   below.
@@ -653,3 +641,23 @@ obvious entries lives here instead:
   public env-var page as of this writing; to be confirmed on the first real
   run (a timeout shows up as a killed Bash call in the transcript).
 - `Bash(curl *)` joins `wget`/`nc` in `deny` for the same reason.
+
+### The schema design scripts in `settings.ci.json`
+
+- `Bash(uv run python scripts/run_pe_review.py *)` and
+  `Bash(uv run python scripts/run_post_schema_routing.py *)` (#1059): the
+  headless schema-design PE review and post-schema reroute, the steps Bedrock
+  mode runs inside schema design. `run_pe_review.py` writes one review request
+  per design (per group for DynamoDB) under `artifacts/` and, with
+  `--finalize`, records the review subagent's answer in the design trace;
+  `run_post_schema_routing.py` runs the shared router one pass per call
+  (`--rollback` after a failed redesign). Both only read and write the job's
+  own artifacts and print one JSON line.
+- `Bash(uv run python scripts/run_wave_redesign.py *)` (#1992): Phase 7b. It
+  moves the job's design files to `wave-redesign/` and back (`--rollback`),
+  writes the round's checks and log, and prints one JSON line.
+- `Bash(uv run python scripts/run_wave_edit.py *)` (#2067): `/wave-edit`. It
+  shows one wave, records the customer's decision on its review warnings under
+  `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the
+  same way, and prints one JSON line. It has no `--rollback`: a failed round
+  is rolled back with `run_wave_redesign.py --rollback`.
