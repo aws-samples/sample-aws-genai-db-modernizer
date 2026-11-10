@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,10 @@ from typing import Any
 from src.contracts.routine_check import RoutineCheckResult, RoutineMismatch, RoutineNotCarried
 from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
 from src.tools.data_movement.routine_scripts import (
-    CHECK_END,
     CHECK_FIELDS,
     CHECK_FORMAT,
-    CHECK_MAGIC,
+    ROUTINES_CHECK,
+    CheckScript,
     check_names,
     output_key,
 )
@@ -107,9 +108,16 @@ def parse_check_output(
     engine: str,
     contract_sha: str,
     target_database: str | None,
+    asked: Iterable[StepRoutine] | None = None,
+    spec: CheckScript = ROUTINES_CHECK,
+    settings: dict[str, frozenset[str]] | None = None,
 ) -> dict[tuple[str, ...], list[Row]]:
     """The output's routine lines, by their check key, after the strict reading of the
-    module docstring; :class:`RoutineCheckOutputError` on the first problem."""
+    module docstring; :class:`RoutineCheckOutputError` on the first problem. ``asked`` and
+    ``spec`` read the output of another check script built the same way (the cutover
+    check, #1948): the routines it asks for and its header and end lines. ``settings``
+    names the setting lines it prints (their first field, every other field empty but the
+    last, which is one of the values given), each at most once, under the key ``(name,)``."""
     if len(data) > MAX_OUTPUT_BYTES:
         raise RoutineCheckOutputError(f"the check output is over {MAX_OUTPUT_BYTES} bytes")
     try:
@@ -120,9 +128,9 @@ def parse_check_output(
     if lines and lines[-1] == "":
         lines.pop()
     if not lines:
-        raise RoutineCheckOutputError("the check output is empty: run routines-check.sql again")
-    header = (CHECK_MAGIC, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
-    names = check_names(section, engine, target_database)
+        raise RoutineCheckOutputError(f"the check output is empty: run {spec.script} again")
+    header = (spec.magic, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
+    names = check_names(section, engine, target_database, rows=asked)
     rows: dict[tuple[str, ...], list[Row]] = {}
     seen: set[Row] = set()
     end = False
@@ -141,14 +149,23 @@ def parse_check_output(
             )
         if number == 1:
             if tuple(fields) != header:
-                raise RoutineCheckOutputError(_header_problem(fields, header))
+                raise RoutineCheckOutputError(_header_problem(fields, header, spec))
             continue
-        if fields[0] == CHECK_END:
+        if fields[0] == spec.end:
             if any(fields[1:]):
                 raise RoutineCheckOutputError(f"line {number}: the end line has values")
             end = True
             continue
         row: Row = tuple(fields)  # type: ignore[assignment]
+        if settings and row[0] in settings:
+            if any(row[1:6]) or row[6] not in settings[row[0]]:
+                raise RoutineCheckOutputError(
+                    f"line {number}: a setting value the script does not print"
+                )
+            if (row[0],) in rows:
+                raise RoutineCheckOutputError(f"line {number}: the same setting line twice")
+            rows[(row[0],)] = [row]
+            continue
         key = _key(row, engine)
         if row[0] not in _KINDS[engine] or key not in names:
             raise RoutineCheckOutputError(
@@ -162,20 +179,20 @@ def parse_check_output(
         rows.setdefault(key, []).append(row)
     if not end:
         raise RoutineCheckOutputError(
-            "the check output has no end line: it was cut short; run routines-check.sql again"
+            f"the check output has no end line: it was cut short; run {spec.script} again"
         )
     return rows
 
 
-def _header_problem(fields: list[str], header: tuple[str, ...]) -> str:
-    if fields[0] != CHECK_MAGIC or fields[1] != CHECK_FORMAT:
-        return "line 1 is not the header routines-check.sql prints"
+def _header_problem(fields: list[str], header: tuple[str, ...], spec: CheckScript) -> str:
+    if fields[0] != spec.magic or fields[1] != CHECK_FORMAT:
+        return f"line 1 is not the header {spec.script} prints"
     if fields[2] != header[2]:
         return "the check output is for another Aurora engine"
     if fields[3] != header[3]:
         return (
-            "the check output comes from a routines-check.sql of another step contract: run "
-            "run_dms_step.py routines, then the new routines-check.sql"
+            f"the check output comes from a {spec.script} of another step contract: run "
+            f"run_dms_step.py {spec.command}, then the new {spec.script}"
         )
     return "the check output's header names another target database"
 

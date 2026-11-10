@@ -50,6 +50,14 @@ Every subcommand prints one JSON line, its result (exit 1 only on ``"status": "e
   the cutover script), the read-only ``routines-check.sql`` and ``routines.md``.
   ``routines-check`` (no AWS call): read the customer's ``routines-check.tsv`` strictly and write
   ``routines-check.json``, which the gate's routines check reads. Neither connects to a database.
+- ``cutover-scripts`` (#1948, no AWS call): write the cutover script the customer runs at their own
+  cutover (``cutover-routines.sql``: PostgreSQL ``ENABLE TRIGGER`` for each trigger step 1 created
+  disabled, or the MySQL triggers and events step 1 left to cutover), its read-only
+  ``cutover-check.sql`` and ``cutover.md``. ``cutover-check`` (no AWS call): read the customer's
+  ``cutover-check.tsv`` strictly and write ``cutover-check.json``. ``cutover-scripts --resume``
+  (Aurora MySQL): after a cutover script that stopped part way, write ``cutover-resume.sql`` with
+  only the triggers and events ``cutover-check.tsv`` shows missing. ``/move`` never runs a script
+  and never signals a cutover; neither subcommand connects to a database.
 - ``restart-validation --approve`` (#2048): when Prove reports ``validation_stalled``, stop this
   job's step 1 task, wait until it has stopped, start it again with ``resume-processing`` (CDC
   resumes from its checkpoint, nothing reloads) and wait until it runs; this restarts the DMS
@@ -158,7 +166,9 @@ ROUTINES = "routines"  # writes step 1's routine scripts once the full load is d
 ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS call (#1947)
 READS = ("preflight", "gate", "status", ROUTINES)
 VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
-LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, ROUTINES_CHECK)
+CUTOVER_SCRIPTS, CUTOVER_CHECK = "cutover-scripts", "cutover-check"  # no AWS call (#1948)
+LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, ROUTINES_CHECK, CUTOVER_SCRIPTS,
+         CUTOVER_CHECK)  # fmt: skip
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -385,6 +395,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--interval-seconds", type=int, default=30)
     p.add_argument("--target-user", help="routines: the Aurora MySQL user the DEFINER clauses "
                    "name (default: the routine-migration artifact's)")  # fmt: skip
+    p.add_argument("--resume", action="store_true", help="cutover-scripts (Aurora MySQL): write "
+                   "cutover-resume.sql with only what cutover-check.tsv shows missing")  # fmt: skip
     return p
 
 
@@ -2009,6 +2021,94 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
             "result": str(Path(root) / key)}  # fmt: skip
 
 
+# --- Cutover routines (#1948): the customer's scripts; /move never runs them -------------
+
+
+def cutover_scripts(root: str, db: str, job_id: str, inputs: MoveInputs,
+                    *, target_user: str | None = None, resume: bool = False) -> dict[str, Any]:  # fmt: skip
+    """Write the cutover routine scripts (``cutover_scripts``) for the customer to run at
+    their own cutover; with ``resume``, only ``cutover-resume.sql``, without what the
+    customer's ``cutover-check.tsv`` (read strictly) shows on the target. No AWS call; it
+    never connects to a database and never runs them."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.cutover_check import parse_cutover_output
+    from src.tools.data_movement.cutover_scripts import (
+        CUTOVER_CHECK_OUTPUT,
+        EVENT_SCHEDULER,
+        write_cutover_scripts,
+    )
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.routine_check import RoutineCheckOutputError
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    present: set[tuple[str, ...]] | None = None
+    if resume:
+        output = _step_dir(root, db, job_id) / CUTOVER_CHECK_OUTPUT
+        if not output.is_file():
+            raise MoveError(f"--resume reads the check output: run cutover-check.sql and save its "
+                            f"output at {output} first")  # fmt: skip
+        try:
+            parsed = parse_cutover_output(output, step.contract, step.contract_sha256,
+                                          inputs.target_database_name)  # fmt: skip
+        except RoutineCheckOutputError as exc:
+            raise MoveError(f"{output}: refused: {exc}") from None
+        present = {k for k in parsed if k != (EVENT_SCHEDULER,)}
+    scripts = write_cutover_scripts(store, db, job_id, step.contract, step.contract_sha256,
+                                    _step_dir(root, db, job_id),
+                                    target_database=inputs.target_database_name,
+                                    target_user=target_user, present=present)  # fmt: skip
+    excluded = [{"routine_id": i, "kind": k, "reason": c} for k, i, c in scripts.excluded]
+    out: dict[str, Any] = {"status": scripts.status, "expected": scripts.expected,
+                           "excluded": len(excluded), "excluded_routines": excluded[:ROUTINES_SHOWN],
+                           "runs_it": "the customer, at their cutover; /move never runs it"}  # fmt: skip
+    if scripts.status == "ready":
+        out.update({"in_script": scripts.in_script, "stays_disabled": scripts.stays_disabled,
+                    "events_enabled": scripts.events_enabled,
+                    "events_replica_disabled": scripts.events_replica_disabled,
+                    "files": scripts.files})  # fmt: skip
+        if resume:
+            out["already_there"] = scripts.already_there
+    return out
+
+
+def cutover_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
+    """Read the customer's output of the cutover check script (``cutover-check.tsv``),
+    strictly, and write ``cutover-check.json``. No AWS call. A refused file removes an
+    earlier result, so no result outlives a file that contradicts it."""
+    from src.contracts.cutover_check import CutoverCheckResult
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.cutover_check import read_cutover_check
+    from src.tools.data_movement.cutover_scripts import CUTOVER_CHECK_OUTPUT
+    from src.tools.data_movement.dms_step import load_step1
+    from src.tools.data_movement.routine_check import RoutineCheckOutputError
+
+    store = LocalArtifactStore(base_dir=root)
+    step = load_step1(store, db, job_id, with_ddl=False)
+    output = _step_dir(root, db, job_id) / CUTOVER_CHECK_OUTPUT
+    key = f"{db}/{job_id}/data-movement/step-1/cutover-check.json"
+    try:
+        result = read_cutover_check(output, step.contract, store, job_id=job_id, database_name=db,
+                                    contract_sha=step.contract_sha256,
+                                    target_database=inputs.target_database_name)  # fmt: skip
+    except RoutineCheckOutputError as exc:
+        store.delete(key)
+        raise MoveError(f"{output}: refused: {exc}") from None
+    if result is None:
+        store.delete(key)
+        return {"status": "no_output", "expected_file": str(output)}
+    checked: CutoverCheckResult = result
+    store.write_json(key, checked.model_dump(mode="json"))
+    return {"status": result.status, "expected": result.expected, "confirmed": result.confirmed,
+            "mismatches": [m.model_dump(mode="json") for m in result.mismatches[:ROUTINES_SHOWN]],
+            "mismatch_count": len(result.mismatches), "not_carried": len(result.not_carried),
+            "not_carried_routines": [m.model_dump(mode="json") for m in result.not_carried[:ROUTINES_SHOWN]],
+            "left_out": len(result.left_out),
+            "left_out_routines": [m.model_dump(mode="json") for m in result.left_out[:ROUTINES_SHOWN]],
+            "events_scheduled": result.events_scheduled, "event_scheduler": result.event_scheduler,
+            "result": str(Path(root) / key)}  # fmt: skip
+
+
 # --- Entry point -------------------------------------------------------------------------
 
 
@@ -2154,6 +2254,11 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
             return emit(verify_step(args.command, args.artifact_root, db, job_id, inputs))
         if args.command == ROUTINES_CHECK:
             return emit(routines_check(args.artifact_root, db, job_id, inputs))
+        if args.command == CUTOVER_SCRIPTS:
+            return emit(cutover_scripts(args.artifact_root, db, job_id, inputs,
+                                        target_user=args.target_user, resume=args.resume))  # fmt: skip
+        if args.command == CUTOVER_CHECK:
+            return emit(cutover_check(args.artifact_root, db, job_id, inputs))
         _use_profile(inputs.write_profile if args.command in WRITES else inputs.read_profile)
         if args.command in ("preflight", "gate"):
             return _delegate(args.command, args, inputs)

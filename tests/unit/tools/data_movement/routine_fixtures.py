@@ -15,7 +15,7 @@ from src.contracts.routine_migration import (
     RoutineRewriteEntry,
 )
 from src.contracts.routine_sources import RoutineSession, RoutineSource
-from src.contracts.transformation_contract import StepContract
+from src.contracts.transformation_contract import StepContract, StepRoutine, StepRoutines
 from src.tools.data_movement.step1_routines import build_step_routines
 from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
 
@@ -87,11 +87,21 @@ def migration(
 
 
 def contract_with_routines(
-    artifact: RoutineMigrationContract, engine: str | None = None
+    artifact: RoutineMigrationContract,
+    engine: str | None = None,
+    *,
+    triggers: dict[str, dict[str, Any]] | None = None,
 ) -> StepContract:
+    """The step contract with the artifact's routines section; ``triggers`` sets, by
+    routine id, what the collection gives a trigger (``source_state``, ``fires``,
+    ``action_order``), as ``attach_step_routines`` reads it."""
     target = engine or artifact.target_engine
     contract = make_contract(target)
     section = build_step_routines(artifact, contract, version=2)
+    if triggers:
+        rows = [StepRoutine.model_validate({**r.model_dump(), **triggers.get(r.routine_id, {})})
+                for r in section.routines]  # fmt: skip
+        section = StepRoutines.model_validate({**section.model_dump(), "routines": rows})
     return contract.model_copy(update={"routines": section})
 
 

@@ -236,6 +236,16 @@ uv run python scripts/run_dms_step.py routines-check --job-id {job_id} --db {db}
 
 Show its `status` (`pass` or `fail`), `confirmed` of `carried`, every entry of `mismatches` (each `routine_id` with its `problem`) and of `not_carried_routines`, and the `label`. `"status": "no_output"`: the file is not at `expected` yet; ask again. An error line (a refused file) names what is wrong: tell the customer to run `routines-check.sql` again. Then go to the Gate.
 
+**Cutover routines.** The customer's cutover script exists for them to run at their own cutover; `/move` never runs it, never signals a cutover and never waits for it (no AWS call, no database connection):
+
+```bash
+uv run python scripts/run_dms_step.py cutover-scripts --job-id {job_id} --db {db}
+uv run python scripts/run_dms_step.py cutover-check --job-id {job_id} --db {db}
+uv run python scripts/run_dms_step.py cutover-scripts --resume --job-id {job_id} --db {db}
+```
+
+Run the first after the routines check: on `"status": "ready"`, show `expected`, `in_script` and every entry of `excluded_routines` with its `reason`, and point the customer at `cutover.md` in `files` (`cutover-routines.sql` enables the PostgreSQL triggers step 1 created disabled, or creates the Aurora MySQL triggers and events it left to cutover; run it only once the applications have stopped writing to the source and DMS has applied the last change; it has no rollback). Run the second only when the customer says they ran `cutover-check.sql`, never under `--auto`: show its `status`, `confirmed` of `expected`, and every entry of `mismatches` and `not_carried_routines`; `"status": "no_output"`: the file is not at `expected_file` yet; an error line names what is wrong with the file. Run the third only when the customer says their Aurora MySQL cutover script stopped part way and they ran the check again: point them at `cutover-resume.sql` in `files`. Then go to the Gate.
+
 **Gate.** When `phase` is `caught_up` (the full load is at 100% and validation caught up), run the read-only gate (it runs `scripts/check_dms_step_gate.py` on the stack and prints that script's line):
 
 ```bash

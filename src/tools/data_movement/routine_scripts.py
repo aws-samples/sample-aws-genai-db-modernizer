@@ -21,8 +21,9 @@ three files into ``data-movement/step-1/``:
 - ``routines.md``: how to run both, in order, and where the check's output goes
   (``routines-check.tsv``, which ``run_dms_step.py routines-check`` reads).
 
-The deploy script is the one file outside the routine sources that holds a routine's
-text: the text never goes into a JSON artifact, a log, a printed line or a report, and no
+The deploy script (with the cutover script, #1948, which builds its MySQL blocks the same
+way) is the one file outside the routine sources that holds a routine's text: the text
+never goes into a JSON artifact, a log, a printed line or a report, and no
 hash of it is kept. Identifiers that reach a comment or a literal of either script are
 written safely (control characters refused, quotes doubled); a routine whose names or
 session values do not pass is refused, by id and reason code, never written.
@@ -38,10 +39,10 @@ import os
 import re
 import tempfile
 import unicodedata
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from src.agents.collector.routine_sources import read_routine_sources
 from src.contracts.routine_migration import RoutineMigrationContract
@@ -55,10 +56,18 @@ __all__ = [
     "INSTRUCTIONS_FILE",
     "CHECK_MAGIC",
     "CHECK_END",
+    "ROUTINES_CHECK",
+    "CheckScript",
     "RoutineScriptError",
     "RoutineScripts",
+    "block_of",
     "check_names",
+    "read_migration",
     "render_check_script",
+    "require_section",
+    "spool_blocks",
+    "spooled_chunks",
+    "write_atomic",
     "write_routine_scripts",
 ]
 
@@ -149,13 +158,18 @@ def _names_safe(row: StepRoutine) -> bool:
 
 
 def check_names(
-    section: StepRoutines, engine: str, target_database: str | None
+    section: StepRoutines,
+    engine: str,
+    target_database: str | None,
+    *,
+    rows: Iterable[StepRoutine] | None = None,
 ) -> dict[tuple[str, ...], StepRoutine]:
-    """The key each section row has in the check output, for every row whose names may be
-    written into the check script: PostgreSQL ``(kind, schema, name)`` or ``("trigger",
-    schema, table, name)``; MySQL the same lower case, in the target database."""
+    """The key each section row (or each of ``rows``) has in the check output, for every
+    row whose names may be written into the check script: PostgreSQL ``(kind, schema,
+    name)`` or ``("trigger", schema, table, name)``; MySQL the same lower case, in the
+    target database."""
     out: dict[tuple[str, ...], StepRoutine] = {}
-    for row in section.routines:
+    for row in section.routines if rows is None else rows:
         if not _names_safe(row):
             continue
         out.setdefault(output_key(row, engine, target_database), row)
@@ -179,8 +193,10 @@ def _statement(text: str) -> str:
     return body if body.endswith(";") else body + ";"
 
 
-def _pg_block(row: StepRoutine, source: RoutineSource, total: int) -> tuple[str | None, str | None]:
-    lines = [f"-- {row.order}/{total} {row.kind} {_comment(row.routine_id)}"]
+def _pg_block(
+    row: StepRoutine, source: RoutineSource, position: int, total: int
+) -> tuple[str | None, str | None]:
+    lines = [f"-- {position}/{total} {row.kind} {_comment(row.routine_id)}"]
     if row.schema_name:
         lines.append(f"SET search_path TO {_pg_ident(row.schema_name)}, public;")
     lines.append(_statement(source.create_statement))
@@ -224,11 +240,14 @@ def _mysql_text(
 def _mysql_block(
     row: StepRoutine,
     source: RoutineSource,
+    position: int,
     total: int,
     migration: RoutineMigrationContract,
     user: str,
     database: str | None,
 ) -> tuple[str | None, str | None]:
+    """A MySQL routine's block: its own ``sql_mode`` and collation, the rewrites applied
+    for ``user``, between ``DELIMITER`` lines (the deploy script and the cutover script)."""
     session = source.session
     if session.sql_mode and not _SQL_MODE.match(session.sql_mode):
         return None, "session_not_allowed"
@@ -243,7 +262,7 @@ def _mysql_block(
     delimiter = next((d for d in _DELIMITERS if d not in text), None)
     if delimiter is None:
         return None, "delimiter_in_text"
-    lines = [f"-- {row.order}/{total} {row.kind} {_comment(row.routine_id)}"]
+    lines = [f"-- {position}/{total} {row.kind} {_comment(row.routine_id)}"]
     if database:
         lines.append(f"USE {_mysql_ident(database)};")
     lines.append(f"SET SESSION sql_mode = {_mysql_literal(session.sql_mode or '')};")
@@ -303,29 +322,61 @@ def _deploy_footer(engine: str) -> str:
     return "COMMIT;\n" if engine == "aurora_postgresql" else ""
 
 
+@dataclass(frozen=True)
+class CheckScript:
+    """What tells one read-only check script (and its output) from another: the first
+    field of its header and end lines, its title and its file names."""
+
+    magic: str
+    end: str
+    title: str
+    script: str
+    output: str
+    command: str  # the run_dms_step.py subcommand that writes the script
+
+
+#: Step 1's routine check (#1947).
+ROUTINES_CHECK = CheckScript(
+    CHECK_MAGIC, CHECK_END, "Step 1 routine check", CHECK_FILE, CHECK_OUTPUT, "routines"
+)
+
+
 def render_check_script(
-    section: StepRoutines, engine: str, contract_sha: str, target_database: str | None
+    section: StepRoutines,
+    engine: str,
+    contract_sha: str,
+    target_database: str | None,
+    *,
+    rows: Iterable[StepRoutine] | None = None,
+    spec: CheckScript = ROUTINES_CHECK,
+    extra: Iterable[str] = (),
 ) -> str:
     """The read-only check script: catalog ``SELECT``\\s in a ``READ ONLY`` transaction,
-    asking only for the section's routines, one tab-separated line each, between a header
-    and an end line."""
-    names = check_names(section, engine, target_database)
-    header = (CHECK_MAGIC, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
+    asking only for the section's routines (or ``rows`` of it), one tab-separated line
+    each, between a header and an end line; ``extra`` statements (read-only ``SELECT``\\s
+    of a setting) run just before the end line."""
+    names = check_names(section, engine, target_database, rows=rows)
+    header = (spec.magic, CHECK_FORMAT, engine, contract_sha, target_database or "", "", "")
     if engine == "aurora_postgresql":
-        return _pg_check(names, header)
-    return _mysql_check(names, header)
+        return _pg_check(names, header, spec, list(extra))
+    return _mysql_check(names, header, spec, list(extra))
 
 
 def _select_line(values: Iterable[str], literal: Any) -> str:
     return "SELECT " + ", ".join(literal(v) for v in values) + ";"
 
 
-def _pg_check(names: dict[tuple[str, ...], StepRoutine], header: tuple[str, ...]) -> str:
+def _pg_check(
+    names: dict[tuple[str, ...], StepRoutine],
+    header: tuple[str, ...],
+    spec: CheckScript,
+    extra: list[str],
+) -> str:
     routines = sorted({(k[1], k[3]) for k in names if k[0] in ("function", "procedure")})
     triggers = sorted({(k[1], k[2], k[3]) for k in names if k[0] == "trigger"})
     out = [
-        "-- Step 1 routine check: read-only, catalog SELECTs only, in a READ ONLY transaction.",
-        '-- Run: psql "<connection>" -X -f routines-check.sql -o routines-check.tsv',
+        f"-- {spec.title}: read-only, catalog SELECTs only, in a READ ONLY transaction.",
+        f'-- Run: psql "<connection>" -X -f {spec.script} -o {spec.output}',
         "\\set QUIET on",
         "\\set ON_ERROR_STOP on",
         "\\pset format unaligned",
@@ -361,11 +412,16 @@ def _pg_check(names: dict[tuple[str, ...], StepRoutine], header: tuple[str, ...]
             " AND e.tgname = t.tgname\n"
             "WHERE NOT t.tgisinternal\nORDER BY 2, 3, 4;"
         )
-    out += [_select_line((CHECK_END, "", "", "", "", "", ""), _pg_literal), "COMMIT;"]
+    out += [*extra, _select_line((spec.end, "", "", "", "", "", ""), _pg_literal), "COMMIT;"]
     return "\n".join(out) + "\n"
 
 
-def _mysql_check(names: dict[tuple[str, ...], StepRoutine], header: tuple[str, ...]) -> str:
+def _mysql_check(
+    names: dict[tuple[str, ...], StepRoutine],
+    header: tuple[str, ...],
+    spec: CheckScript,
+    extra: list[str],
+) -> str:
     by_kind: dict[str, list[tuple[str, str]]] = {}
     for key in sorted(names):
         by_kind.setdefault(key[0], []).append((key[1], key[3]))
@@ -376,10 +432,10 @@ def _mysql_check(names: dict[tuple[str, ...], StepRoutine], header: tuple[str, .
         )
 
     out = [
-        "-- Step 1 routine check: read-only, information_schema SELECTs only, in a READ ONLY "
+        f"-- {spec.title}: read-only, information_schema SELECTs only, in a READ ONLY "
         "transaction.",
-        "-- Run: mysql <connection options> --batch --skip-column-names < routines-check.sql "
-        "> routines-check.tsv",
+        f"-- Run: mysql <connection options> --batch --skip-column-names < {spec.script} "
+        f"> {spec.output}",
         "SET SESSION group_concat_max_len = 1048576;",
         "START TRANSACTION READ ONLY;",
         _select_line(header, _mysql_literal),
@@ -415,7 +471,7 @@ def _mysql_check(names: dict[tuple[str, ...], StepRoutine], header: tuple[str, .
             f"WHERE (LOWER(EVENT_SCHEMA), LOWER(EVENT_NAME)) IN ({pairs('event')})\n"
             "ORDER BY 2, 4;"
         )
-    out += [_select_line((CHECK_END, "", "", "", "", "", ""), _mysql_literal), "COMMIT;"]
+    out += [*extra, _select_line((spec.end, "", "", "", "", "", ""), _mysql_literal), "COMMIT;"]
     return "\n".join(out) + "\n"
 
 
@@ -508,12 +564,141 @@ def _dependencies(
     }
 
 
-def _write_atomic(path: Path, chunks: Iterator[bytes]) -> None:
+def write_atomic(path: Path, chunks: Iterator[bytes]) -> None:
+    """Write ``chunks`` to ``path`` through a temporary file, replaced at the end."""
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "wb") as out:
         for chunk in chunks:
             out.write(chunk)
     os.replace(tmp, path)
+
+
+def read_migration(
+    store: Any, db: str, job_id: str, section: StepRoutines
+) -> RoutineMigrationContract:
+    """The routine-migration artifact the section was read from."""
+    from src.tools.routines.migration import read_routine_migration
+
+    migration = None
+    if section.routine_migration_version is not None:
+        migration = read_routine_migration(store, db, job_id, section.routine_migration_version)
+    if migration is None:
+        raise RoutineScriptError(
+            f"no routine-migration artifact at routines/v{section.routine_migration_version}: "
+            "run scripts/run_transformation_contract.py again"
+        )
+    return migration
+
+
+def require_section(contract: StepContract) -> StepRoutines:
+    """The contract's routines section; :class:`RoutineScriptError` when it has none."""
+    if contract.routines is None:
+        raise RoutineScriptError(
+            "the step 1 contract has no routines section (written before #1947): run "
+            "scripts/run_transformation_contract.py, run_data_movement_plan.py and "
+            "render_dms_step.py again"
+        )
+    return contract.routines
+
+
+RoutineKey = tuple[str, str]  # kind, routine_id
+BlockOf = Callable[[StepRoutine, RoutineSource, int, int], tuple[str | None, str | None]]
+
+
+def block_of(
+    engine: str, migration: RoutineMigrationContract, user: str, target_database: str | None
+) -> BlockOf:
+    """How one routine's ``CREATE`` is written into a script, ``(block, None)`` or
+    ``(None, reason code)``: the exact text, and on Aurora MySQL its session and the
+    routine-migration rewrites for ``user``."""
+
+    def block(
+        row: StepRoutine, source: RoutineSource, position: int, total: int
+    ) -> tuple[str | None, str | None]:
+        if engine == "aurora_postgresql":
+            return _pg_block(row, source, position, total)
+        database = _target_schema(row, engine, target_database)
+        return _mysql_block(row, source, position, total, migration, user, database)
+
+    return block
+
+
+def spool_blocks(
+    store: Any,
+    db: str,
+    job_id: str,
+    rows: list[StepRoutine],
+    block: BlockOf,
+    spool: IO[bytes],
+    *,
+    engine: str,
+    migration: RoutineMigrationContract,
+    positions: dict[RoutineKey, tuple[int, int]] | None = None,
+) -> tuple[dict[RoutineKey, tuple[int, int]], dict[RoutineKey, str]]:
+    """Each of ``rows``' blocks spooled to ``spool`` as the routine sources are read, one
+    chunk at a time: the ``(offset, length)`` of each block written, and the reason code of
+    each routine refused (its text, names or session do not pass, its source is missing, or
+    it names a routine refused, checked in the order of ``rows``). ``positions`` numbers a
+    row's comment line (default: its place in ``rows``)."""
+    where = positions or {(r.kind, r.routine_id): (i + 1, len(rows)) for i, r in enumerate(rows)}
+    # A PostgreSQL rewrite that changes the text (the search_path pin) is never applied by
+    # the artifact today (the source's search_path is not collected); the scripts use the
+    # exact text, so a routine that has one is refused rather than written without it.
+    text_rewrites = {
+        (r.kind, r.routine_id)
+        for r in migration.routines
+        if engine == "aurora_postgresql" and any(w.rewrite == "search_path" for w in r.rewrites)
+    }
+    refused: dict[RoutineKey, str] = {}
+    pending: dict[tuple[str, str, str], StepRoutine] = {}
+    for row in rows:
+        if (row.kind, row.routine_id) in text_rewrites:
+            refused[(row.kind, row.routine_id)] = "rewrite_not_reapplied"
+        elif not _names_safe(row):
+            refused[(row.kind, row.routine_id)] = "unsafe_name"
+        else:
+            pending[(row.kind, row.schema_name or "", row.specific_name or "")] = row
+    spans: dict[RoutineKey, tuple[int, int]] = {}
+    for source in read_routine_sources(store, db, job_id):
+        found = pending.pop(source.key(), None)
+        if found is None:
+            continue
+        key = (found.kind, found.routine_id)
+        text: str | None
+        code: str | None
+        if not source.exact:
+            text, code = None, "source_text_not_exact"
+        else:
+            text, code = block(found, source, *where[key])
+        if text is None:
+            refused[key] = code or "refused"
+            continue
+        data = text.encode("utf-8")
+        spans[key] = (spool.tell(), len(data))
+        spool.write(data)
+        del text, data
+    for row in pending.values():
+        refused[(row.kind, row.routine_id)] = "source_missing"
+    # A routine naming one left out is left out too: its CREATE could fail on it.
+    deps = _dependencies(migration)
+    for row in rows:
+        key = (row.kind, row.routine_id)
+        if key not in refused and any(d in refused for d in deps.get(key, ())):
+            refused[key] = "depends_on_refused"
+            spans.pop(key, None)
+    return spans, refused
+
+
+def spooled_chunks(
+    spool: IO[bytes], rows: Iterable[StepRoutine], spans: dict[RoutineKey, tuple[int, int]]
+) -> Iterator[bytes]:
+    """The spooled blocks of ``rows``, in that order (a refused row has none)."""
+    for row in rows:
+        span = spans.get((row.kind, row.routine_id))
+        if span is None:
+            continue
+        spool.seek(span[0])
+        yield spool.read(span[1])
 
 
 def write_routine_scripts(
@@ -530,15 +715,7 @@ def write_routine_scripts(
     """Write the step's routine scripts and instructions into ``step_dir`` (module
     docstring). ``nothing_to_deploy`` (and no file) when the section carries no routine
     and defers none."""
-    from src.tools.routines.migration import read_routine_migration
-
-    section = contract.routines
-    if section is None:
-        raise RoutineScriptError(
-            "the step 1 contract has no routines section (written before #1947): run "
-            "scripts/run_transformation_contract.py, run_data_movement_plan.py and "
-            "render_dms_step.py again"
-        )
+    section = require_section(contract)
     engine = contract.target.engine
     carried = _routine_order(section)
     if not carried and not section.deferred:
@@ -546,81 +723,24 @@ def write_routine_scripts(
         for name in (DEPLOY_FILE, CHECK_FILE, INSTRUCTIONS_FILE):
             (step_dir / name).unlink(missing_ok=True)
         return RoutineScripts(status="nothing_to_deploy", deferred=0)
-    migration = None
-    if section.routine_migration_version is not None:
-        migration = read_routine_migration(store, db, job_id, section.routine_migration_version)
-    if migration is None:
-        raise RoutineScriptError(
-            f"no routine-migration artifact at routines/v{section.routine_migration_version}: "
-            "run scripts/run_transformation_contract.py again"
-        )
+    migration = read_migration(store, db, job_id, section)
     user = target_user or migration.target_user
-    total = len(carried)
-    # A PostgreSQL rewrite that changes the text (the search_path pin) is never applied by
-    # the artifact today (the source's search_path is not collected); the deploy uses the
-    # exact text, so a routine that has one is refused rather than deployed without it.
-    text_rewrites = {
-        (r.kind, r.routine_id)
-        for r in migration.routines
-        if engine == "aurora_postgresql" and any(w.rewrite == "search_path" for w in r.rewrites)
-    }
-    refused: dict[tuple[str, str], str] = {}
-    pending: dict[tuple[str, str, str], StepRoutine] = {}
-    for row in carried:
-        if (row.kind, row.routine_id) in text_rewrites:
-            refused[(row.kind, row.routine_id)] = "rewrite_not_reapplied"
-        elif not _names_safe(row):
-            refused[(row.kind, row.routine_id)] = "unsafe_name"
-        else:
-            pending[(row.kind, row.schema_name or "", row.specific_name or "")] = row
     step_dir.mkdir(parents=True, exist_ok=True)
-    spans: dict[int, tuple[int, int]] = {}
     with tempfile.TemporaryFile(dir=step_dir) as spool:
-        for source in read_routine_sources(store, db, job_id):
-            found = pending.pop(source.key(), None)
-            if found is None:
-                continue
-            row = found
-            block: str | None
-            code: str | None
-            if not source.exact:
-                block, code = None, "source_text_not_exact"
-            elif engine == "aurora_postgresql":
-                block, code = _pg_block(row, source, total)
-            else:
-                database = _target_schema(row, engine, target_database)
-                block, code = _mysql_block(row, source, total, migration, user, database)
-            if block is None:
-                refused[(row.kind, row.routine_id)] = code or "refused"
-                continue
-            data = block.encode("utf-8")
-            spans[int(row.order or 0)] = (spool.tell(), len(data))
-            spool.write(data)
-            del block, data
-        for row in pending.values():
-            refused[(row.kind, row.routine_id)] = "source_missing"
-        # A routine naming one left out is left out too: its CREATE could fail on it.
-        deps = _dependencies(migration)
-        for row in carried:
-            key = (row.kind, row.routine_id)
-            if key not in refused and any(d in refused for d in deps.get(key, ())):
-                refused[key] = "depends_on_refused"
-                spans.pop(int(row.order or 0), None)
+        spans, refused = spool_blocks(
+            store, db, job_id, carried, block_of(engine, migration, user, target_database),
+            spool, engine=engine, migration=migration,
+        )  # fmt: skip
         in_script = len(spans)
 
         def deploy_chunks() -> Iterator[bytes]:
             yield _deploy_header(engine, section, in_script, contract_sha).encode("utf-8")
-            for row in carried:
-                span = spans.get(int(row.order or 0))
-                if span is None:
-                    continue
-                spool.seek(span[0])
-                yield spool.read(span[1])
+            yield from spooled_chunks(spool, carried, spans)
             yield _deploy_footer(engine).encode("utf-8")
 
-        _write_atomic(step_dir / DEPLOY_FILE, deploy_chunks())
+        write_atomic(step_dir / DEPLOY_FILE, deploy_chunks())
     check = render_check_script(section, engine, contract_sha, target_database)
-    _write_atomic(step_dir / CHECK_FILE, iter([check.encode("utf-8")]))
+    write_atomic(step_dir / CHECK_FILE, iter([check.encode("utf-8")]))
     refusals = sorted((k, i, c) for (k, i), c in refused.items())
     scripts = RoutineScripts(
         status="ready",
@@ -630,7 +750,7 @@ def write_routine_scripts(
         refused=refusals,
     )
     output = str(step_dir / CHECK_OUTPUT)
-    _write_atomic(
+    write_atomic(
         step_dir / INSTRUCTIONS_FILE,
         iter([_instructions(engine, scripts, section, output, user).encode("utf-8")]),
     )
