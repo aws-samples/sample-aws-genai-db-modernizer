@@ -263,20 +263,33 @@ def _exposure_phrase(exposure: Mapping[str, Any]) -> tuple[str, str, Any]:
     return what, act, wave
 
 
+def _before(waves: list[Any]) -> str:
+    """ "before wave 3 starts", "before waves 1 and 3 start", or nothing with no wave."""
+    named = [str(w) for w in waves if w]
+    if not named:
+        return ""
+    if len(named) == 1:
+        return f" before wave {named[0]} starts"
+    return f" before waves {_join(named)} start"
+
+
+def _wave_order(wave: Any) -> tuple[int, int]:
+    return (0, wave) if isinstance(wave, int) and not isinstance(wave, bool) else (1, 0)
+
+
 def _actions(exposures: list[tuple[str, str, Any]]) -> str:
-    """Each wave's actions once, joined, then the wave they come before."""
+    """Each wave's actions once, joined, then the wave they come before, in wave order.
+    When every exposure is only to be reviewed, one clause names every wave (#2125:
+    never "review them ... before wave 3 starts, and review them ... before wave 1")."""
     by_wave: dict[Any, list[str]] = {}
-    for _, act, wave in exposures:
+    for _, act, wave in sorted(exposures, key=lambda e: _wave_order(e[2])):
         acts = by_wave.setdefault(wave, [])
         if act not in acts:
             acts.append(act)
     several = len(exposures) > 1  # facts: presentation (verb agreement)
     if several and all(a == "review it in the risk register" for _, a, _ in exposures):
-        by_wave = {w: ["review them in the risk register"] for w in by_wave}
-    parts = [
-        _join(acts) + (f" before wave {wave} starts" if wave else "")
-        for wave, acts in by_wave.items()
-    ]
+        return "review them in the risk register" + _before(list(by_wave))
+    parts = [_join(acts) + _before([wave]) for wave, acts in by_wave.items()]
     return ", and ".join(parts)
 
 
