@@ -59,6 +59,7 @@ from typing import Any
 
 from src.agents.prompt_framing import frame_untrusted
 from src.shared.engine_names import display_engine
+from src.shared.report_facts import risk_engine_and_body
 from src.shared.wave_readiness import redesign_facts as redesign_facts
 from src.storage.artifact_store import ArtifactStore
 
@@ -195,7 +196,10 @@ def fixable_requests(
                     "risk_id": hold.get("risk_id"),
                     "severity": hold.get("severity"),
                     "line": hold.get("line"),
-                    "detail": risk.get("description"),
+                    # The risk text without its "[engine]" attribution tag, which the
+                    # deck parses from the description: the request reaches report.json,
+                    # where a raw engine id is internal wording (#2107).
+                    "detail": risk_engine_and_body(risk.get("description"))[1] or None,
                     "mitigation": risk.get("mitigation"),
                     "query_ids": query_ids[:MAX_QUERY_IDS_PER_CHECK],
                 }
