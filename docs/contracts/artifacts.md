@@ -30,12 +30,12 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `synthesis/(?:v\d+/)?report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `referee-synthesis/report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `deliverables/assessment-data\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
-| `schema-[^/]+/v\d+/groups_manifest\.json` | `SchemaDesignGroupsManifest` (`src.contracts.schema_design_input`) |
-| `schema-[^/]+/v\d+/version_meta\.json` | `SchemaVersionMeta` (`src.contracts.schema_revision_models`) |
-| `schema-[^/]+/v\d+/revision_request\.json` | `SchemaRevisionRequest` (`src.contracts.schema_revision_models`) |
+| `schema-[^/]+/(?:v\d+/)?groups_manifest\.json` | `SchemaDesignGroupsManifest` (`src.contracts.schema_design_input`) |
+| `schema-[^/]+/(?:v\d+/)?version_meta\.json` | `SchemaVersionMeta` (`src.contracts.schema_revision_models`) |
+| `schema-[^/]+/(?:v\d+/)?revision_request\.json` | `SchemaRevisionRequest` (`src.contracts.schema_revision_models`) |
 | `schema-[^/]+/confirmed\.json` | `SchemaConfirmation` (`src.contracts.schema_revision_models`) |
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | `DesignTrace` (`src.contracts.schema_design_trace`) |
-| `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
+| `schema-[^/]+/(?:v\d+/)?design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
 | `decisions/engine_scope\.json` | `EngineScopeDecision` (`src.contracts.engine_scope_decision`) |
 | `decisions/wave-edit/wave-\d+/v\d+\.json` | `WaveEditDecision` (`src.contracts.wave_edit_decision`): the customer's decision on one wave's design review warnings, one version per `/wave-edit`, never overwritten (#2067) |
 | `transformation-contract/v\d+/step-\d+\.json` | `StepContract` (`src.contracts.transformation_contract`) |
@@ -68,8 +68,8 @@ A model session's own files: requests, inputs, answers and group drafts. Never c
 | `llm_input\.json` |
 | `llm_response\.json` |
 | `partial_output\.json` |
-| `schema-[^/]+/v\d+/schema_draft_group_\d+\.json` |
-| `schema-[^/]+/v\d+/input_group_\d+\.json` |
+| `schema-[^/]+/(?:v\d+/)?schema_draft_group_\d+\.json` |
+| `schema-[^/]+/(?:v\d+/)?input_group_\d+\.json` |
 
 ## Internal artifacts
 
@@ -78,17 +78,17 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | Path pattern | Why it is not a contract |
 |---|---|
 | `wave-redesign/v\d+/rounds\.json` | the bounded redesign rounds of held waves: read by the next round and copied by synthesis into report.json's wave_redesign, which the contract types |
-| `schema-[^/]+/v\d+/redesign_request\.json` | the failed checks one redesign round sends back to an engine's design: read only by that round's design input, and deleted when the rounds end |
+| `schema-[^/]+/(?:v\d+/)?redesign_request\.json` | the failed checks one redesign round sends back to an engine's design: read only by that round's design input, and deleted when the rounds end |
 | `collector/sql_shadow\.json` | parser comparison (sqlglot facade vs regex table references, #557): a diagnostic rewritten every collect, read by no phase |
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |
 | `assignment/v\d+/access_patterns\.json` | each query's access-pattern class and scores as routing scored them (#728, #936): an audit record written with its assignment version |
 | `assignment/review/pending_hitl\.json` | AWS Transform transport state: the pending review task to resume |
-| `schema-[^/]+/v\d+/merge_record\.json` | the last --merge of the DynamoDB group drafts (draft hashes, errors) |
-| `schema-[^/]+/v\d+/finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
-| `schema-[^/]+/v\d+/changelog\.json` | a schema revision's changelog, shown with the revision |
-| `schema-[^/]+/v\d+/revision_context\.json` | a schema revision's context for the designer, rewritten per revision |
-| `schema-[^/]+/v\d+/carried_forward\.json` | the parts a post-schema reroute version kept from the version before, with their designs (#1650): an audit record the --split line reads |
+| `schema-[^/]+/(?:v\d+/)?merge_record\.json` | the last --merge of the DynamoDB group drafts (draft hashes, errors) |
+| `schema-[^/]+/(?:v\d+/)?finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
+| `schema-[^/]+/(?:v\d+/)?changelog\.json` | a schema revision's changelog, shown with the revision |
+| `schema-[^/]+/(?:v\d+/)?revision_context\.json` | a schema revision's context for the designer, rewritten per revision |
+| `schema-[^/]+/(?:v\d+/)?carried_forward\.json` | the parts a post-schema reroute version kept from the version before, with their designs (#1650): an audit record the --split line reads |
 | `post-schema-router/external_run\.json` | external-mode post-schema routing pass record (depth, engines to design again) |
 | `transformation-contract/v\d+/findings\.json` | a step's validation and shape-check findings flattened for the report (#1764): derived from the step contract beside it; a view for the report, not a pin or an input |
 | `data-movement/step-\d+/validation-seen\.json` | the tables DMS reported Validated since their full load (#2062): written by Prove's status polls and read by the gate; a missing or unreadable file only means each table is judged by its state now |
