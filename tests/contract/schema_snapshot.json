@@ -39239,6 +39239,25 @@
                                             ]
                                           }
                                         },
+                                        "parts": {
+                                          "required": false,
+                                          "schema": {
+                                            "kind": "anyOf",
+                                            "members": [
+                                              {
+                                                "items": {
+                                                  "kind": "scalar",
+                                                  "type": "integer"
+                                                },
+                                                "kind": "array"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
                                         "query_ids": {
                                           "required": false,
                                           "schema": {
@@ -39598,8 +39617,8 @@
         }
       }
     },
-    "schema_hash": "1545c962088fff4dd51e30360afece7eb87a5241c42fa469166a3de4cda9510a",
-    "version": "1.94"
+    "schema_hash": "3966949424b0df949d3ce32318c350dff355a0ea0b527eab0f84fab4c4fa76a6",
+    "version": "1.95"
   },
   "transformation_contract.StepContract": {
     "fields": {

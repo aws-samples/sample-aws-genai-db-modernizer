@@ -21,13 +21,22 @@ source, a wave 1 not suggested, a wave not designed yet.
 
 1. its design moves to ``wave-redesign/v<N>/round_<k>/`` (designers reuse a design that
    exists, so the next one starts fresh, and the round keeps the one it replaced): the
-   whole engine, or, with ``parts=True`` and a design in parts (DynamoDB groups), only
-   the parts holding the failed checks' queries, so only those are designed again and
-   merged with the rest; ``redesign_request.json`` records the failed checks, which the
-   design input of every mode carries (:func:`redesign_input`, risk text framed);
-2. the engine is designed and reviewed again, then synthesis runs again;
+   whole engine, or, with ``parts=True`` and a DynamoDB design in parts (its groups),
+   only the parts a check names (#2119): the parts holding a check's queries, the parts
+   whose last review held the design (an ``open_review`` hold names them,
+   :func:`_name_review_parts`), and every part sharing a placement group
+   (``write_groups.placement_groups``: a co-dependency group, a write group or a
+   routine unit) with one of those, since the split can cut such a group across parts.
+   One check that names no query keeps the whole engine. ``redesign_request.json``
+   records the failed checks, which the design input carries (:func:`redesign_input`,
+   risk text framed; in a parts round only the parts redesigned get it), and, in a
+   parts round, the parts kept with the digests of their draft, review and input
+   (:func:`kept_parts_at`): ``--split`` marks those ``carried_from`` (their own index),
+   so no designer and no reviewer is asked for them again;
+2. the engine (or its parts) is designed and reviewed again, then synthesis runs again;
 3. :func:`plan_round` closes the round. The new design is kept only when it exists, its
-   review ran (every engine's design is reviewed in both modes, #2081) and it is
+   review ran (every engine's design is reviewed in both modes, #2081; in a parts round,
+   every part it redesigned has its own review) and it is
    **strictly better**: fewer holds on the engine's waves or fewer assigned queries it
    marks unsupported, and more of neither. Otherwise the earlier design is put back
    (``did_not_improve``, ``not_reviewed``, or ``failed`` when no design was written) and
@@ -54,7 +63,7 @@ Spend (Bedrock and ``assess()``): a round starts only when the run's ceilings
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from src.agents.prompt_framing import frame_untrusted
@@ -73,6 +82,15 @@ FIXABLE_RISK_RULES = frozenset({"design.hot_partition"})
 
 #: At most this many query ids per failed check go back to the designer.
 MAX_QUERY_IDS_PER_CHECK = 50
+
+
+def _in_parts(engine: str) -> bool:
+    """Whether a round can redesign ``engine`` in parts (#2119): an engine designed and
+    reviewed per part (``pe_review_external``'s rule); every other one is whole."""
+    from src.agents.schema_design.pe_review_external import _grouped
+
+    return _grouped(engine)
+
 
 FIXED, IMPROVED, DID_NOT_IMPROVE, FAILED, STOPPED, NOT_REVIEWED = (
     "fixed",
@@ -162,10 +180,14 @@ def fixable_requests(
     report: Mapping[str, Any],
     exclude: set[str] | frozenset[str] = frozenset(),
     waves: set[int] | frozenset[int] | None = None,
+    *,
+    max_query_ids: int | None = MAX_QUERY_IDS_PER_CHECK,
 ) -> dict[str, dict[str, Any]]:
     """Per designed engine (outside ``exclude``), the holds on its waves a redesign can
     fix, as one request: the waves, and each failed check with its risk's text and
-    queries. ``waves``: only the holds of those waves (``/wave-edit``, #2067)."""
+    queries (at most ``max_query_ids`` of them, the ones the designer is shown; None
+    keeps every one, which a parts round picks its parts from, #2119). ``waves``: only
+    the holds of those waves (``/wave-edit``, #2067)."""
     facts = report.get("facts") or {}
     risks = {
         r.get("risk_id"): r
@@ -201,7 +223,7 @@ def fixable_requests(
                     # where a raw engine id is internal wording (#2107).
                     "detail": risk_engine_and_body(risk.get("description"))[1] or None,
                     "mitigation": risk.get("mitigation"),
-                    "query_ids": query_ids[:MAX_QUERY_IDS_PER_CHECK],
+                    "query_ids": query_ids[:max_query_ids],
                 }
             )
     return out
@@ -338,6 +360,9 @@ def _move(store: ArtifactStore, keys: list[str], src: str, dst: str) -> None:
         store.delete(key)
 
 
+#: A post-schema reroute's record of its carried parts (``carry_forward``, #1650).
+_CARRIED_FORWARD = "carried_forward.json"
+
 #: The merged design files a parts round moves with the parts it redesigns.
 _MERGED = ("schema_output.json", "design_trace.json", "merge_record.json")
 
@@ -346,30 +371,145 @@ def _part_files(index: int) -> tuple[str, ...]:
     return (f"schema_draft_group_{index}.json", f"design_trace_group_{index}.json")
 
 
-def _affected_parts(store: ArtifactStore, prefix: str, query_ids: set[str]) -> list[int] | None:
-    """The design parts (group indexes) whose input holds one of ``query_ids``; None
-    for a design not in parts, or when a check names no query (the whole engine)."""
+def _part_ids(store: ArtifactStore, prefix: str) -> dict[int, list[str]] | None:
+    """``{group index: every statement its input lists}`` (a query pattern's members
+    included) for a design in parts; None for one not in parts or a part whose input
+    cannot be read."""
+    from src.agents.schema_design.pattern_input import input_query_ids
+
     manifest_key = prefix + "groups_manifest.json"
-    if not query_ids or not store.exists(manifest_key):
+    if not store.exists(manifest_key):
         return None
-    parts: list[int] = []
-    for group in store.read_json(manifest_key).get("groups") or []:
-        idx = int(group.get("group_index") or 0)
-        try:
+    parts: dict[int, list[str]] = {}
+    try:
+        groups = store.read_json(manifest_key).get("groups") or []
+        for group in groups:
             data = store.read_json(prefix + str(group.get("input_file") or ""))
-        except (OSError, ValueError):
-            return None
-        own = {
-            str(q.get("query_id"))
-            for q in ((data.get("collector_output") or {}).get("queries") or {}).get(
-                "query_patterns"
-            )
-            or []
-            if isinstance(q, Mapping)
-        }
-        if own & query_ids:
-            parts.append(idx)
+            idx = int(group.get("group_index") or 0)
+            parts[idx] = input_query_ids(data.get("collector_output") or {})
+    except (OSError, ValueError, AttributeError):
+        return None
     return parts or None
+
+
+def _affected_parts(
+    request: Mapping[str, Any], part_ids: Mapping[int, list[str]]
+) -> set[int] | None:
+    """The parts the request's checks name: those a check names itself (``parts``, a
+    review hold) and those holding a check's queries. None (the whole engine) when a
+    check names neither, or no part holds its queries."""
+    affected: set[int] = set()
+    checks = [c for c in request.get("checks") or [] if isinstance(c, Mapping)]
+    for check in checks:
+        named = {int(p) for p in check.get("parts") or [] if int(p) in part_ids}
+        ids = {str(q) for q in check.get("query_ids") or []}
+        held = {i for i, own in part_ids.items() if ids.intersection(own)}
+        if not (named | held):
+            return None
+        affected |= named | held
+    return affected or None
+
+
+def _with_placement_groups(
+    store: ArtifactStore,
+    db: str,
+    job_id: str,
+    version: int,
+    part_ids: Mapping[int, list[str]],
+    affected: set[int],
+) -> list[int]:
+    """``affected`` with every part that shares a placement group (a co-dependency
+    group, a write group or a routine unit, ``write_groups.placement_groups``) with one
+    of its parts, until none is left: the split clusters a co-dependency group's tables
+    together, but cuts a cluster over the part size into several parts, so a group's
+    statements can sit in two parts, and its parts are redesigned together."""
+    from src.agents.referee.write_groups import assignment_placement_groups
+    from src.storage.assignment_versioning import assignment_artifact_path
+    from src.storage.collector_for_models import read_collector_for_models
+
+    key = assignment_artifact_path(db, job_id, version)
+    try:
+        assignment = store.read_json(key) if store.exists(key) else None
+        collector = read_collector_for_models(store, db, job_id, missing_ok=True)
+    except (OSError, ValueError):
+        return sorted(affected)
+    if not isinstance(assignment, Mapping):
+        return sorted(affected)
+    part_of = {q: i for i, own in part_ids.items() for q in own}
+    units = [
+        {part_of[q] for q in unit if q in part_of}
+        for unit in assignment_placement_groups(assignment, collector)
+    ]
+    grown = set(affected)
+    changed = True
+    while changed:
+        changed = False
+        for parts in units:
+            if parts & grown and not parts <= grown:
+                grown |= parts
+                changed = True
+    return sorted(grown)
+
+
+def _held_review_parts(store: ArtifactStore, prefix: str, parts: Iterable[int]) -> list[int]:
+    """The parts whose own last design review holds the design (a blocker, the rule
+    ``wave_readiness.open_review_count`` counts the ``open_review`` hold with)."""
+    from src.shared.wave_readiness import open_review_count
+
+    held: list[int] = []
+    for idx in parts:
+        try:
+            trace = store.read_json(prefix + _part_files(idx)[1])
+        except (OSError, ValueError):
+            continue
+        if open_review_count(trace if isinstance(trace, Mapping) else None):
+            held.append(idx)
+    return held
+
+
+def _name_review_parts(
+    store: ArtifactStore, db: str, job_id: str, version: int, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The request with each ``open_review`` check naming the parts whose last review
+    held the design (``parts``, group indexes) and those parts' statements
+    (``query_ids``): the hold counts the reviews that did not approve a design, so it
+    names no query of its own (#2119). A design not in parts, or a check that already
+    names queries, is left as it is."""
+    engine = str(request.get("engine") or "")
+    prefix = _design_prefix(db, job_id, engine, version)
+    part_ids = _part_ids(store, prefix) if _in_parts(engine) else None
+    if not part_ids:
+        return dict(request)
+    checks: list[dict[str, Any]] = []
+    for check in request.get("checks") or []:
+        check = dict(check)
+        if check.get("check") == "open_review" and not check.get("query_ids"):
+            held = _held_review_parts(store, prefix, sorted(part_ids))
+            if held:
+                ids = list(dict.fromkeys(q for i in held for q in part_ids[i]))
+                check["parts"] = held
+                check["query_ids"] = ids[:MAX_QUERY_IDS_PER_CHECK]
+        checks.append(check)
+    return {**request, "checks": checks}
+
+
+def _with_every_query(request: Mapping[str, Any], uncapped: Mapping[str, Any]) -> dict[str, Any]:
+    """``request`` with each check's ``query_ids`` taken from the same check of
+    ``uncapped`` (:func:`fixable_requests` with no cap, built from the same holds in the
+    same order); a check named by its parts (a review hold) keeps its own."""
+    full = [c for c in uncapped.get("checks") or [] if isinstance(c, Mapping)]
+    checks: list[dict[str, Any]] = []
+    for n, check in enumerate(request.get("checks") or []):
+        check = dict(check)
+        other = full[n] if n < len(full) else None
+        if (
+            other is not None
+            and other.get("check") == check.get("check")
+            and not check.get("parts")
+        ):
+            check["query_ids"] = list(other.get("query_ids") or [])
+        checks.append(check)
+    return {**request, "checks": checks}
 
 
 def _set_aside(
@@ -386,13 +526,21 @@ def _set_aside(
     dst = _archive_prefix(db, job_id, version, round_n, engine)
     keys = store.list_prefix(src)
     affected: list[int] | None = None
-    if parts:
-        ids = [set(c.get("query_ids") or []) for c in request.get("checks") or []]
-        if ids and all(ids):
-            affected = _affected_parts(store, src, set().union(*ids))
+    part_ids = _part_ids(store, src) if parts and _in_parts(engine) else None
+    named = _affected_parts(request, part_ids) if part_ids else None
+    if part_ids and named:
+        affected = _with_placement_groups(store, db, job_id, version, part_ids, named)
     if affected is not None:
         names = {*_MERGED, *(f for i in affected for f in _part_files(i))}
         keys = [k for k in keys if k[len(src) :] in names]
+        # A post-schema reroute's record of the parts it carried (#1650) stays in place,
+        # and a copy goes with the round: the round's --split gives a carried part it
+        # redesigns another input and so records its copy dropped, and putting the
+        # round back restores the record with the draft, so that part reads carried
+        # again rather than missing (#2119 review).
+        record = src + _CARRIED_FORWARD
+        if store.exists(record):
+            store.write_bytes(dst + _CARRIED_FORWARD, store.read_bytes(record))
     _move(store, keys, src, dst)
     return affected
 
@@ -404,20 +552,155 @@ def _put_back(
     version: int,
     round_n: int,
     engine: str,
-    whole: bool = True,
+    parts: list[int] | None = None,
 ) -> None:
     """The design the round set aside, back in place of whatever the round wrote: for a
-    whole-engine round every file the round wrote goes; for a parts round, the parts it
-    redesigned and the merged design."""
+    whole-engine round (``parts`` None) every file the round wrote goes; for a parts
+    round, the parts it redesigned (a draft or a review the round wrote for a part that
+    had none before included) and the merged design."""
     src = _design_prefix(db, job_id, engine, version)
     dst = _archive_prefix(db, job_id, version, round_n, engine)
     kept = store.list_prefix(dst)
     names = {k[len(dst) :] for k in kept}
+    if parts is not None:
+        names |= {*_MERGED, *(f for i in parts for f in _part_files(i))}
     for key in store.list_prefix(src):
-        if whole or key[len(src) :] in names or key.endswith("redesign_request.json"):
+        if parts is None or key[len(src) :] in names or key.endswith("redesign_request.json"):
             store.delete(key)
     for key in kept:
         store.write_bytes(src + key[len(dst) :], store.read_bytes(key))
+
+
+def _sha256(store: ArtifactStore, key: str) -> str | None:
+    import hashlib
+
+    try:
+        return hashlib.sha256(store.read_bytes(key)).hexdigest() if store.exists(key) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _input_digest(store: ArtifactStore, key: str) -> str | None:
+    """A part's input without the round's ``redesign_request``: what its designer was
+    given, whichever round wrote the file."""
+    import hashlib
+    import json
+
+    try:
+        data = store.read_json(key) if store.exists(key) else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, Mapping):
+        return None
+    view = {k: v for k, v in data.items() if k != "redesign_request"}
+    return hashlib.sha256(json.dumps(view, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _kept_record(
+    store: ArtifactStore, prefix: str, affected: list[int] | None
+) -> list[dict[str, Any]] | None:
+    """For a parts round, every part it keeps with a draft, and the digests of that
+    draft, its design trace (with its review) and its input; None for a whole-engine
+    round."""
+    if affected is None:
+        return None
+    try:
+        groups = store.read_json(prefix + "groups_manifest.json").get("groups") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    kept: list[dict[str, Any]] = []
+    for group in groups:
+        idx = int(group.get("group_index") or 0)
+        draft = _sha256(store, prefix + _part_files(idx)[0])
+        if idx in affected or draft is None:
+            continue
+        kept.append(
+            {
+                "part": idx,
+                "draft_sha256": draft,
+                "trace_sha256": _sha256(store, prefix + _part_files(idx)[1]),
+                "input_sha256": _input_digest(store, f"{prefix}input_group_{idx}.json"),
+            }
+        )
+    return kept
+
+
+def _request_at(store: ArtifactStore, base_key: str) -> Mapping[str, Any]:
+    key = f"{base_key.rstrip('/')}/redesign_request.json"
+    try:
+        request = store.read_json(key) if store.exists(key) else None
+    except (OSError, ValueError):
+        request = None
+    return request if isinstance(request, Mapping) else {}
+
+
+def redesign_parts(
+    store: ArtifactStore, db: str, job_id: str, engine: str, version: int
+) -> list[int] | None:
+    """The parts the running round designs again, or None (the whole engine, or no
+    round): only those parts' inputs carry the round's ``redesign_request``."""
+    parts = _request_at(store, _design_prefix(db, job_id, engine, version)).get("parts")
+    return [int(p) for p in parts] if isinstance(parts, list) else None
+
+
+def kept_parts_at(store: ArtifactStore, base_key: str) -> dict[int, int]:
+    """``{part: part}`` for the parts of the design at ``base_key``
+    (``<db>/<job>/schema-<engine>/v<N>``) a parts round keeps (#2119): each still holds
+    the draft it had when the round started, byte for byte, and its input is the one
+    that draft was designed for. Their design and review count as done, as a part a
+    post-schema reroute carried forward does (``carry_forward.carried_parts_at``)."""
+    base = base_key.rstrip("/")
+    out: dict[int, int] = {}
+    for entry in _request_at(store, base).get("kept_parts") or []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("part"), int):
+            continue
+        idx = int(entry["part"])
+        draft, trace = _part_files(idx)
+        if (
+            entry.get("draft_sha256")
+            and _sha256(store, f"{base}/{draft}") == entry["draft_sha256"]
+            and _input_digest(store, f"{base}/input_group_{idx}.json") == entry.get("input_sha256")
+        ):
+            out[idx] = idx
+    return out
+
+
+def stale_kept_review(store: ArtifactStore, base_key: str, part: int) -> bool:
+    """Whether ``part`` is one the running parts round kept whose draft has changed
+    since while its design trace has not: the review it holds is of the earlier draft."""
+    base = base_key.rstrip("/")
+    draft, trace = _part_files(part)
+    for entry in _request_at(store, base).get("kept_parts") or []:
+        if isinstance(entry, Mapping) and entry.get("part") == part:
+            if _sha256(store, f"{base}/{trace}") != entry.get("trace_sha256"):
+                return False  # a review recorded since
+            return bool(_sha256(store, f"{base}/{draft}") != entry.get("draft_sha256"))
+    return False
+
+
+def _parts_reviewed(
+    store: ArtifactStore,
+    db: str,
+    job_id: str,
+    engine: str,
+    version: int,
+    parts: list[int] | None,
+) -> bool:
+    """Every part a parts round redesigned has a review recorded that ran (True for a
+    whole-engine round, which the report's counts decide)."""
+    if not parts:
+        return True
+    from src.shared.wave_readiness import reviewed_count
+
+    prefix = _design_prefix(db, job_id, engine, version)
+    for idx in parts:
+        try:
+            trace = store.read_json(prefix + _part_files(idx)[1])
+        except (OSError, ValueError):
+            return False
+        if not reviewed_count(trace if isinstance(trace, Mapping) else None):
+            return False
+    return True
 
 
 def _clear_requests(store: ArtifactStore, db: str, job_id: str, version: int, log: Mapping) -> None:
@@ -478,6 +761,7 @@ def _close(
     n = int(rnd["round"])
     designed = _designed(report)
     still = fixable_requests(report)
+    parts: Mapping[str, list[int] | None] = rnd.get("parts") or {}
     outcome: dict[str, str] = {}
     restored: list[str] = []
     for engine in rnd.get("engines") or []:
@@ -487,9 +771,13 @@ def _close(
             rnd.setdefault("failed", {})[
                 engine
             ] = f"redesign round {n} failed: schema_design_{engine} wrote no design"
-        elif not _review_ran(report, engine):
+        elif not _review_ran(report, engine) or not _parts_reviewed(
+            store, db, job_id, engine, version, parts.get(engine)
+        ):
             # Every design is reviewed in both modes (#2081): a design whose review did
-            # not run or failed is never kept, whatever the one it replaced had.
+            # not run or failed is never kept, whatever the one it replaced had. In a
+            # parts round the parts kept carry their reviews, so each part the round
+            # redesigned must have its own (#2119).
             outcome[engine] = NOT_REVIEWED
         elif not _strictly_better(_round_score(report, engine, before), before):
             outcome[engine] = DID_NOT_IMPROVE
@@ -503,8 +791,7 @@ def _close(
         else:
             outcome[engine] = IMPROVED
             continue
-        whole = ((rnd.get("parts") or {}).get(engine)) is None
-        _put_back(store, db, job_id, version, n, engine, whole)
+        _put_back(store, db, job_id, version, n, engine, parts.get(engine))
         restored.append(engine)
     rnd["outcome"] = outcome
     return restored
@@ -592,12 +879,28 @@ def plan_round(
         store.write_json(log_key(db, job_id, version), log)
         return {"status": STOPPED, "reason": reason, **base}
     n = len(log["rounds"]) + 1
+    # A review hold names the parts whose review held the design (#2119).
+    requests = {e: _name_review_parts(store, db, job_id, version, r) for e, r in requests.items()}
+    # The parts are picked from every query a check names, not only the ones the
+    # designer is shown (#2119 review): a part past the cap is redesigned too.
+    every_id = fixable_requests(report, max_query_ids=None)
     affected: dict[str, list[int] | None] = {}
     for engine, request in sorted(requests.items()):
-        affected[engine] = _set_aside(store, db, job_id, version, n, engine, request, parts)
+        chosen = _with_every_query(request, every_id.get(engine) or {})
+        affected[engine] = _set_aside(store, db, job_id, version, n, engine, chosen, parts)
         store.write_json(
             request_key(db, job_id, engine, version),
-            {"round": done + 1, "max_rounds": MAX_REDESIGN_ROUNDS, **request},
+            {
+                "round": done + 1,
+                "max_rounds": MAX_REDESIGN_ROUNDS,
+                **request,
+                # A parts round: the parts designed again, and the parts kept as they
+                # are, which --split marks carried_from (#2119).
+                "parts": affected[engine],
+                "kept_parts": _kept_record(
+                    store, _design_prefix(db, job_id, engine, version), affected[engine]
+                ),
+            },
         )
     log["rounds"].append(
         {
@@ -634,8 +937,7 @@ def fail_round(
         return {"status": "error", "message": "no redesign round is running"}
     n = int(rnd["round"])
     for engine in rnd.get("engines") or []:
-        whole = ((rnd.get("parts") or {}).get(engine)) is None
-        _put_back(store, db, job_id, version, n, engine, whole)
+        _put_back(store, db, job_id, version, n, engine, (rnd.get("parts") or {}).get(engine))
     rnd["outcome"] = {e: FAILED for e in rnd.get("engines") or []}
     rnd["failed"] = {e: reason for e in rnd.get("engines") or []}
     _clear_requests(store, db, job_id, version, log)

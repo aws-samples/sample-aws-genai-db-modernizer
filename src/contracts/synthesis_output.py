@@ -681,6 +681,9 @@ Version History:
   written or read; a redesign is kept only once its own review ran
 - 1.94 (2026-11-10, #2107): Added optional facts.cutover_responsibility: the one
   sentence every wave plan says about the cutover
+- 1.95 (2026-11-11, #2119): Added optional WaveRedesignCheck.parts: an open_review check
+  on a DynamoDB design in parts names the parts whose last review held the design, with
+  their statements in query_ids, so a redesign round redesigns only those parts.
 """
 
 from datetime import datetime
@@ -1493,6 +1496,14 @@ class WaveRedesignCheck(BaseModel):
     detail: str | None = Field(None, description="The risk's own text, as the register states it")
     mitigation: str | None = None
     query_ids: list[str] = Field(default_factory=list)
+    parts: list[int] | None = Field(
+        None,
+        description=(
+            "An open_review check on a design in parts (#2119): the parts (DynamoDB group "
+            "indexes) whose last review held the design, with their statements in "
+            "query_ids; None for every other check"
+        ),
+    )
     warning: ReviewWarning | None = Field(
         None,
         description=(
@@ -1552,8 +1563,9 @@ class WaveRedesignRound(BaseModel):
     parts: dict[str, list[int] | None] | None = Field(
         None,
         description=(
-            "Per engine, the design parts (DynamoDB groups) the round redesigned; None "
-            "for the whole engine"
+            "Per engine, the design parts (DynamoDB groups) the round redesigned: the "
+            "parts its checks name and every part sharing a placement group with one "
+            "(#2119); None for the whole engine"
         ),
     )
     failed: dict[str, str] | None = Field(
@@ -3911,7 +3923,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.94",
+        default="1.95",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

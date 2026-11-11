@@ -661,7 +661,8 @@ obvious entries lives here instead:
   (`--rollback` after a failed redesign). Both only read and write the job's
   own artifacts and print one JSON line.
 - `Bash(uv run python scripts/run_wave_redesign.py *)` (#1992): Phase 7b. It
-  moves the job's design files to `wave-redesign/` and back (`--rollback`),
+  moves the job's design files (for DynamoDB in parts, only the parts the round
+  redesigns, #2119) to `wave-redesign/` and back (`--rollback`),
   writes the round's checks and log, and prints one JSON line.
 - `Bash(uv run python scripts/run_wave_edit.py *)` (#2067): `/wave-edit`. It
   shows one wave, records the customer's decision on its review warnings under
