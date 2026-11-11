@@ -31,8 +31,8 @@ _IMPORTERS = {
     "scripts/run_assessment.py",  # writes them
     "src/tools/routines/migration.py",  # reads them: the routine-migration phase (#1934)
     "src/tools/data_movement/routine_scripts.py",  # writes step 1's deploy script (#1947)
-    "src/tools/data_movement/cutover_scripts.py",  # writes the cutover script (#1948)
-    "src/tools/data_movement/cutover_check.py",  # reads an event's status only (#1948)
+    "src/tools/data_movement/triggers_scripts.py",  # writes the triggers-enable script (#1948)
+    "src/tools/data_movement/triggers_check.py",  # reads an event's status only (#1948)
 }
 _READERS = {"read_routine_sources", "RoutineSourcesChunk"}
 _PATHS = ("collector/routine_sources", "routine_sources.json", "routine_sources/part-")
@@ -88,7 +88,7 @@ def test_nothing_but_the_routine_sources_module_reads_a_chunk():
         # Writes the exact text only into step 1's deploy script (#1947, ADR-034).
         "src/tools/data_movement/routine_scripts.py",
         # Reads only the status each MySQL event's CREATE EVENT gives, never keeps text (#1948).
-        "src/tools/data_movement/cutover_check.py",
+        "src/tools/data_movement/triggers_check.py",
     }
 
 

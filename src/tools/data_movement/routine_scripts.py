@@ -14,14 +14,14 @@ three files into ``data-movement/step-1/``:
   ``check_function_bodies`` on, and each trigger is disabled in that transaction, so no
   replicated change ever meets it enabled. On Aurora MySQL each routine runs under its
   own ``sql_mode`` and connection collation, as ``mysqldump`` does; MySQL triggers and
-  events are not in it (they belong to the cutover script, #1948).
+  events are not in it (they belong to the triggers-enable script, #1948).
 - ``routines-check.sql``: read-only (a ``READ ONLY`` transaction of catalog ``SELECT``\\s):
   one tab-separated line per routine of the section that exists on the target, between a
   header line naming the engine and the contract it was generated for and an end line.
 - ``routines.md``: how to run both, in order, and where the check's output goes
   (``routines-check.tsv``, which ``run_dms_step.py routines-check`` reads).
 
-The deploy script (with the cutover script, #1948, which builds its MySQL blocks the same
+The deploy script (with the triggers-enable script, #1948, which builds its MySQL blocks the same
 way) is the one file outside the routine sources that holds a routine's text: the text
 never goes into a JSON artifact, a log, a printed line or a report, and no
 hash of it is kept. Identifiers that reach a comment or a literal of either script are
@@ -248,7 +248,7 @@ def _mysql_block(
     database: str | None,
 ) -> tuple[str | None, str | None]:
     """A MySQL routine's block: its own ``sql_mode`` and collation, the rewrites applied
-    for ``user``, between ``DELIMITER`` lines (the deploy script and the cutover script)."""
+    for ``user``, between ``DELIMITER`` lines (the deploy script and the triggers-enable script)."""
     session = source.session
     if session.sql_mode and not _SQL_MODE.match(session.sql_mode):
         return None, "session_not_allowed"
@@ -294,7 +294,8 @@ def _deploy_header(engine: str, section: StepRoutines, in_script: int, contract_
             "-- One transaction: if any statement fails, nothing is created; fix it and run "
             "the script again.",
             "-- Triggers are created and disabled in that transaction: DMS already applies "
-            "the source triggers' effects, so they stay off; the cutover script turns them on.",
+            "the source triggers' effects, so they stay off; the triggers-enable script turns them "
+            "on.",
             f"-- lock_timeout {PG_LOCK_TIMEOUT}, below PostgreSQL's default deadlock_timeout (1s): "
             "while DMS applies changes, a lock this script waits for makes the script fail, "
             "never DMS's apply; run the script again.",
@@ -310,7 +311,7 @@ def _deploy_header(engine: str, section: StepRoutines, in_script: int, contract_
         lines += [
             "-- MySQL triggers and events are not here: MySQL cannot create a trigger "
             "disabled, and an enabled event would run on Aurora while DMS replicates the "
-            "source's own event's effects; the cutover script creates them.",
+            "source's own event's effects; the triggers-enable script creates them.",
             "-- MySQL commits each CREATE on its own: the client stops at the first error; "
             "routines-check.sql then shows which routines exist.",
             "",
@@ -510,7 +511,7 @@ def _instructions(
     ]
     if not pg:
         lines.append(
-            f"- Left to the cutover script: {section.deferred} MySQL triggers and events "
+            f"- Left to the triggers-enable script: {section.deferred} MySQL triggers and events "
             "(MySQL cannot create a trigger disabled, and an enabled event would run on Aurora "
             "while DMS replicates the source's own event's effects)."
         )

@@ -1,16 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Reading the customer's output of the cutover routine check script (#1948): untrusted
-input, read strictly, compared with the routines the cutover acts on."""
+"""Reading the customer's output of the triggers-enable check script (#1948): untrusted
+input, read strictly, compared with the routines the triggers-enable script acts on."""
 
 from __future__ import annotations
 
 import pytest
 
-from src.contracts.cutover_check import CutoverCheckResult
-from src.tools.data_movement.cutover_check import read_cutover_check
+from src.contracts.triggers_enable_check import TriggersEnableCheckResult
 from src.tools.data_movement.routine_check import RoutineCheckOutputError
+from src.tools.data_movement.triggers_check import read_triggers_check
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
     contract_with_routines,
@@ -19,8 +19,8 @@ from tests.unit.tools.data_movement.routine_fixtures import (
     mysql_source,
     row,
 )
-from tests.unit.tools.data_movement.test_cutover_scripts import _mysql_case, _pg_case
 from tests.unit.tools.data_movement.test_routine_scripts import SHA, _job
+from tests.unit.tools.data_movement.test_triggers_scripts import _mysql_case, _pg_case
 from tests.unit.tools.sql._timing import assert_cost_ratio
 
 PG = "aurora_postgresql"
@@ -28,7 +28,7 @@ MY = "aurora_mysql"
 
 
 def _output(
-    engine, lines, sha=SHA, database="", magic="modernizer-cutover-check", scheduler=None
+    engine, lines, sha=SHA, database="", magic="modernizer-triggers-enable-check", scheduler=None
 ) -> bytes:
     header = [magic, "1", engine, sha, database, "", ""]
     if scheduler is not None:
@@ -39,11 +39,11 @@ def _output(
 
 def _read(
     tmp_path, store, contract, data: bytes | None, database=None
-) -> CutoverCheckResult | None:
-    path = tmp_path / "cutover-check.tsv"
+) -> TriggersEnableCheckResult | None:
+    path = tmp_path / "triggers-enable-check.tsv"
     if data is not None:
         path.write_bytes(data)
-    return read_cutover_check(path, contract, store, job_id="job1", database_name="shop",
+    return read_triggers_check(path, contract, store, job_id="job1", database_name="shop",
                               contract_sha=SHA, target_database=database)  # fmt: skip
 
 
@@ -138,7 +138,7 @@ def test_only_disabled_events_need_no_scheduler_but_the_line_must_be_there(tmp_p
 
 
 def test_triggers_left_out_for_their_order_or_state_fail_the_check_named(tmp_path):
-    from tests.unit.tools.data_movement.test_cutover_scripts import _two_triggers
+    from tests.unit.tools.data_movement.test_triggers_scripts import _two_triggers
 
     store, contract = _mysql_case(tmp_path, **_two_triggers(orders=(1, None)))
     data = _output(
@@ -157,7 +157,7 @@ def test_triggers_left_out_for_their_order_or_state_fail_the_check_named(tmp_pat
 
 def test_each_postgresql_source_state_is_checked_exactly(tmp_path):
     names = ("t_o", "t_a", "t_r", "t_d")
-    from tests.unit.tools.data_movement.test_cutover_scripts import _pg_case as case
+    from tests.unit.tools.data_movement.test_triggers_scripts import _pg_case as case
 
     store, contract = case(tmp_path, triggers=names,
                            states={f"public.orders.{n}": n[-1].upper() for n in names})  # fmt: skip
@@ -190,13 +190,13 @@ def test_mysql_names_are_matched_case_insensitively_in_the_target_database(tmp_p
 @pytest.mark.parametrize(
     ("data", "words"),
     [
-        # step 1's routine check output is not the cutover check's, nor the other way round
+        # step 1's routine check output is not the triggers-enable check's, nor the other way round
         (
             _output(PG, [], magic="modernizer-routines-check"),
-            "line 1 is not the header cutover-check.sql",
+            "line 1 is not the header triggers-enable-check.sql",
         ),
         (_output(MY, []), "another Aurora engine"),
-        (_output(PG, [], sha="c" * 64), "run run_dms_step.py cutover-scripts"),
+        (_output(PG, [], sha="c" * 64), "run run_dms_step.py triggers-scripts"),
         (
             _output(PG, [["trigger", "public", "orders", f"x{SENTINEL}", "", "", "O"]]),
             "does not ask for",
@@ -244,11 +244,11 @@ def test_a_hundred_thousand_trigger_lines_read_in_linear_time(tmp_path):
         data = _output(
             PG, [["trigger", "public", "orders", f"t{i}", "", "", "O"] for i in range(n)]
         )
-        (folder / "cutover-check.tsv").write_bytes(data)
+        (folder / "triggers-enable-check.tsv").write_bytes(data)
         return folder, store, contract
 
     def read(folder, store, contract):
-        return read_cutover_check(folder / "cutover-check.tsv", contract, store, job_id="job1",
+        return read_triggers_check(folder / "triggers-enable-check.tsv", contract, store, job_id="job1",
                                   database_name="shop", contract_sha=SHA, target_database=None)  # fmt: skip
 
     big, ref = case(100_000), case(10_000)

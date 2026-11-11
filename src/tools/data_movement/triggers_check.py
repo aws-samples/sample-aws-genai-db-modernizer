@@ -1,28 +1,28 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Read the customer's output of the cutover routine check script (#1948).
+"""Read the customer's output of the triggers-enable check script (#1948, renamed in #2113).
 
 The file is untrusted input: the customer's machine wrote it. It is read exactly as step
 1's routine check output is (:func:`~src.tools.data_movement.routine_check.parse_check_output`:
 size, UTF-8, seven tab-separated fields per line, no control character, the header and end
-lines, only the routines the script asks for, each once), under the cutover check's own
+lines, only the routines the script asks for, each once), under the triggers-enable check's own
 header and end lines, so neither script's output passes for the other's. A refusal names
 the line number and what is wrong, never the line's content; nothing of the file is kept.
 
-Then each routine the cutover acts on is compared with the rows of its name:
+Then each routine the triggers-enable script acts on is compared with the rows of its name:
 
 - Aurora PostgreSQL: each trigger step 1 carried exists in its source state (``tgenabled``
   equal to the contract's ``source_state``: O, A, R, or D for one that stays disabled; O or
   D for a state the collection gives only as enabled or disabled, #2099).
 - Aurora MySQL: each trigger step 1 deferred exists; each event exists with the status its
-  source ``CREATE EVENT`` gives (:func:`~src.tools.data_movement.cutover_scripts.event_state`,
+  source ``CREATE EVENT`` gives (:func:`~src.tools.data_movement.triggers_scripts.event_state`,
   read from the routine sources one chunk at a time; only the status leaves the text); and
   when one is created enabled, ``@@GLOBAL.event_scheduler`` (the check's setting line) is ON.
 
-A trigger or event step 1 does not carry, or one the cutover leaves out for a reason the
-contract shows (:func:`~src.tools.data_movement.cutover_scripts.left_out_rows`), fails the
-result, named with its reasons. Linear in the lines and the routines.
+A trigger or event step 1 does not carry, or one the triggers-enable script leaves out for a
+reason the contract shows (:func:`~src.tools.data_movement.triggers_scripts.left_out_rows`),
+fails the result, named with its reasons. Linear in the lines and the routines.
 """
 
 from __future__ import annotations
@@ -32,18 +32,12 @@ from pathlib import Path
 from typing import Any
 
 from src.agents.collector.routine_sources import read_routine_sources
-from src.contracts.cutover_check import CutoverCheckResult, CutoverLeftOut, CutoverMismatch
 from src.contracts.routine_check import RoutineNotCarried
 from src.contracts.transformation_contract import StepContract, StepRoutine
-from src.tools.data_movement.cutover_scripts import (
-    CUTOVER_CHECK,
-    EVENT_SCHEDULER,
-    SCHEDULER_VALUES,
-    TARGET_STATE,
-    event_state,
-    excluded_rows,
-    expected_rows,
-    left_out_rows,
+from src.contracts.triggers_enable_check import (
+    TriggersEnableCheckResult,
+    TriggersEnableLeftOut,
+    TriggersEnableMismatch,
 )
 from src.tools.data_movement.routine_check import (
     MAX_OUTPUT_BYTES,
@@ -51,9 +45,43 @@ from src.tools.data_movement.routine_check import (
     Row,
     parse_check_output,
 )
-from src.tools.data_movement.routine_scripts import output_key
+from src.tools.data_movement.routine_scripts import CheckScript, output_key
+from src.tools.data_movement.triggers_scripts import (
+    EVENT_SCHEDULER,
+    LEGACY_CHECK,
+    SCHEDULER_VALUES,
+    TARGET_STATE,
+    TRIGGERS_CHECK,
+    TRIGGERS_CHECK_OUTPUT,
+    event_state,
+    excluded_rows,
+    expected_rows,
+    left_out_rows,
+)
 
-__all__ = ["check_cutover", "event_states", "parse_cutover_output", "read_cutover_check"]
+__all__ = [
+    "check_output",
+    "check_triggers",
+    "event_states",
+    "parse_triggers_output",
+    "read_triggers_check",
+]
+
+
+def check_output(step_dir: Path) -> Path:
+    """The check output to read in ``step_dir``: ``triggers-enable-check.tsv``, or, when
+    only that one is there, the output a job from before #2113 saved under the old name
+    (``LEGACY_CHECK.output``)."""
+    new, old = step_dir / TRIGGERS_CHECK_OUTPUT, step_dir / LEGACY_CHECK.output
+    return old if not new.is_file() and old.is_file() else new
+
+
+def _spec(data: bytes) -> CheckScript:
+    """The check whose header the output starts with: a script generated before #2113
+    prints the old one (``LEGACY_CHECK``)."""
+    legacy = data.startswith(LEGACY_CHECK.magic.encode("utf-8") + b"\t")
+    return LEGACY_CHECK if legacy else TRIGGERS_CHECK
+
 
 #: The statuses information_schema.EVENTS reports for each status a CREATE EVENT gives.
 _EVENT_STATUSES = {
@@ -99,7 +127,7 @@ def _problem(
     return None
 
 
-def check_cutover(
+def check_triggers(
     contract: StepContract,
     rows: dict[tuple[str, ...], list[Row]] | None,
     states: dict[tuple[str, str], str | None],
@@ -110,26 +138,26 @@ def check_cutover(
     target_database: str | None,
     rows_read: int = 0,
     now: datetime | None = None,
-) -> CutoverCheckResult:
-    """The result for the contract's cutover routines from the parsed output ``rows``
+) -> TriggersEnableCheckResult:
+    """The result for the contract's triggers and events to turn on, from the parsed output ``rows``
     (None when there was nothing to check) and the events' source ``states``."""
     section = contract.routines
-    assert section is not None  # nosec B101 -- read_cutover_check refuses a contract without one
+    assert section is not None  # nosec B101 -- read_triggers_check refuses a contract without one
     engine = contract.target.engine
     rows = rows or {}
     expected = expected_rows(section, engine)
-    mismatches: list[CutoverMismatch] = []
+    mismatches: list[TriggersEnableMismatch] = []
     for row in expected:
         found = rows.get(output_key(row, engine, target_database), [])
         problem = _problem(row, found, engine, states)
         if problem is not None:
             mismatches.append(
-                CutoverMismatch(routine_id=row.routine_id, kind=row.kind, problem=problem)  # type: ignore[arg-type]
+                TriggersEnableMismatch(routine_id=row.routine_id, kind=row.kind, problem=problem)  # type: ignore[arg-type]
             )
     mismatches.sort(key=lambda m: (m.kind, m.routine_id))
     left_out = sorted(
         (
-            CutoverLeftOut(routine_id=r.routine_id, kind=r.kind, reason=reason)  # type: ignore[arg-type]
+            TriggersEnableLeftOut(routine_id=r.routine_id, kind=r.kind, reason=reason)  # type: ignore[arg-type]
             for r, reason in left_out_rows(section, engine)
         ),
         key=lambda m: (m.kind, m.routine_id),
@@ -146,7 +174,7 @@ def check_cutover(
         ),
         key=lambda m: (m.kind, m.routine_id),
     )
-    return CutoverCheckResult(
+    return TriggersEnableCheckResult(
         job_id=job_id,
         database_name=database_name,
         target_engine=engine,  # type: ignore[arg-type]
@@ -168,10 +196,10 @@ def check_cutover(
     )
 
 
-def parse_cutover_output(
+def parse_triggers_output(
     path: Path, contract: StepContract, contract_sha: str, target_database: str | None
 ) -> dict[tuple[str, ...], list[Row]]:
-    """The cutover check output at ``path``, read strictly (module docstring): its routine
+    """The triggers-enable check output at ``path``, read strictly (module docstring): its routine
     lines by check key, and its event scheduler line under ``(EVENT_SCHEDULER,)``. A
     script with events to check prints that line, so an output without it is refused."""
     section = contract.routines
@@ -183,24 +211,26 @@ def parse_cutover_output(
     expected = expected_rows(section, engine)
     if path.stat().st_size > MAX_OUTPUT_BYTES:
         raise RoutineCheckOutputError(f"the check output is over {MAX_OUTPUT_BYTES} bytes")
+    data = path.read_bytes()
+    spec = _spec(data)
     parsed = parse_check_output(
-        path.read_bytes(),
+        data,
         section,
         engine=engine,
         contract_sha=contract_sha,
         target_database=target_database,
         asked=expected,
-        spec=CUTOVER_CHECK,
+        spec=spec,
         settings={EVENT_SCHEDULER: SCHEDULER_VALUES} if engine == "aurora_mysql" else None,
     )
     if any(r.kind == "event" for r in expected) and (EVENT_SCHEDULER,) not in parsed:
         raise RoutineCheckOutputError(
-            f"the check output has no {EVENT_SCHEDULER} line: run {CUTOVER_CHECK.script} again"
+            f"the check output has no {EVENT_SCHEDULER} line: run {spec.script} again"
         )
     return parsed
 
 
-def read_cutover_check(
+def read_triggers_check(
     path: Path,
     contract: StepContract,
     store: Any,
@@ -210,8 +240,8 @@ def read_cutover_check(
     contract_sha: str,
     target_database: str | None,
     now: datetime | None = None,
-) -> CutoverCheckResult | None:
-    """The result from the output file at ``path``; None when the cutover acts on some
+) -> TriggersEnableCheckResult | None:
+    """The result from the output file at ``path``; None when the script acts on some
     routine and the file is not there yet. With nothing to act on, no file is needed."""
     section = contract.routines
     if section is None:
@@ -226,10 +256,10 @@ def read_cutover_check(
     if expected:
         if not path.is_file():
             return None
-        parsed = parse_cutover_output(path, contract, contract_sha, target_database)
+        parsed = parse_triggers_output(path, contract, contract_sha, target_database)
         count = sum(len(v) for k, v in parsed.items() if k != (EVENT_SCHEDULER,))
         states = event_states(store, database_name, job_id, expected)
-    return check_cutover(
+    return check_triggers(
         contract,
         parsed,
         states,

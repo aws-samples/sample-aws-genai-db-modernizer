@@ -207,9 +207,10 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `data-movement/step-1/`: `/move`'s step 1 files; `routines-deploy.sql` (the one file
   besides the routine sources that holds routine text) and the read-only
   `routines-check.sql` the customer runs, and `routines-check.json`, read from their
-  check output (#1947); `cutover-routines.sql` and `cutover-resume.sql` (both hold MySQL routine text), the
-  read-only `cutover-check.sql` and `cutover.md` for the customer's own cutover, and
-  `cutover-check.json`, read from that check's output (#1948)
+  check output (#1947); `triggers-enable.sql` and `triggers-enable-resume.sql` (both hold
+  MySQL routine text), which turn on the triggers and events step 1 left off, the read-only
+  `triggers-enable-check.sql` and `triggers.md`, and `triggers-enable-check.json`, read
+  from that check's output (#1948, #2113)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus a per-version copy of the rendered files, keyed on the assignment version
 - `deliverables/`: the customer folder `scripts/run_report.py` fills for the

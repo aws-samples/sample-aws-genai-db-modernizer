@@ -373,6 +373,11 @@ def test_the_mocked_model_run_wrote_model_io_and_designs(tmp_path_factory) -> No
 # Entries of the other two lists that neither the scan nor a run here produces, with
 # who writes them. Kept short; an entry here that a scan or run does produce is stale too.
 NOT_PRODUCED_HERE: dict[str, str] = {
+    r"data-movement/step-\d+/cutover-check\.json": (
+        "the triggers-enable check result under the name #1948 gave it: nothing writes it since "
+        "#2113 (triggers-enable-check.json), and the entry stays so a saved job's old result "
+        "still loads"
+    ),
     r"data-movement/wave-\d+/plan\.json": (
         "the per-wave plan layout written before #1797: nothing writes it now, and the entry "
         "stays so a saved job's old plans still load"

@@ -23,13 +23,13 @@ artifact's deploy order:
    settled as carried, is not carried either (``depends_on_not_carried``); in deploy
    order every routine it names is settled first (the artifact puts dependency cycles in
    *needs attention*).
-5. A MySQL trigger or event is deferred to the cutover script (#1948): MySQL can't
+5. A MySQL trigger or event is left to the triggers-enable script (#1948): MySQL can't
    create a trigger disabled, and an enabled event would run on the target while DMS
    replicates the effects the source's own event already had.
 6. Anything else is carried, numbered in deploy order; a PostgreSQL trigger is created
    disabled.
 
-A trigger also carries what the cutover script needs of it, from the collection (#1948):
+A trigger also carries what the triggers-enable script needs of it, from the collection (#1948):
 a PostgreSQL trigger's source state (``source_state``: its ``tgenabled`` letter, or only
 ``enabled`` / ``disabled`` from a collection that predates the letter), a MySQL trigger's timing and
 event (``fires``) and ``ACTION_ORDER``.
@@ -53,7 +53,7 @@ __all__ = [
     "step_tables",
 ]
 
-#: The routine kinds each target leaves to the cutover script.
+#: The routine kinds each target leaves to the triggers-enable script.
 DEFERRED_KINDS = {"aurora_mysql": ("trigger", "event"), "aurora_postgresql": ()}
 TABLE_NOT_IN_STEP = "depends_on_table_not_in_step"
 VIEW_DEPENDENCY = "depends_on_view"  # reason "depends_on_view:<schema.view>"
