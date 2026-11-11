@@ -20,11 +20,20 @@ then run it again. The engine stays: no assignment version is written.
     uv run python scripts/run_wave_redesign.py --job-id <id> --db <name>
     uv run python scripts/run_wave_redesign.py --job-id <id> --db <name> \
         --rollback --reason "redesign round 1 failed: schema_design_dynamodb"
+    uv run python scripts/run_wave_redesign.py --job-id <id> --db <name> --stop
 
 ``--rollback``: a design of the running round failed (its subagent, after the one
 retry): put each engine's earlier design back and record the round ``failed`` with
 ``--reason``; synthesize again after it. It moves and deletes only the job's own design
 files (``schema-<engine>/v<N>/`` and ``wave-redesign/``).
+
+``--stop`` (#2122): the run goes on to its report without running the open round (a
+run's last step runs it every time): put each engine's earlier design back, record the
+round ``stopped`` (``stopped_by`` ``closed``, with ``--reason`` or a default), and end
+the loop. It prints ``awaiting_synthesis`` (synthesize again so the waves state it, then
+run the check again, which prints ``complete`` or ``exhausted``), or ``no_open_round``
+when no round of the automatic loop is open, changing nothing (an open
+``/wave-edit`` round is that command's to check or roll back: it stays open).
 
 One JSON status line on stdout. A run without a model (``--llm-mode none``) has no
 design, so it is always ``complete`` with 0 rounds.
@@ -73,8 +82,17 @@ def main() -> None:
         action="store_true",
         help="The running round's design failed: put the earlier designs back",
     )
-    parser.add_argument("--reason", default=None, help="With --rollback: what failed")
+    parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="Close the open round unchecked: put the earlier designs back, end the loop",
+    )
+    parser.add_argument(
+        "--reason", default=None, help="With --rollback: what failed; with --stop: why"
+    )
     args = parser.parse_args()
+    if args.rollback and args.stop:
+        _error("--rollback and --stop are exclusive")
 
     from scripts._sandbox import sandbox_violation
 
@@ -91,7 +109,12 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
-    from src.agents.schema_design.wave_redesign import fail_round, latest_report, plan_round
+    from src.agents.schema_design.wave_redesign import (
+        fail_round,
+        latest_report,
+        plan_round,
+        stop_round,
+    )
     from src.storage.assignment_versioning import resolve_downstream_assignment_version
     from src.storage.local_store import LocalArtifactStore
 
@@ -103,6 +126,9 @@ def main() -> None:
     if args.rollback:
         reason = args.reason or "a design of the redesign round failed"
         _output(fail_round(store, args.db, args.job_id, version, reason))
+        return
+    if args.stop:
+        _output(stop_round(store, args.db, args.job_id, version, args.reason))
         return
     report = latest_report(store, args.db, args.job_id)
     if report is None:

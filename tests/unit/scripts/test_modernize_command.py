@@ -1512,3 +1512,27 @@ def test_an_error_engine_choices_line_wins_over_its_decisions() -> None:
     assert 'unless that line is an error (`"status": "error"`' in line
     assert line.index("unless that line is an error") < line.index("each `decided` entry")
     assert "wins over its `decided` and `schema_design_engines`" in line
+
+
+def test_a_redesign_round_is_run_or_closed_never_left_pending() -> None:
+    """#2122: a discourse run printed ``awaiting_redesign`` for round 2 of 2 and went on to
+    its report. Phase 7b runs that round, or closes it with ``--stop``; Completion closes
+    any round still open before it prints the summary."""
+    text = _modernize_text()
+    phase_7b = text.split("### Phase 7b: Wave redesign", 1)[1].split("### Completion", 1)[0]
+    awaiting = next(ln for ln in phase_7b.splitlines() if '"status": "awaiting_redesign"' in ln)
+    assert "Run that round now" in awaiting
+    assert "`round` equal to `max_rounds` is the last round, still to run" in awaiting
+    assert "never go on to Completion from this line" in awaiting
+    stop = (
+        "uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name} "
+        "--stop --reason"
+    )
+    assert stop in phase_7b
+    assert "under `--auto` every round runs" in phase_7b
+    assert "Go on to Completion only from `complete` or `exhausted`" in phase_7b
+    completion = _completion_text()
+    assert stop in completion
+    assert completion.index(stop) < completion.index("scripts/print_summary.py")
+    assert '`"status": "no_open_round"`' in completion
+    assert '`"status": "awaiting_synthesis"`' in completion

@@ -46,7 +46,11 @@ source, a wave 1 not suggested, a wave not designed yet.
    ``fixed`` means the kept design is reviewed and no redesign-fixable hold is left;
    ``improved`` means it is kept and still held.
 
-An engine whose round failed or did not improve is not sent back again. The log is per
+An engine whose round failed or did not improve is not sent back again. A round never
+stays open at the end of a run (#2122): a run that goes on to its report without
+running it closes it with :func:`stop_round` (``stopped``, ``stopped_by`` ``closed``,
+the earlier design put back), which ends the loop, and the in-process loop does the
+same when anything but a design stops it. The log is per
 assignment version (``wave-redesign/v<N>/rounds.json``); synthesis copies it into
 ``report.json`` (``wave_redesign``), and a round closed after that synthesis is written
 back into the report, so the two always agree.
@@ -64,6 +68,7 @@ Spend (Bedrock and ``assess()``): a round starts only when the run's ceilings
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -72,6 +77,8 @@ from src.shared.engine_names import display_engine
 from src.shared.report_facts import risk_engine_and_body
 from src.shared.wave_readiness import redesign_facts as redesign_facts
 from src.storage.artifact_store import ArtifactStore
+
+logger = logging.getLogger(__name__)
 
 #: At most this many redesign rounds per assignment version (see the docstring).
 MAX_REDESIGN_ROUNDS = 2
@@ -118,6 +125,13 @@ SKIPPED = "skipped"
 AWAITING_REVIEW = "awaiting_review"
 #: The status lines a caller continues from, not endings of the loop.
 LOOP_STEPS = frozenset({"awaiting_synthesis", "awaiting_redesign", AWAITING_REVIEW})
+#: How a ``stopped`` round stopped (#2122, the log's ``stopped_by``): a run ceiling left no
+#: room before it started, or the run closed it with its design never checked
+#: (:func:`stop_round`), which also ends the loop. A stopped round saved before the field
+#: was a ceiling's.
+CEILING, CLOSED = "ceiling", "closed"
+#: :func:`stop_round`'s status line when no round is open: nothing to close.
+NO_OPEN_ROUND = "no_open_round"
 
 
 def log_key(db: str, job_id: str, version: int) -> str:
@@ -839,8 +853,10 @@ def plan_round(
     - ``awaiting_redesign``: design again exactly ``engines`` (``parts``: the DynamoDB
       groups, or None for the whole engine), synthesize, then run this again;
     - ``complete`` (nothing a redesign can fix is held), ``exhausted`` (rounds ran out,
-      or the engines left are not sent back again; ``held`` lists them) or ``stopped``
-      (``budget`` gave a reason: no round starts; synthesize once more to state it).
+      the engines left are not sent back again, or the run closed a round, #2122:
+      ``held`` lists them, ``stopped`` says why a closed round ended the loop) or
+      ``stopped`` (``budget`` gave a reason: no round starts; synthesize once more to
+      state it).
     """
     log = read_log(store, db, job_id, version)
     pending = pending_reviews(store, db, job_id, version, log) if wait_for_reviews else []
@@ -861,12 +877,15 @@ def plan_round(
     requests = {e: r for e, r in held.items() if e not in final}
     done = len(own)
     base = {"rounds": done, "max_rounds": MAX_REDESIGN_ROUNDS}
-    if not requests or done >= MAX_REDESIGN_ROUNDS:
+    # A round the run closed (stop_round, #2122) ends the loop: no further round starts.
+    closed = next((rnd for rnd in own if rnd.get("stopped_by") == CLOSED), None)
+    if not requests or done >= MAX_REDESIGN_ROUNDS or closed is not None:
         _clear_requests(store, db, job_id, version, log)
         store.write_json(log_key(db, job_id, version), log)
         if not held:
             return {"status": COMPLETE, **base}
-        return {"status": EXHAUSTED, **base, "held": sorted(held)}
+        ended = {"stopped": str(closed.get("stopped") or "")} if closed is not None else {}
+        return {"status": EXHAUSTED, **base, "held": sorted(held), **ended}
     reason = budget() if budget is not None else None
     if reason:
         log["rounds"].append(
@@ -877,6 +896,7 @@ def plan_round(
                 "requests": [requests[e] for e in sorted(requests)],
                 "outcome": {e: STOPPED for e in sorted(requests)},
                 "stopped": reason,
+                "stopped_by": CEILING,
             }
         )
         store.write_json(log_key(db, job_id, version), log)
@@ -948,6 +968,55 @@ def fail_round(
     return {"status": "rolled_back", "round": n, "engines": list(rnd.get("engines") or [])}
 
 
+def stop_round(
+    store: ArtifactStore, db: str, job_id: str, version: int, reason: str | None = None
+) -> dict[str, Any]:
+    """Close the open round without checking its design (#2122): the run is ending, or
+    goes on to its report, with the round's design not designed, reviewed or synthesized.
+    Every engine's earlier design is put back (a parts round's ``carried_forward.json``
+    with it, #2119), the round records ``stopped`` (``stopped_by`` ``closed``, with
+    ``reason``) and the report's log states it; no further round starts. Synthesize
+    again (``awaiting_synthesis``) so the waves state it on the earlier design.
+    ``no_open_round`` when no round of the automatic loop is open: nothing changes.
+
+    An open ``/wave-edit`` round (``wave_edit`` set, #2067) is never closed here: it
+    belongs to that command, which checks it or rolls it back (``--rollback``), so a
+    ``/modernize`` run's close leaves it as it is (``open_wave_edit_round`` names it)."""
+    log = read_log(store, db, job_id, version)
+    rnd = _open_round(log)
+    if rnd is None or rnd.get("wave_edit") is not None:
+        out: dict[str, Any] = {"status": NO_OPEN_ROUND, "rounds": len(log["rounds"])}
+        if rnd is not None:
+            out["open_wave_edit_round"] = int(rnd["round"])
+        return out
+    n = int(rnd["round"])
+    # The customer line already names the round ("redesign round N was not completed").
+    reason = reason or "its design was never checked"
+    engines = [str(e) for e in rnd.get("engines") or []]
+    for engine in engines:
+        _put_back(store, db, job_id, version, n, engine, (rnd.get("parts") or {}).get(engine))
+    rnd["outcome"] = {e: STOPPED for e in engines}
+    rnd["stopped"] = reason
+    rnd["stopped_by"] = CLOSED
+    _clear_requests(store, db, job_id, version, log)
+    store.write_json(log_key(db, job_id, version), log)
+    from src.shared.contract_versioning import ContractVersionError
+
+    try:
+        _write_report_log(store, db, job_id, version, log)
+    except (OSError, ValueError, ContractVersionError):
+        # The synthesis this asks for copies the log into the report anyway: a report
+        # that does not load (another MAJOR, unreadable) must not keep the round open.
+        pass
+    return {
+        "status": "awaiting_synthesis",
+        "round": n,
+        "stopped": reason,
+        "restored": engines,
+        "rounds": len(log["rounds"]),
+    }
+
+
 def run_rounds(
     store: ArtifactStore,
     db: str,
@@ -962,7 +1031,42 @@ def run_rounds(
     """The loop for a run that designs in process (Bedrock, ``assess()``): check,
     redesign the held engines' failing parts, synthesize again, until nothing fixable is
     held or the rounds run out. A design that raises puts the earlier design back and
-    ends the loop. Returns the last status line."""
+    ends the loop. Anything else that stops the loop with a round open (a synthesis that
+    raises, an interrupt) closes that round ``stopped`` with the earlier design put back
+    (:func:`stop_round`, #2122) before it propagates. Returns the last status line."""
+    try:
+        return _run_rounds(store, db, job_id, version, read_report, design, synthesize, budget)
+    except BaseException as exc:
+        try:
+            stop_round(
+                store,
+                db,
+                job_id,
+                version,
+                f"the run stopped before its design was checked ({type(exc).__name__})",
+            )
+        except Exception as close_exc:  # noqa: BLE001 -- the original error must propagate
+            # The round stays open in the log (outcome None), as it is on disk: a later
+            # --stop can still close it. The failure is logged and noted on the error.
+            note = (
+                f"the open redesign round was not closed ({type(close_exc).__name__}: "
+                f"{close_exc}); close it with run_wave_redesign.py --stop"
+            )
+            logger.warning("wave redesign: %s", note)
+            exc.add_note(note)
+        raise
+
+
+def _run_rounds(
+    store: ArtifactStore,
+    db: str,
+    job_id: str,
+    version: int,
+    read_report: Callable[[], Mapping[str, Any]],
+    design: Callable[[str], object],
+    synthesize: Callable[[], object],
+    budget: Callable[[], str | None],
+) -> dict[str, Any]:
     while True:
         status = plan_round(store, db, job_id, read_report(), version, parts=True, budget=budget)
         if status["status"] == "awaiting_synthesis":

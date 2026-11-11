@@ -714,8 +714,9 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
     """Per engine, from one assignment version's redesign log (``report.json``'s
     ``wave_redesign``, #1992): the rounds that redesigned it, its last outcome, and the
     note a wave states when the last round did not keep a new design (it failed, did not
-    improve it, or a run ceiling stopped it), and ``short_note``, the same with no free
-    text (a failed round's reason can name a table, #2075)."""
+    improve it, a run ceiling stopped it, or the run closed it before its design was
+    checked, #2122), and ``short_note``, the same with no free text (a failed round's
+    reason can name a table, #2075). A stopped round never counts as a redesign."""
     out: dict[str, dict[str, Any]] = {}
     for rnd in (log or {}).get("rounds") or []:
         if not isinstance(rnd, Mapping):
@@ -730,7 +731,19 @@ def redesign_facts(log: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
             last = outcome.get(engine)
             row["last"] = last
             row["note"] = row["short_note"] = None
+            if last == "stopped" and rnd.get("stopped_by") == "closed":
+                # The run closed the round before its design was checked (#2122): the
+                # earlier design is back, and no further round ran.
+                row["note"] = (
+                    f"redesign round {n} was not completed: {rnd.get('stopped')}; the "
+                    "earlier design is kept"
+                )
+                row["short_note"] = (
+                    f"redesign round {n} was not completed; the earlier design is kept"
+                )
+                continue
             if last == "stopped":
+                # A run ceiling (``stopped_by`` ceiling, or a round saved before the field).
                 row["note"] = f"no further redesign round ran: {rnd.get('stopped')}"
                 row["short_note"] = "no further redesign round ran: a run ceiling stopped it"
                 continue

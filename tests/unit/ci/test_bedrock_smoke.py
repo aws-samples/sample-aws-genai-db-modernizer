@@ -170,7 +170,7 @@ def test_every_status_the_loop_returns_is_an_ending_a_failure_or_a_step() -> Non
 
     steps = wr.LOOP_STEPS
     found: set[str] = set()
-    for fn in (wr.plan_round, wr.run_rounds):
+    for fn in (wr.plan_round, wr.run_rounds, wr._run_rounds):
         for node in ast.walk(ast.parse(inspect.getsource(fn).lstrip())):
             if not isinstance(node, ast.Dict):
                 continue
