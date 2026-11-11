@@ -46,6 +46,9 @@ class EngineArtifacts:
     analysis: dict | None = None
     schema_design: dict | None = None
     design_trace: DesignTrace | None = None
+    # #2141: the placement units the design split cut across parts (its groups
+    # manifest's ``unit_cuts``), so synthesis states them; empty when there is none.
+    unit_cuts: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -298,6 +301,8 @@ def load_synthesis_data(
             trace_key = f"{database_name}/{job_id}/schema-{engine}/design_trace.json"
 
         artifacts.design_trace = _read_design_trace(store, trace_key, design_missing)
+        if artifacts.schema_design:
+            artifacts.unit_cuts = _unit_cuts(store, schema_key.rsplit("/", 1)[0])
 
         data.engines[engine] = artifacts
         logger.info(
@@ -310,6 +315,19 @@ def load_synthesis_data(
 
     _apply_cache_safety_net(data)
     return data
+
+
+def _unit_cuts(store: ArtifactStore, base_key: str) -> list[dict]:
+    """The ``unit_cuts`` of the design's groups manifest (#2141): none for a design not
+    in parts, or one split before the field."""
+    key = f"{base_key}/groups_manifest.json"
+    try:
+        manifest = store.read_json(key) if store.exists(key) else {}
+    except Exception as e:  # noqa: BLE001 -- an unreadable optional artifact, as _read_artifact
+        logger.warning("Optional artifact unreadable: %s — %s", key, e)
+        return []
+    cuts = manifest.get("unit_cuts") if isinstance(manifest, dict) else None
+    return [c for c in cuts or [] if isinstance(c, dict)]
 
 
 def _scoring_engines(selected: list[str], assignment: dict) -> list[str]:

@@ -36,13 +36,20 @@ one entry per pattern. Clustering, table ownership, context tables and naming st
 every member statement. A single pattern too large for one part's input is cut between
 its members (:func:`fit_units_to_budget`).
 
+Placement units (#2141, ``placement_units``: a co-dependency group, a write group or a
+routine unit, merged as routing merges them) are kept whole: a unit's items go to one
+cluster, a chunk packs whole units and halving moves whole units. A unit is cut only
+when it alone is over a part's size or input budget, at its weakest link
+(``placement_units.weakest_cut``), and the cut is recorded in the manifest's
+``unit_cuts``.
+
 Works with ArtifactStore for both local and S3 backends.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.table_resolution import TableNameResolver
@@ -59,10 +66,21 @@ from src.agents.schema_design.pattern_input import (
     pattern_units,
     split_unit,
 )
+from src.agents.schema_design.placement_units import (
+    REASON_INPUT_BUDGET,
+    REASON_KEPT_PRIOR_PARTS,
+    REASON_PART_SIZE,
+    PlacementUnit,
+    SplitUnits,
+    by_table,
+    is_block_key,
+    weakest_cut,
+)
 from src.contracts.schema_design_input import (
     ExcludedQuery,
     SchemaDesignGroupEntry,
     SchemaDesignGroupsManifest,
+    UnitCut,
 )
 from src.shared.assumptions import design_context
 from src.shared.placeholder_tables import is_placeholder_table
@@ -277,6 +295,7 @@ def build_groups(
     analysis_output: dict | None = None,
     co_dependency_groups: list[list[str]] | None = None,
     max_size: int | None = None,
+    units: SplitUnits | None = None,
 ) -> list[dict]:
     """Split queries into groups using table affinity clusters.
 
@@ -287,6 +306,11 @@ def build_groups(
 
     ``max_size`` caps a group: statements (default ``MAX_STATEMENTS_PER_GROUP``), or the
     query pattern units of an engine split per pattern (``MAX_PATTERNS_PER_PART``, #1602).
+
+    ``units`` (#2141): the placement units to keep whole. A unit's items go to the
+    cluster of its first item and a chunk packs whole units; a unit of more than
+    ``max_size`` items is first cut at its weakest link into pieces that fit, and the
+    cut recorded on ``units`` (``over_part_size``).
 
     Returns a list of dicts with keys: group_name, primary_tables, queries.
     """
@@ -313,7 +337,11 @@ def build_groups(
         parent = {}
 
     # Each query's query pattern (#1146): its queries share one cluster, the first one's.
+    # A placement unit's items do too (#2141): an item in a unit is keyed by its block.
     pattern_of = query_pattern_index(queries, collector_output)
+    if units:
+        units.absorb(queries)
+        pattern_of = _atom_keys(queries, pattern_of, units)
     pattern_root: dict[int, str] = {}
 
     # Map each query to its cluster root
@@ -341,6 +369,10 @@ def build_groups(
 
     for cluster_root in sorted(by_cluster, key=lambda c: len(by_cluster[c]), reverse=True):
         cluster_queries = _by_pattern(by_cluster[cluster_root], pattern_of)
+        if units and len(cluster_queries) > cap:
+            cluster_queries = _cut_large_blocks(
+                cluster_queries, pattern_of, units, cap, primary_of, _tables_of(db_name, resolver)
+            )
         tables_in_cluster = sorted(cluster_tables.get(cluster_root, {cluster_root}))
 
         # Name the group after the root table (or first table alphabetically)
@@ -358,7 +390,9 @@ def build_groups(
             else:
                 # Sub-split large clusters by chunk: whole tables per chunk when they
                 # fit, whole query patterns otherwise (#1243, #1146).
-                chunks = _table_chunks(cluster_queries, primary_of, pattern_of, cap)
+                chunks = _table_chunks(
+                    cluster_queries, primary_of, pattern_of, cap, is_block_key if units else None
+                )
                 for chunk_num, chunk in enumerate(chunks, start=1):
                     suffix = f"_part{chunk_num}" if len(chunks) > 1 else ""
                     groups.append(
@@ -414,6 +448,7 @@ def keep_prior_parts(
     co_dependency_groups: list[list[str]] | None = None,
     *,
     by_pattern: bool = False,
+    units: SplitUnits | None = None,
 ) -> list[dict]:
     """The groups of a post-schema reroute version: the previous version's parts, kept.
 
@@ -427,6 +462,10 @@ def keep_prior_parts(
     and its design is carried forward (``carry_forward``, #1650). For a per-pattern
     engine (``by_pattern``) each kept part's statements are made into query pattern
     units again, which keeps a pattern cut across parts cut the same way.
+
+    ``units`` (#2141): a newcomer whose placement unit has statements in exactly one kept
+    part joins that part; a unit the kept parts still hold in two or more is recorded as
+    cut (``kept_prior_parts``).
     """
     resolver = TableNameResolver.from_collector(collector_output) if collector_output else None
     source_engine = source_engine_of(collector_output)
@@ -442,6 +481,17 @@ def keep_prior_parts(
             continue
         placed.update(_qid(q) for q in held)
         kept.append((held, list(part.get("primary_tables") or []), part.get("group_name")))
+    if units:
+        # A newcomer joins the one kept part that holds the rest of its unit (#2141).
+        part_of = {_qid(q): n for n, (held, _, _) in enumerate(kept) for q in held}
+        for q in queries:
+            qid = _qid(q)
+            if qid in placed:
+                continue
+            homes = {part_of[o] for o in units.unit_members(qid) if o in part_of}
+            if len(homes) == 1:
+                kept[homes.pop()][0].append(q)
+                placed.add(qid)
     still_owned = {t for _, tables, _ in kept for t in tables}
     orphans = dropped_tables - still_owned
     groups: list[dict] = []
@@ -466,13 +516,19 @@ def keep_prior_parts(
                 analysis_output,
                 co_dependency_groups=co_dependency_groups,
                 max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
+                units=units,
             )
         )
+    if units:
+        units.record([g["queries"] for g in groups], REASON_KEPT_PRIOR_PARTS)
     return groups
 
 
 def assign_table_owners(
-    groups: list[dict], db_name: str, resolver: TableNameResolver | None = None
+    groups: list[dict],
+    db_name: str,
+    resolver: TableNameResolver | None = None,
+    written: Callable[[dict], Iterable[str]] | None = None,
 ) -> list[dict]:
     """Give every table in the groups' ``primary_tables`` exactly one owning group (#1243).
 
@@ -484,16 +540,28 @@ def assign_table_owners(
     table is designed by its owner; the group designs its own queries' access
     patterns on the owner's table and never gives it a key schema of its own.
 
+    ``written`` (#2141, #2153): the tables a statement writes or locks
+    (``write_groups.written_tables``). A table's owner is first the group holding most
+    of its writes, and a group holding a write of a table is a candidate for it: a
+    non-owner designs no write of a context table (``group_input.CONTEXT_TABLE_RULE``),
+    so the owner must be the part that holds them. A table's write group is kept in one
+    part (#2141), so it holds all of them unless the manifest records a cut.
+
     Run on the final list (after :func:`fit_groups_to_budget`): the indices are the
     groups' positions. A table no group lists stays unowned, as before. Sorted
     throughout, so the result does not depend on the hash seed.
     """
     primary_counts: list[Counter[str]] = []
     touch_counts: list[Counter[str]] = []
+    write_counts: list[Counter[str]] = []
     for group in groups:
         primary: Counter[str] = Counter()
         touched: Counter[str] = Counter()
+        writes: Counter[str] = Counter()
         for q in expand(group["queries"]):
+            if written is not None:
+                for t in {_canon(t, db_name, resolver) for t in written(q)}:
+                    writes[t] += 1
             primary[
                 _canon(get_primary_table(q, db_name, _known_ids(resolver)), db_name, resolver)
             ] += 1
@@ -501,16 +569,26 @@ def assign_table_owners(
                 touched[t] += 1
         primary_counts.append(primary)
         touch_counts.append(touched)
+        write_counts.append(writes)
 
     candidates: dict[str, list[int]] = defaultdict(list)
     for n, group in enumerate(groups):
         for t in group["primary_tables"]:
             candidates[t].append(n)
+    # A group writing a table any group lists is a candidate for it (#2153).
+    for n in range(len(groups)):
+        for t in write_counts[n]:
+            if t in candidates and n not in candidates[t]:
+                candidates[t].append(n)
 
-    def rank(n: int, t: str) -> tuple[int, int, int]:
-        return (-primary_counts[n][t], -touch_counts[n][t], n)
+    def rank(n: int, t: str) -> tuple[int, int, int, int]:
+        return (-write_counts[n][t], -primary_counts[n][t], -touch_counts[n][t], n)
 
-    owner = {t: min(rank(n, t) for n in ns)[2] for t, ns in candidates.items()}
+    owner = {t: min(rank(n, t) for n in ns)[3] for t, ns in candidates.items()}
+    candidates_of: dict[int, set[str]] = defaultdict(set)
+    for t, ns in candidates.items():
+        for n in ns:
+            candidates_of[n].add(t)
 
     owned: list[dict] = []
     for n, group in enumerate(groups):
@@ -518,7 +596,9 @@ def assign_table_owners(
         owned.append(
             {
                 **group,
-                "primary_tables": sorted(t for t in set(group["primary_tables"]) if owner[t] == n),
+                "primary_tables": sorted(
+                    t for t in {*group["primary_tables"], *candidates_of[n]} if owner[t] == n
+                ),
                 "context_tables": context,
                 "context_owners": {t: owner[t] for t in context},
             }
@@ -610,17 +690,125 @@ def _runs(queries: list[dict], pattern_of: dict[str, int]) -> list[list[dict]]:
     return runs
 
 
-def _pattern_chunks(queries: list[dict], pattern_of: dict[str, int], size: int) -> list[list[dict]]:
+def _pattern_chunks(
+    queries: list[dict],
+    pattern_of: dict[str, int],
+    size: int,
+    hard: Callable[[int], bool] | None = None,
+) -> list[list[dict]]:
     """Chunks of at most ``size`` queries that cut no query pattern that fits in one.
 
     A pattern larger than ``size`` fills the open chunk, then whole chunks, and its
     last part stays open for the next pattern, so it adds no group of its own. When
     keeping the patterns whole would still take more chunks than a plain ``size``
     cut, the plain cut of the same (pattern-ordered) queries is kept: no extra
-    designer call (#1146 review)."""
+    designer call (#1146 review), unless it cuts a placement unit (``hard`` keys, #2141)."""
     chunks = _fill_chunks(_runs(queries, pattern_of), size)
     plain = [queries[i : i + size] for i in range(0, len(queries), size)]
-    return chunks if len(chunks) <= len(plain) else plain
+    if len(chunks) <= len(plain) or (hard and _cuts_a_block(plain, pattern_of, hard)):
+        return chunks
+    return plain
+
+
+def _cuts_a_block(
+    chunks: list[list[dict]], keys: dict[str, int], hard: Callable[[int], bool]
+) -> bool:
+    """Whether ``chunks`` put the items of one placement unit block in two chunks."""
+    seen: dict[int, int] = {}
+    for n, chunk in enumerate(chunks):
+        for q in chunk:
+            key = keys.get(_qid(q))
+            if key is not None and hard(key) and seen.setdefault(key, n) != n:
+                return True
+    return False
+
+
+def _atom_keys(
+    queries: list[dict], pattern_of: dict[str, int], units: SplitUnits
+) -> dict[str, int]:
+    """Each item's key: its placement unit block's when it is in one, else its query
+    pattern's (#2141)."""
+    keys = dict(pattern_of)
+    for q in queries:
+        block = units.block_key(q)
+        if block is not None:
+            keys[_qid(q)] = block
+    return keys
+
+
+def _writer(collector_output: dict) -> Callable[[dict], Iterable[str]]:
+    """The tables a statement writes or locks (``write_groups.written_tables``), read in
+    the collection's dialect: what ``assign_table_owners`` gives each table's owner by."""
+    from src.agents.referee.table_resolution import SourceScope
+    from src.agents.referee.write_groups import written_tables
+
+    engine = source_engine_of(collector_output)
+    scope = SourceScope.from_collector(collector_output)
+
+    def written(q: dict) -> Iterable[str]:
+        return written_tables(q, engine, scope)
+
+    return written
+
+
+def _tables_of(db_name: str, resolver: TableNameResolver | None) -> Callable[[dict], set[str]]:
+    def tables(item: dict) -> set[str]:
+        return {
+            _canon(t, db_name, resolver)
+            for m in members(item)
+            for t in m.get("tables_accessed") or []
+            if t and not is_placeholder_table(t)
+        }
+
+    return tables
+
+
+def _cut_large_blocks(
+    queries: list[dict],
+    keys: dict[str, int],
+    units: SplitUnits,
+    size: int,
+    primary_of: dict[str, str],
+    tables_of: Callable[[dict], set[str]],
+) -> list[dict]:
+    """``queries`` with each placement unit block of more than ``size`` items cut into
+    pieces of at most ``size`` (:func:`_cut_block`); ``keys`` gives each piece its own."""
+    out: list[dict] = []
+    for run in _runs(queries, keys):
+        key = keys.get(_qid(run[0]))
+        if key is None or not is_block_key(key) or len(run) <= size:
+            out.extend(run)
+            continue
+        out.extend(_cut_block(run, units, size, lambda q: primary_of.get(_qid(q), ""), tables_of))
+    for q in out:
+        block = units.block_key(q)
+        if block is not None:
+            keys[_qid(q)] = block
+    return out
+
+
+def _cut_block(
+    items: list[dict],
+    units: SplitUnits,
+    size: int,
+    primary: Callable[[dict], str],
+    tables_of: Callable[[dict], set[str]],
+) -> list[dict]:
+    """A block of more than ``size`` items cut at its weakest link
+    (``placement_units.weakest_cut``) until every piece has at most ``size``, in as few
+    pieces as a plain cut takes; each cut recorded as ``over_part_size``."""
+    if len(items) <= size:
+        return items
+    ordered = list(by_table(items, primary))
+    n = len(ordered)
+    pieces = -(-n // size)
+    allowed = [c for c in range(1, n) if -(-c // size) + -(-(n - c) // size) == pieces]
+    c = weakest_cut(ordered, allowed, tables_of)
+    left, right = ordered[:c], ordered[c:]
+    units.cut(left, right, REASON_PART_SIZE)
+    return _cut_block(left, units, size, primary, tables_of) + _cut_block(
+        right, units, size, primary, tables_of
+    )
 
 
 def _table_chunks(
@@ -628,6 +816,7 @@ def _table_chunks(
     primary_of: dict[str, str],
     pattern_of: dict[str, int],
     size: int,
+    hard: Callable[[int], bool] | None = None,
 ) -> list[list[dict]]:
     """Chunks of at most ``size`` queries keeping each primary table's queries in one
     chunk when they fit (#1243), so a table's queries span groups only when they must.
@@ -638,7 +827,8 @@ def _table_chunks(
     cuts. When keeping tables whole would take more chunks than :func:`_pattern_chunks`
     on the same table-ordered queries, that cut is kept: no extra designer call. Either
     way :func:`assign_table_owners` gives each table one owner and the other chunks
-    it as context."""
+    it as context. A placement unit's items (``hard`` keys, #2141) count as one pattern,
+    and the fallback is not kept when it cuts one."""
     table_of_pattern: dict[int, str] = {}
     by_table: dict[str, list[dict]] = defaultdict(list)
     for n, q in enumerate(queries):
@@ -654,8 +844,10 @@ def _table_chunks(
         else:
             runs.extend(_runs(table_queries, pattern_of))
     chunks = _fill_chunks(runs, size)
-    fallback = _pattern_chunks([q for run in runs for q in run], pattern_of, size)
-    return chunks if len(chunks) <= len(fallback) else fallback
+    fallback = _pattern_chunks([q for run in runs for q in run], pattern_of, size, hard)
+    if len(chunks) <= len(fallback) or (hard and _cuts_a_block(fallback, pattern_of, hard)):
+        return chunks
+    return fallback
 
 
 def _fill_chunks(runs: list[list[dict]], size: int) -> list[list[dict]]:
@@ -713,6 +905,8 @@ def fit_groups_to_budget(
     measure: Callable[[dict], int],
     max_chars: int = MAX_GROUP_INPUT_CHARS,
     pattern_of: dict[str, int] | None = None,
+    units: SplitUnits | None = None,
+    tables_of: Callable[[dict], set[str]] | None = None,
 ) -> list[dict]:
     """Halve each group whose input is over ``max_chars`` until every part fits.
 
@@ -725,6 +919,9 @@ def fit_groups_to_budget(
     ``pattern_of`` (query id -> query pattern, #1146): a group is halved at the
     query-pattern boundary nearest its middle, inside a pattern only when the
     group is one pattern, unless that takes more parts than halving at the middle.
+    ``units`` (#2141): a group is never halved inside a placement unit unless the unit
+    is all that is left over the budget; then it is cut at its weakest link and the cut
+    recorded (``over_input_budget``).
     """
     fitted: list[dict] = []
     for group in groups:
@@ -739,11 +936,15 @@ def fit_groups_to_budget(
         def measure_part(qs: list[dict], base: dict = group, name: str = longest_name) -> int:
             return measure({**base, "group_name": name, "queries": qs})
 
-        parts = _halve_to_fit(group["queries"], measure_part, max_chars, pattern_of or {})
+        if units:
+            units.absorb(group["queries"])
+        queries = _blocks_together(group["queries"], units)
+        parts = _halve_to_fit(queries, measure_part, max_chars, pattern_of or {}, units, tables_of)
         if pattern_of and len(parts) > 1:
             # Cutting at pattern boundaries must not take more parts than the plain
-            # halving would: no extra designer call (#1146 review).
-            plain = _halve_to_fit(group["queries"], measure_part, max_chars)
+            # halving would: no extra designer call (#1146 review). Either keeps units
+            # whole, and records every unit it has to cut.
+            plain = _halve_to_fit(queries, measure_part, max_chars, None, units, tables_of)
             if len(plain) < len(parts):
                 parts = plain
         if len(parts) == 1:
@@ -754,27 +955,86 @@ def fit_groups_to_budget(
     return fitted
 
 
+def _blocks_together(items: list[dict], units: SplitUnits | None) -> list[dict]:
+    """``items`` with each placement unit block's items next to each other, at its first
+    item (stable); unchanged with no units."""
+    if not units:
+        return items
+    keys = [units.block_key(q) for q in items]
+    order: dict[object, int] = {}
+    for n, key in enumerate(keys):
+        order.setdefault(key if key is not None else ("item", n), len(order))
+    ranked = sorted(
+        range(len(items)), key=lambda n: order[keys[n] if keys[n] is not None else ("item", n)]
+    )
+    return [items[n] for n in ranked]
+
+
+def _inside_block(items: list[dict], units: SplitUnits | None) -> set[int]:
+    """The cut positions (1 to ``len(items) - 1``) that fall inside a placement unit block."""
+    if not units:
+        return set()
+    keys = [units.block_key(q) for q in items]
+    return {c for c in range(1, len(items)) if keys[c] is not None and keys[c] == keys[c - 1]}
+
+
+def _cut_one_block(
+    items: list[dict], units: SplitUnits, tables_of: Callable[[dict], set[str]] | None
+) -> tuple[list[dict], list[dict]]:
+    """``items``, one placement unit block over the input budget by itself, cut at its
+    weakest link among the cuts in the middle half; recorded as ``over_input_budget``."""
+    ordered = list(by_table(items, _first_table))
+    n = len(ordered)
+    allowed = [c for c in range(1, n) if n <= 4 * c <= 3 * n] or list(range(1, n))
+    c = weakest_cut(ordered, allowed, tables_of or _plain_tables)
+    left, right = ordered[:c], ordered[c:]
+    units.cut(left, right, REASON_INPUT_BUDGET)
+    return left, right
+
+
+def _first_table(item: dict) -> str:
+    tables = members(item)[0].get("tables_accessed") or []
+    return str(tables[0]) if tables else ""
+
+
+def _plain_tables(item: dict) -> set[str]:
+    return {str(t) for m in members(item) for t in m.get("tables_accessed") or [] if t}
+
+
 def _halve_to_fit(
     queries: list[dict],
     measure: Callable[[list[dict]], int],
     max_chars: int,
     pattern_of: dict[str, int] | None = None,
+    units: SplitUnits | None = None,
+    tables_of: Callable[[dict], set[str]] | None = None,
 ) -> list[list[dict]]:
     if len(queries) <= 1 or measure(queries) <= max_chars:
         return [queries]
-    mid = (len(queries) + 1) // 2
-    # The access-pattern boundary nearest the middle (#1146); the middle when none.
-    if pattern_of:
-        cuts, n = [], 0
-        for run in _runs(queries, pattern_of)[:-1]:
-            n += len(run)
-            cuts.append(n)
-        # Only a boundary in the middle half: a lopsided cut leaves a tiny group.
-        near = [c for c in cuts if len(queries) <= 4 * c <= 3 * len(queries)]
-        if near:
-            mid = min(near, key=lambda c: (abs(c - mid), c))
-    return _halve_to_fit(queries[:mid], measure, max_chars, pattern_of) + _halve_to_fit(
-        queries[mid:], measure, max_chars, pattern_of
+    inside = _inside_block(queries, units)
+    if units and len(inside) == len(queries) - 1:
+        # One placement unit, over the budget by itself (#2141).
+        left, right = _cut_one_block(queries, units, tables_of)
+    else:
+        mid = (len(queries) + 1) // 2
+        # The access-pattern boundary nearest the middle (#1146); the middle when none.
+        if pattern_of:
+            cuts, n = [], 0
+            for run in _runs(queries, pattern_of)[:-1]:
+                n += len(run)
+                cuts.append(n)
+            # Only a boundary in the middle half: a lopsided cut leaves a tiny group.
+            near = [c for c in cuts if len(queries) <= 4 * c <= 3 * len(queries)]
+            near = [c for c in near if c not in inside]
+            if near:
+                mid = min(near, key=lambda c: (abs(c - mid), c))
+        if mid in inside:
+            # Never inside a placement unit: the nearest cut between units (#2141).
+            free = [c for c in range(1, len(queries)) if c not in inside]
+            mid = min(free, key=lambda c: (abs(c - mid), c))
+        left, right = queries[:mid], queries[mid:]
+    return _halve_to_fit(left, measure, max_chars, pattern_of, units, tables_of) + _halve_to_fit(
+        right, measure, max_chars, pattern_of, units, tables_of
     )
 
 
@@ -782,6 +1042,8 @@ def fit_units_to_budget(
     groups: list[dict],
     measure: Callable[[dict], int],
     max_chars: int = MAX_GROUP_INPUT_CHARS,
+    units: SplitUnits | None = None,
+    tables_of: Callable[[dict], set[str]] | None = None,
 ) -> list[dict]:
     """:func:`fit_groups_to_budget` for groups of query pattern units (#1602).
 
@@ -790,7 +1052,12 @@ def fit_units_to_budget(
     (``pattern_input.split_unit``: the first half of its members, then the rest), so
     even one pattern too large for a part's input is designed in deterministic parts;
     a one-statement unit is kept whatever its size. Parts are named as
-    :func:`fit_groups_to_budget` names them."""
+    :func:`fit_groups_to_budget` names them.
+
+    ``units`` (#2141): halving moves whole placement units, at the cut between units
+    nearest the middle. A part that is one placement unit and still over is cut at the
+    unit's weakest link, and a query pattern in a unit is cut between its members only
+    when it is all that is left; each such cut is recorded (``over_input_budget``)."""
     fitted: list[dict] = []
     for group in groups:
         longest_base = max(
@@ -798,10 +1065,13 @@ def fit_units_to_budget(
         )
         longest_name = f"{longest_base}_part{len(expand(group['queries']))}"
 
-        def measure_part(units: list[dict], base: dict = group, name: str = longest_name) -> int:
-            return measure({**base, "group_name": name, "queries": units})
+        def measure_part(units_: list[dict], base: dict = group, name: str = longest_name) -> int:
+            return measure({**base, "group_name": name, "queries": units_})
 
-        parts = _halve_units_to_fit(group["queries"], measure_part, max_chars)
+        if units:
+            units.absorb(group["queries"])
+        items = _blocks_together(group["queries"], units)
+        parts = _halve_units_to_fit(items, measure_part, max_chars, units, tables_of)
         if len(parts) == 1:
             fitted.append(group)
             continue
@@ -811,18 +1081,37 @@ def fit_units_to_budget(
 
 
 def _halve_units_to_fit(
-    units: list[dict], measure: Callable[[list[dict]], int], max_chars: int
+    items: list[dict],
+    measure: Callable[[list[dict]], int],
+    max_chars: int,
+    units: SplitUnits | None = None,
+    tables_of: Callable[[dict], set[str]] | None = None,
 ) -> list[list[dict]]:
-    if measure(units) <= max_chars:
-        return [units]
-    if len(units) == 1:
-        halves = split_unit(units[0])
+    if measure(items) <= max_chars:
+        return [items]
+    if len(items) == 1:
+        halves = split_unit(items[0])
         if len(halves) == 1:
-            return [units]
-        return [part for half in halves for part in _halve_units_to_fit([half], measure, max_chars)]
-    mid = (len(units) + 1) // 2
-    return _halve_units_to_fit(units[:mid], measure, max_chars) + _halve_units_to_fit(
-        units[mid:], measure, max_chars
+            return [items]
+        if units and units.block_key(items[0]) is not None:
+            units.cut([halves[0]], [halves[1]], REASON_INPUT_BUDGET)
+        return [
+            part
+            for half in halves
+            for part in _halve_units_to_fit([half], measure, max_chars, units, tables_of)
+        ]
+    inside = _inside_block(items, units)
+    if units and len(inside) == len(items) - 1:
+        # One placement unit, over the budget by itself (#2141).
+        left, right = _cut_one_block(items, units, tables_of)
+    else:
+        mid = (len(items) + 1) // 2
+        if mid in inside:
+            free = [c for c in range(1, len(items)) if c not in inside]
+            mid = min(free, key=lambda c: (abs(c - mid), c))
+        left, right = items[:mid], items[mid:]
+    return _halve_units_to_fit(left, measure, max_chars, units, tables_of) + _halve_units_to_fit(
+        right, measure, max_chars, units, tables_of
     )
 
 
@@ -881,6 +1170,7 @@ def split_schema_input(
     co_dependency_groups: list[list[str]] | None = None,
     decision_trace: dict | None = None,
     prior_parts: list[dict] | None = None,
+    placement_units: list[PlacementUnit] | None = None,
 ) -> SchemaDesignGroupsManifest:
     """Split schema design input into groups and write per-group input files.
 
@@ -903,6 +1193,11 @@ def split_schema_input(
             one from (``carry_forward.prior_parts``: each part's ``group_name``,
             ``query_ids`` and ``primary_tables``). Kept as they were (:func:`keep_prior_parts`), so a
             move changes only the parts holding it (#1650); None splits afresh.
+        placement_units: The assignment's placement units
+            (``placement_units.assignment_placement_units``: co-dependency groups, write
+            groups and routine units, merged, #2141). Each unit's statements are kept in
+            one part; a unit too large for one part by itself is cut at its weakest link
+            and the cut listed in the manifest's ``unit_cuts``. None keeps none whole.
 
     Returns:
         SchemaDesignGroupsManifest with group entries. A query that touches no
@@ -931,6 +1226,9 @@ def split_schema_input(
     # #1602: the engine's parts are built from query patterns, one unit each, capped at
     # MAX_PATTERNS_PER_PART patterns; ownership and context still count every statement.
     by_pattern = engine in PATTERN_ENGINES
+    units = SplitUnits(
+        placement_units or [], (str(q["query_id"]) for q in design_queries if q.get("query_id"))
+    )
     if prior_parts:
         groups = keep_prior_parts(
             design_queries,
@@ -940,6 +1238,7 @@ def split_schema_input(
             analysis_output,
             co_dependency_groups=co_dependency_groups,
             by_pattern=by_pattern,
+            units=units,
         )
     else:
         groups = build_groups(
@@ -953,6 +1252,7 @@ def split_schema_input(
             analysis_output,
             co_dependency_groups=co_dependency_groups,
             max_size=MAX_PATTERNS_PER_PART if by_pattern else MAX_STATEMENTS_PER_GROUP,
+            units=units,
         )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
     # #1991: the customer's peak, when one is recorded, is every group's peak.
@@ -987,14 +1287,17 @@ def split_schema_input(
 
     manifest_groups: list[SchemaDesignGroupEntry] = []
 
+    tables_of = _tables_of(database_name, resolver)
     if by_pattern:
-        sized = fit_units_to_budget(groups, measure)
+        sized = fit_units_to_budget(groups, measure, units=units, tables_of=tables_of)
     else:
         pattern_of = query_pattern_index(design_queries, collector_output)
-        sized = fit_groups_to_budget(groups, measure, pattern_of=pattern_of)
+        sized = fit_groups_to_budget(
+            groups, measure, pattern_of=pattern_of, units=units, tables_of=tables_of
+        )
     # Halved parts copy their group's tables: give each table one owner again (#1243).
     fitted = name_groups(
-        assign_table_owners(sized, database_name, resolver),
+        assign_table_owners(sized, database_name, resolver, written=_writer(collector_output)),
         database_name,
         resolver,
     )
@@ -1041,6 +1344,10 @@ def split_schema_input(
             )
         )
 
+    # #2141: every placement unit the parts still hold in two or more, with its reason.
+    unit_cuts = units.unit_cuts(
+        [[str(m.get("query_id") or "") for m in expand(g["queries"])] for g in fitted]
+    )
     manifest = SchemaDesignGroupsManifest(
         job_id=job_id,
         database_name=database_name,
@@ -1049,6 +1356,7 @@ def split_schema_input(
         total_groups=len(manifest_groups),
         groups=manifest_groups,
         excluded_queries=excluded_queries,
+        unit_cuts=[UnitCut.model_validate(c) for c in unit_cuts],
     )
 
     store.write_json(f"{base_key}/groups_manifest.json", manifest.model_dump())

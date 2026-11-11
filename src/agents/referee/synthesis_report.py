@@ -1843,6 +1843,13 @@ def build_risk_assessment(
                 }
             )
 
+        # Placement units the design split had to cut across parts (#2141): each is too
+        # large for one part by itself, so its statements were designed in two or more
+        # parts and reconciled by the merge. Stated, never hidden.
+        if artifacts.unit_cuts and schema:
+            risk_id += 1
+            risks.append(_unit_cut_risk(risk_id, engine, artifacts.unit_cuts, risk_tables))
+
         # Migration notes from schema design
         # The description names the object; the logic to build is the mitigation (#252).
         for mn in field_list(schema, "migration_notes"):
@@ -2485,6 +2492,43 @@ def _tables_for(
         touched |= query_tables.get(q, set())
     narrowed = sorted(t for t in ap_tables if t in touched)
     return narrowed or sorted(ap_tables)
+
+
+_UNIT_CUT_REASONS = {
+    "over_part_size": "is larger than one design part holds",
+    "over_input_budget": "is larger than one design part's input",
+    "kept_prior_parts": "was kept in the design parts of the version it came from",
+}
+
+
+def _unit_cut_risk(
+    risk_id: int, engine: str, cuts: list[dict], risk_tables: Mapping[str, Iterable[str]]
+) -> dict:
+    """One LOW risk for the placement units the design split cut across parts (#2141):
+    the groups of statements routing places together that were designed in two or more
+    parts, with why, so no deliverable hides them."""
+    ids = sorted({str(q) for c in cuts for q in c.get("query_ids") or []})
+    tables = sorted({t for q in ids for t in risk_tables.get(q, ())})
+    reasons = sorted({str(c.get("reason") or "") for c in cuts} & set(_UNIT_CUT_REASONS))
+    why = " or ".join(_UNIT_CUT_REASONS[r] for r in reasons) or _UNIT_CUT_REASONS["over_part_size"]
+    n = len(cuts)
+    return {
+        "risk_id": f"RISK-{risk_id:03d}",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "severity": "LOW",
+        "description": (
+            f"[{engine}] Designed across parts: {n} "
+            f"{'group' if n == 1 else 'groups'} of statements that routing places together "
+            f"{'was' if n == 1 else 'were'} designed in two or more design parts, because "
+            f"{'it' if n == 1 else 'each'} {why}; the merge reconciled the parts."
+        ),
+        "affected_tables": tables,
+        "mitigation": (
+            "Review these statements' access patterns together: they were designed in "
+            "separate parts."
+        ),
+        "query_ids": ids,
+    }
 
 
 def _design_conflict_risks(
