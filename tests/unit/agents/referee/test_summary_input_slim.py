@@ -196,3 +196,49 @@ def test_every_wave_keeps_the_unit_of_its_share():
         "queries",
         "calls",
     ]
+
+
+def _routine_risk(rule: str, description: str, **extra) -> dict:
+    return {
+        "risk_id": "RISK-014", "risk_type": "MIGRATION_COMPLEXITY", "severity": "HIGH",
+        "rule": rule, "wave": 1, "description": description,
+        "affected_tables": ["public.posts", "public.topics"], "query_ids": [],
+        "mitigation": "Migrate these routines yourself before wave 1, then check them again. "
+        "See the Wave 1 gate in the roadmap.",
+        "to_do": "migrate 2 routines yourself", "details": ["function public.f: x"], **extra,
+    }  # fmt: skip
+
+
+def test_a_routine_risk_enters_as_one_short_line():
+    """#2132: each routine risk keeps its id, severity, rule and wave, so it is still
+    counted; its text repeats the Routines section and the wave's to-do line."""
+    payload = _payload()
+    risks = payload["risk_assessment"]["risks"]
+    risks.append(
+        _routine_risk(
+            "routines.migrate_yourself",
+            "[aurora_postgresql] We could not translate 2 routines automatically; migrate "
+            "them yourself before wave 1. They are 1 function, 1 procedure.",
+        )
+    )
+    risks.append(_routine_risk("routines.carried", "[aurora_postgresql] Wave 1: ...",
+                               severity="LOW", risk_id="RISK-015"))  # fmt: skip
+    out = slim_summary_input(payload)["risk_assessment"]["risks"]
+    assert out[1:] == [
+        {"risk_id": "RISK-014", "severity": "HIGH", "rule": "routines.migrate_yourself",
+         "wave": 1},
+        {"risk_id": "RISK-015", "severity": "LOW", "rule": "routines.carried", "wave": 1},
+    ]  # fmt: skip
+    # Every other risk keeps its fields, and the input is not changed.
+    assert out[0] == slim_summary_input(_payload())["risk_assessment"]["risks"][0]
+    assert risks[1]["mitigation"] and risks[1]["details"]
+
+
+def test_a_mitigation_loses_only_its_closing_pointer_to_the_roadmap():
+    payload = _payload()
+    risks = payload["risk_assessment"]["risks"]
+    risks[0]["mitigation"] = "Load-test the reads first. See the Wave 3 gate in the roadmap."
+    risks.append({"severity": "LOW", "mitigation": "See the Wave 2 gate in the roadmap. Then go."})
+    out = slim_summary_input(payload)["risk_assessment"]["risks"]
+    assert out[0]["mitigation"] == "Load-test the reads first."
+    assert out[1]["mitigation"] == "See the Wave 2 gate in the roadmap. Then go."

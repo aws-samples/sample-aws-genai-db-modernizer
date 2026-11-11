@@ -35,6 +35,14 @@ this payload.
   statements by intent. So does a routine risk (#1938, ``routines.*``): its details name
   each routine, and its description counts them by kind. Every other risk keeps its
   ``details``.
+- A routine risk (``routines.*``) enters as one short line (#2132): its id, severity,
+  rule and wave, and the to-do of the one to migrate yourself ("migrate 2 routines
+  yourself"). Its description, mitigation and tables repeat what the deliverables'
+  Routines section states, and the summary names no routine; each risk stays, so its
+  count and severity can still be stated.
+- A mitigation loses its closing pointer to the roadmap ("See the Wave 3 gate in the
+  roadmap.", #1510, #2132): it tells a report reader where to look, and the summary
+  quotes no mitigation.
 - A trade-off's ``target_tables`` is dropped when it only repeats the bare
   names of its ``source_tables``.
 - A table mapping's alternatives are the engine names, without scores.
@@ -43,6 +51,7 @@ this payload.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 NO_MOVE_STATEMENT = (
@@ -71,6 +80,17 @@ SUMMARISED_DETAIL_RULES = frozenset(
         "routines.opted_out",
     }
 )
+
+
+# A routine risk's fields the summary request keeps (#2132): one short line per risk.
+ROUTINE_RISK_KEEP = ("risk_id", "severity", "rule", "wave")
+# The pointer migration_risk_rules ends a mitigation with (#1510).
+_GATE_POINTER = re.compile(r"\s*See the Wave \d+ gate in the roadmap\.\s*\Z")
+
+
+def _routine_line(entry: dict[str, Any]) -> dict[str, Any]:
+    """A routine risk as one short line: the kept fields only."""
+    return {k: entry[k] for k in ROUTINE_RISK_KEEP if k in entry}
 
 
 def _bare(table: object) -> str:
@@ -104,10 +124,26 @@ def slim_summary_input(payload: dict) -> dict:
 
     risk = out.get("risk_assessment") or {}
     for section in ("risks", "resolved_risks"):
-        for r in risk.get(section) or []:
+        rows = risk.get(section)
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
             _ids_to_count(r)
+            mitigation = r.get("mitigation")
+            if isinstance(mitigation, str) and _GATE_POINTER.search(mitigation):
+                r["mitigation"] = _GATE_POINTER.sub("", mitigation)
             if r.get("rule") in SUMMARISED_DETAIL_RULES and isinstance(r.get("details"), list):
                 r["detail_count"] = len(r.pop("details"))
+        risk[section] = [
+            (
+                _routine_line(r)
+                if isinstance(r, dict) and str(r.get("rule") or "").startswith("routines.")
+                else r
+            )
+            for r in rows
+        ]
 
     for t in out.get("trade_offs") or []:
         _ids_to_count(t)
