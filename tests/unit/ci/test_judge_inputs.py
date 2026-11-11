@@ -501,13 +501,14 @@ def test_prompt_above_ceiling_cuts_trade_offs_before_risk_register(
 ) -> None:
     deliverables = _stage_run3(tmp_path, monkeypatch)
     _, _, rubric_body = judge.load_rubric(judge.DEFAULT_RUBRIC_PATH)
-    # 59K: the #952 rubric and facts are about 7K larger than when this was
-    # 45K, and the count tables of #513 add 4K more, so the same deliverable
-    # room makes the same cuts
+    # 65K: the #952 rubric and facts are about 7K larger than when this was
+    # 45K, the count tables of #513 add 4K more, and since #2146 every cut
+    # section keeps a floor (6K more), so the same deliverable room makes the
+    # same cuts
     prompt, stats = judge.build_prompt_with_stats(
-        rubric_body, RUN3_DB, RUN3_JOB, deliverables, ceiling=59_000, nonce="feedc0de"
+        rubric_body, RUN3_DB, RUN3_JOB, deliverables, ceiling=65_000, nonce="feedc0de"
     )
-    assert len(prompt) <= 59_000
+    assert len(prompt) <= 65_000
     md = stats["inputs"]["engineering_md"]
     assert md["truncated"] is True and md["chars"] < md["source_chars"]
     cut = {c["section"] for c in md["sections_truncated"]}

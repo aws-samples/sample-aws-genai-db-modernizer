@@ -13,6 +13,7 @@ real CLI's non-interactive output has (an outer object with a string
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import stat
@@ -46,8 +47,17 @@ def _build_job_dir(artifact_root: Path, *, db: str = DB, job: str = JOB, version
     (folder / "engineering-report.md").write_text(
         "# Engineering Report\n\nDynamoDB. Cost: $500/mo.\n"
     )
-    (folder / "executive-report.pdf").write_bytes(b"%PDF-1.4 not a real pdf")
+    (folder / "executive-report.pdf").write_bytes(_real_pdf())
     return folder
+
+
+@functools.cache
+def _real_pdf() -> bytes:
+    """A PDF pypdf can read: a judge whose PDF fails to extract fails its
+    judge_input check (#2146), so the staged job needs a real one."""
+    from src.report import executive_report
+
+    return executive_report.render_executive_report_pdf({"database_name": DB})
 
 
 def _write_stub(

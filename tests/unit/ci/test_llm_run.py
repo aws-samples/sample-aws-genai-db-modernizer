@@ -760,6 +760,7 @@ def test_results_all_green_passes(tmp_path: Path) -> None:
         "pdf": True,
         "ui": None,
         "judge": True,
+        "judge_input": None,  # a judge.json from before #2146 carries none
         "explore": None,
     }
     assert row["job_id"] == "dry00001"
@@ -919,6 +920,57 @@ def test_results_junit_failures_counted(tmp_path: Path) -> None:
     )
     assert row["checks"]["engineering"] is False
     assert row["pass"] is False
+
+
+def _results_with_judge(tmp_path: Path, judge_payload: dict) -> dict:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary)
+    junit = tmp_path / "junit.xml"
+    _write_junit(
+        junit,
+        [
+            ("tests.e2e.test_pipeline", "test_x", False),
+            ("tests.e2e.test_report_engineering", "test_x", False),
+            ("tests.e2e.test_report_pdf", "test_x", False),
+        ],
+    )
+    judge_path = tmp_path / "judge.json"
+    judge_path.write_text(json.dumps(judge_payload))
+    return run.build_results_row(
+        mode="chat",
+        fixture="discourse",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[junit],
+        judge_path=judge_path,
+    )
+
+
+def test_a_judge_that_saw_empty_sections_fails_the_run_with_its_reason(tmp_path: Path) -> None:
+    """#2146: the judge refuses to grade a prompt with an empty deliverable
+    section; results.json says why in checks.judge_input and judge_input."""
+    problems = ['engineering_report: 3 sections shown empty: #7 "Migration map"']
+    row = _results_with_judge(
+        tmp_path,
+        {
+            "error": "judge input incomplete, no sample graded: " + problems[0],
+            "judge_input": {"ok": False, "problems": problems},
+        },
+    )
+    assert row["checks"]["judge_input"] is False
+    assert row["judge_input"] == {"ok": False, "problems": problems}
+    assert row["pass"] is False
+
+
+def test_judge_input_is_required_once_judge_json_carries_it(tmp_path: Path) -> None:
+    passing = {"scores": {"grounded": 5}, "mean": 5.0, "pass": True}  # nosec B105
+    row = _results_with_judge(tmp_path, {**passing, "judge_input": {"ok": True, "problems": []}})
+    assert row["checks"]["judge_input"] is True and row["pass"] is True
+    # a judge that scored although its input check failed still fails the run
+    row = _results_with_judge(
+        tmp_path, {**passing, "judge_input": {"ok": False, "problems": ["executive_pdf is empty"]}}
+    )
+    assert row["checks"]["judge"] is True
+    assert row["checks"]["judge_input"] is False and row["pass"] is False
 
 
 def test_results_missing_judge_file_is_null_and_fails(tmp_path: Path) -> None:
