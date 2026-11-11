@@ -39,11 +39,13 @@ What each routine is checked against:
   attention, directly or through others, needs attention too
   (``depends_on_needs_attention``, the routines it names in ``blocked_by``).
 
-- **Rows read**: those a current collection lists. A row with no ``body_status`` comes
-  from a collection written before #1652, which holds no code and lists the functions
-  and aggregates an extension owns too (``CREATE EXTENSION`` creates them on Aurora;
-  today's collectors leave them out by ``pg_depend``'s extension membership): it is not
-  read (:func:`listed_by_name_only`, #2124), and the run log counts it.
+- **Rows read**: every row with code or a ``body_status``. A row with neither, from
+  any source, is a name only: a collection written before #1652 lists routines so, the
+  functions and aggregates an extension owns among them (``CREATE EXTENSION`` creates
+  them on Aurora; today's collectors leave them out by ``pg_depend``'s extension
+  membership). It is not read (:func:`listed_by_name_only`, #2124), and the run log
+  counts it. A DDL upload's or an ``assess()`` collection's row with code and no status
+  is read.
 Status: only a failed check (one whose impact is not informational) or a reason code
 makes a routine ``needs_attention``. A check whose outcome is ``unknown`` (it could not be
 checked: an incomplete dependency list, the superuser flag) never changes the status, so
@@ -224,14 +226,16 @@ def _kind_of(row: Mapping[str, Any]) -> str:
 
 
 def listed_by_name_only(row: Mapping[str, Any]) -> bool:
-    """True for a routine row a collection written before #1652 lists: it has no
-    ``body_status``, which every PostgreSQL and MySQL collector has set on every routine
-    row since. Such a collection holds no code for any routine, and lists routines a
-    current collection leaves out (the functions and aggregates an extension owns, which
-    ``CREATE EXTENSION`` creates on Aurora), and it cannot tell which: so none of its
-    rows is a routine to carry or to migrate by hand (#2124). Collected again with the
-    current script, each routine gets its verdict."""
-    return _text(_value(row.get("body_status"))) is None
+    """True for a routine row with neither a ``body_status`` nor any code
+    (``definition``), whatever produced it: a collection written before #1652 lists every
+    routine so, functions and aggregates an extension owns among them (``CREATE
+    EXTENSION`` creates those on Aurora; today's collectors leave them out by
+    ``pg_depend``'s extension membership), and such a row cannot say which it is. It is
+    not a routine to carry or to migrate by hand (#2124). A row that carries code is
+    read, status or not: a DDL upload (``parse_ddl_routines``) and an ``assess()``
+    collection give code with no status, and such a routine still gets its verdict, the
+    HIGH to-do included."""
+    return _text(_value(row.get("body_status"))) is None and _text(row.get("definition")) is None
 
 
 def name_only_routine_count(collector: Mapping[str, Any]) -> int:
