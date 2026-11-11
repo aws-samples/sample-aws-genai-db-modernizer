@@ -1,0 +1,1162 @@
+{
+  "_fixture": "Discourse-shaped (#1128), scaled down to check by hand: PostgreSQL 16 to Aurora PostgreSQL, 60 tables, 200 in-scope queries; DynamoDB and DocumentDB share one engine wave (wave 2) as two slice steps; a risk-held stage 2d; relational_only is not offered (two queries fail Aurora's gates). A report.json fragment.",
+  "migration_waves": [
+    {
+      "wave": 1,
+      "title": "Move to Aurora PostgreSQL",
+      "engines": [
+        "aurora_postgresql"
+      ],
+      "moves_from": [
+        "postgresql"
+      ],
+      "serves_from": [],
+      "fronts": null,
+      "homogeneity": "homogeneous",
+      "tables": [
+        "public.api_keys",
+        "public.ar_internal_metadata",
+        "public.backup_metadata",
+        "public.badges",
+        "public.bookmarks",
+        "public.categories",
+        "public.category_users",
+        "public.chat_channels",
+        "public.chat_messages",
+        "public.color_scheme_colors",
+        "public.color_schemes",
+        "public.developers",
+        "public.drafts",
+        "public.email_logs",
+        "public.embeddable_hosts",
+        "public.group_users",
+        "public.groups",
+        "public.incoming_emails",
+        "public.invites",
+        "public.javascript_caches",
+        "public.notifications",
+        "public.plugin_store_rows",
+        "public.post_actions",
+        "public.post_replies",
+        "public.post_revisions",
+        "public.post_search_data",
+        "public.post_timings",
+        "public.post_uploads",
+        "public.posts",
+        "public.remote_themes",
+        "public.reviewables",
+        "public.scheduler_stats",
+        "public.schema_migrations",
+        "public.screened_emails",
+        "public.screened_ip_addresses",
+        "public.screened_urls",
+        "public.single_sign_on_records",
+        "public.site_settings",
+        "public.stylesheet_cache",
+        "public.tag_groups",
+        "public.tags",
+        "public.theme_fields",
+        "public.themes",
+        "public.topic_search_data",
+        "public.topic_tags",
+        "public.topic_users",
+        "public.topic_view_stats",
+        "public.topic_views",
+        "public.topics",
+        "public.uploads",
+        "public.user_actions",
+        "public.user_auth_tokens",
+        "public.user_badges",
+        "public.user_emails",
+        "public.user_options",
+        "public.user_profiles",
+        "public.user_stats",
+        "public.user_visits",
+        "public.users",
+        "public.web_hooks"
+      ],
+      "table_count": 60,
+      "query_count": 150,
+      "cutover_query_count": 200,
+      "workload_share_percent": 75.0,
+      "share_basis": "queries",
+      "rationale": "Fixture rationale for wave 1.",
+      "gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility.",
+      "gate_parts": [
+        {
+          "text": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility.",
+          "items": []
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "title": "Move to DynamoDB and DocumentDB",
+      "engines": [
+        "dynamodb",
+        "documentdb"
+      ],
+      "moves_from": [
+        "aurora_postgresql"
+      ],
+      "serves_from": [],
+      "fronts": null,
+      "homogeneity": null,
+      "tables": [
+        "public.badges",
+        "public.categories",
+        "public.notifications",
+        "public.post_timings",
+        "public.theme_fields",
+        "public.themes",
+        "public.topic_users",
+        "public.topic_view_stats",
+        "public.topic_views",
+        "public.topics",
+        "public.user_badges",
+        "public.user_options",
+        "public.user_stats",
+        "public.users"
+      ],
+      "table_count": 14,
+      "query_count": 50,
+      "cutover_query_count": null,
+      "workload_share_percent": 25.0,
+      "share_basis": "queries",
+      "rationale": "Fixture rationale for wave 2.",
+      "gate": "Backfill complete and query parity confirmed per stage.",
+      "gate_parts": [
+        {
+          "text": "Backfill complete and query parity confirmed per stage.",
+          "items": []
+        }
+      ]
+    }
+  ],
+  "facts": {
+    "projected_monthly_cost_usd": 573.16,
+    "in_scope_query_count": 200,
+    "moving_query_count": 50,
+    "source_table_count": 60,
+    "tables_migrate": 8,
+    "engines": [
+      {
+        "engine": "aurora_postgresql",
+        "role": "Retained",
+        "monthly_cost_usd": 286.16
+      },
+      {
+        "engine": "dynamodb",
+        "role": "Migration target",
+        "monthly_cost_usd": 15.2
+      },
+      {
+        "engine": "documentdb",
+        "role": "Migration target",
+        "monthly_cost_usd": 271.8
+      }
+    ],
+    "no_migration": {
+      "engines": [
+        "aurora_postgresql"
+      ],
+      "workload_percent": 75.0,
+      "cached_call_share_percent": 0.0,
+      "critical_high_risks": 0
+    },
+    "critical_high_risks_by_engine": {
+      "dynamodb": 1
+    },
+    "slice_plan": {
+      "step_basis": "slices",
+      "slice_basis": "community",
+      "plan_steps": [
+        {
+          "step_number": 1,
+          "kind": "relational_cutover",
+          "engine": "aurora_postgresql",
+          "new_engine": true,
+          "movement": "homogeneous",
+          "phase_wave": 1,
+          "slice_key": null,
+          "step_stages": [
+            {
+              "label": "1",
+              "kind": "cutover",
+              "unit_keys": [
+                "aurora_postgresql:whole-database"
+              ],
+              "unit_count": 1,
+              "query_count": 200,
+              "owned_table_count": 60,
+              "call_share_percent": 100.0,
+              "holding_risk_ids": [],
+              "gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility.",
+              "stage_gate_parts": [
+                {
+                  "text": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility.",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 1,
+          "unit_count": 1,
+          "query_count": 200,
+          "owned_table_count": 60,
+          "call_share_percent": 100.0,
+          "metrics": null,
+          "table_classes": {
+            "stays": [
+              "public.api_keys",
+              "public.bookmarks",
+              "public.category_users",
+              "public.chat_channels",
+              "public.chat_messages",
+              "public.drafts",
+              "public.email_logs",
+              "public.group_users",
+              "public.groups",
+              "public.incoming_emails",
+              "public.invites",
+              "public.post_actions",
+              "public.post_replies",
+              "public.post_revisions",
+              "public.post_search_data",
+              "public.post_uploads",
+              "public.posts",
+              "public.reviewables",
+              "public.site_settings",
+              "public.tag_groups",
+              "public.tags",
+              "public.topic_search_data",
+              "public.topic_tags",
+              "public.uploads",
+              "public.user_actions",
+              "public.user_auth_tokens",
+              "public.user_emails",
+              "public.user_profiles",
+              "public.user_visits",
+              "public.web_hooks"
+            ],
+            "stays_count": 30,
+            "leaves": [
+              {
+                "table": "public.notifications",
+                "stage_label": "2c"
+              },
+              {
+                "table": "public.post_timings",
+                "stage_label": "2c"
+              },
+              {
+                "table": "public.theme_fields",
+                "stage_label": "3b"
+              },
+              {
+                "table": "public.themes",
+                "stage_label": "3b"
+              },
+              {
+                "table": "public.topic_users",
+                "stage_label": "2c"
+              },
+              {
+                "table": "public.topic_view_stats",
+                "stage_label": "2d"
+              },
+              {
+                "table": "public.topic_views",
+                "stage_label": "2d"
+              },
+              {
+                "table": "public.user_options",
+                "stage_label": "3b"
+              }
+            ],
+            "leaves_count": 8,
+            "replicated_out": [
+              "public.badges",
+              "public.categories",
+              "public.topics",
+              "public.user_badges",
+              "public.user_stats",
+              "public.users"
+            ],
+            "replicated_out_count": 6,
+            "unread": [
+              "public.ar_internal_metadata",
+              "public.backup_metadata",
+              "public.color_scheme_colors",
+              "public.color_schemes",
+              "public.developers",
+              "public.embeddable_hosts",
+              "public.javascript_caches",
+              "public.plugin_store_rows",
+              "public.remote_themes",
+              "public.scheduler_stats",
+              "public.schema_migrations",
+              "public.screened_emails",
+              "public.screened_ip_addresses",
+              "public.screened_urls",
+              "public.single_sign_on_records",
+              "public.stylesheet_cache"
+            ],
+            "unread_count": 16
+          }
+        },
+        {
+          "step_number": 2,
+          "kind": "slice",
+          "engine": "dynamodb",
+          "new_engine": true,
+          "movement": "heterogeneous",
+          "phase_wave": 2,
+          "slice_key": "dynamodb:activity",
+          "step_stages": [
+            {
+              "label": "2a",
+              "kind": "replica_reads",
+              "unit_keys": [
+                "dynamodb:public.user_stats",
+                "dynamodb:public.badges"
+              ],
+              "unit_count": 2,
+              "query_count": 5,
+              "owned_table_count": 0,
+              "call_share_percent": 10.3,
+              "holding_risk_ids": [],
+              "gate": "CDC from Aurora PostgreSQL to DynamoDB is within the reads' staleness tolerance, and the 5 reads return the same rows on DynamoDB.",
+              "stage_gate_parts": [
+                {
+                  "text": "CDC from Aurora PostgreSQL to DynamoDB is within the reads' staleness tolerance, and the 5 reads return the same rows on DynamoDB.",
+                  "items": []
+                }
+              ]
+            },
+            {
+              "label": "2c",
+              "kind": "with_reverse_replica",
+              "unit_keys": [
+                "dynamodb:public.post_timings",
+                "dynamodb:public.notifications"
+              ],
+              "unit_count": 2,
+              "query_count": 18,
+              "owned_table_count": 3,
+              "call_share_percent": 13.9,
+              "holding_risk_ids": [],
+              "gate": "Backfill complete and query parity confirmed for 3 tables; CDC from DynamoDB to Aurora PostgreSQL carries the 3 reads that stay there, within their tolerance.",
+              "stage_gate_parts": [
+                {
+                  "text": "Backfill complete and query parity confirmed for 3 tables; CDC from DynamoDB to Aurora PostgreSQL carries the 3 reads that stay there, within their tolerance.",
+                  "items": []
+                }
+              ]
+            },
+            {
+              "label": "2d",
+              "kind": "risk_held",
+              "unit_keys": [
+                "dynamodb:public.topic_view_stats"
+              ],
+              "unit_count": 1,
+              "query_count": 7,
+              "owned_table_count": 2,
+              "call_share_percent": 12.0,
+              "holding_risk_ids": [
+                "RISK-007"
+              ],
+              "gate": "Before this stage: resolve RISK-007 (the topic view refresh routine writes both tables in one transaction).",
+              "stage_gate_parts": [
+                {
+                  "text": "Before this stage: resolve RISK-007 (the topic view refresh routine writes both tables in one transaction).",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 3,
+          "unit_count": 5,
+          "query_count": 30,
+          "owned_table_count": 5,
+          "call_share_percent": 36.2,
+          "metrics": {
+            "gravity": 0.31,
+            "hub_score": 0.14,
+            "cut_cost": {
+              "replica_table_count": 7,
+              "write_site_count": 10,
+              "transactions_split": null
+            },
+            "value_call_share_percent": 36.2,
+            "value_monthly_cost_usd": 15.2
+          },
+          "table_classes": null
+        },
+        {
+          "step_number": 3,
+          "kind": "slice",
+          "engine": "documentdb",
+          "new_engine": true,
+          "movement": "heterogeneous",
+          "phase_wave": 2,
+          "slice_key": "documentdb:settings",
+          "step_stages": [
+            {
+              "label": "3a",
+              "kind": "replica_reads",
+              "unit_keys": [
+                "documentdb:public.categories"
+              ],
+              "unit_count": 1,
+              "query_count": 2,
+              "owned_table_count": 0,
+              "call_share_percent": 8.8,
+              "holding_risk_ids": [],
+              "gate": "CDC from Aurora PostgreSQL to DocumentDB is within the reads' staleness tolerance, and the 2 reads return the same rows on DocumentDB.",
+              "stage_gate_parts": [
+                {
+                  "text": "CDC from Aurora PostgreSQL to DocumentDB is within the reads' staleness tolerance, and the 2 reads return the same rows on DocumentDB.",
+                  "items": []
+                }
+              ]
+            },
+            {
+              "label": "3b",
+              "kind": "self_contained",
+              "unit_keys": [
+                "documentdb:public.theme_fields",
+                "documentdb:public.user_options"
+              ],
+              "unit_count": 2,
+              "query_count": 18,
+              "owned_table_count": 3,
+              "call_share_percent": 0.8,
+              "holding_risk_ids": [],
+              "gate": "Backfill complete and query parity confirmed for 3 tables; no other engine reads them.",
+              "stage_gate_parts": [
+                {
+                  "text": "Backfill complete and query parity confirmed for 3 tables; no other engine reads them.",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 2,
+          "unit_count": 3,
+          "query_count": 20,
+          "owned_table_count": 3,
+          "call_share_percent": 9.6,
+          "metrics": {
+            "gravity": 0.05,
+            "hub_score": 0.0,
+            "cut_cost": {
+              "replica_table_count": 1,
+              "write_site_count": 7,
+              "transactions_split": null
+            },
+            "value_call_share_percent": 9.6,
+            "value_monthly_cost_usd": 271.8
+          },
+          "table_classes": null
+        }
+      ],
+      "step_count": 3,
+      "move_units": [
+        {
+          "key": "aurora_postgresql:whole-database",
+          "engine": "aurora_postgresql",
+          "kind": "whole_database",
+          "query_ids": [],
+          "query_count": 200,
+          "write_query_ids": [],
+          "owned_tables": [
+            "public.api_keys",
+            "public.ar_internal_metadata",
+            "public.backup_metadata",
+            "public.badges",
+            "public.bookmarks",
+            "public.categories",
+            "public.category_users",
+            "public.chat_channels",
+            "public.chat_messages",
+            "public.color_scheme_colors",
+            "public.color_schemes",
+            "public.developers",
+            "public.drafts",
+            "public.email_logs",
+            "public.embeddable_hosts",
+            "public.group_users",
+            "public.groups",
+            "public.incoming_emails",
+            "public.invites",
+            "public.javascript_caches",
+            "public.notifications",
+            "public.plugin_store_rows",
+            "public.post_actions",
+            "public.post_replies",
+            "public.post_revisions",
+            "public.post_search_data",
+            "public.post_timings",
+            "public.post_uploads",
+            "public.posts",
+            "public.remote_themes",
+            "public.reviewables",
+            "public.scheduler_stats",
+            "public.schema_migrations",
+            "public.screened_emails",
+            "public.screened_ip_addresses",
+            "public.screened_urls",
+            "public.single_sign_on_records",
+            "public.site_settings",
+            "public.stylesheet_cache",
+            "public.tag_groups",
+            "public.tags",
+            "public.theme_fields",
+            "public.themes",
+            "public.topic_search_data",
+            "public.topic_tags",
+            "public.topic_users",
+            "public.topic_view_stats",
+            "public.topic_views",
+            "public.topics",
+            "public.uploads",
+            "public.user_actions",
+            "public.user_auth_tokens",
+            "public.user_badges",
+            "public.user_emails",
+            "public.user_options",
+            "public.user_profiles",
+            "public.user_stats",
+            "public.user_visits",
+            "public.users",
+            "public.web_hooks"
+          ],
+          "owned_table_count": 60,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 100.0,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": null
+        },
+        {
+          "key": "dynamodb:public.user_stats",
+          "engine": "dynamodb",
+          "kind": "replica_reads",
+          "query_ids": [
+            "q151",
+            "q152"
+          ],
+          "query_count": 2,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [
+            {
+              "table": "public.user_stats",
+              "source_of_truth": "aurora_postgresql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 6.1,
+          "holding_risk_ids": [],
+          "pilot": true,
+          "metrics": {
+            "gravity": 0.04,
+            "blast_radius": 2,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "dynamodb:public.badges",
+          "engine": "dynamodb",
+          "kind": "replica_reads",
+          "query_ids": [
+            "q153",
+            "q154",
+            "q155"
+          ],
+          "query_count": 3,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [
+            {
+              "table": "public.badges",
+              "source_of_truth": "aurora_postgresql"
+            },
+            {
+              "table": "public.user_badges",
+              "source_of_truth": "aurora_postgresql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 4.2,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.06,
+            "blast_radius": 3,
+            "hub_score": 0.01
+          }
+        },
+        {
+          "key": "dynamodb:public.post_timings",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q166",
+            "q167",
+            "q168",
+            "q169",
+            "q170",
+            "q171",
+            "q172",
+            "q173"
+          ],
+          "query_count": 8,
+          "write_query_ids": [
+            "q171",
+            "q172",
+            "q173"
+          ],
+          "owned_tables": [
+            "public.post_timings",
+            "public.topic_users"
+          ],
+          "owned_table_count": 2,
+          "replicated_in": [
+            {
+              "table": "public.users",
+              "source_of_truth": "aurora_postgresql"
+            }
+          ],
+          "reverse_replicas": [
+            {
+              "engine": "aurora_postgresql",
+              "query_ids": [
+                "q012"
+              ],
+              "read_count": 1
+            }
+          ],
+          "reverse_read_count": 1,
+          "kept_whole_ids": [
+            "co_dependency:2",
+            "write:public.post_timings"
+          ],
+          "call_share_percent": 5.5,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.22,
+            "blast_radius": 9,
+            "hub_score": 0.07
+          }
+        },
+        {
+          "key": "dynamodb:public.notifications",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q156",
+            "q157",
+            "q158",
+            "q159",
+            "q160",
+            "q161",
+            "q162",
+            "q163",
+            "q164",
+            "q165"
+          ],
+          "query_count": 10,
+          "write_query_ids": [
+            "q162",
+            "q163",
+            "q164",
+            "q165"
+          ],
+          "owned_tables": [
+            "public.notifications"
+          ],
+          "owned_table_count": 1,
+          "replicated_in": [],
+          "reverse_replicas": [
+            {
+              "engine": "aurora_postgresql",
+              "query_ids": [
+                "q010",
+                "q011"
+              ],
+              "read_count": 2
+            }
+          ],
+          "reverse_read_count": 2,
+          "kept_whole_ids": [
+            "write:public.notifications"
+          ],
+          "call_share_percent": 8.4,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.19,
+            "blast_radius": 12,
+            "hub_score": 0.05
+          }
+        },
+        {
+          "key": "dynamodb:public.topic_view_stats",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q174",
+            "q175",
+            "q176",
+            "q177",
+            "q178",
+            "q179",
+            "q180"
+          ],
+          "query_count": 7,
+          "write_query_ids": [
+            "q178",
+            "q179",
+            "q180"
+          ],
+          "owned_tables": [
+            "public.topic_view_stats",
+            "public.topic_views"
+          ],
+          "owned_table_count": 2,
+          "replicated_in": [
+            {
+              "table": "public.topics",
+              "source_of_truth": "aurora_postgresql"
+            },
+            {
+              "table": "public.users",
+              "source_of_truth": "aurora_postgresql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [
+            "routine_unit:refresh_topic_views"
+          ],
+          "call_share_percent": 12.0,
+          "holding_risk_ids": [
+            "RISK-007"
+          ],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.35,
+            "blast_radius": 7,
+            "hub_score": 0.21
+          }
+        },
+        {
+          "key": "documentdb:public.categories",
+          "engine": "documentdb",
+          "kind": "replica_reads",
+          "query_ids": [
+            "q181",
+            "q182"
+          ],
+          "query_count": 2,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [
+            {
+              "table": "public.categories",
+              "source_of_truth": "aurora_postgresql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 8.8,
+          "holding_risk_ids": [],
+          "pilot": true,
+          "metrics": {
+            "gravity": 0.03,
+            "blast_radius": 2,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "documentdb:public.theme_fields",
+          "engine": "documentdb",
+          "kind": "owner",
+          "query_ids": [
+            "q183",
+            "q184",
+            "q185",
+            "q186",
+            "q187",
+            "q188",
+            "q189",
+            "q190"
+          ],
+          "query_count": 8,
+          "write_query_ids": [
+            "q188",
+            "q189",
+            "q190"
+          ],
+          "owned_tables": [
+            "public.theme_fields",
+            "public.themes"
+          ],
+          "owned_table_count": 2,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [
+            "write:public.themes"
+          ],
+          "call_share_percent": 0.3,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.0,
+            "blast_radius": 8,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "documentdb:public.user_options",
+          "engine": "documentdb",
+          "kind": "owner",
+          "query_ids": [
+            "q191",
+            "q192",
+            "q193",
+            "q194",
+            "q195",
+            "q196",
+            "q197",
+            "q198",
+            "q199",
+            "q200"
+          ],
+          "query_count": 10,
+          "write_query_ids": [
+            "q197",
+            "q198",
+            "q199",
+            "q200"
+          ],
+          "owned_tables": [
+            "public.user_options"
+          ],
+          "owned_table_count": 1,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [
+            "write:public.user_options"
+          ],
+          "call_share_percent": 0.5,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.02,
+            "blast_radius": 10,
+            "hub_score": 0.0
+          }
+        }
+      ],
+      "dependencies": [
+        {
+          "unit_key": "dynamodb:public.user_stats",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.1,
+          "tables": [
+            "public.user_stats"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:public.badges",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.1,
+          "tables": [
+            "public.badges",
+            "public.user_badges"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:public.post_timings",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "replica_read",
+            "reverse_replica"
+          ],
+          "edge_weight": 0.4,
+          "tables": [
+            "public.post_timings",
+            "public.users"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:public.notifications",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "reverse_replica"
+          ],
+          "edge_weight": 0.3,
+          "tables": [
+            "public.notifications"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:public.topic_view_stats",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.3,
+          "tables": [
+            "public.topics",
+            "public.users"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:public.topic_view_stats",
+          "depends_on": "dynamodb:public.post_timings",
+          "kinds": [
+            "shared_table"
+          ],
+          "edge_weight": 0.2,
+          "tables": [
+            "public.users"
+          ]
+        },
+        {
+          "unit_key": "documentdb:public.categories",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.1,
+          "tables": [
+            "public.categories"
+          ]
+        },
+        {
+          "unit_key": "documentdb:public.user_options",
+          "depends_on": "aurora_postgresql:whole-database",
+          "kinds": [
+            "foreign_key"
+          ],
+          "edge_weight": 0.05,
+          "tables": [
+            "public.users"
+          ]
+        }
+      ],
+      "kept_whole": [
+        {
+          "group_id": "co_dependency:1",
+          "kind": "co_dependency",
+          "query_ids": [
+            "q020",
+            "q021",
+            "q022",
+            "q023",
+            "q024",
+            "q025",
+            "q026",
+            "q027",
+            "q028",
+            "q029",
+            "q030",
+            "q031",
+            "q032",
+            "q033",
+            "q034",
+            "q035",
+            "q036",
+            "q037",
+            "q038",
+            "q039",
+            "q040"
+          ],
+          "table": null
+        },
+        {
+          "group_id": "co_dependency:2",
+          "kind": "co_dependency",
+          "query_ids": [
+            "q166",
+            "q167"
+          ],
+          "table": null
+        },
+        {
+          "group_id": "routine_unit:refresh_topic_views",
+          "kind": "routine_unit",
+          "query_ids": [
+            "q178",
+            "q179"
+          ],
+          "table": null
+        },
+        {
+          "group_id": "write:public.notifications",
+          "kind": "write_group",
+          "query_ids": [
+            "q162",
+            "q163"
+          ],
+          "table": "public.notifications"
+        },
+        {
+          "group_id": "write:public.post_timings",
+          "kind": "write_group",
+          "query_ids": [
+            "q171",
+            "q172"
+          ],
+          "table": "public.post_timings"
+        },
+        {
+          "group_id": "write:public.themes",
+          "kind": "write_group",
+          "query_ids": [
+            "q188",
+            "q189"
+          ],
+          "table": "public.themes"
+        },
+        {
+          "group_id": "write:public.user_options",
+          "kind": "write_group",
+          "query_ids": [
+            "q197",
+            "q198",
+            "q199",
+            "q200"
+          ],
+          "table": "public.user_options"
+        }
+      ]
+    },
+    "adoption": {
+      "default_path_id": "full_target",
+      "paths": [
+        {
+          "path_id": "through_step_2",
+          "engines": [
+            "aurora_postgresql",
+            "dynamodb"
+          ],
+          "stops_after_step": 2,
+          "step_count": 2,
+          "stage_count": 4,
+          "gate_count": 4,
+          "queries_moved": 30,
+          "queries_by_engine": {
+            "aurora_postgresql": 170,
+            "dynamodb": 30
+          },
+          "tables_migrate": 5,
+          "monthly_cost_usd": 301.36,
+          "cost_delta_vs_relational_usd": 15.2,
+          "cost_delta_vs_current_usd": null,
+          "cost_is_upper_bound": true,
+          "critical_high_risks": 1,
+          "replicated_table_count": 7,
+          "temporary_stream_count": 2,
+          "first_gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility."
+        },
+        {
+          "path_id": "full_target",
+          "engines": [
+            "aurora_postgresql",
+            "dynamodb",
+            "documentdb"
+          ],
+          "stops_after_step": 3,
+          "step_count": 3,
+          "stage_count": 6,
+          "gate_count": 6,
+          "queries_moved": 50,
+          "queries_by_engine": {
+            "aurora_postgresql": 150,
+            "dynamodb": 30,
+            "documentdb": 20
+          },
+          "tables_migrate": 8,
+          "monthly_cost_usd": 573.16,
+          "cost_delta_vs_relational_usd": 287.0,
+          "cost_delta_vs_current_usd": null,
+          "cost_is_upper_bound": true,
+          "critical_high_risks": 1,
+          "replicated_table_count": 8,
+          "temporary_stream_count": 2,
+          "first_gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility."
+        }
+      ],
+      "path_count": 2,
+      "not_offered": [
+        {
+          "path_id": "relational_only",
+          "reason": "fails_relational_gates",
+          "failing_query_ids": [
+            "q176",
+            "q177"
+          ],
+          "failing_query_count": 2,
+          "serving_engines": [
+            "dynamodb"
+          ],
+          "offered_instead": "through_step_2"
+        }
+      ],
+      "one_step": {
+        "cutovers": 1,
+        "staged_cutovers": 6,
+        "gate_count": 6,
+        "temporary_stream_count": 0,
+        "staged_temporary_stream_count": 2,
+        "suits_one_step": false,
+        "one_step_checks": [
+          {
+            "rule": "no_open_critical_high_risk",
+            "observed": 1,
+            "limit": 0,
+            "passed": false
+          },
+          {
+            "rule": "at_most_one_purpose_built_target",
+            "observed": 2,
+            "limit": 1,
+            "passed": false
+          },
+          {
+            "rule": "no_reverse_replica_stage",
+            "observed": 1,
+            "limit": 0,
+            "passed": false
+          }
+        ]
+      }
+    }
+  }
+}
