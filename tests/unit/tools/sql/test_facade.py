@@ -319,6 +319,45 @@ class TestBridgesNeverChangeTables:
         assert [t.written for t in refs.tables] == ["dbo.Queue"]
 
     @pytest.mark.parametrize(
+        "hint",
+        [
+            "OPTIMIZE FOR (@PortalId UNKNOWN)",
+            "OPTIMIZE FOR (@a UNKNOWN, @b = ?)",
+            "RECOMPILE, OPTIMIZE FOR (@a = ?)",
+            "optimize for ( @a unknown )",
+        ],
+    )
+    def test_tsql_optimize_for_a_variable_list_is_read_by_sqlglot(self, hint):
+        # #2147: sqlglot's tsql reader fails on the per-variable list, so the whole
+        # statement fell back to the regex reading.
+        refs = table_references(
+            "SELECT R.*, (SELECT COUNT(*) FROM dbo.[UserRoles] U WHERE U.RoleID = R.RoleID)"
+            f" AS UserCount FROM dbo.[Roles] R WHERE R.PortalId = @PortalId OPTION ({hint})",
+            "sqlserver",
+        )
+        assert refs.parsed_by == "sqlglot"
+        assert refs.fallback_reason is None
+        assert sorted(t.written for t in refs.tables) == ["dbo.Roles", "dbo.UserRoles"]
+
+    @pytest.mark.passes_on_main  # what the #2147 bridge must not touch
+    def test_tsql_optimize_for_in_a_string_or_comment_is_left_as_written(self):
+        sql = (
+            "SELECT 'OPTION (OPTIMIZE FOR (@a UNKNOWN))' AS s FROM dbo.T"
+            " -- OPTIMIZE FOR (@a UNKNOWN)\nWHERE a = @a"
+        )
+        refs = table_references(sql, "sqlserver")
+        assert refs.parsed_by == "sqlglot"
+        assert [t.written for t in refs.tables] == ["dbo.T"]
+        assert sql_facts(sql, "sqlserver").parsed_by == "sqlglot"
+
+    @pytest.mark.passes_on_main  # what the #2147 bridge must not touch
+    def test_tsql_optimize_for_is_only_bridged_for_sql_server(self):
+        refs = table_references(
+            "SELECT a FROM t WHERE x = 1 OPTION (OPTIMIZE FOR (@a UNKNOWN))", "mysql"
+        )
+        assert refs.parsed_by == "regex"
+
+    @pytest.mark.parametrize(
         "sql,expected",
         [
             ('SELECT * FROM "price$1usd" WHERE a = $1', ["price$1usd"]),
