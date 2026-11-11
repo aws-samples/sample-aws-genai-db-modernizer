@@ -238,6 +238,11 @@ ID_FIELD_PATHS = frozenset(
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)
         ("relational_rows", "engine"),  # ReportFacts.query_group_counts.relational_rows (#1410)
+        # #1128: the slice plan's and adoption paths' engine ids (facts.slice_plan, adoption).
+        ("plan_steps", "engine"),  # SliceStep.engine
+        ("move_units", "engine"),  # MoveUnit.engine
+        ("reverse_replicas", "engine"),  # ReverseReplica.engine
+        ("not_offered", "serving_engines"),  # NotOfferedPath.serving_engines
         ("ungrouped_queries", "engine"),  # ReportFacts.query_group_counts (#226)
         ("carried_writes", "engine"),  # SynthesisOutputContract.carried_writes[] (#1364)
         ("engine_pairs", "alternative"),  # ReportFacts.close_calls.engine_pairs[] (#730)

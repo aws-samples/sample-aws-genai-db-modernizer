@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from src.shared import catalog
+from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.cache_role import cache_role_sentence
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
@@ -3959,6 +3960,10 @@ def compute_report_facts(
         # #1990: the assumptions block and the growth scenario, stated once.
         "assumptions": assumptions_block(assumptions),
         "growth_scenarios": dict(growth_scenarios) if growth_scenarios is not None else None,
+        # #1128: the steps, stages and move units (#1129, #1698), and the adoption paths
+        # and one-step form (#1130); empty until their computation lands.
+        "slice_plan": (plan := slice_plan_facts(report)),
+        "adoption": adoption_facts(report, plan),
     }
 
 

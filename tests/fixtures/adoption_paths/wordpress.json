@@ -1,0 +1,1166 @@
+{
+  "_fixture": "WordPress-sized (#1128): MySQL 8.0 to Aurora MySQL, 50 tables, 107 in-scope queries; steps: the relational cutover, the cache, one DynamoDB slice in stages 3a, 3b and 3c. Figures follow docs/examples/wordpress. A report.json fragment.",
+  "migration_waves": [
+    {
+      "wave": 1,
+      "title": "Move to Aurora MySQL",
+      "engines": [
+        "aurora_mysql"
+      ],
+      "moves_from": [
+        "mysql"
+      ],
+      "serves_from": [],
+      "fronts": null,
+      "homogeneity": "homogeneous",
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_claims",
+        "wordpress.wp_actionscheduler_groups",
+        "wordpress.wp_actionscheduler_logs",
+        "wordpress.wp_commentmeta",
+        "wordpress.wp_comments",
+        "wordpress.wp_links",
+        "wordpress.wp_options",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_terms",
+        "wordpress.wp_usermeta",
+        "wordpress.wp_users",
+        "wordpress.wp_wc_admin_note_actions",
+        "wordpress.wp_wc_admin_notes",
+        "wordpress.wp_wc_category_lookup",
+        "wordpress.wp_wc_customer_lookup",
+        "wordpress.wp_wc_download_log",
+        "wordpress.wp_wc_order_addresses",
+        "wordpress.wp_wc_order_coupon_lookup",
+        "wordpress.wp_wc_order_operational_data",
+        "wordpress.wp_wc_order_product_lookup",
+        "wordpress.wp_wc_order_stats",
+        "wordpress.wp_wc_order_tax_lookup",
+        "wordpress.wp_wc_orders",
+        "wordpress.wp_wc_orders_meta",
+        "wordpress.wp_wc_product_attributes_lookup",
+        "wordpress.wp_wc_product_download_directories",
+        "wordpress.wp_wc_product_meta_lookup",
+        "wordpress.wp_wc_rate_limits",
+        "wordpress.wp_wc_reserved_stock",
+        "wordpress.wp_wc_tax_rate_classes",
+        "wordpress.wp_wc_webhooks",
+        "wordpress.wp_woocommerce_api_keys",
+        "wordpress.wp_woocommerce_attribute_taxonomies",
+        "wordpress.wp_woocommerce_downloadable_product_permissions",
+        "wordpress.wp_woocommerce_log",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_payment_tokenmeta",
+        "wordpress.wp_woocommerce_payment_tokens",
+        "wordpress.wp_woocommerce_sessions",
+        "wordpress.wp_woocommerce_shipping_zone_locations",
+        "wordpress.wp_woocommerce_shipping_zone_methods",
+        "wordpress.wp_woocommerce_shipping_zones",
+        "wordpress.wp_woocommerce_tax_rate_locations",
+        "wordpress.wp_woocommerce_tax_rates"
+      ],
+      "table_count": 50,
+      "query_count": 67,
+      "cutover_query_count": 107,
+      "workload_share_percent": 62.6,
+      "share_basis": "queries",
+      "rationale": "Fixture rationale for wave 1.",
+      "gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility.",
+      "gate_parts": [
+        {
+          "text": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility.",
+          "items": []
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "title": "Cache hot reads with ElastiCache",
+      "engines": [
+        "elasticache"
+      ],
+      "moves_from": [],
+      "serves_from": [],
+      "fronts": "aurora_mysql",
+      "homogeneity": null,
+      "tables": [],
+      "table_count": 0,
+      "query_count": 15,
+      "cutover_query_count": null,
+      "workload_share_percent": 77.5,
+      "share_basis": "calls",
+      "rationale": "Fixture rationale for wave 2.",
+      "gate": "Cache hit rate and invalidation verified against Aurora MySQL.",
+      "gate_parts": [
+        {
+          "text": "Cache hit rate and invalidation verified against Aurora MySQL.",
+          "items": []
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "title": "Move key-value and point-lookup queries to DynamoDB",
+      "engines": [
+        "dynamodb"
+      ],
+      "moves_from": [
+        "aurora_mysql"
+      ],
+      "serves_from": [],
+      "fronts": null,
+      "homogeneity": null,
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_logs",
+        "wordpress.wp_commentmeta",
+        "wordpress.wp_comments",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_terms",
+        "wordpress.wp_users",
+        "wordpress.wp_wc_customer_lookup",
+        "wordpress.wp_wc_order_addresses",
+        "wordpress.wp_wc_order_operational_data",
+        "wordpress.wp_wc_orders",
+        "wordpress.wp_wc_product_meta_lookup",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_sessions"
+      ],
+      "table_count": 18,
+      "query_count": 40,
+      "cutover_query_count": null,
+      "workload_share_percent": 37.4,
+      "share_basis": "queries",
+      "rationale": "Fixture rationale for wave 3.",
+      "gate": "Backfill complete and query parity confirmed per stage.",
+      "gate_parts": [
+        {
+          "text": "Backfill complete and query parity confirmed per stage.",
+          "items": []
+        }
+      ]
+    }
+  ],
+  "facts": {
+    "projected_monthly_cost_usd": 512.58,
+    "in_scope_query_count": 107,
+    "moving_query_count": 40,
+    "source_table_count": 50,
+    "tables_migrate": 15,
+    "engines": [
+      {
+        "engine": "aurora_mysql",
+        "role": "Retained",
+        "monthly_cost_usd": 251.24
+      },
+      {
+        "engine": "dynamodb",
+        "role": "Migration target",
+        "monthly_cost_usd": 76.75
+      },
+      {
+        "engine": "elasticache",
+        "role": "Cache layer",
+        "monthly_cost_usd": 184.59
+      }
+    ],
+    "no_migration": {
+      "engines": [
+        "aurora_mysql",
+        "elasticache"
+      ],
+      "workload_percent": 62.6,
+      "cached_call_share_percent": 77.5,
+      "critical_high_risks": 0
+    },
+    "critical_high_risks_by_engine": {},
+    "slice_plan": {
+      "step_basis": "slices",
+      "slice_basis": "community",
+      "plan_steps": [
+        {
+          "step_number": 1,
+          "kind": "relational_cutover",
+          "engine": "aurora_mysql",
+          "new_engine": true,
+          "movement": "homogeneous",
+          "phase_wave": 1,
+          "slice_key": null,
+          "step_stages": [
+            {
+              "label": "1",
+              "kind": "cutover",
+              "unit_keys": [
+                "aurora_mysql:whole-database"
+              ],
+              "unit_count": 1,
+              "query_count": 107,
+              "owned_table_count": 50,
+              "call_share_percent": 100.0,
+              "holding_risk_ids": [],
+              "gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility.",
+              "stage_gate_parts": [
+                {
+                  "text": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility.",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 1,
+          "unit_count": 1,
+          "query_count": 107,
+          "owned_table_count": 50,
+          "call_share_percent": 100.0,
+          "metrics": null,
+          "table_classes": {
+            "stays": [
+              "wordpress.wp_links",
+              "wordpress.wp_options",
+              "wordpress.wp_termmeta",
+              "wordpress.wp_usermeta"
+            ],
+            "stays_count": 4,
+            "leaves": [
+              {
+                "table": "wordpress.wp_actionscheduler_actions",
+                "stage_label": "3b"
+              },
+              {
+                "table": "wordpress.wp_actionscheduler_logs",
+                "stage_label": "3b"
+              },
+              {
+                "table": "wordpress.wp_commentmeta",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_comments",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_postmeta",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_posts",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_term_relationships",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_wc_customer_lookup",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_wc_order_addresses",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_wc_order_operational_data",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_wc_orders",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_wc_product_meta_lookup",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_woocommerce_order_itemmeta",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_woocommerce_order_items",
+                "stage_label": "3c"
+              },
+              {
+                "table": "wordpress.wp_woocommerce_sessions",
+                "stage_label": "3b"
+              }
+            ],
+            "leaves_count": 15,
+            "replicated_out": [
+              "wordpress.wp_term_taxonomy",
+              "wordpress.wp_terms",
+              "wordpress.wp_users"
+            ],
+            "replicated_out_count": 3,
+            "unread": [
+              "wordpress.wp_actionscheduler_claims",
+              "wordpress.wp_actionscheduler_groups",
+              "wordpress.wp_wc_admin_note_actions",
+              "wordpress.wp_wc_admin_notes",
+              "wordpress.wp_wc_category_lookup",
+              "wordpress.wp_wc_download_log",
+              "wordpress.wp_wc_order_coupon_lookup",
+              "wordpress.wp_wc_order_product_lookup",
+              "wordpress.wp_wc_order_stats",
+              "wordpress.wp_wc_order_tax_lookup",
+              "wordpress.wp_wc_orders_meta",
+              "wordpress.wp_wc_product_attributes_lookup",
+              "wordpress.wp_wc_product_download_directories",
+              "wordpress.wp_wc_rate_limits",
+              "wordpress.wp_wc_reserved_stock",
+              "wordpress.wp_wc_tax_rate_classes",
+              "wordpress.wp_wc_webhooks",
+              "wordpress.wp_woocommerce_api_keys",
+              "wordpress.wp_woocommerce_attribute_taxonomies",
+              "wordpress.wp_woocommerce_downloadable_product_permissions",
+              "wordpress.wp_woocommerce_log",
+              "wordpress.wp_woocommerce_payment_tokenmeta",
+              "wordpress.wp_woocommerce_payment_tokens",
+              "wordpress.wp_woocommerce_shipping_zone_locations",
+              "wordpress.wp_woocommerce_shipping_zone_methods",
+              "wordpress.wp_woocommerce_shipping_zones",
+              "wordpress.wp_woocommerce_tax_rate_locations",
+              "wordpress.wp_woocommerce_tax_rates"
+            ],
+            "unread_count": 28
+          }
+        },
+        {
+          "step_number": 2,
+          "kind": "cache",
+          "engine": "elasticache",
+          "new_engine": true,
+          "movement": "heterogeneous",
+          "phase_wave": 2,
+          "slice_key": null,
+          "step_stages": [
+            {
+              "label": "2a",
+              "kind": "cache_reads",
+              "unit_keys": [
+                "elasticache:wordpress.wp_options"
+              ],
+              "unit_count": 1,
+              "query_count": 15,
+              "owned_table_count": 0,
+              "call_share_percent": 77.5,
+              "holding_risk_ids": [],
+              "gate": "Cache hit rate and invalidation verified against Aurora MySQL for the 15 cached reads.",
+              "stage_gate_parts": [
+                {
+                  "text": "Cache hit rate and invalidation verified against Aurora MySQL for the 15 cached reads.",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 1,
+          "unit_count": 1,
+          "query_count": 15,
+          "owned_table_count": 0,
+          "call_share_percent": 77.5,
+          "metrics": null,
+          "table_classes": null
+        },
+        {
+          "step_number": 3,
+          "kind": "slice",
+          "engine": "dynamodb",
+          "new_engine": true,
+          "movement": "heterogeneous",
+          "phase_wave": 3,
+          "slice_key": "dynamodb:content-and-orders",
+          "step_stages": [
+            {
+              "label": "3a",
+              "kind": "replica_reads",
+              "unit_keys": [
+                "dynamodb:wordpress.wp_term_taxonomy",
+                "dynamodb:wordpress.wp_users"
+              ],
+              "unit_count": 2,
+              "query_count": 4,
+              "owned_table_count": 0,
+              "call_share_percent": 0.9,
+              "holding_risk_ids": [],
+              "gate": "CDC from Aurora MySQL to DynamoDB is within the reads' staleness tolerance, and the 4 reads return the same rows on DynamoDB.",
+              "stage_gate_parts": [
+                {
+                  "text": "CDC from Aurora MySQL to DynamoDB is within the reads' staleness tolerance, and the 4 reads return the same rows on DynamoDB.",
+                  "items": []
+                }
+              ]
+            },
+            {
+              "label": "3b",
+              "kind": "self_contained",
+              "unit_keys": [
+                "dynamodb:wordpress.wp_woocommerce_sessions",
+                "dynamodb:wordpress.wp_actionscheduler_actions"
+              ],
+              "unit_count": 2,
+              "query_count": 5,
+              "owned_table_count": 3,
+              "call_share_percent": 0.6,
+              "holding_risk_ids": [],
+              "gate": "Backfill complete and query parity confirmed for 3 tables (wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_logs, wordpress.wp_woocommerce_sessions); no other engine reads them.",
+              "stage_gate_parts": [
+                {
+                  "text": "Backfill complete and query parity confirmed for 3 tables",
+                  "items": [
+                    "wordpress.wp_actionscheduler_actions",
+                    "wordpress.wp_actionscheduler_logs",
+                    "wordpress.wp_woocommerce_sessions"
+                  ]
+                },
+                {
+                  "text": "; no other engine reads them.",
+                  "items": []
+                }
+              ]
+            },
+            {
+              "label": "3c",
+              "kind": "with_reverse_replica",
+              "unit_keys": [
+                "dynamodb:wordpress.wp_commentmeta",
+                "dynamodb:wordpress.wp_wc_customer_lookup",
+                "dynamodb:wordpress.wp_postmeta"
+              ],
+              "unit_count": 3,
+              "query_count": 31,
+              "owned_table_count": 12,
+              "call_share_percent": 54.9,
+              "holding_risk_ids": [],
+              "gate": "Backfill complete and query parity confirmed for 12 tables; CDC from DynamoDB to Aurora MySQL carries the 10 reads that stay there, within their tolerance.",
+              "stage_gate_parts": [
+                {
+                  "text": "Backfill complete and query parity confirmed for 12 tables; CDC from DynamoDB to Aurora MySQL carries the 10 reads that stay there, within their tolerance.",
+                  "items": []
+                }
+              ]
+            }
+          ],
+          "stage_count": 3,
+          "unit_count": 7,
+          "query_count": 40,
+          "owned_table_count": 15,
+          "call_share_percent": 56.4,
+          "metrics": {
+            "gravity": 0.42,
+            "hub_score": 0.18,
+            "cut_cost": {
+              "replica_table_count": 7,
+              "write_site_count": 16,
+              "transactions_split": null
+            },
+            "value_call_share_percent": 56.4,
+            "value_monthly_cost_usd": 76.75
+          },
+          "table_classes": null
+        }
+      ],
+      "step_count": 3,
+      "move_units": [
+        {
+          "key": "aurora_mysql:whole-database",
+          "engine": "aurora_mysql",
+          "kind": "whole_database",
+          "query_ids": [],
+          "query_count": 107,
+          "write_query_ids": [],
+          "owned_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_claims",
+            "wordpress.wp_actionscheduler_groups",
+            "wordpress.wp_actionscheduler_logs",
+            "wordpress.wp_commentmeta",
+            "wordpress.wp_comments",
+            "wordpress.wp_links",
+            "wordpress.wp_options",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts",
+            "wordpress.wp_term_relationships",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_termmeta",
+            "wordpress.wp_terms",
+            "wordpress.wp_usermeta",
+            "wordpress.wp_users",
+            "wordpress.wp_wc_admin_note_actions",
+            "wordpress.wp_wc_admin_notes",
+            "wordpress.wp_wc_category_lookup",
+            "wordpress.wp_wc_customer_lookup",
+            "wordpress.wp_wc_download_log",
+            "wordpress.wp_wc_order_addresses",
+            "wordpress.wp_wc_order_coupon_lookup",
+            "wordpress.wp_wc_order_operational_data",
+            "wordpress.wp_wc_order_product_lookup",
+            "wordpress.wp_wc_order_stats",
+            "wordpress.wp_wc_order_tax_lookup",
+            "wordpress.wp_wc_orders",
+            "wordpress.wp_wc_orders_meta",
+            "wordpress.wp_wc_product_attributes_lookup",
+            "wordpress.wp_wc_product_download_directories",
+            "wordpress.wp_wc_product_meta_lookup",
+            "wordpress.wp_wc_rate_limits",
+            "wordpress.wp_wc_reserved_stock",
+            "wordpress.wp_wc_tax_rate_classes",
+            "wordpress.wp_wc_webhooks",
+            "wordpress.wp_woocommerce_api_keys",
+            "wordpress.wp_woocommerce_attribute_taxonomies",
+            "wordpress.wp_woocommerce_downloadable_product_permissions",
+            "wordpress.wp_woocommerce_log",
+            "wordpress.wp_woocommerce_order_itemmeta",
+            "wordpress.wp_woocommerce_order_items",
+            "wordpress.wp_woocommerce_payment_tokenmeta",
+            "wordpress.wp_woocommerce_payment_tokens",
+            "wordpress.wp_woocommerce_sessions",
+            "wordpress.wp_woocommerce_shipping_zone_locations",
+            "wordpress.wp_woocommerce_shipping_zone_methods",
+            "wordpress.wp_woocommerce_shipping_zones",
+            "wordpress.wp_woocommerce_tax_rate_locations",
+            "wordpress.wp_woocommerce_tax_rates"
+          ],
+          "owned_table_count": 50,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 100.0,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": null
+        },
+        {
+          "key": "elasticache:wordpress.wp_options",
+          "engine": "elasticache",
+          "kind": "cache_reads",
+          "query_ids": [
+            "q001",
+            "q002",
+            "q003",
+            "q004",
+            "q005",
+            "q006",
+            "q007",
+            "q008",
+            "q009",
+            "q010",
+            "q011",
+            "q012",
+            "q013",
+            "q014",
+            "q015"
+          ],
+          "query_count": 15,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 77.5,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": null
+        },
+        {
+          "key": "dynamodb:wordpress.wp_term_taxonomy",
+          "engine": "dynamodb",
+          "kind": "replica_reads",
+          "query_ids": [
+            "q068",
+            "q069"
+          ],
+          "query_count": 2,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [
+            {
+              "table": "wordpress.wp_term_taxonomy",
+              "source_of_truth": "aurora_mysql"
+            },
+            {
+              "table": "wordpress.wp_terms",
+              "source_of_truth": "aurora_mysql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 0.5,
+          "holding_risk_ids": [],
+          "pilot": true,
+          "metrics": {
+            "gravity": 0.08,
+            "blast_radius": 2,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_users",
+          "engine": "dynamodb",
+          "kind": "replica_reads",
+          "query_ids": [
+            "q070",
+            "q071"
+          ],
+          "query_count": 2,
+          "write_query_ids": [],
+          "owned_tables": [],
+          "owned_table_count": 0,
+          "replicated_in": [
+            {
+              "table": "wordpress.wp_users",
+              "source_of_truth": "aurora_mysql"
+            }
+          ],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 0.4,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.11,
+            "blast_radius": 2,
+            "hub_score": 0.02
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_woocommerce_sessions",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q075",
+            "q076"
+          ],
+          "query_count": 2,
+          "write_query_ids": [
+            "q076"
+          ],
+          "owned_tables": [
+            "wordpress.wp_woocommerce_sessions"
+          ],
+          "owned_table_count": 1,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [],
+          "call_share_percent": 0.4,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.0,
+            "blast_radius": 2,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_actionscheduler_actions",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q072",
+            "q073",
+            "q074"
+          ],
+          "query_count": 3,
+          "write_query_ids": [
+            "q073",
+            "q074"
+          ],
+          "owned_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_logs"
+          ],
+          "owned_table_count": 2,
+          "replicated_in": [],
+          "reverse_replicas": [],
+          "reverse_read_count": 0,
+          "kept_whole_ids": [
+            "write:wordpress.wp_actionscheduler_actions"
+          ],
+          "call_share_percent": 0.2,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.05,
+            "blast_radius": 3,
+            "hub_score": 0.0
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_commentmeta",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q077",
+            "q078",
+            "q079",
+            "q080",
+            "q081",
+            "q082",
+            "q083",
+            "q084"
+          ],
+          "query_count": 8,
+          "write_query_ids": [
+            "q082",
+            "q083",
+            "q084"
+          ],
+          "owned_tables": [
+            "wordpress.wp_commentmeta",
+            "wordpress.wp_comments"
+          ],
+          "owned_table_count": 2,
+          "replicated_in": [
+            {
+              "table": "wordpress.wp_users",
+              "source_of_truth": "aurora_mysql"
+            }
+          ],
+          "reverse_replicas": [
+            {
+              "engine": "aurora_mysql",
+              "query_ids": [
+                "q020",
+                "q021"
+              ],
+              "read_count": 2
+            }
+          ],
+          "reverse_read_count": 2,
+          "kept_whole_ids": [
+            "write:wordpress.wp_comments"
+          ],
+          "call_share_percent": 12.3,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.31,
+            "blast_radius": 10,
+            "hub_score": 0.12
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_wc_customer_lookup",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q099",
+            "q100",
+            "q101",
+            "q102",
+            "q103",
+            "q104",
+            "q105",
+            "q106",
+            "q107"
+          ],
+          "query_count": 9,
+          "write_query_ids": [
+            "q103",
+            "q104",
+            "q105",
+            "q106",
+            "q107"
+          ],
+          "owned_tables": [
+            "wordpress.wp_wc_customer_lookup",
+            "wordpress.wp_wc_order_addresses",
+            "wordpress.wp_wc_order_operational_data",
+            "wordpress.wp_wc_orders",
+            "wordpress.wp_wc_product_meta_lookup",
+            "wordpress.wp_woocommerce_order_itemmeta",
+            "wordpress.wp_woocommerce_order_items"
+          ],
+          "owned_table_count": 7,
+          "replicated_in": [],
+          "reverse_replicas": [
+            {
+              "engine": "aurora_mysql",
+              "query_ids": [
+                "q023",
+                "q024",
+                "q025"
+              ],
+              "read_count": 3
+            }
+          ],
+          "reverse_read_count": 3,
+          "kept_whole_ids": [
+            "write:wordpress.wp_wc_orders",
+            "write:wordpress.wp_woocommerce_order_items"
+          ],
+          "call_share_percent": 9.8,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.27,
+            "blast_radius": 12,
+            "hub_score": 0.09
+          }
+        },
+        {
+          "key": "dynamodb:wordpress.wp_postmeta",
+          "engine": "dynamodb",
+          "kind": "owner",
+          "query_ids": [
+            "q085",
+            "q086",
+            "q087",
+            "q088",
+            "q089",
+            "q090",
+            "q091",
+            "q092",
+            "q093",
+            "q094",
+            "q095",
+            "q096",
+            "q097",
+            "q098"
+          ],
+          "query_count": 14,
+          "write_query_ids": [
+            "q094",
+            "q095",
+            "q096",
+            "q097",
+            "q098"
+          ],
+          "owned_tables": [
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts",
+            "wordpress.wp_term_relationships"
+          ],
+          "owned_table_count": 3,
+          "replicated_in": [
+            {
+              "table": "wordpress.wp_term_taxonomy",
+              "source_of_truth": "aurora_mysql"
+            },
+            {
+              "table": "wordpress.wp_terms",
+              "source_of_truth": "aurora_mysql"
+            },
+            {
+              "table": "wordpress.wp_users",
+              "source_of_truth": "aurora_mysql"
+            }
+          ],
+          "reverse_replicas": [
+            {
+              "engine": "aurora_mysql",
+              "query_ids": [
+                "q016",
+                "q017",
+                "q018",
+                "q019",
+                "q022"
+              ],
+              "read_count": 5
+            }
+          ],
+          "reverse_read_count": 5,
+          "kept_whole_ids": [
+            "co_dependency:2",
+            "write:wordpress.wp_postmeta",
+            "write:wordpress.wp_posts"
+          ],
+          "call_share_percent": 32.8,
+          "holding_risk_ids": [],
+          "pilot": false,
+          "metrics": {
+            "gravity": 0.58,
+            "blast_radius": 19,
+            "hub_score": 0.41
+          }
+        }
+      ],
+      "dependencies": [
+        {
+          "unit_key": "elasticache:wordpress.wp_options",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "cache_fronts"
+          ],
+          "edge_weight": 0.6,
+          "tables": [
+            "wordpress.wp_options"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_term_taxonomy",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.2,
+          "tables": [
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_terms"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_users",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "replica_read"
+          ],
+          "edge_weight": 0.1,
+          "tables": [
+            "wordpress.wp_users"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_commentmeta",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "replica_read",
+            "reverse_replica"
+          ],
+          "edge_weight": 0.4,
+          "tables": [
+            "wordpress.wp_comments",
+            "wordpress.wp_users"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_wc_customer_lookup",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "reverse_replica"
+          ],
+          "edge_weight": 0.3,
+          "tables": [
+            "wordpress.wp_wc_orders"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_postmeta",
+          "depends_on": "aurora_mysql:whole-database",
+          "kinds": [
+            "replica_read",
+            "reverse_replica"
+          ],
+          "edge_weight": 0.7,
+          "tables": [
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_terms",
+            "wordpress.wp_users"
+          ]
+        },
+        {
+          "unit_key": "dynamodb:wordpress.wp_postmeta",
+          "depends_on": "dynamodb:wordpress.wp_commentmeta",
+          "kinds": [
+            "shared_table"
+          ],
+          "edge_weight": 0.2,
+          "tables": [
+            "wordpress.wp_users"
+          ]
+        }
+      ],
+      "kept_whole": [
+        {
+          "group_id": "co_dependency:1",
+          "kind": "co_dependency",
+          "query_ids": [
+            "q026",
+            "q027",
+            "q028",
+            "q029",
+            "q030",
+            "q031",
+            "q032",
+            "q033",
+            "q034",
+            "q035",
+            "q036",
+            "q037",
+            "q038",
+            "q039",
+            "q040"
+          ],
+          "table": null
+        },
+        {
+          "group_id": "co_dependency:2",
+          "kind": "co_dependency",
+          "query_ids": [
+            "q085",
+            "q086",
+            "q087"
+          ],
+          "table": null
+        },
+        {
+          "group_id": "write:wordpress.wp_actionscheduler_actions",
+          "kind": "write_group",
+          "query_ids": [
+            "q073",
+            "q074"
+          ],
+          "table": "wordpress.wp_actionscheduler_actions"
+        },
+        {
+          "group_id": "write:wordpress.wp_comments",
+          "kind": "write_group",
+          "query_ids": [
+            "q082",
+            "q083"
+          ],
+          "table": "wordpress.wp_comments"
+        },
+        {
+          "group_id": "write:wordpress.wp_options",
+          "kind": "write_group",
+          "query_ids": [
+            "q041",
+            "q042"
+          ],
+          "table": "wordpress.wp_options"
+        },
+        {
+          "group_id": "write:wordpress.wp_postmeta",
+          "kind": "write_group",
+          "query_ids": [
+            "q097",
+            "q098"
+          ],
+          "table": "wordpress.wp_postmeta"
+        },
+        {
+          "group_id": "write:wordpress.wp_posts",
+          "kind": "write_group",
+          "query_ids": [
+            "q094",
+            "q095",
+            "q096"
+          ],
+          "table": "wordpress.wp_posts"
+        },
+        {
+          "group_id": "write:wordpress.wp_wc_orders",
+          "kind": "write_group",
+          "query_ids": [
+            "q103",
+            "q104",
+            "q105"
+          ],
+          "table": "wordpress.wp_wc_orders"
+        },
+        {
+          "group_id": "write:wordpress.wp_woocommerce_order_items",
+          "kind": "write_group",
+          "query_ids": [
+            "q106",
+            "q107"
+          ],
+          "table": "wordpress.wp_woocommerce_order_items"
+        }
+      ]
+    },
+    "adoption": {
+      "default_path_id": "full_target",
+      "paths": [
+        {
+          "path_id": "relational_only",
+          "engines": [
+            "aurora_mysql",
+            "elasticache"
+          ],
+          "stops_after_step": 2,
+          "step_count": 2,
+          "stage_count": 2,
+          "gate_count": 2,
+          "queries_moved": 0,
+          "queries_by_engine": {
+            "aurora_mysql": 107
+          },
+          "tables_migrate": 0,
+          "monthly_cost_usd": 435.83,
+          "cost_delta_vs_relational_usd": 0.0,
+          "cost_delta_vs_current_usd": null,
+          "cost_is_upper_bound": true,
+          "critical_high_risks": 0,
+          "replicated_table_count": 0,
+          "temporary_stream_count": 0,
+          "first_gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility."
+        },
+        {
+          "path_id": "full_target",
+          "engines": [
+            "aurora_mysql",
+            "elasticache",
+            "dynamodb"
+          ],
+          "stops_after_step": 3,
+          "step_count": 3,
+          "stage_count": 5,
+          "gate_count": 5,
+          "queries_moved": 40,
+          "queries_by_engine": {
+            "aurora_mysql": 67,
+            "dynamodb": 40
+          },
+          "tables_migrate": 15,
+          "monthly_cost_usd": 512.58,
+          "cost_delta_vs_relational_usd": 76.75,
+          "cost_delta_vs_current_usd": null,
+          "cost_is_upper_bound": true,
+          "critical_high_risks": 0,
+          "replicated_table_count": 7,
+          "temporary_stream_count": 3,
+          "first_gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility."
+        }
+      ],
+      "path_count": 2,
+      "not_offered": [],
+      "one_step": {
+        "cutovers": 1,
+        "staged_cutovers": 5,
+        "gate_count": 5,
+        "temporary_stream_count": 0,
+        "staged_temporary_stream_count": 3,
+        "suits_one_step": false,
+        "one_step_checks": [
+          {
+            "rule": "no_open_critical_high_risk",
+            "observed": 0,
+            "limit": 0,
+            "passed": true
+          },
+          {
+            "rule": "at_most_one_purpose_built_target",
+            "observed": 1,
+            "limit": 1,
+            "passed": true
+          },
+          {
+            "rule": "no_reverse_replica_stage",
+            "observed": 1,
+            "limit": 0,
+            "passed": false
+          }
+        ]
+      }
+    }
+  }
+}
