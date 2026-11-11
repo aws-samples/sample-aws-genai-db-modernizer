@@ -66,3 +66,10 @@ def test_e2e_llm_installs_browsers_with_the_shared_helpers_not_with_deps():
     assert "--with-deps" not in script
     assert "playwright_install_with_retry chromium webkit" in script
     assert "playwright_ensure_deps chromium webkit" in script
+
+
+def test_the_browser_shards_run_on_an_image_playwright_supports():
+    """``ubuntu-latest`` is Ubuntu 26.04, where Playwright's browser system packages
+    don't install (#2138), so the e2e shards stay on a pinned 24.04 runner."""
+    workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    assert workflow["jobs"]["e2e-shard"]["runs-on"] == "ubuntu-24.04"
