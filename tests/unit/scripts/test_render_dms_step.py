@@ -23,8 +23,13 @@ def test_render_writes_the_three_files(tmp_path, capsys):
     assert script.main(_args(tmp_path)) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "complete" and out["replica_identity_recommended"] == 0
-    for name in ("aurora-target.yaml", "step-1.ddl.sql", "dms-step-1.yaml"):
+    for name in ("aurora-target.yaml", "step-1.ddl.sql"):
         assert store.exists(f"shop/job1/data-movement/step-1/{name}")
+    # customers.bio (LONGTEXT) is unmeasured (#2123): the LOB size script, and no stack yet.
+    assert out["lob_sizes_needed"] == 1 and store.exists(
+        "shop/job1/data-movement/step-1/lob-sizes.sql"
+    )
+    assert not store.exists("shop/job1/data-movement/step-1/dms-step-1.yaml")
 
 
 def test_a_missing_plan_is_an_error_line(tmp_path, capsys):

@@ -260,9 +260,13 @@ def test_no_mapping_rule_carries_lob_settings():
         assert "lob-settings" not in json.dumps(rules)
 
 
-def test_the_task_runs_in_full_lob_mode_when_a_table_needs_it():
-    t = task_settings(make_step1_inputs())["TargetMetadata"]
-    assert (t["SupportLobs"], t["FullLobMode"], t["LimitedSizeLobMode"]) == (True, True, False)
+def test_the_task_never_runs_full_lob_mode_from_a_mysql_plan_with_a_full_table():
+    # #2123: a plan written before then lists a MySQL LONGTEXT table in full mode; the task
+    # still runs limited, since full LOB mode inserts NULL into a NOT NULL LOB column first.
+    inputs = make_step1_inputs()
+    assert any(t.mode == "full" for t in inputs.plan.replication.lob_tables)
+    t = task_settings(inputs)["TargetMetadata"]
+    assert (t["SupportLobs"], t["FullLobMode"], t["LimitedSizeLobMode"]) == (True, False, True)
     assert t["LobChunkSize"] == FULL_LOB_CHUNK_KB
 
 

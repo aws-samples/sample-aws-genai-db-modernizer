@@ -69,6 +69,9 @@ def _parser() -> argparse.ArgumentParser:
         "--target-certificate-arn", default="", help="the target endpoint's DMS certificate ARN"
     )
     p.add_argument("--subnet-ids", default="", help="the stack's SubnetIds, comma separated")
+    p.add_argument("--lob-sizes", choices=["measure", "skip"], default="measure",
+                   help="the inputs file's lob_sizes: skip only when the customer chose not to measure "
+                        "the LOB sizes the collection did not (#2123)")  # fmt: skip
     p.add_argument(
         "--secrets-manager-endpoint-override",
         default="",
@@ -116,6 +119,7 @@ def main(argv: list[str] | None = None, *, clients: PreflightClients | None = No
         source_certificate_arn=args.source_certificate_arn, target_certificate_arn=args.target_certificate_arn,
         subnet_ids=tuple(x.strip() for x in args.subnet_ids.split(",") if x.strip()),
         secrets_manager_endpoint_override=args.secrets_manager_endpoint_override,
+        lob_sizes=args.lob_sizes,
     )  # fmt: skip
     if clients is None:
         from src.tools.aws.credentials import AWSCredentialManager

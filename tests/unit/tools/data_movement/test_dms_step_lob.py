@@ -1,16 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Step 1's LOB mode per source (#1918): a PostgreSQL source never runs full LOB mode.
+"""Step 1's LOB mode per source (#1918, #2123): neither source runs full LOB mode.
 
 From a PostgreSQL source into Aurora PostgreSQL, full LOB mode wrote a NULL LOB as an empty
 value in a live run: a unique index over a nullable text column refused the second row, and an
-array column refused the empty value. MySQL rehearsals passed in full LOB mode, so it keeps it.
+array column refused the empty value. From a MySQL source it inserted NULL into NOT NULL
+LONGTEXT columns (#2123; test_dms_lob_mysql.py covers MySQL).
 """
 
 from __future__ import annotations
-
-import pytest
 
 from src.contracts.transformation_contract import Finding
 from src.shared.catalog.dms_sizing import dms_sizing
@@ -57,9 +56,8 @@ def test_a_postgresql_source_keeps_a_larger_plan_size():
     assert _lob(task_settings(inputs)) == (False, True, big)
 
 
-@pytest.mark.passes_on_main  # MySQL keeps full LOB mode: its rehearsals passed with it
-def test_a_mysql_source_keeps_full_lob_mode_and_no_truncation_setting():
-    assert _lob(task_settings(make_step1_inputs("aurora_mysql"))) == (True, False, 64)
+def test_a_mysql_source_runs_limited_lob_mode_with_no_truncation_setting():
+    assert _lob(task_settings(make_step1_inputs("aurora_mysql"))) == (False, True, 64)
     assert "FailTasksOnLobTruncation" not in _source_settings("aurora_mysql")
 
 
@@ -86,9 +84,9 @@ def test_the_postgresql_ddl_header_says_the_lob_size_is_not_measured_and_how_to_
     assert "The tables: public.customers, public.orders." in ddl
 
 
-@pytest.mark.passes_on_main  # the MySQL DDL is unchanged
-def test_the_mysql_ddl_header_has_no_lob_paragraph():
-    assert "LOB columns:" not in render_ddl(make_step1_inputs("aurora_mysql"))
+def test_the_mysql_ddl_header_has_its_own_lob_paragraph():
+    ddl = render_ddl(make_step1_inputs("aurora_mysql"))
+    assert "LOB columns:" in ddl and "PostgreSQL" not in ddl
 
 
 def test_a_blocked_lob_table_is_not_listed_in_the_ddl_header():

@@ -36,14 +36,41 @@ def test_examples_are_the_rendered_snapshot(example):
         assert (example / name).read_text() == text, name
 
 
+@pytest.mark.passes_on_main  # a lint guard: each example's templates, whichever it has
 @pytest.mark.parametrize("example", script.example_dirs(), ids=lambda p: p.name)
 def test_example_templates_pass_cfn_lint(example):
     for name in (AURORA_TEMPLATE, DMS_TEMPLATE):
-        assert _cfn_lint((example / name).read_text()) == [], name
+        if (example / name).exists():
+            assert _cfn_lint((example / name).read_text()) == [], name
+
+
+def _stacked():
+    return [p for p in script.example_dirs() if (p / DMS_TEMPLATE).exists()]
+
+
+def test_the_mysql_example_has_no_stack_while_its_lob_sizes_are_unmeasured():
+    # The recorded WordPress plan has no measured LOB size (#2123): step 1 writes lob-sizes.sql
+    # and no dms-step-1.yaml, never a stack at a guessed LobMaxSize.
+    example = _example("wordpress-mysql")
+    assert not (example / DMS_TEMPLATE).exists() and (example / "lob-sizes.sql").exists()
+    assert "no DMS stack" in " ".join(
+        line.removeprefix("-- ") for line in (example / DDL_FILE).read_text().splitlines()
+    )
+
+
+@pytest.mark.passes_on_main  # a lint guard: the MySQL stack the example no longer carries
+def test_a_measured_mysql_stack_passes_cfn_lint():
+    # The MySQL stack's lint, now that the recorded example has none: the fixture's, measured.
+    from src.tools.data_movement.dms_step import render_files
+
+    from .dms_step_fixtures import make_step1_inputs
+
+    files = render_files(make_step1_inputs("aurora_mysql", measured=True))
+    assert _cfn_lint(files[DMS_TEMPLATE]) == []
 
 
 @pytest.mark.passes_on_main  # reads the parsed mappings, whatever their JSON layout (#1915)
-@pytest.mark.parametrize("example", script.example_dirs(), ids=lambda p: p.name)
+@pytest.mark.parametrize("example", _stacked(), ids=lambda p: p.name)
 def test_example_mappings_list_exactly_the_contract_tables(example):
     rules = json.loads((example / "input.json").read_text())["contract"]["rules"]
     text = (example / DMS_TEMPLATE).read_text()

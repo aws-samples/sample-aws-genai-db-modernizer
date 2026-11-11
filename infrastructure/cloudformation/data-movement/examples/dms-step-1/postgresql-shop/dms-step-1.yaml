@@ -24,7 +24,8 @@ Parameters:
     AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
     Description: AWS DMS engine version of the replication instance. On the default engine (3.5.4) the
       data validator can fail to read an endpoint secret and retry one table indefinitely, which stalls
-      validation on large sources; on 3.6.1 it re-reads the secret and recovers.
+      validation on large sources; on 3.6.1 it re-reads the secret and recovers. From a PostgreSQL source,
+      3.6.1 was checked in a live step 1 run (#2021).
   AllocatedStorage:
     Type: Number
     Default: 50

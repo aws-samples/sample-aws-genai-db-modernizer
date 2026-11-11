@@ -114,6 +114,9 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
 _REVISION = "revision_context.json: revision instructions, not a contract"
 _K6 = "the load generator's own summary files"
 FILE_READS: dict[tuple[str, str, str], str] = {
+    ("src/tools/data_movement/plan.py", "_inputs_skip", "data"): (
+        "step 1's inputs.json, the customer's ids and choices (no contract): only its lob_sizes key"
+    ),
     ("src/atx_orchestrator/runtime/hitl.py", "_download_artifact_json", "<return>"): (
         "a human-in-the-loop answer file, not a contract"
     ),

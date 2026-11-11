@@ -3,10 +3,14 @@
 
 """Step 1's DMS preflight: read-only checks before the stack deploys (#1799).
 
-Eight checks, in a fixed order (``CHECK_ORDER``), stopping at the first failure (the rows
-after it are ``not_run``). A ``confirm`` row (checks 3 and 6) becomes ``pass`` when its id is in the
-``confirmed`` set ``run_preflight`` takes (checks 3, 6 and 8 can produce one). The checks:
+Nine checks, in a fixed order (``CHECK_ORDER``), stopping at the first failure (the rows
+after it are ``not_run``). A ``confirm`` row (checks 4 and 7) becomes ``pass`` when its id is in the
+``confirmed`` set ``run_preflight`` takes (checks 4, 7 and 9 can produce one). The checks:
 
+0. ``lob_sizes`` (no AWS call, #2123): every moved LOB table of a source whose endpoint
+   truncates without a task error (``lob.measure_required``: MySQL) has a measured size, from the
+   collection or from the customer's run of ``lob-sizes.sql``, or the customer chose to skip
+   measuring (a pass that says so, every time). PostgreSQL passes: the plan's finding covers it.
 1. ``aurora_cluster``: the named cluster exists and runs the step's Aurora engine at the
    design's version line (``replication.target_engine_line``) or later.
 2. ``aurora_parameters``: its cluster parameter group has the values
@@ -42,6 +46,7 @@ from urllib.parse import unquote
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.contracts.dms_preflight import CHECK_ORDER, DmsPreflight, PreflightCheck
+from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.catalog.gaps import parse_version_line
 from src.shared.engine_names import display_engine
 from src.tools.aws.credentials import AWSCredentialManager
@@ -103,6 +108,8 @@ class PreflightRequest:
     # The replication subnets (the stack's SubnetIds) and the stack's SecretsManagerEndpointOverride.
     subnet_ids: tuple[str, ...] = ()
     secrets_manager_endpoint_override: str = ""
+    # The inputs file's lob_sizes (#2123): "skip" only when the customer chose not to measure.
+    lob_sizes: Literal["measure", "skip"] = "measure"
 
 
 @dataclass(frozen=True)
@@ -214,6 +221,72 @@ def _settings(
 def _writer(cluster: Mapping[str, Any]) -> Mapping[str, Any] | None:
     members: list[Mapping[str, Any]] = cluster.get("DBClusterMembers") or []
     return next((m for m in members if m.get("IsClusterWriter")), None)
+
+
+@_guarded("lob_sizes")
+def check_lob_sizes(inputs: Step1Inputs, req: PreflightRequest, clients: PreflightClients,
+                    ctx: dict[str, Any]) -> PreflightCheck:  # fmt: skip
+    """``lob_sizes`` (#2123): no AWS call; the step plan's LOB tables only."""
+    from src.tools.data_movement.dms_sizing import (
+        LOB_SIZES_COMMAND,
+        LOB_SIZES_SQL,
+        measure_required,
+        needs_measuring,
+        skipped_lob_tables,
+        unmeasured_lob_tables,
+    )
+    from src.tools.data_movement.dms_step import contract_tables
+
+    replication = inputs.plan.replication
+    dialect = inputs.plan.source.dialect or inputs.plan.source.engine
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    lob = [t for t in (replication.lob_tables if replication else []) if t.table in moved]
+    missing = [t.table for t in needs_measuring(lob, dialect)]
+    skipped = skipped_lob_tables(lob)
+    skip = getattr(req, "lob_sizes", "measure") == "skip"
+    kb = dms_sizing().lob.skipped_max_kb
+    evidence = {"lob_tables": str(len(lob)), "unmeasured": str(len(missing)), "skipped": str(len(skipped)),
+                "inputs_lob_sizes": "skip" if skip else "measure"}  # fmt: skip
+    if skipped and not skip:
+        # The plan was written while the inputs said skip; they no longer do (#2123).
+        return _row("lob_sizes", "fail", (
+            f"The plan runs {len(skipped)} LOB table{'' if len(skipped) == 1 else 's'} at {kb} KB from an earlier "
+            "choice to skip measuring, but inputs.json no longer says \"lob_sizes\": \"skip\""), evidence, message=(
+            f"Run {LOB_SIZES_COMMAND}: it writes the plan again from the inputs file, so those tables need "
+            f"measuring; then run the read-only {LOB_SIZES_SQL} and {LOB_SIZES_COMMAND} again."))  # fmt: skip
+    if missing:
+        shown = ", ".join(missing[:10]) + (
+            f" and {len(missing) - 10} more" if len(missing) > 10 else ""
+        )
+        message = (
+            f"Run the read-only {LOB_SIZES_SQL} on the source (data-movement/step-1/lob-sizes.md says how), "
+            f"then {LOB_SIZES_COMMAND}: it sizes each table from the output and writes the stack again. "
+            "Or, only if you choose to skip measuring, set \"lob_sizes\": \"skip\" in inputs.json and run "
+            f"{LOB_SIZES_COMMAND}: each such table then runs at {kb} KB and a longer value is truncated, "
+            "which only DMS validation reports.")  # fmt: skip
+        if skip:
+            message = (f"inputs.json says \"lob_sizes\": \"skip\", but the plan was written before: run "
+                       f"{LOB_SIZES_COMMAND} to write it again, each such table at {kb} KB.")  # fmt: skip
+        return _row("lob_sizes", "fail", (
+            f"LOB size not measured for {len(missing)} moved table{'' if len(missing) == 1 else 's'} ({shown}); "
+            "the source endpoint truncates a longer value with no task error"), evidence, message=message)  # fmt: skip
+    if skipped:
+        return _row("lob_sizes", "pass", (
+            f"LOB sizes not measured, by your choice: {len(skipped)} table{' runs' if len(skipped) == 1 else 's run'} at "
+            f"{kb} KB (inputs.json lob_sizes skip); the replication instance is sized for it, and a longer "
+            "value is truncated with only a warning in the task log: only DMS validation reports it"), evidence)  # fmt: skip
+    if not lob:
+        return _row("lob_sizes", "pass", "No moved table has a LOB column", evidence)
+    if measure_required(dialect):
+        return _row("lob_sizes", "pass", f"Every moved LOB table has a measured or declared size ({len(lob)} with "
+                    "LOB columns)", evidence)  # fmt: skip
+    # PostgreSQL (#1918): an unmeasured table runs at the catalog's size with the plan's finding.
+    unmeasured = unmeasured_lob_tables(lob, dialect)
+    return _row("lob_sizes", "pass", (
+        f"{len(lob)} moved table{'' if len(lob) == 1 else 's'} with LOB columns; "
+        + (f"{len(unmeasured)} unmeasured run at the catalog's {dms_sizing().lob.undeclared_max_kb} KB (the plan's "
+           "finding says how to check them; the source endpoint stops the task on a longer value)"
+           if unmeasured else "every size measured or declared")), evidence)  # fmt: skip
 
 
 @_guarded("aurora_cluster")
@@ -959,6 +1032,7 @@ def check_secrets_manager_reachable(inputs: Step1Inputs, req: PreflightRequest, 
 
 
 CHECKS: tuple[tuple[str, Callable[..., PreflightCheck]], ...] = (
+    ("lob_sizes", check_lob_sizes),
     ("aurora_cluster", check_aurora_cluster),
     ("aurora_parameters", check_aurora_parameters),
     ("secrets", check_secrets),

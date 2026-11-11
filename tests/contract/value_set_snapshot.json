@@ -369,11 +369,12 @@
       "dms_certificates",
       "dms_service_roles",
       "instance_class_offered",
+      "lob_sizes",
       "secrets",
       "secrets_manager_reachable",
       "source_cdc"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "documentdb_decision_trace.EmbeddingRelationshipType": {
     "module": "documentdb_decision_trace",

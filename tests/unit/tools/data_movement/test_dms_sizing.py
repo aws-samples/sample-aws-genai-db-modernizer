@@ -104,9 +104,15 @@ def _lob_cols(*cols):
     return [{"column_name": n, "data_type": t, "max_length": m} for n, t, m in cols]
 
 
-def _plan(columns, dialect="mysql", **kw):
+def _plan(columns, dialect="mysql", rules=None, **kw):
     c = _collector(engine=dialect, columns=_lob_cols(*columns), **kw)
-    return lob_plan(c, ["shop.orders"], dialect)
+    return lob_plan(c, ["shop.orders"], dialect, rules)
+
+
+# The catalog's LOB rules for a dialect that may run full LOB mode: since #2123 no source step 1
+# supports is one (MySQL and PostgreSQL never run it), so the full-mode path is checked on MySQL's
+# types with MySQL taken off ``limited_only``.
+FULL_OK = dms_sizing().lob.model_copy(update={"limited_only": (), "fails_on_truncation": ()})
 
 
 def test_a_bounded_lob_table_runs_in_limited_mode_at_its_size():
@@ -118,22 +124,27 @@ def test_a_bounded_lob_table_runs_in_limited_mode_at_its_size():
     assert "4 bytes per character" in tables[0].reason and "40 KB" in tables[0].reason
 
 
+@pytest.mark.passes_on_main  # the full-mode path, kept for a dialect outside limited_only
 def test_each_lob_table_says_why_it_is_full():
-    unbounded = _plan([("b", "longtext", None)])[1][0].reason
+    unbounded = _plan([("b", "longtext", None)], rules=FULL_OK)[1][0].reason
     assert "no declared maximum" in unbounded and "full LOB mode" in unbounded
-    over = _plan([("b", "longtext", 4294967295)])[1][0].reason
+    over = _plan([("b", "longtext", 4294967295)], rules=FULL_OK)[1][0].reason
     assert "1024 KB" in over and "full LOB mode" in over
 
 
 def test_a_character_lob_counts_four_bytes_per_character_a_binary_one_one():
     # 300,000 characters is 1,171 KB of bytes: over the 1,024 KB limit. 300,000 bytes is 293 KB.
-    assert _plan([("b", "longtext", 300000)])[1][0].mode == "full"
+    assert _plan([("b", "longtext", 300000)], rules=FULL_OK)[1][0].mode == "full"
     size, tables = _plan([("b", "longblob", 300000)])
     assert (tables[0].mode, size) == ("limited", 293)
     assert (
         _plan([("b", "longtext", 262144)])[1][0].max_size_kb == 1024
     )  # exactly the limit stays limited
-    assert _plan([("b", "longtext", 262145)])[1][0].mode == "full"
+    assert _plan([("b", "longtext", 262145)], rules=FULL_OK)[1][0].mode == "full"
+    # From MySQL itself (#2123) a declared size over the limit is the type's ceiling: limited at
+    # the catalog's size, never full.
+    t = _plan([("b", "longtext", 262145)])[1][0]
+    assert (t.mode, t.max_size_kb) == ("limited", dms_sizing().lob.undeclared_max_kb)
 
 
 def test_types_dms_does_not_read_as_a_lob_are_not_listed():
@@ -141,8 +152,9 @@ def test_types_dms_does_not_read_as_a_lob_are_not_listed():
         assert _plan([("b", t, 65535)])[1] == [], t
 
 
+@pytest.mark.passes_on_main  # the full-mode path, kept for a dialect outside limited_only
 def test_one_unbounded_column_makes_the_whole_table_full():
-    _, tables = _plan([("a", "mediumtext", 100), ("b", "longtext", None)])
+    _, tables = _plan([("a", "mediumtext", 100), ("b", "longtext", None)], rules=FULL_OK)
     assert (
         tables[0].mode == "full"
         and tables[0].columns == ["a", "b"]
@@ -150,14 +162,20 @@ def test_one_unbounded_column_makes_the_whole_table_full():
     )
 
 
-@pytest.mark.passes_on_main  # MySQL keeps full LOB mode (#1918 changes PostgreSQL only)
 @pytest.mark.parametrize("dialect", ["mysql", "mariadb"])
-def test_a_large_or_unknown_mysql_lob_runs_in_full_mode(dialect):
+def test_a_large_or_unknown_mysql_lob_runs_limited_at_the_catalogs_size(dialect):
+    # #2123: full LOB mode inserted NULL into NOT NULL LONGTEXT columns on Aurora MySQL.
+    lob = dms_sizing().lob
     for size in (4294967295, None):
         c = _collector(engine=dialect, columns=_lob_cols(("body", "longtext", size)))
         size_kb, tables = lob_plan(c, ["shop.orders"], dialect)
-        assert (tables[0].mode, tables[0].max_size_kb) == ("full", None)
-        assert size_kb == dms_sizing().lob.default_max_kb and "full LOB mode" in tables[0].reason
+        assert (tables[0].mode, tables[0].max_size_kb) == ("limited", lob.undeclared_max_kb)
+        assert size_kb == lob.undeclared_max_kb
+        why = tables[0].reason
+        assert "LOB size not measured (body)" in why and "NOT NULL" in why
+        assert (
+            "SELECT max(length(<column>)) FROM <table>" in why and "full LOB mode moves" not in why
+        )
 
 
 def test_a_postgresql_lob_of_unknown_size_runs_limited_at_the_catalogs_size():
@@ -214,19 +232,21 @@ def test_a_named_postgresql_type_runs_its_table_as_a_lob_of_unknown_size_scalars
         assert "c has a type not known to map to a non-LOB DMS type" in tables[0].reason
 
 
-def test_the_task_lob_mode_is_full_only_off_postgresql():
+def test_the_task_lob_mode_is_never_full_from_postgresql_or_mysql():
     lob = dms_sizing().lob
     full = [LobTable(table="s.a", mode="full", columns=["x"])]
     limited = [LobTable(table="s.b", mode="limited", columns=["y"], max_size_kb=40)]
-    for dialect in ("mysql", "mariadb", None):
-        assert task_lob_mode(dialect, full + limited, 40) == (True, 40)
+    assert task_lob_mode(None, full + limited, 40) == (True, 40)
+    assert task_lob_mode(None, limited, 40) == (False, 40)
+    # A plan written before #1918 (PostgreSQL) or #2123 (MySQL) lists a table in full mode: it
+    # runs limited.
+    for dialect in ("postgresql", "mysql", "mariadb"):
+        assert task_lob_mode(dialect, full + limited, 40) == (False, lob.undeclared_max_kb)
         assert task_lob_mode(dialect, limited, 40) == (False, 40)
-        assert not fails_on_lob_truncation(dialect)
-    # A plan written before #1918 lists a PostgreSQL table in full mode: it runs limited.
-    assert task_lob_mode("postgresql", full + limited, 40) == (False, lob.undeclared_max_kb)
-    assert task_lob_mode("postgresql", limited, 40) == (False, 40)
-    assert task_lob_mode("postgresql", [], 32) == (False, 32)
+        assert task_lob_mode(dialect, [], 32) == (False, 32)
+    # Only the PostgreSQL source endpoint has FailTasksOnLobTruncation.
     assert fails_on_lob_truncation("postgresql")
+    assert not any(fails_on_lob_truncation(d) for d in ("mysql", "mariadb", None))
 
 
 @pytest.mark.parametrize("data_type", ["double precision", "character varying", "time with time zone",
@@ -339,7 +359,8 @@ def test_mysql_types_carry_a_modifier_and_case():
 def test_a_table_without_lobs_is_not_listed_and_mariadb_reads_mysql_types():
     assert lob_plan(_collector(), ["shop.orders"], "mysql")[1] == []
     c = _collector(engine="mariadb", columns=_lob_cols(("body", "mediumtext", 16777215)))
-    assert lob_plan(c, ["shop.orders"], "mariadb")[1][0].mode == "full"
+    [t] = lob_plan(c, ["shop.orders"], "mariadb")[1]
+    assert (t.mode, t.columns) == ("limited", ["body"])
 
 
 def test_only_the_asked_tables_are_planned():

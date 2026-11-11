@@ -83,9 +83,9 @@ Ask whether to go on to Check (they may come back later: `/move step-1` resumes)
 4. `source_certificate_arn` and `target_certificate_arn`.
 5. `subnet_ids` and `security_group_ids` (lists), and `secrets_manager_endpoint_override` only when the Secrets Manager interface endpoint has no private DNS.
 6. `confirmed_checks`: only the preflight check ids the customer says they checked themselves; never fill it in yourself. Leave it out at first: Preflight adds an id once the customer confirms it.
-7. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, and `template_bucket` only for a large source (a stack template over 51,200 bytes): an S3 bucket the customer owns in the stack's region, where `deploy` uploads the template.
+7. Optional: `multi_az` (`false` for a demo; the plan's cost prices `true`), `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, and `template_bucket` only for a large source (a stack template over 51,200 bytes): an S3 bucket the customer owns in the stack's region, where `deploy` uploads the template. `lob_sizes` only as the preflight's `lob_sizes` check below says, and only when the customer says so.
 
-Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, one JSON object with exactly these keys, plus any optional key of block 7 the customer gave (`multi_az`, `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, `template_bucket`); leave out what the customer did not give:
+Write them with the Write tool to `artifacts/{db}/{job_id}/data-movement/step-1/inputs.json`, one JSON object with exactly these keys, plus any optional key of block 7 the customer gave (`multi_az`, `instance_class`, `allocated_storage`, `stack_name`, `read_profile`, `write_profile`, `template_bucket`, `lob_sizes`); leave out what the customer did not give:
 
 ```json
 {"region": "<region>", "aurora_cluster_id": "<cluster>", "source_kind": "rds_instance", "source_id": "<instance>",
@@ -106,6 +106,14 @@ uv run python scripts/run_dms_step.py preflight --job-id {job_id} --db {db}
 - `"status": "fail"`: name the `first_failure` check and explain its `message`, which says what to fix. The customer fixes it (or gives a corrected input: rewrite the file), then run the preflight again. It stops at the first failure, so a rerun can find the next one.
 - `"status": "needs_confirmation"`: for each id in `to_confirm`, show what to check (the `message`, and the README's list for that check) and ask the customer to confirm they checked it themselves. Rerun with one `--confirm <check_id>` per confirmed id, for example `--confirm source_cdc`, and add each confirmed id to `confirmed_checks` in the inputs file so a later run keeps it. Never confirm a row for them.
 - `"status": "error"`: explain its `message`; fix the inputs file if it names one, then run again.
+
+**LOB sizes.** A `lob_sizes` failure means a moved MySQL table's LOB sizes were not measured, and that endpoint truncates a longer value with no task error; until they are, step 1 writes no `dms-step-1.yaml` and `plan` and `deploy` refuse. Point the customer at `lob-sizes.md` in the step's folder: they run the read-only `lob-sizes.sql` on the source with their own credentials, saving its output as `lob-sizes.tsv` there. Ask them to say when it is there, then run (no AWS call), and the preflight again. Under `--auto`, never wait: run it once (it reads a `lob-sizes.tsv` already there, or applies the given inputs file's `"lob_sizes": "skip"`), then the preflight once, whose line ends the run as below:
+
+```bash
+uv run python scripts/run_dms_step.py lob-sizes --job-id {job_id} --db {db}
+```
+
+Show its `status`, `instance_class`, `lob_max_size_kb` and `tables`. `"status": "no_output"`: the file is not at `expected` yet; ask again. An error line (a refused file) names what is wrong: tell the customer to run `lob-sizes.sql` again. Only if the customer says they choose not to measure, add `"lob_sizes": "skip"` to the inputs file and run `lob-sizes`: quote its `warning` verbatim. The inputs file decides each time: taking the key out makes those tables unmeasured again (run `lob-sizes`). Never add it yourself, and never under `--auto` unless the given inputs file already has it. <!-- claim: tests/unit/scripts/test_run_dms_step_lob_sizes.py::test_the_customers_output_sizes_the_tables_and_writes_the_stack_again, tests/unit/scripts/test_run_dms_step_lob_sizes.py::test_skip_runs_unmeasured_tables_at_one_mb_with_a_warning, tests/unit/scripts/test_run_dms_step_lob_sizes.py::test_a_bad_output_file_is_refused_whole_and_never_echoed, tests/unit/scripts/test_run_dms_step_lob_sizes.py::test_plan_and_deploy_refuse_while_a_mysql_lob_table_is_unmeasured, tests/unit/scripts/test_run_dms_step_lob_sizes.py::test_taking_the_skip_out_of_the_inputs_makes_the_tables_unmeasured_again -->
 
 Under `--auto`, do not ask: run the preflight once, with no `--confirm` flag: it uses the file's `confirmed_checks`, and never adds to them. Anything but `pass` ends with `MOVE_RESULT: stopped stage=check reason=preflight <status>: <first_failure or to_confirm>`. Interactively, the customer may stop here: end with `MOVE_RESULT: stopped stage=check reason=<what is left to fix>`.
 

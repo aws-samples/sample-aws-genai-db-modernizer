@@ -111,8 +111,20 @@ def make_bundle(
     return DmsStepBundle(plan=plan, contract=contract, ddl=make_ddl(contract))
 
 
-def make_step1_inputs(engine: str = "aurora_mysql") -> Step1Inputs:
-    return bundle_inputs(make_bundle(engine))
+def make_step1_inputs(engine: str = "aurora_mysql", *, measured: bool = False) -> Step1Inputs:
+    """``measured``: every LOB table of the plan has a measured size (#2123), so preflight's
+    ``lob_sizes`` check passes on a MySQL source; the default plan lists ``customers`` in full
+    LOB mode, as a plan written before then does."""
+    bundle = make_bundle(engine)
+    if measured:
+        tables = [t.model_copy(update={"mode": "limited", "max_size_kb": 64, "size_source": "measured",
+                                       "reason": "Measured: the longest LOB value is 10 bytes."})
+                  for t in bundle.plan.replication.lob_tables]  # fmt: skip
+        replication = bundle.plan.replication.model_copy(update={"lob_tables": tables})
+        bundle = bundle.model_copy(
+            update={"plan": bundle.plan.model_copy(update={"replication": replication})}
+        )
+    return bundle_inputs(bundle)
 
 
 def _job_tables(fk: bool = False, dates: bool = False) -> list[dict[str, Any]]:

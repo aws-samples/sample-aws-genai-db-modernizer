@@ -154,7 +154,8 @@ def test_the_delivery_writes_the_sequences_file_and_counts_it(tmp_path):
     assert f"shop/job1/data-movement/step-1/{SEQUENCES_FILE}" in out["files"]
     assert out["sequences_to_set"] == 2
     mysql = write_step1_delivery(write_job(tmp_path / "mysql"), "shop", "job1")
-    assert len(mysql["files"]) == 3 and mysql["sequences_to_set"] == 0
+    # customers.bio is unmeasured (#2123): lob-sizes.sql and lob-sizes.md instead of the stack.
+    assert len(mysql["files"]) == 4 and mysql["sequences_to_set"] == 0
 
 
 # --- What step 1 does not move ---------------------------------------------------------------

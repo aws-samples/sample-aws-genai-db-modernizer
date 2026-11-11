@@ -27,11 +27,22 @@ def _result(status, rows):
             "instance_class": "dms.t3.medium", "checks": rows}  # fmt: skip
 
 
-def test_the_eight_checks_in_their_fixed_order():
+def test_the_nine_checks_in_their_fixed_order_lob_sizes_first():
     assert CHECK_ORDER == (
-        "aurora_cluster", "aurora_parameters", "secrets", "instance_class_offered",
+        "lob_sizes", "aurora_cluster", "aurora_parameters", "secrets", "instance_class_offered",
         "dms_service_roles", "source_cdc", "dms_certificates", "secrets_manager_reachable",
     )  # fmt: skip
+
+
+def test_a_preflight_written_before_lob_sizes_still_loads():
+    # #2123 added lob_sizes; a saved preflight.json has the eight earlier checks.
+    from src.contracts.dms_preflight import LEGACY_CHECK_ORDER
+
+    rows = [{"id": c, "status": "pass", "summary": "ok"} for c in LEGACY_CHECK_ORDER]
+    old = DmsPreflight.model_validate({**_result("pass", rows), "contract_version": "1.0"})
+    assert [c.id for c in old.checks] == list(CHECK_ORDER[1:])
+    with pytest.raises(ValueError, match="one row per check"):
+        DmsPreflight.model_validate(_result("pass", rows[1:]))
 
 
 def test_a_full_pass_loads():

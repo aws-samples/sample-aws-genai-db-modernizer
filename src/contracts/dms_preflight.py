@@ -12,6 +12,9 @@ first failure; the rows after it are ``not_run``.
 
 Version History:
 - 1.0 (2026-11-03, #1799): Initial version.
+- 1.1 (2026-11-11, #2123): Added the lob_sizes check, first in CHECK_ORDER (a MySQL LOB
+  table the collection did not measure stops step 1); a file with the eight earlier
+  checks still loads.
 """
 
 from datetime import datetime
@@ -20,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 CheckId = Literal[
+    "lob_sizes",
     "aurora_cluster",
     "aurora_parameters",
     "secrets",
@@ -30,6 +34,7 @@ CheckId = Literal[
     "secrets_manager_reachable",
 ]
 CHECK_ORDER: tuple[str, ...] = (
+    "lob_sizes",
     "aurora_cluster",
     "aurora_parameters",
     "secrets",
@@ -39,6 +44,8 @@ CHECK_ORDER: tuple[str, ...] = (
     "dms_certificates",
     "secrets_manager_reachable",
 )
+# The checks of a preflight written before lob_sizes (#2123): such a file still loads.
+LEGACY_CHECK_ORDER: tuple[str, ...] = CHECK_ORDER[1:]
 
 
 class PreflightCheck(BaseModel):
@@ -67,7 +74,7 @@ class DmsPreflight(BaseModel):
     """Step 1's preflight result (#1799)."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version of this file"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version of this file"
     )
     job_id: str = Field(..., description="The job the step belongs to")
     database_name: str = Field(..., description="The source database the job assesses")
@@ -88,12 +95,16 @@ class DmsPreflight(BaseModel):
         description="fail if any check failed, else needs_confirmation if any needs confirming, else pass",
     )
     checks: list[PreflightCheck] = Field(
-        ..., description="One row per check, all present, in CHECK_ORDER"
+        ...,
+        description=(
+            "One row per check, all present, in CHECK_ORDER (a file written before #2123 has "
+            "LEGACY_CHECK_ORDER's eight)"
+        ),
     )
 
     @model_validator(mode="after")
     def _consistent(self) -> "DmsPreflight":
-        if tuple(c.id for c in self.checks) != CHECK_ORDER:
+        if tuple(c.id for c in self.checks) not in (CHECK_ORDER, LEGACY_CHECK_ORDER):
             raise ValueError(f"checks must be one row per check, in order: {CHECK_ORDER}")
         statuses = [c.status for c in self.checks]
         if "fail" in statuses:

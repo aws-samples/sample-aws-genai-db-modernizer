@@ -41,6 +41,9 @@ from src.tools.data_movement.dms_step import (  # noqa: E402
     write_step1_delivery,
 )
 
+# Every file name render_files can write for an example.
+RENDERED = {"aurora-target.yaml", "step-1.ddl.sql", "dms-step-1.yaml", "step-1.sequences.sql",
+            "lob-sizes.sql", "lob-sizes.md"}  # fmt: skip
 EXAMPLES_DIR = (
     REPO_ROOT / "infrastructure" / "cloudformation" / "data-movement" / "examples" / "dms-step-1"
 )
@@ -58,7 +61,8 @@ def render_example(example: Path) -> dict[str, str]:
 def _examples(check: bool) -> int:
     stale = []
     for example in example_dirs():
-        for name, text in render_example(example).items():
+        files = render_example(example)
+        for name, text in files.items():
             path = example / name
             if path.exists() and path.read_text() == text:
                 continue
@@ -66,6 +70,15 @@ def _examples(check: bool) -> int:
                 stale.append(path.relative_to(REPO_ROOT).as_posix())
             else:
                 path.write_text(text)
+        # A file step 1 no longer renders for this example (the DMS stack while a MySQL LOB
+        # table is unmeasured, the LOB size script once nothing is, #2123) is stale too.
+        for name in RENDERED - set(files):
+            path = example / name
+            if path.exists():
+                if check:
+                    stale.append(path.relative_to(REPO_ROOT).as_posix())
+                else:
+                    path.unlink()
     print(json.dumps({"status": "stale", "files": stale} if stale else {"status": "ok"}))
     return 1 if stale else 0
 

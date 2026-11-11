@@ -57,6 +57,11 @@ note = "Above 2 TB or 5,000 writes per second, size the replication instance wit
 version = "3.6.1"
 why = "On the default engine (3.5.4) the data validator can fail to read an endpoint secret and retry one table indefinitely, which stalls validation on large sources; on 3.6.1 it re-reads the secret and recovers."
 
+[engine.source_why]
+# Per source dialect (mariadb reads mysql's), appended to why in the plan and the stack (#2123).
+postgresql = "From a PostgreSQL source, 3.6.1 was checked in a live step 1 run (#2021)."
+mysql = "From a MySQL source, earlier rehearsals passed on 3.5.4 in full LOB mode, and the first on 3.6.1 failed in full LOB mode on NOT NULL LONGTEXT columns (#2123); the 3.6.0 and 3.6.1 release notes list no MySQL LOB change, and step 1 no longer runs a MySQL source in full LOB mode, so 3.6.1 stays until a live run shows otherwise."
+
 [gate]
 # The step 1 plan's gates.max_lag_seconds: the DMS gate (src/tools/data_movement/dms_gate.py)
 # fails when a CDCLatencySource or CDCLatencyTarget datapoint in its window reaches it.
@@ -75,24 +80,56 @@ default_max_kb = 32
 # (AWS DMS User Guide, "Endpoint settings when using PostgreSQL as a source").
 unbounded_varchar_max_bytes = 10485760
 why = "Limited LOB mode is the fast path; above 1 MB this catalog runs those tables in full LOB mode (AWS DMS User Guide, Setting LOB support for source databases in an AWS DMS task; the 1 MB threshold is this catalog's choice)."
-# Source dialects whose step 1 task never runs in full LOB mode (#1918). From a PostgreSQL
-# source into Aurora PostgreSQL, full LOB mode writes each row first and its LOB columns in a
-# second statement, and writes a NULL LOB as an empty value: a unique index over a nullable
-# text column refuses the second such row, and an array column refuses the empty value.
-# Limited LOB mode writes the row in one statement. A table whose LOB columns the collection
-# measured runs at the measured size (measured_* below); one whose LOB sizes are neither
-# declared nor measured runs at undeclared_max_kb, and the plan says so. The source endpoint sets
-# FailTasksOnLobTruncation, but in a live full load DMS 3.5.4 still truncated a larger value with
-# only a warning in the task log, so the size, not that setting, keeps values whole. During
-# change capture DMS allocates memory in proportion to LobMaxSize times the LOB columns: in a
-# live run on a 311-table source (about 100 tables with LOB columns), 100 MB, 8 MB and 2 MB ran
-# a dms.t3.medium out of memory within minutes of change capture, 64 KB did not
-# (lob.instance_classes sizes the class).
-limited_only = ["postgresql"]
+# Source dialects whose step 1 task never runs in full LOB mode (#1918, #2123). AWS DMS User
+# Guide, "Best practices for AWS DMS", "Migrating large binary objects (LOBs)": DMS "creates a
+# new row in the target table and populates the row with all data except the associated LOB
+# value", then "updates the row in the target table with the LOB data", so "all LOB columns on
+# the target table must be nullable"; the guide's "Table and collection settings rules and
+# operations" says limited mode migrates "all LOBs inline together with other column data types"
+# in a full load. From a PostgreSQL source into Aurora PostgreSQL, full LOB mode wrote a NULL
+# LOB as an empty value: a unique index over a nullable text column refused the second such row,
+# and an array column refused the empty value (#1918). From a MySQL source into Aurora MySQL, the
+# first statement's NULL failed on the NOT NULL LONGTEXT columns step 1's DDL keeps from the
+# source ("Update LOB failed ... cannot be null", #2123). Limited LOB mode writes the row in one
+# statement. A table whose LOB columns the collection measured runs at the measured size
+# (measured_* below); one whose LOB sizes are neither declared nor measured runs at
+# undeclared_max_kb, and the plan says so. A PostgreSQL source endpoint sets
+# FailTasksOnLobTruncation (fails_on_truncation), but in a live full load DMS 3.5.4 still
+# truncated a larger value with only a warning in the task log, so the size, not that setting,
+# keeps values whole; a MySQL source endpoint has no such setting (AWS DMS User Guide,
+# "Endpoint settings when using MySQL as a source"), so DMS validation reports a truncated row
+# as mismatched. During change capture DMS allocates memory in proportion to LobMaxSize times
+# the LOB columns: in a live run on a 311-table source (about 100 tables with LOB columns),
+# 100 MB, 8 MB and 2 MB ran a dms.t3.medium out of memory within minutes of change capture,
+# 64 KB did not (lob.instance_classes sizes the class).
+limited_only = ["postgresql", "mysql"]
 undeclared_max_kb = 64
-limited_only_why = "On a PostgreSQL source into Aurora PostgreSQL, full LOB mode turns a NULL LOB into an empty value (a live step 1 run, #1918), so step 1 runs limited LOB mode; an unmeasured LOB runs at 64 KB, this catalog's choice: DMS notes that a limit above 63 KB slows the load, and larger limits ran the smallest instance out of memory during change capture in that run."
+limited_only_why = "Full LOB mode writes each row first and its LOB values in a second statement: from a PostgreSQL source it turned a NULL LOB into an empty value (#1918), and from a MySQL source the first statement's NULL failed on a NOT NULL LONGTEXT column (#2123), so step 1 runs limited LOB mode; an unmeasured LOB runs at 64 KB, this catalog's choice: DMS notes that a limit above 63 KB slows the load, and larger limits ran the smallest instance out of memory during change capture in a live run."
+# The source dialects whose DMS endpoint has FailTasksOnLobTruncation (AWS DMS User Guide,
+# "Endpoint settings when using PostgreSQL as a source"; the MySQL source endpoint has none).
+fails_on_truncation = ["postgresql"]
+# The source dialects whose LOB types declare the type's ceiling, not a bound on the values:
+# MySQL's information_schema gives every LONGTEXT a CHARACTER_MAXIMUM_LENGTH of 4294967295 and
+# every MEDIUMTEXT 16777215. A declared size above limited_max_kb from such a dialect is not
+# used as the table's LOB limit (it would size it at DMS's 100 MB maximum); the table runs at
+# undeclared_max_kb until its values are measured.
+declared_is_type_ceiling = ["mysql"]
+# The source dialects whose unmeasured LOB tables stop step 1 (#2123): the MySQL source endpoint
+# truncates a longer value with no task error (in a live run 64 KB truncated 4 WordPress rows,
+# up to 79,934 bytes, caught only by DMS validation), so preflight's lob_sizes check fails until
+# each such table is measured: by the collection (max_value_bytes), or by the read-only
+# lob-sizes.sql step 1 writes, whose output run_dms_step.py lob-sizes reads. PostgreSQL keeps
+# undeclared_max_kb with a finding (its endpoint sets FailTasksOnLobTruncation).
+measure_required = ["mysql"]
+# Only when the customer explicitly skips measuring ("lob_sizes": "skip" in step 1's
+# inputs.json): each unmeasured table runs at skipped_max_kb, and the replication instance is
+# sized for it (lob.instance_classes).
+skipped_max_kb = 1024
+skipped_why = "You chose to skip measuring (\"lob_sizes\": \"skip\" in inputs.json), so each unmeasured LOB table runs at 1024 KB (this catalog's choice): DMS allocates memory in proportion to the LOB limit times the LOB columns, so the replication instance is sized for it, and a longer value is truncated with only a warning in the task log; only DMS validation reports it."
 # Measured LOB sizes (#1918): the PostgreSQL collection script records each LOB column's
-# longest value in bytes (max_value_bytes, the UTF-8 octet length; a bytea's raw length). DMS
+# longest value in bytes (max_value_bytes, the UTF-8 octet length; a bytea's raw length), and
+# so does the MySQL one since #2128 (MAX(LENGTH()), in bytes); a MySQL column it could not
+# measure (an older collection, or a table over its scan limit) stops step 1 (#2123). DMS
 # counts a character LOB in at most 2 bytes per character (a live run: 64 KB kept a value of
 # 31,978 characters whole), and 2 bytes per UTF-8 byte bounds both encodings. LobMaxSize is the
 # largest measured value in that count, times measured_headroom, rounded up to measured_round_kb.
@@ -101,6 +138,10 @@ limited_only_why = "On a PostgreSQL source into Aurora PostgreSQL, full LOB mode
 measured_bytes_per_character = 2
 measured_headroom = 1.25
 measured_round_kb = 1024
+# Per source dialect, a finer step (#2123): from a MySQL source every measured table above the
+# catalog's size would otherwise round up to 1 MB, and the replication instance pays for it per
+# LOB column (lob.instance_classes max_total_lob_kb). PostgreSQL keeps 1 MB, as its live runs did.
+measured_round_kb_by_source = { mysql = 64 }
 measured_why = "Sized from the collection's measured longest values: 2 bytes per stored byte of a character LOB (DMS counts at most 2 bytes per character), 1.25 times headroom, rounded up to 1 MB steps (this catalog's choice)."
 # A table whose measured values need more than the task's LobMaxSize gets its own limit (#1918):
 # a table-settings rule with lob-settings (mode limited, bulk-max-size in KB) overrides the task's
@@ -113,6 +154,13 @@ measured_why = "Sized from the collection's measured longest values: 2 bytes per
 table_settings_why = "A task-wide limit sized for one table costs memory for every LOB column of every table DMS buffers (in a live run a task-wide 2048 KB ran a 4 GiB replication instance out of memory within minutes of change capture, where a 64 KB task with one table at 5120 KB held), so only these tables get the larger limit."
 scalars_why = "Types the DMS PostgreSQL source maps to non-LOB types (AWS DMS User Guide, Source data types for PostgreSQL); the list is this catalog's reading of that table, and a type not on it is moved in full LOB mode."
 
+# max_total_lob_kb (#2123) is the most the class holds summed over every LOB column of every moved
+# LOB table, each at the limit it runs at (the task's LobMaxSize, or its table's own): DMS
+# allocates a buffer per LOB column, so 60 tables at 1 MB each cost what one task-wide 1 MB over
+# 60 tables does. dms.t3.medium held about 100 LOB tables at 64 KB plus one at 5120 KB (about
+# 11,500 KB in total) and ran out of memory at 100 tables at 2048 KB (about 200,000 KB), so it
+# takes 16384 KB; dms.r6i.large held about 100 tables at 5120 KB (about 512,000 KB), so 524288
+# KB; the larger classes scale with memory (this catalog's choice).
 # The replication instance the LOB limits need (#1918), smallest first. max_lob_kb is the
 # largest task-wide LobMaxSize the class holds; max_table_lob_kb the largest limit one table may
 # have of its own (table_settings_why) while the task runs at most at max_lob_kb. During change
@@ -132,6 +180,7 @@ instance_class = "dms.t3.medium"
 memory_gib = 4
 max_lob_kb = 64
 max_table_lob_kb = 5120
+max_total_lob_kb = 16384
 included_storage_gb = 50
 why = "4 GiB held a 64 KB task with one table at 5120 KB through change capture under a heavy write load in a live run; a task-wide 2048 KB ran it out of memory."
 
@@ -140,6 +189,7 @@ instance_class = "dms.r6i.large"
 memory_gib = 16
 max_lob_kb = 5120
 max_table_lob_kb = 20480
+max_total_lob_kb = 524288
 included_storage_gb = 100
 why = "16 GiB held a task-wide 5120 KB LobMaxSize through the full load and change capture in a live run; a table's own limit scales from dms.t3.medium's with memory (this catalog's choice, not measured)."
 
@@ -148,6 +198,7 @@ instance_class = "dms.r6i.xlarge"
 memory_gib = 32
 max_lob_kb = 10240
 max_table_lob_kb = 40960
+max_total_lob_kb = 1048576
 included_storage_gb = 100
 why = "32 GiB: twice dms.r6i.large's memory, so twice its LobMaxSize (this catalog's choice, not measured)."
 
@@ -156,6 +207,7 @@ instance_class = "dms.r6i.2xlarge"
 memory_gib = 64
 max_lob_kb = 20480
 max_table_lob_kb = 81920
+max_total_lob_kb = 2097152
 included_storage_gb = 100
 why = "64 GiB: four times dms.r6i.large's memory, so four times its LobMaxSize (this catalog's choice, not measured)."
 
