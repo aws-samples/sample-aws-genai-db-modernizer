@@ -28,7 +28,7 @@ from src.storage.local_store import LocalArtifactStore
 from src.tools.routines.mysql_checks import MySqlRoutine, check_mysql_routine
 from src.tools.routines.postgresql_checks import PostgresRoutine, check_postgresql_routine
 from src.tools.routines.rewrites import rewrite_mysql_routine, rewrite_postgresql_routine
-from tests.e2e.deliverable_figures import md_plain
+from tests.e2e.deliverable_figures import md_plain, norm, pdf_page_texts
 from tests.e2e.pipeline import PipelineResult, sample_routines
 
 pytestmark = [pytest.mark.e2e, pytest.mark.deterministic]
@@ -248,13 +248,37 @@ def test_the_engineering_report_states_each_outcome(sample_run: PipelineResult) 
     assert f"`{_key(sample_run.db, 'rewritten')[1]}`" in notes
 
 
+def _rendered_texts(run: PipelineResult, html_dir: Path) -> dict[str, str]:
+    """Every rendered file of the job, by name: the deliverables folder and synthesis's
+    per-version copies, JSON, JavaScript, Markdown and HTML as text, and each PDF as its
+    page text (the way ``test_deliverable_figures.py`` reads it). A run writes no HTML
+    deliverable (the decision and analysis HTML reports are retired, #987), so the
+    engineering report is also rendered to the help site's HTML page, as
+    ``scripts/build_docs_sample.py`` renders it."""
+    from scripts.build_docs_sample import _render_engineering_html
+
+    out: dict[str, str] = {"report.json": run.report_json().read_text()}
+    html = _render_engineering_html(run.deliverable("engineering-report.md"), html_dir)
+    assert html is not None, "the docs extra (markdown) renders the HTML: uv sync --extra docs"
+    out["engineering-report.html"] = html.read_text(encoding="utf-8")
+    folders = [Path(run.report["deliverables_dir"]), run.job_dir() / "synthesis"]
+    for path in sorted(p for folder in folders for p in folder.rglob("*") if p.is_file()):
+        name = str(path.relative_to(run.job_dir()))
+        if path.suffix == ".pdf":
+            out[name] = " ".join(pdf_page_texts(str(path)))
+        elif path.suffix in (".json", ".js", ".md", ".html"):
+            out[name] = path.read_text(encoding="utf-8")
+    return out
+
+
 def test_no_routine_text_reaches_report_json_or_the_deliverables(
-    sample_run: PipelineResult,
+    sample_run: PipelineResult, tmp_path: Path
 ) -> None:
-    """The routine text stays in the routine sources (ADR-034 Decision 4)."""
-    texts = [sample_run.report_json().read_text()]
-    deliverables = Path(sample_run.report["deliverables_dir"])
-    texts += [p.read_text(encoding="utf-8") for p in sorted(deliverables.glob("*.[jm][sd]*"))]
+    """The routine text stays in the routine sources (ADR-034 Decision 4): no rendered
+    file holds it, PDF and HTML included."""
+    texts = _rendered_texts(sample_run, tmp_path)
+    for suffix in (".pdf", ".md", ".json", ".html"):
+        assert any(n.endswith(suffix) for n in texts), suffix
     bodies = (
         "innodb_flush_log_at_trx_commit",
         "COUNT(*) INTO n",
@@ -262,7 +286,8 @@ def test_no_routine_text_reaches_report_json_or_the_deliverables(
         "bumped_at <",
     )
     for body in bodies:
-        assert not any(body in t for t in texts), body
+        leaks = [n for n, t in texts.items() if body in t or norm(body) in t]
+        assert not leaks, (body, leaks)
 
 
 def test_the_counts_hold_only_the_routines_with_code(sample_run: PipelineResult) -> None:
