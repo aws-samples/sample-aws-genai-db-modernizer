@@ -32,11 +32,15 @@ Prompt inputs
   report with mermaid fences removed, in full.
 
 The whole prompt is capped at ``PROMPT_CHAR_CEILING`` characters. Below it
-nothing is cut; above it the largest inputs are cut first, per section, with
-an explicit marker per cut (``truncate_sections`` / ``truncate_json``). The
+nothing is cut; above it the deliverables keep at least
+``DELIVERABLES_MIN_SHARE`` of the room, the largest inputs are cut first, per
+section, with a floor per section, the rubric's sections weighted up, and an
+explicit marker per cut (``truncate_sections`` / ``truncate_json``). The
 output JSON records ``prompt_chars`` and, per input, ``source_chars``,
 ``chars``, ``truncated`` and ``sections_truncated``, so a reviewer can tell a
-harness gap from a product defect.
+harness gap from a product defect, and ``judge_input``: when a deliverable or
+one of its sections would reach the judge empty, the judge fails (exit 2)
+without calling the model (``check_judge_input``, #2146).
 
 Model invocation
 -----------------
@@ -170,14 +174,19 @@ DEFECT_KINDS: tuple[str, ...] = (
 MAX_DEFECTS = 60
 DEFECT_TEXT_CHARS = 300
 
-# Overall prompt ceiling, in characters (about 40K tokens). Every input is
+# Overall prompt ceiling, in characters (about 62K tokens). Every input is
 # included in full when the whole prompt fits; above the ceiling ``facts``
-# keeps its budget first and the largest deliverables are cut first
-# (max-min fair share of what's left), each per section with an explicit,
-# nonce-tagged marker and an entry in the trusted cut list after the data, so
-# the judge never mistakes truncation for absence. One constant, so changing
-# it is a one-line diff.
-PROMPT_CHAR_CEILING = 150_000
+# keep at most what leaves the deliverables ``DELIVERABLES_MIN_SHARE`` of the
+# room, and the largest deliverables are cut first (max-min fair share of
+# what's left), each per section with an explicit, nonce-tagged marker and an
+# entry in the trusted cut list after the data, so the judge never mistakes
+# truncation for absence. It was 150K until #2146. A whole wordpress prompt
+# is 163,469 characters (tests/fixtures/real_runs/wordpress-both), so 150K cut
+# five engineering-report sections and 250K keeps it whole; a discourse prompt
+# with all its facts left the deliverables nothing at 150K, and at 250K only
+# the Migration map stays partly cut (about 266K would keep every rubric
+# section whole). One constant, so changing it is a one-line diff.
+PROMPT_CHAR_CEILING = 250_000
 
 # Inputs in prompt order: (key, section heading). ``facts`` is built from
 # report.json (+ llm_input.json / assignment.json); the others are the
@@ -383,6 +392,10 @@ def locate_deliverables(artifact_root: Path, db: str, job: str) -> dict[str, Pat
 # ---------------------------------------------------------------------------
 
 
+# The one PDF note that is not a judge_input problem (check_judge_input).
+PYPDF_MISSING_NOTE = "pypdf not installed"
+
+
 def read_pdf_text(path: Path | None) -> tuple[str, str | None]:
     """Return ``(text, note)``. ``note`` is set (and ``text`` empty) whenever
     the PDF section is skipped: no PDF deliverable, ``pypdf`` not installed
@@ -395,7 +408,7 @@ def read_pdf_text(path: Path | None) -> tuple[str, str | None]:
     try:
         import pypdf
     except ImportError:
-        return "", "pypdf not installed (requires the 'e2e' extra); PDF section skipped."
+        return "", PYPDF_MISSING_NOTE + " (requires the 'e2e' extra); PDF section skipped."
 
     try:
         pages = extract_pdf_pages(path, pypdf)
@@ -472,24 +485,57 @@ _Rendered = tuple[str, list[dict[str, Any]]]
 _MD_HEADING_RE = re.compile(r"^(#{1,6} |\[page \d+)")
 _CODE_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
-# Sections cut last: the ones the risks, roadmap and justified_engines
-# criteria are graded on. Matched case-insensitively against a section's
-# heading path, so "Risk register (11) > dynamodb" is protected along with its
-# parent. The engineering report's own headings (#952): "Risk posture",
-# "Resolved by the assignment", "Mitigation strategies", "Close calls"; and
-# the roadmap's "Migration roadmap". "Migration trade-offs" stays cuttable
-# (it is the longest of them and is cut before the register).
+# Where a cut spends the engineering report's budget (#2146). A section is
+# weighted by its top-level heading (case-insensitive substring), so "Risk
+# register (11) > dynamodb" counts with its parent and a "Cost" subsection of
+# the trade-offs does not count as the Cost section. PROTECTED_SECTIONS are the
+# ones the criteria are graded on (rubric.md, "Evidence by criterion"): the
+# executive summary, engines, cost, close calls, ownership (Migration map,
+# Sources of truth), the roadmap and its gates, and the risk sections (#952:
+# "Risk posture", "Resolved by the assignment", "Mitigation strategies"),
+# plus the deck's older page titles. They are cut only once every other
+# section is down to its floor. The SECONDARY_SECTIONS, where the rubric
+# looks next for justified_engines and risks (the trade-offs and the
+# per-engine schemas), are cut before them but get SECONDARY_WEIGHT times the
+# allowance of a plain section once the protected ones are whole; below that
+# every unprotected section is at its floor, so the weight only applies
+# between the two.
 PROTECTED_SECTIONS: tuple[str, ...] = (
+    "executive summary",
+    "target engines",
+    "cost",
+    "close calls",
+    "decided automatically",
+    "cache layer",
+    "migration map",
+    "sources of truth",
+    "migration roadmap",
+    "migration sequencing",
     "risk register",
     "risk profile",
     "risk posture",
     "resolved by the assignment",
     "mitigation strategies",
-    "close calls",
-    "migration sequencing",
-    "migration map",
-    "migration roadmap",
 )
+SECONDARY_SECTIONS: tuple[str, ...] = ("migration trade-offs", "target schemas")
+SECONDARY_WEIGHT = 2
+
+
+def _section_weight(name: str, protected: tuple[str, ...]) -> int | None:
+    """A section's allowance weight, ``None`` for a protected section."""
+    top = name.split(" > ", 1)[0].lower()
+    if any(p in top for p in protected):
+        return None
+    if any(p in top for p in SECONDARY_SECTIONS):
+        return SECONDARY_WEIGHT
+    return 1
+
+
+# Every section with content keeps at least this many characters of it when
+# cut (#2146): a cut spends the budget unevenly, never down to a bare
+# heading. Only when even the floors don't fit is the floor lowered, and
+# then whole lines are dropped from the end (``judge_input`` then fails).
+SECTION_FLOOR_CHARS = 240
 
 # The shortest piece of a cut line worth showing; below this the line is
 # counted as not shown rather than shown as a few meaningless characters.
@@ -541,6 +587,75 @@ def _section_names(sections: list[tuple[str | None, list[str]]]) -> list[str]:
     return names
 
 
+# The Migration map's rows the ownership rule (rubric.md) checks first: a
+# table another engine also reads, or a cache fronts, is where the Owner can
+# disagree with Sources of truth and the wave sync lines. When the map is
+# cut, those rows are kept before the single-engine ones (#2146).
+_EMPTY_CELLS = frozenset({"", "-", "\u2014"})
+
+
+def _preferred_lines(name: str, items: list[str]) -> list[int] | None:
+    """Indices of the lines a cut keeps first, or ``None`` for plain order:
+    in the Migration map, every line that is not a table row of a
+    single-engine, uncached table."""
+    if "migration map" not in name.split(" > ", 1)[0].lower():
+        return None
+    columns: dict[str, int] = {}
+    preferred: list[int] = []
+    for i, item in enumerate(items):
+        cells = [c.strip() for c in item.strip().strip("|").split("|")]
+        if not item.lstrip().startswith("|"):
+            preferred.append(i)
+        elif "Also read by" in cells:
+            columns = {c: n for n, c in enumerate(cells)}
+            preferred.append(i)
+        elif not columns or set(item.replace("|", "").strip()) <= set("-: "):
+            preferred.append(i)
+        elif any(
+            cells[columns[c]] not in _EMPTY_CELLS
+            for c in ("Also read by", "Cached by")
+            if c in columns and columns[c] < len(cells)
+        ):
+            preferred.append(i)
+    return preferred if columns else None
+
+
+def _render_preferred(
+    lines: list[str],
+    items: list[str],
+    preferred: list[int],
+    allowance: int,
+    name: str,
+    tag: str,
+    index: int,
+) -> tuple[list[str], dict[str, Any]]:
+    """Whole lines, the ``preferred`` ones first, in document order."""
+    keep: set[int] = set()
+    used = 0
+    rest = [i for i in range(len(items)) if i not in set(preferred)]
+    for group in (preferred, rest):
+        for i in group:
+            if used + len(items[i]) + 1 > allowance:
+                break
+            keep.add(i)
+            used += len(items[i]) + 1
+        else:
+            continue
+        break
+    lines += [items[i] for i in sorted(keep)]
+    lines.append(
+        f"[{tag}: section #{index}: {len(keep)} of {len(items)} lines shown in full, "
+        "rows also read by another engine or cached kept first]"
+    )
+    return lines, {
+        "section": name,
+        "index": index,
+        "shown": len(keep),
+        "total": len(items),
+        "preferred_first": True,
+    }
+
+
 def _render_section(
     heading: str | None,
     items: list[str],
@@ -557,6 +672,9 @@ def _render_section(
     lines = [heading] if heading is not None else []
     if allowance is None or sum(len(i) + 1 for i in items) <= allowance:
         return lines + items, None
+    preferred = _preferred_lines(name, items)
+    if preferred is not None and allowance >= SECTION_FLOOR_CHARS:
+        return _render_preferred(lines, items, preferred, allowance, name, tag, index)
     used, kept = 0, 0
     partial: tuple[int, int] | None = None
     for item in items:
@@ -592,27 +710,36 @@ def truncate_sections(
     """Fit ``text`` into ``budget`` characters, keeping every heading.
 
     Each section gets the same character allowance for its lines (the
-    largest that fits), so short sections stay whole and long ones are cut.
-    Sections whose heading path matches ``protected`` are cut only once the
-    others are down to nothing. If even the headings don't fit, whole lines
-    are dropped from the end (never mid-line). Returns ``(text, info)`` with
+    largest that fits), so short sections stay whole and long ones are cut;
+    the ``SECONDARY_SECTIONS`` get ``SECONDARY_WEIGHT`` times it, and no
+    section gets less than ``SECTION_FLOOR_CHARS``. Sections whose top-level
+    heading matches ``protected`` stay whole until every other section is
+    down to its floor; then they share what is left the same way. If the
+    floors don't fit, the floor is lowered; if even the headings don't fit,
+    whole lines are dropped from the end (never mid-line). Returns
+    ``(text, info)`` with
     ``info = {"truncated", "sections_truncated", ["hard_cut"]}``."""
     if len(text) <= budget:
         return text, {"truncated": False, "sections_truncated": []}
 
     sections = _split_sections(text)
     names = _section_names(sections)
-    is_protected = [any(p in n.lower() for p in protected) for n in names]
+    weights = [_section_weight(n, protected) for n in names]
 
     def render(
-        free_allowance: int | None, protected_allowance: int | None
+        scale: int, floor: int, protected_allowance: int | None
     ) -> tuple[str, list[dict[str, Any]]]:
         lines: list[str] = []
         cuts: list[dict[str, Any]] = []
-        for index, ((heading, items), name, prot) in enumerate(
-            zip(sections, names, is_protected, strict=True), start=1
+        for index, ((heading, items), name, weight) in enumerate(
+            zip(sections, names, weights, strict=True), start=1
         ):
-            allowance = protected_allowance if prot else free_allowance
+            if weight is not None:
+                allowance: int | None = max(floor, scale * weight)
+            elif protected_allowance is not None:
+                allowance = max(floor, protected_allowance)
+            else:
+                allowance = None
             section_lines, cut = _render_section(heading, items, allowance, name, tag, index)
             lines.extend(section_lines)
             if cut:
@@ -631,13 +758,16 @@ def truncate_sections(
         return best
 
     longest = max((sum(len(i) + 1 for i in items) for _, items in sections), default=0)
-    best = search(lambda a: render(a, None), longest)
+    floor = SECTION_FLOOR_CHARS
+    best = search(lambda a: render(a, floor, None), longest) or search(
+        lambda a: render(0, floor, a), longest
+    )
     if best is None:
-        best = search(lambda a: render(0, a), longest)
+        best = search(lambda f: render(0, f, 0), floor)
 
     info: dict[str, Any] = {"truncated": True}
     if best is None:
-        rendered, cuts = render(0, 0)
+        rendered, cuts = render(0, 0, 0)
         kept_lines: list[str] = []
         all_lines = rendered.splitlines()
         size = 0
@@ -697,36 +827,43 @@ def dump_facts(obj: Any) -> str:
 
 def truncate_json(obj: Any, budget: int, *, tag: str = "cut") -> tuple[str, dict[str, Any]]:
     """``dump_facts(obj)`` fitted into ``budget`` characters, always as valid
-    JSON. Lists in ``FACTS_CUT_FIRST`` are capped first, then every other
-    list except ``FACTS_UNCUT_LISTS``, each at the largest common length that
-    fits and ending in a ``"[cut-<nonce>: list truncated: k of m items
-    shown]"`` string. Then ``FACTS_DROPPABLE_KEYS`` are replaced by a marker.
-    If it still doesn't fit the JSON is returned whole, flagged
-    ``over_budget``: never sliced into invalid JSON."""
+    JSON. Lists are capped, each ending in a ``"[cut-<nonce>: list truncated:
+    k of m items shown]"`` string, in this order, each step at the largest
+    common length that fits: the lists of plain values (table names, ids)
+    while lists of records (risks, waves, engine pairs) stay whole (#2146);
+    then the ``FACTS_CUT_FIRST`` lists alone; then every list; then the
+    ``FACTS_CUT_FIRST`` lists emptied and the others capped.
+    ``FACTS_UNCUT_LISTS`` are never capped. Then ``FACTS_DROPPABLE_KEYS``
+    are replaced by a marker. If it still doesn't fit the JSON is returned
+    whole, flagged ``over_budget``: never sliced into invalid JSON."""
     full = dump_facts(obj)
     if len(full) <= budget:
         return full, {"truncated": False, "sections_truncated": []}
 
-    def cap(value: Any, first_n: int | None, other_n: int | None, path: str, cut: list) -> Any:
+    Limit = Callable[[str, list], "int | None"]
+
+    def cap(value: Any, limit_for: Limit, path: str, cut: list) -> Any:
         if isinstance(value, dict):
             return {
-                k: cap(v, first_n, other_n, f"{path}.{k}" if path else k, cut)
-                for k, v in value.items()
+                k: cap(v, limit_for, f"{path}.{k}" if path else k, cut) for k, v in value.items()
             }
         if isinstance(value, list):
-            if path in FACTS_UNCUT_LISTS:
-                limit = None
-            elif path in FACTS_CUT_FIRST:
-                limit = first_n
-            else:
-                limit = other_n
+            limit = None if path in FACTS_UNCUT_LISTS else limit_for(path, value)
             items = value if limit is None else value[:limit]
-            kept = [cap(v, first_n, other_n, f"{path}[]", cut) for v in items]
+            kept = [cap(v, limit_for, f"{path}[]", cut) for v in items]
             if limit is not None and len(value) > limit:
                 cut.append({"section": path, "shown": limit, "total": len(value)})
                 kept.append(f"[{tag}: list truncated: {limit} of {len(value)} items shown]")
             return kept
         return value
+
+    def first(n: int | None, other: int | None) -> Limit:
+        return lambda path, _value: n if path in FACTS_CUT_FIRST else other
+
+    def plain_values(n: int) -> Limit:
+        return lambda _path, value: (
+            n if all(not isinstance(v, (dict, list)) for v in value) else None
+        )
 
     def longest(value: Any) -> int:
         if isinstance(value, dict):
@@ -735,9 +872,9 @@ def truncate_json(obj: Any, budget: int, *, tag: str = "cut") -> tuple[str, dict
             return max([len(value), *(longest(v) for v in value)])
         return 0
 
-    def render(source: Any, first_n: int | None, other_n: int | None) -> tuple[str, list]:
+    def render(source: Any, limit_for: Limit) -> tuple[str, list]:
         cut: list[dict[str, Any]] = []
-        return dump_facts(cap(source, first_n, other_n, "", cut)), cut
+        return dump_facts(cap(source, limit_for, "", cut)), cut
 
     def search(fn: Callable[[int], _Rendered], hi: int) -> _Rendered | None:
         lo, best = 0, None
@@ -752,7 +889,12 @@ def truncate_json(obj: Any, budget: int, *, tag: str = "cut") -> tuple[str, dict
 
     hi = longest(obj)
     info: dict[str, Any] = {"truncated": True}
-    best = search(lambda n: render(obj, n, None), hi) or search(lambda n: render(obj, 0, n), hi)
+    best = (
+        search(lambda n: render(obj, plain_values(n)), hi)
+        or search(lambda n: render(obj, first(n, None)), hi)
+        or search(lambda n: render(obj, first(n, n)), hi)
+        or search(lambda n: render(obj, first(0, n)), hi)
+    )
     if best is None and isinstance(obj, dict):
         reduced = dict(obj)
         dropped: list[str] = []
@@ -761,13 +903,13 @@ def truncate_json(obj: Any, budget: int, *, tag: str = "cut") -> tuple[str, dict
                 continue
             reduced[key] = f"[{tag}: {key} dropped to fit the prompt ceiling]"
             dropped.append(key)
-            candidate = render(reduced, 0, 0)
+            candidate = render(reduced, first(0, 0))
             if len(candidate[0]) <= budget:
                 best = candidate
                 break
         info["keys_dropped"] = dropped
         if best is None:
-            best = render(reduced, 0, 0)
+            best = render(reduced, first(0, 0))
             info["over_budget"] = True
     elif best is None:
         best = (full, [])
@@ -785,6 +927,23 @@ def truncate_json(obj: Any, budget: int, *, tag: str = "cut") -> tuple[str, dict
         slot["total"] += entry["total"]
     info["sections_truncated"] = list(merged.values())
     return rendered, info
+
+
+# The share of the room left after the fixed prompt parts that the
+# deliverables keep when facts and deliverables don't both fit (#2146). Facts
+# used to take their budget first, and on discourse (118K chars of facts) the
+# deliverables were left with nothing; the judge then saw every section cut
+# to 0 lines and scored all criteria a neutral 3.
+DELIVERABLES_MIN_SHARE = 0.5
+
+
+def facts_allowance(facts_size: int, deliverables_size: int, available: int) -> int:
+    """Characters for ``facts``: all of it when everything fits, else as much
+    as leaves the deliverables ``DELIVERABLES_MIN_SHARE`` of ``available``
+    (or all they need, when that is less)."""
+    available = max(0, available)
+    reserve = min(deliverables_size, int(available * DELIVERABLES_MIN_SHARE))
+    return min(facts_size, available - reserve)
 
 
 def allocate_budgets(sizes: dict[str, int], available: int) -> dict[str, int]:
@@ -921,6 +1080,8 @@ def _cut_list(inputs: dict[str, dict[str, Any]]) -> str:
                 if cut.get("partial_line_chars"):
                     shown, total = cut["partial_line_chars"]
                     detail += f", next line cut at {shown} of {total} chars"
+                if cut.get("preferred_first"):
+                    detail += ", rows also read by another engine or cached kept first"
                 detail += f" ({_quoted_name(cut['section'])})"
             else:
                 detail = (
@@ -933,6 +1094,53 @@ def _cut_list(inputs: dict[str, dict[str, Any]]) -> str:
         if entry.get("hard_cut"):
             lines.append(f"- {label}: {entry['hard_cut']['lines_dropped']} trailing lines dropped")
     return "\n".join(lines) if lines else "None: every input above is complete."
+
+
+def check_judge_input(inputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Whether the judge sees every deliverable (#2146): ``{"ok", "problems"}``.
+
+    A problem is a deliverable with no text, one cut by dropping trailing
+    lines (its section floors did not fit), or a section with content of
+    which not a character is shown. The judge used to score such a prompt
+    a neutral 3 on every criterion; ``run_judge`` now fails instead, before
+    any model call. So is a PDF whose text could not be extracted. A PDF
+    skipped because ``pypdf`` is not installed (the dev extra only) is not:
+    the prompt says so in place of its text."""
+    problems: list[str] = []
+    for key, heading in PROMPT_INPUTS:
+        if key == "facts":
+            continue
+        label = heading.split(" -- ", 1)[0].removeprefix("## ")
+        entry = inputs[key]
+        note = entry.get("note")
+        if note and note.startswith(PYPDF_MISSING_NOTE):
+            continue
+        if note:
+            problems.append(f"{label}: {note}")
+            continue
+        if not entry.get("source_chars"):
+            problems.append(f"{label} is empty")
+            continue
+        if entry.get("hard_cut"):
+            problems.append(
+                f"{label}: {entry['hard_cut']['lines_dropped']} trailing lines dropped "
+                "(the section floors do not fit the prompt ceiling)"
+            )
+        blank = [
+            cut
+            for cut in entry.get("sections_truncated") or []
+            if "index" in cut
+            and cut["total"] > 0
+            and cut["shown"] == 0
+            and not cut.get("partial_line_chars")
+        ]
+        if blank:
+            listed = ", ".join(
+                f"#{c['index']} {json.dumps(c['section'][:CUT_LIST_NAME_CHARS])}" for c in blank[:5]
+            )
+            more = f" and {len(blank) - 5} more" if len(blank) > 5 else ""
+            problems.append(f"{label}: {len(blank)} sections shown empty: {listed}{more}")
+    return {"ok": not problems, "problems": problems}
 
 
 def build_prompt_with_stats(
@@ -951,8 +1159,11 @@ def build_prompt_with_stats(
     Order: task, rubric (inputs, rules, anchors), untrusted-data rule, the
     three blocks, then the rubric's evidence pointers, the trusted cut list,
     the reminder and the response format. The prompt stays under ``ceiling``
-    unless the fixed parts alone exceed it. ``facts`` gets its budget first;
-    the deliverables share the rest, largest cut first."""
+    unless the fixed parts alone exceed it. ``facts`` gets at most what
+    leaves the deliverables ``DELIVERABLES_MIN_SHARE`` of the room
+    (``facts_allowance``); the deliverables share the rest, largest cut
+    first. ``stats["judge_input"]`` says whether the judge can see every
+    deliverable section (``check_judge_input``)."""
     nonce = nonce or secrets.token_hex(8)
     tag = _cut_tag(nonce)
 
@@ -1023,13 +1234,16 @@ def build_prompt_with_stats(
     slack = 0
     for attempt in range(10):
         available = ceiling - overhead - slack
-        facts_budget = min(full_sizes["facts"], max(0, available))
-        budgets = allocate_budgets({k: full_sizes[k] for k in sources}, available - facts_budget)
+        facts_budget = facts_allowance(
+            full_sizes["facts"], sum(full_sizes[k] for k in sources), available
+        )
         bodies: dict[str, str] = {}
         inputs: dict[str, dict[str, Any]] = {}
         body, info = truncate_json(facts, facts_budget, tag=tag)
         bodies["facts"] = body
         inputs["facts"] = {"source_chars": full_sizes["facts"], "chars": len(body), **info}
+        # What facts leave unused goes to the deliverables.
+        budgets = allocate_budgets({k: full_sizes[k] for k in sources}, available - len(body))
         for key in sources:
             body, info = truncate_sections(neutralise_tags(sources[key]), budgets[key], tag=tag)
             bodies[key] = body
@@ -1051,6 +1265,7 @@ def build_prompt_with_stats(
         "prompt_char_ceiling": ceiling,
         "fixed_chars": overhead,
         "inputs": {k: inputs[k] for k, _ in PROMPT_INPUTS},
+        "judge_input": check_judge_input(inputs),
     }
     return prompt, stats
 
@@ -1555,6 +1770,11 @@ def run_judge(
         prompt, prompt_stats = build_prompt_with_stats(
             rubric_body, db, job, deliverables, relative_to=Path(artifact_root)
         )
+        if not prompt_stats["judge_input"]["ok"]:
+            raise JudgeError(
+                "judge input incomplete, no sample graded: "
+                + "; ".join(prompt_stats["judge_input"]["problems"])
+            )
         graded: list[dict[str, Any]] = []
         failed: list[str] = []
         for _ in range(samples):

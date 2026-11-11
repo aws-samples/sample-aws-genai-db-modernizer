@@ -2007,6 +2007,7 @@ def build_results_row(
         "pdf": None,
         "ui": None,
         "judge": None,
+        "judge_input": None,
         "explore": None,
     }
     missing_required = False
@@ -2090,6 +2091,7 @@ def build_results_row(
         apply_junit(ui_junit, ("ui",))
 
     judge_section: dict[str, Any] | None = None
+    judge_input: dict[str, Any] | None = None
     judge_payload = _load_json(judge_path)
     if judge_payload is None:
         missing_required = True
@@ -2098,6 +2100,12 @@ def build_results_row(
     else:
         checks["judge"] = bool(judge_payload.get("pass"))
         judge_section = {"mean": judge_payload.get("mean"), "scores": judge_payload.get("scores")}
+    # #2146: whether the judge saw every deliverable section. A judge.json from
+    # before #2146 (or one that failed before building its prompt) has none,
+    # and the check stays null and not required.
+    if judge_payload is not None and isinstance(judge_payload.get("judge_input"), dict):
+        judge_input = judge_payload["judge_input"]
+        checks["judge_input"] = judge_input.get("ok") is True
 
     # The /explore step (#307): required once it ran (its path is given); a dry run
     # without an explore transcript skips it and passes no path.
@@ -2124,6 +2132,8 @@ def build_results_row(
             }
 
     required = ["transcript", "contracts", "engineering", "pdf", "judge"]
+    if checks["judge_input"] is not None:
+        required.append("judge_input")
     if mode != "chat":
         required.append("ui")
     if explore_path is not None:
@@ -2184,6 +2194,7 @@ def build_results_row(
         "budget": budget,
         "warnings": warnings,
         "judge": judge_section,
+        "judge_input": judge_input,
         "explore": explore_section,
         "pass": overall_pass,
     }
