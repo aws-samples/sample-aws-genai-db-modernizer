@@ -109,7 +109,7 @@ class _FakeArtifactStore:
     ``._create_request_context`` (discovery lists via the client directly with a
     workspaceFilter), records the download, and serves a canned collection."""
 
-    def __init__(self, artifacts: list[dict], content: dict | None = None) -> None:
+    def __init__(self, artifacts: list[dict], content: dict | str | None = None) -> None:
         self.client = _FakeAgenticClient(artifacts)
         self._content = content if content is not None else {"collection_version": 1}
         self.downloaded: list[str] = []
@@ -120,7 +120,10 @@ class _FakeArtifactStore:
     def download_artifact(self, artifact_id: str, destination_file_path: str) -> None:
         self.downloaded.append(artifact_id)
         with open(destination_file_path, "w") as fh:
-            json.dump(self._content, fh)
+            if isinstance(self._content, str):  # a file as the script printed it
+                fh.write(self._content)
+            else:
+                json.dump(self._content, fh)
 
 
 def _artifact(
@@ -200,6 +203,52 @@ class TestDiscoverUploadedInput:
         assert fake.downloaded == ["art-1"]
         # ...and staged the content at the seed key for the collector to read.
         assert store.read_json(seed) == {"collection_version": 7}
+
+    def test_a_mysql_collection_with_the_lob_sizes_after_it_is_staged_with_them_merged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """collect-mysql.sql prints a second object after the collection (#2128); json.load
+        failed on it ("Extra data") and the job failed. The staged copy holds the sizes."""
+        collection = {
+            "collection_version": "1.0",
+            "columns": [
+                {"table_name": "t", "column_name": "id", "ordinal_position": 1},
+                {"table_name": "t", "column_name": "body", "ordinal_position": 2},
+            ],
+        }
+        sizes = {
+            "lob_sizes": [{"table_name": "t", "ordinal_position": 2, "max_value_bytes": 70000}]
+        }
+        fake = _FakeArtifactStore(
+            [_artifact("art-1", "default", path="mysql.json")],
+            content=json.dumps(collection) + "\n" + json.dumps(sizes) + "\n",
+        )
+        _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "shop")
+
+        assert core._discover_uploaded_input(store, "uuid1", "shop") == seed
+
+        staged = store.read_json(seed)
+        assert [c.get("max_value_bytes") for c in staged["columns"]] == [None, 70000]
+
+    @pytest.mark.passes_on_main  # a collection without the second object was always staged
+    def test_a_mysql_collection_whose_measurement_failed_is_staged_without_sizes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        collection = {
+            "collection_version": "1.0",
+            "columns": [{"table_name": "t", "ordinal_position": 1}],
+        }
+        fake = _FakeArtifactStore(
+            [_artifact("art-1", "default", path="mysql.json")],
+            content=json.dumps(collection) + "\n",
+        )
+        _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "shop")
+        assert core._discover_uploaded_input(store, "uuid1", "shop") == seed
+        assert store.read_json(seed) == collection
 
     def test_lists_without_server_side_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Regression guard: server-side category/agent filters returned listed=0

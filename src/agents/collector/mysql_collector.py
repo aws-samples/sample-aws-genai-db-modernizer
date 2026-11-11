@@ -637,10 +637,12 @@ def _collect_schema_raw(db: MySQLRemoteCollector, include_bodies: bool = True) -
     tables = []
     for t in raw_tables:
         name = t["table_name"]
+        columns = db.collect_columns(name)
+        db.measure_lob_columns(name, columns)  # max_value_bytes, bounded by size (#2128)
         tables.append(
             {
                 **t,
-                "columns": db.collect_columns(name),
+                "columns": columns,
                 "indexes": db.collect_indexes(name),
                 "foreign_keys": db.collect_foreign_keys(name),
                 "primary_key": db.collect_primary_key(name),

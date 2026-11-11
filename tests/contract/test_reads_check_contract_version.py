@@ -113,12 +113,7 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
 # direct file read reads, for a read whose result reaches none of HELPERS.
 _REVISION = "revision_context.json: revision instructions, not a contract"
 _K6 = "the load generator's own summary files"
-_REFERENCE = "the raw offline upload (a collection, no contract) the script seeds"
 FILE_READS: dict[tuple[str, str, str], str] = {
-    ("src/atx_orchestrator/core.py", "_discover_uploaded_input", "collection"): (
-        "the customer upload, copied verbatim to the seed key; the store checks it when "
-        "it is read back"
-    ),
     ("src/atx_orchestrator/runtime/hitl.py", "_download_artifact_json", "<return>"): (
         "a human-in-the-loop answer file, not a contract"
     ),
@@ -156,13 +151,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("src/agents/load_test/opensearch/runner.py", "validate_queries", "entries"): (
         "the runner's query manifest (a list, not a contract)"
     ),
-    ("scripts/atx_bootstrap_reference.py", "<module>", "raw"): _REFERENCE,
     ("scripts/usage_cost.py", "main", "usage"): (
         "the run's model usage record (_logs/model_usage.json, a declared internal file, "
         "#1494): token counts to price, no contract"
     ),
-    ("scripts/atx_subagent_test.py", "<module>", "<expr>"): _REFERENCE,
-    ("scripts/atx_tool_test.py", "<module>", "<expr>"): _REFERENCE,
     ("scripts/build_docs_sample.py", "update_scan_baseline", "data"): (
         "the repository's detect-secrets baseline (.secrets.baseline), not a contract"
     ),

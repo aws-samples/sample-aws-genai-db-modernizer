@@ -14,7 +14,6 @@ Everything here operates on the ArtifactStore abstraction. Storage type
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import tempfile
@@ -245,8 +244,12 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     try:
         # Any size (#384); the counts are checked when it is ingested (#142).
         artifacts.download_artifact(artifact_id, tmp_path)
+        # The collection scripts' own reader (#2128): a MySQL or MariaDB file may hold a second
+        # object after the collection (the LOB sizes), which json.load rejects as extra data.
+        from src.tools.database.offline_collection_check import read_collection_text
+
         with open(tmp_path, encoding="utf-8") as fh:
-            collection = json.load(fh)
+            collection = read_collection_text(fh.read(), source=f"uploaded artifact {artifact_id}")
         # The staged copy holds no literal value (#1625): a collector output's text,
         # tags and definitions, or a raw collection's (which keeps its query ids).
         from src.tools.sql.redact import redact_collector_output, redact_raw_collection

@@ -93,7 +93,8 @@ Version History:
   (#1891). Backward compatible: defaults to None (not recorded).
 - 5.10 (2026-11-07, #1918): Added optional ``Column.max_value_bytes``: the longest
   stored value of a LOB column in bytes, measured by the PostgreSQL collection script,
-  which sizes the step 1 DMS LobMaxSize.
+  which sizes the step 1 DMS LobMaxSize. Since #2128 the MySQL and MariaDB script and
+  live collector measure it too (``MAX(LENGTH(column))``); the shape is unchanged.
 - 5.11 (2026-11-07, #1834): Added optional ``Schema.enum_types`` (``SourceEnumType``:
   schema_name, type_name, labels): PostgreSQL's enum types with their labels in sort
   order (pg_enum), so a same-engine step 1 keeps enum columns. Backward compatible:
@@ -659,7 +660,8 @@ class Column(BaseModel):
         ge=0,
         description=(
             "The longest stored value in bytes (UTF-8 octets; a bytea's raw length), measured "
-            "by the collection for a LOB column (PostgreSQL, #1918); None when not measured"
+            "by the collection for a LOB column (PostgreSQL #1918, MySQL and MariaDB #2128); None "
+            "when not measured, 0 for an empty column"
         ),
     )
     numeric_precision: int | None = Field(

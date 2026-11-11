@@ -21,7 +21,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from src.tools.database.collection_text import extract_json_object
+from src.tools.database.collection_addenda import merge_addenda
+from src.tools.database.collection_text import extract_json_objects
 
 __all__ = ["CollectionLoadError", "load_collection"]
 
@@ -99,13 +100,17 @@ def _load_zip(path: Path) -> dict[str, Any]:
 
 def _parse(text: str, label: str) -> dict[str, Any]:
     try:
-        body = extract_json_object(text, source=label)
+        body, later = extract_json_objects(text, source=label)
     except ValueError as exc:
         raise CollectionLoadError(str(exc)) from exc
     try:
         data = json.loads(body)
     except json.JSONDecodeError as exc:
         raise CollectionLoadError(f"{label}: the JSON object is not valid JSON ({exc})") from exc
+    try:
+        merge_addenda(data, later, source=label)  # a second object some scripts print (#2128)
+    except ValueError as exc:
+        raise CollectionLoadError(str(exc)) from exc
     missing = [key for key in _REQUIRED_KEYS if key not in data]
     if missing:
         raise CollectionLoadError(

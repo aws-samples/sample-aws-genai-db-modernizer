@@ -34,6 +34,20 @@ from src.tools.sql.query_type import statement_query_type
 logger = logging.getLogger(__name__)
 
 
+# #2128: the column types whose longest value the collection measures, as the collection
+# script does (``scripts/collect-mysql.sql``): the types DMS reads as BLOB or CLOB, the
+# catalog's ``[lob.types] mysql`` list. A test keeps the three in step.
+LOB_TYPES = frozenset({
+    "mediumtext", "longtext", "mediumblob", "longblob", "json",
+    "geometry", "point", "linestring", "polygon", "multipoint", "multilinestring",
+    "multipolygon", "geometrycollection",
+})  # fmt: skip
+# A table of more MB than this is not measured (the script's ``@lob_scan_max_mb``).
+DEFAULT_LOB_SCAN_MAX_MB = 1024
+# A table's measurement ends after this many seconds, the wait for its metadata lock included
+# (the script's ``@lob_scan_timeout_seconds``); 0 sets no limit.
+DEFAULT_LOB_SCAN_TIMEOUT_SECONDS = 60
+
 # #1652: the collection script's routine sections (``scripts/collect-mysql.sql``), for
 # the live collector, with DATABASE() for ``@db``; ``{flag}`` is 1 or 0
 # (``include_routine_bodies``). Catalog reads only: no SHOW, no setting changed.
@@ -223,6 +237,11 @@ _NO_PROGRAM_STATS = {
 }
 
 
+def _literal(text: str) -> str:
+    """``text`` as a single-quoted SQL string, backslash and quote escaped."""
+    return "'" + str(text).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
 class MySQLRemoteCollector:
     """Collects MySQL metadata via SSM Run Command on an automation instance."""
 
@@ -328,6 +347,83 @@ class MySQLRemoteCollector:
               AND table_name = '{table_name}'
             ORDER BY ordinal_position
         """)  # nosec B608 — table_name from information_schema, not user input
+
+    # The view of each InnoDB tablespace's file size; MariaDB names it differently.
+    _TABLESPACE_VIEW = "innodb_tablespaces"
+
+    def _lob_scan_bytes(self, table_name: str) -> int | None:
+        """The table's size for the LOB scan bound: ``data_length + index_length``, and for an
+        InnoDB table the larger of that and its tablespace file, summed over the partitions of a
+        partitioned table (InnoDB keeps a large value on pages ``data_length`` does not count).
+        None when unknown: an InnoDB file size that is not shown (no PROCESS, a shared
+        tablespace, a name MySQL encodes in the file name) or is 0, never ``data_length`` alone."""
+        rows = self._query(f"""
+            SELECT engine, data_length + index_length AS bytes
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = {_literal(table_name)}
+              AND table_type = 'BASE TABLE'
+        """)  # nosec B608 -- the literal is escaped
+        if not rows or rows[0].get("bytes") is None:
+            return None
+        size = int(rows[0]["bytes"])
+        if str(rows[0].get("engine") or "").lower() != "innodb":
+            return size
+        try:
+            files = self._query(f"""
+                SELECT SUM(file_size) AS file_size
+                FROM information_schema.{self._TABLESPACE_VIEW}
+                WHERE SUBSTRING_INDEX(LOWER(name), '#p#', 1)
+                      = LOWER(CONCAT(DATABASE(), '/', {_literal(table_name)}))
+            """)  # nosec B608 -- the literal is escaped
+        except Exception as error:  # noqa: BLE001 -- no PROCESS, or a server without the view
+            logger.info(
+                "InnoDB file size of %s not read (%s); its LOBs are not measured", table_name, error
+            )
+            return None
+        file_size = int(files[0]["file_size"]) if files and files[0].get("file_size") else 0
+        return max(size, file_size) if file_size > 0 else None
+
+    def _with_scan_limit(self, select: str, seconds: int) -> str:
+        """``select`` limited to ``seconds`` (0: not limited): MySQL's MAX_EXECUTION_TIME hint
+        covers the read, and ``lock_wait_timeout`` the wait for a metadata lock."""
+        if seconds <= 0:
+            return select
+        hinted = select.replace("SELECT", f"SELECT /*+ MAX_EXECUTION_TIME({seconds * 1000}) */", 1)
+        return f"SET SESSION lock_wait_timeout = {seconds}; {hinted}"
+
+    def measure_lob_columns(
+        self,
+        table_name: str,
+        columns: list[dict],
+        lob_scan_max_mb: int = DEFAULT_LOB_SCAN_MAX_MB,
+        lob_scan_timeout_seconds: int = DEFAULT_LOB_SCAN_TIMEOUT_SECONDS,
+    ) -> None:
+        """Set ``max_value_bytes`` on each LOB column of ``columns`` (#2128): its longest stored
+        value in bytes (``MAX(LENGTH(column))``), as ``scripts/collect-mysql.sql`` does, all the
+        table's LOB columns in one plain SELECT. Left unset (not measured, never 0) when
+        ``lob_scan_max_mb`` is 0, the table is above it or its size is unknown, or the read fails
+        or times out (no SELECT on the table, a lock held on it): the collection goes on."""
+        lobs = [c for c in columns if str(c.get("data_type") or "").lower() in LOB_TYPES]
+        if not lobs or lob_scan_max_mb <= 0:
+            return
+        try:
+            size = self._lob_scan_bytes(table_name)
+            if size is None or size > lob_scan_max_mb * 1048576:
+                return
+            picks = ", ".join(
+                f"COALESCE(MAX(LENGTH({quote_ident(c['column_name'])})), 0) AS m{i}"
+                for i, c in enumerate(lobs)
+            )
+            sql = f"SELECT {picks} FROM {quote_ident(table_name)}"  # nosec B608 -- quoted names
+            rows = self._query(self._with_scan_limit(sql, lob_scan_timeout_seconds))
+        except Exception as error:  # noqa: BLE001 -- an unmeasured table costs only its sizes
+            logger.info("LOB lengths of %s not measured (%s)", table_name, error)
+            return
+        if rows:
+            for i, c in enumerate(lobs):
+                value = rows[0].get(f"m{i}")
+                if value is not None:
+                    c["max_value_bytes"] = int(value)
 
     def _statistics_has_expression(self) -> bool:
         """Whether ``information_schema.statistics`` has the ``EXPRESSION`` column of a

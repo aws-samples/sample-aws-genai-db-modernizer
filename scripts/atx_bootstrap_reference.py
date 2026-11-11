@@ -99,8 +99,10 @@ if not offline_input.exists():
     )
 ok(f"Offline input present ({offline_input.stat().st_size:,} bytes)")
 
-with open(offline_input, encoding="utf-8") as f:
-    raw = json.load(f)
+from src.tools.database.offline_collection_check import read_collection_text  # noqa: E402
+
+# The collection scripts' reader: a MySQL or MariaDB file may hold a second object (#2128).
+raw = read_collection_text(offline_input.read_text(encoding="utf-8"), source=str(offline_input))
 n_raw_tables = len(raw.get("tables", []))
 n_raw_queries = len(raw.get("queries", []))
 ok(f"Offline input parses cleanly ({n_raw_tables} tables, {n_raw_queries} queries)")
