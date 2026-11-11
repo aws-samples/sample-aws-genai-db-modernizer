@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import Any
 
 from src.shared.design_text import (
@@ -339,7 +340,7 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
     return "\n".join(lines)
 
 
-def _unsupported_pattern_md(u: dict[str, Any]) -> str:
+def _unsupported_pattern_md(u: dict[str, Any], query_ids: Collection[str] = ()) -> str:
     """One readable Markdown line for a schema-design ``unsupported_patterns`` entry.
 
     The four engine contracts (``*_model_output.py``) disagree on field names
@@ -362,7 +363,8 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     if len(ids) > 3:
         id_bits += f" (+{len(ids) - 3} more)"
 
-    body = escaping.md_text(unsupported_pattern_text(u))
+    # Model text: a known query id it names is a code span, as the report prints ids (#2107).
+    body = escaping.md_text_with_ids(unsupported_pattern_text(u), query_ids)
     # Inside the closing parenthesis the count reads "and 2 more", never a nested "(+2 more)".
     listed = id_bits.replace(f" (+{len(ids) - 3} more)", f" and {len(ids) - 3} more")
     which = f"{'query' if len(ids) == 1 else 'queries'} {listed}" if id_bits else ""
@@ -608,7 +610,7 @@ def _table_reason_cell(reasons: list[str]) -> str:
     return "; ".join(shown) + (f" (+{more} more)" if more else "")
 
 
-def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
+def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ()) -> list[str]:
     """An Aurora design's app-layer notes, column defaults listed on their own (#156).
 
     ``column_default`` notes are the deterministic ones the schema merge writes
@@ -629,7 +631,7 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
             out.append(
                 f"- {escaping.md_text(feature.capitalize())} on "
                 f"`{escaping.md_code(n.get('source_object') or '?')}`: "
-                f"{escaping.md_text(n.get('recommendation') or '')}"
+                f"{escaping.md_text_with_ids(n.get('recommendation') or '', query_ids)}"
             )
         out.append("")
     if defaults:
@@ -645,7 +647,7 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
                 f"`{escaping.md_code(n.get('source_object') or '?')}`"
             )
         for note, columns in by_note.items():
-            text = escaping.md_text(note.strip())
+            text = escaping.md_text_with_ids(note.strip(), query_ids)
             if len(columns) == 1 or not text:
                 out.append(f"- {', '.join(columns)}" + (f": {text}" if text else ""))
             else:
@@ -655,16 +657,19 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
     return out
 
 
-def _trade_off_lines(t: dict[str, Any], said: _SaidOnce) -> list[str]:
-    """One trade-off's bullet and, when it names source tables, its "Affects" line."""
+def _trade_off_lines(
+    t: dict[str, Any], said: _SaidOnce, query_ids: Collection[str] = ()
+) -> list[str]:
+    """One trade-off's bullet and, when it names source tables, its "Affects" line. The
+    text is a model's: a known query id it names is set as a code span (#2107)."""
     desc = str(t.get("description", "")).strip()
     impact = str(t.get("impact", "")).strip()
     aff = list(t.get("source_tables") or [])
-    line = f"- **{escaping.md_text(desc)}**"
+    line = f"- **{escaping.md_text_with_ids(desc, query_ids)}**"
     if impact and impact != desc:  # reality-check items repeat their title
         names = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:3])
         where = f"in the trade-off for {names}" if names else "above"
-        line += ": " + said.line(escaping.md_text(impact), where)
+        line += ": " + said.line(escaping.md_text_with_ids(impact, query_ids), where)
     out = [line]
     if aff:
         shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
@@ -711,6 +716,7 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     # A model writes the same note on each index or table it applies to; the first
     # trade-off keeps the sentence and a later one points back to it (#1563).
     said = _SaidOnce()
+    query_ids = report_query_ids(report)
     if current:
         by_engine: dict[str, list[tuple[int, dict[str, Any]]]] = {}
         for i, t in current:
@@ -734,7 +740,7 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
             grouped = {i for g in groups or [] for i in g.get("indexes") or []}
             loose = [t for i, t in items if i not in grouped]
             if loose or not groups:
-                out += [line for t in loose for line in _trade_off_lines(t, said)]
+                out += [line for t in loose for line in _trade_off_lines(t, said, query_ids)]
                 out.append("")
             if not groups:
                 continue
@@ -750,7 +756,7 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
                     line
                     for i in g.get("indexes") or []
                     if isinstance(rows.get(i), dict)
-                    for line in _trade_off_lines(rows[i], said)
+                    for line in _trade_off_lines(rows[i], said, query_ids)
                 ]
                 out.append("")
     if reversed_at:
@@ -1517,7 +1523,7 @@ def render_engineering_report_md(
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
                 out += [
-                    f"- {_unsupported_pattern_md(u) if isinstance(u, dict) else escaping.md_text(u)}"
+                    f"- {_unsupported_pattern_md(u, query_ids) if isinstance(u, dict) else escaping.md_text_with_ids(u, query_ids)}"
                     for u in unsupported
                 ]
                 out.append("")
@@ -1532,7 +1538,7 @@ def render_engineering_report_md(
                     "stay on this engine.",
                     "",
                 ]
-                out += [f"- {_unsupported_pattern_md(u)}" for u in waived]
+                out += [f"- {_unsupported_pattern_md(u, query_ids)}" for u in waived]
                 out.append("")
             notes = dz.get("migration_notes") or []
             if isinstance(notes, str):
@@ -1549,7 +1555,7 @@ def render_engineering_report_md(
                     for mn in notes
                 ]
                 out.append("")
-            out += _app_layer_notes_md(dz)
+            out += _app_layer_notes_md(dz, query_ids)
             er = _mermaid_er(eng, dz)
             if er:
                 out += [er, ""]
