@@ -217,3 +217,46 @@ def test_the_session_log_shape_of_a_headless_slash_command_counts(run_hook, proj
         _rec("assistant", "Still waiting on DynamoDB parts 27 and 44.", isSidechain=False),
     ]
     assert _blocked(run_hook(SCRIPT, _event(project, records), env=_env(project)))
+
+
+def _record_reviews(project: Path, groups: range) -> None:
+    vdir = project / "artifacts" / DB / JOB / "schema-dynamodb" / "v1"
+    requests = project / "artifacts" / DB / JOB / "llm_requests"
+    requests.mkdir(exist_ok=True)
+    for g in groups:
+        (requests / f"pe_review_dynamodb_group_{g}.json").write_text("{}")
+        (vdir / f"design_trace_group_{g}.json").write_text(
+            json.dumps({"pe_review": {"verdict": "APPROVED"}})
+        )
+
+
+def test_without_the_tasks_field_every_review_recorded_blocks_with_the_next_step(
+    run_hook, project
+) -> None:
+    """Review of #2127: with no background_tasks field, a turn that ends after the last
+    part's review (6c) with nothing running is blocked too, not only one after the drafts."""
+    _record_reviews(project, range(3))
+    event = _event(project)
+    del event["background_tasks"]
+    res = run_hook(SCRIPT, event, env=_env(project))
+    assert _blocked(res), res.stderr
+    assert "Every DynamoDB part's review is recorded (3 of 3)" in res.stderr
+    assert f"scripts/run_pe_review.py --job-id {JOB} --db {DB}`, then the 6d merge" in res.stderr
+
+
+def test_without_the_tasks_field_a_review_still_out_or_a_started_merge_allows(
+    run_hook, project
+) -> None:
+    _record_reviews(project, range(2))  # part 3's review is still running
+    (
+        project / "artifacts" / DB / JOB / "llm_requests" / "pe_review_dynamodb_group_2.json"
+    ).write_text("{}")
+    event = _event(project)
+    del event["background_tasks"]
+    assert _allowed(run_hook(SCRIPT, event, env=_env(project)))
+    _record_reviews(project, range(3))
+    vdir = project / "artifacts" / DB / JOB / "schema-dynamodb" / "v1"
+    (vdir / "merge_record.json").write_text("{}")  # 6d started: the review test no longer applies
+    event = _event(project)
+    del event["background_tasks"]
+    assert _allowed(run_hook(SCRIPT, event, env=_env(project)))

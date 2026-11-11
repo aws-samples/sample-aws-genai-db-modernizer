@@ -12,6 +12,7 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --split
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status --wait 60
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
         --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
@@ -425,8 +426,51 @@ def _hashes(groups: list[dict]) -> dict[str, str | None]:
     return hashes
 
 
-def run_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
-    """Report DynamoDB group-design progress as one JSON line (read-only, #246).
+# --status --wait (#2121): a bounded wait for drafts a reported subagent wrote a moment
+# ago, never a way to wait out subagents that are still running (their reports wake
+# the orchestrator). Kept under the Bash tool's default two-minute timeout.
+_MAX_WAIT_SECONDS = 110
+_WAIT_POLL_SECONDS = 2.0
+# Lines that a draft or a --finalize still to come can change; any other is final.
+_PENDING_STATUSES = {"drafts_pending", "not_finalized", "finalize_pending"}
+
+
+def run_status(
+    store,
+    job_id: str,
+    db: str,
+    engine: str,
+    assignment_version: int,
+    wait: float = 0,
+    *,
+    sleep=None,
+    clock=None,
+) -> None:
+    """Print the ``--status`` line; with ``wait`` > 0, first wait up to ``wait``
+    seconds while it is pending (#2121).
+
+    Pending is ``drafts_pending`` for DynamoDB and ``not_finalized`` or
+    ``finalize_pending`` for any other engine. The wait re-reads the status every
+    couple of seconds and prints one line, the first that is not pending or the last
+    one read; a wait that ran out adds ``"wait_timed_out": true``. Read-only.
+    """
+    import time
+
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    line = _status_line(store, job_id, db, engine, assignment_version)
+    if wait > 0 and line["status"] in _PENDING_STATUSES:
+        deadline = clock() + min(wait, _MAX_WAIT_SECONDS)
+        while line["status"] in _PENDING_STATUSES and clock() < deadline:
+            sleep(min(_WAIT_POLL_SECONDS, max(deadline - clock(), 0)))
+            line = _status_line(store, job_id, db, engine, assignment_version)
+        if line["status"] in _PENDING_STATUSES:
+            line["wait_timed_out"] = True
+    _output(line)
+
+
+def _status_line(store, job_id: str, db: str, engine: str, assignment_version: int) -> dict:
+    """DynamoDB group-design progress as one JSON object (read-only, #246).
 
     ``groups`` lists only the groups whose draft is missing or invalid (#1593),
     ``group_count`` how many there are in all.
@@ -441,8 +485,7 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     printed, not from the output's ``validation_passed``.
     """
     if engine != "dynamodb":
-        _engine_status(store, job_id, db, engine, assignment_version)
-        return
+        return _engine_status(store, job_id, db, engine, assignment_version)
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
     output_key = f"{base_key}/schema_output.json"
     fields: dict = {
@@ -450,8 +493,7 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
         "output_path": _local_path(store, output_key),
     }
     if not store.exists(f"{base_key}/groups_manifest.json"):
-        _output({"status": "not_split", **fields, "next": "run --split"})
-        return
+        return {"status": "not_split", **fields, "next": "run --split"}
 
     groups = _group_entries(store, base_key, store.read_json(f"{base_key}/groups_manifest.json"))
     missing, invalid = _draft_problems(groups)
@@ -493,22 +535,20 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     # length Claude Code saves to a file outside the working directory. The full
     # list is the --split line's, and the manifest's.
     redo = set(missing + invalid)
-    _output(
-        {
-            "status": status,
-            **fields,
-            "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
-            "group_count": len(groups),
-            "groups": _public([g for g in groups if g["group_index"] in redo]),
-            "drafts_missing": missing,
-            "drafts_invalid": invalid,
-            **extra,
-            "next": next_step,
-        }
-    )
+    return {
+        "status": status,
+        **fields,
+        "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
+        "group_count": len(groups),
+        "groups": _public([g for g in groups if g["group_index"] in redo]),
+        "drafts_missing": missing,
+        "drafts_invalid": invalid,
+        **extra,
+        "next": next_step,
+    }
 
 
-def _engine_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+def _engine_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> dict:
     """Report a single-pass engine's design state from its last ``--finalize`` (#332).
 
     ``complete``: the last ``--finalize`` printed ``complete`` on the response that is
@@ -548,7 +588,7 @@ def _engine_status(store, job_id: str, db: str, engine: str, assignment_version:
         )
     if record and record.get("warnings"):
         extra["warnings"] = record["warnings"]
-    _output({"status": status, **fields, **extra, "next": next_step})
+    return {"status": status, **fields, **extra, "next": next_step}
 
 
 def _read_record(store, key: str) -> dict | None:
@@ -944,6 +984,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--wait",
+        type=float,
+        default=0,
+        metavar="SECONDS",
+        help=(
+            "With --status: while the line is pending (drafts_pending, not_finalized or "
+            f"finalize_pending), re-read it until it is not, for at most SECONDS (capped at "
+            f"{_MAX_WAIT_SECONDS}), then print one line; a wait that ran out adds "
+            '"wait_timed_out": true'
+        ),
+    )
+    parser.add_argument(
         "--check-costs",
         metavar="DRAFT",
         nargs="+",
@@ -997,6 +1049,11 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
+    if args.wait and not args.status:
+        _error("--wait only goes with --status")
+    if args.wait < 0:
+        _error("--wait takes a number of seconds, 0 or more")
+
     if args.check_costs is not None and args.check_costs_all:
         _error("--check-costs and --check-costs-all are mutually exclusive")
 
@@ -1049,7 +1106,7 @@ def main() -> None:
     elif args.merge:
         run_merge(store, args.job_id, args.db, args.engine, version)
     elif args.status:
-        run_status(store, args.job_id, args.db, args.engine, version)
+        run_status(store, args.job_id, args.db, args.engine, version, wait=args.wait)
     elif args.llm_mode == "external":
         run_external(store, args.job_id, args.db, args.engine, version)
     else:
