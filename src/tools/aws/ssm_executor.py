@@ -236,7 +236,10 @@ def _parse_tabular_output(raw: str, engine: str | None = None) -> list[dict]:
     if errors:
         raise SqlClientError(f"{engine} client error: {'; '.join(errors)}")
 
-    lines = [line for line in raw.strip().split("\n") if line.strip()]
+    # Never strip the whole output: the tabs that end the last line belong to a row whose last
+    # field is empty, and without them the row has too few fields and is dropped (mysql prints
+    # no footer after its last row). Blank lines are skipped here; each value is stripped below.
+    lines = [line for line in raw.split("\n") if line.strip()]
 
     # Strip row-count footers
     lines = [line for line in lines if not re.match(r"^\(\d+ rows?( affected)?\)$", line.strip())]
