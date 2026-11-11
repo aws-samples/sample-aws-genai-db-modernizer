@@ -78,7 +78,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | Path pattern | Why it is not a contract |
 |---|---|
 | `wave-redesign/v\d+/rounds\.json` | the bounded redesign rounds of held waves: read by the next round and copied by synthesis into report.json's wave_redesign, which the contract types |
-| `schema-[^/]+/(?:v\d+/)?redesign_request\.json` | the failed checks one redesign round sends back to an engine's design: read only by that round's design input, and deleted when the rounds end |
+| `schema-[^/]+/(?:v\d+/)?redesign_request\.json` | the failed checks one redesign round sends back to an engine's design, and, in a round on DynamoDB parts, the parts it redesigns and the parts it keeps with their digests: read only by that round's design input, `--split` and the review check, and deleted when the rounds end |
 | `collector/sql_shadow\.json` | parser comparison (sqlglot facade vs regex table references, #557): a diagnostic rewritten every collect, read by no phase |
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |

@@ -263,14 +263,18 @@ def _entries_at(store: ArtifactStore, base_key: str) -> list[dict]:
 def carried_parts_at(store: ArtifactStore, base_key: str) -> dict[int, int]:
     """``{part: part on the version before}`` for the parts of the design at ``base_key``
     (``<db>/<job>/schema-<engine>/v<N>``) that still hold their carried draft, byte for
-    byte. Empty when the version carried nothing."""
-    return {
+    byte, and ``{part: part}`` for the parts a wave redesign round on this version keeps
+    as they are (``wave_redesign.kept_parts_at``, #2119). Empty when neither applies."""
+    from src.agents.schema_design.wave_redesign import kept_parts_at
+
+    carried = {
         int(e["part"]): int(e["from_part"])
         for e in _entries_at(store, base_key)
         if e.get("draft_sha256")
         and not e.get("dropped")
         and _digest(store, f"{base_key}/schema_draft_group_{e['part']}.json") == e["draft_sha256"]
     }
+    return {**kept_parts_at(store, base_key), **carried}
 
 
 def carried_parts(
@@ -293,8 +297,13 @@ def is_dropped_copy(store: ArtifactStore, base_key: str, part: int) -> bool:
 
 def stale_review(store: ArtifactStore, base_key: str, part: int) -> bool:
     """Whether ``part``'s design trace is still the copy a reroute carried while its
-    draft is no longer the carried one: the review it holds is of another design, so it
-    does not count as this draft's review."""
+    draft is no longer the carried one, or the trace a wave redesign round kept while
+    the draft has changed since (``wave_redesign.stale_kept_review``, #2119): the review
+    it holds is of another design, so it does not count as this draft's review."""
+    from src.agents.schema_design.wave_redesign import stale_kept_review
+
+    if stale_kept_review(store, base_key, part):
+        return True
     for e in _entries_at(store, base_key):
         if e.get("part") != part:
             continue

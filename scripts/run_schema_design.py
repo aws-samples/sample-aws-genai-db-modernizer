@@ -293,7 +293,8 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
             # Queries with no source table (#276/#369): left out of every
             # group, so their count would otherwise be invisible here.
             "excluded_count": len(excluded_queries),
-            # Parts whose design a post-schema reroute kept (#1650): dispatch none.
+            # Parts whose design a post-schema reroute or a redesign round kept (#1650,
+            # #2119): dispatch none.
             "carried_count": sum(1 for g in entries if g["carried_from"] is not None),
         }
     )
@@ -353,7 +354,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
     """One compact entry per group: what a group subagent's dispatch needs."""
     entries = []
     # The parts a post-schema reroute carried forward from the version before
-    # (#1650): their draft and review are already in place, so no subagent designs them.
+    # (#1650), or a wave redesign round keeps as they are (#2119, ``carried_from`` = its
+    # own index): their draft and review are already in place, so no subagent designs them.
     from src.agents.schema_design.carry_forward import carried_parts_at, is_dropped_copy
 
     carried = carried_parts_at(store, base_key)
@@ -394,7 +396,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
                 "draft": _local_path(store, draft_key),
                 "draft_exists": state != "missing",
                 "draft_state": state,
-                # The part on the version before whose design this one keeps, or None.
+                # The part on the version before whose design this one keeps (its own
+                # index in a wave redesign round that keeps it, #2119), or None.
                 "carried_from": carried.get(idx),
                 "_hash": digest,
                 "_trace_hash": trace_digest,

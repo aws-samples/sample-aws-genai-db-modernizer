@@ -319,8 +319,10 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
     ),
     (
         r"schema-[^/]+/(?:v\d+/)?redesign_request\.json",
-        "the failed checks one redesign round sends back to an engine's design: read only "
-        "by that round's design input, and deleted when the rounds end",
+        "the failed checks one redesign round sends back to an engine's design, and, in a "
+        "round on DynamoDB parts, the parts it redesigns and the parts it keeps with their "
+        "digests: read only by that round's design input, `--split` and the review check, "
+        "and deleted when the rounds end",
     ),
     # Collect
     (

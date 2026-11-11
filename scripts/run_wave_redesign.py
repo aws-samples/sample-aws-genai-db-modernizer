@@ -7,7 +7,9 @@
 Claude Code (``/modernize``) runs this after each synthesis. It reads the latest
 ``report.json``; when a wave is held for a reason its design can fix and rounds remain,
 it moves that engine's design aside, records the failed checks for the next design, and
-prints ``awaiting_redesign`` with the engines to design again. Otherwise it prints
+prints ``awaiting_redesign`` with the engines to design again (``parts``: the DynamoDB
+parts to design again, or None for the whole engine; the next ``--split`` marks every
+other part ``carried_from``, with its review kept, #2119). Otherwise it prints
 ``complete`` (nothing design-fixable is held) or ``exhausted`` (the last round ran, and
 ``held`` engines are still held). It prints ``awaiting_synthesis`` when it put an
 engine's earlier design back (the round's design was missing, or no better): synthesize
@@ -105,8 +107,12 @@ def main() -> None:
     report = latest_report(store, args.db, args.job_id)
     if report is None:
         _error("no synthesis report yet: run synthesis first")
-    # Claude Code reviews a design as its own step (6c): wait for it (#2081).
-    _output(plan_round(store, args.db, args.job_id, report, version, wait_for_reviews=True))
+    # Claude Code reviews a design as its own step (6c): wait for it (#2081). A DynamoDB
+    # design in parts is redesigned only in the parts the checks name, as in Bedrock
+    # (#2119): --split marks the others carried_from.
+    _output(
+        plan_round(store, args.db, args.job_id, report, version, parts=True, wait_for_reviews=True)
+    )
 
 
 if __name__ == "__main__":
