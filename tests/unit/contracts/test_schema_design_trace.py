@@ -572,3 +572,47 @@ def test_a_lenient_write_still_refuses_bad_routing_flags(tmp_path: Path) -> None
 def test_the_strict_write_still_refuses_what_the_lenient_one_repairs(tmp_path: Path) -> None:
     with pytest.raises(DesignTraceShapeError):
         write_design_trace(_fresh(tmp_path), SINGLE, {"token_usage": "n/a"})
+
+
+# --- a wave redesign round's archive (#2051) ------------------------------------------
+# A round sets the design it redoes aside under wave-redesign/v<N>/round_<n>/schema-<engine>/
+# with no v<N> segment of its own (src/agents/schema_design/wave_redesign.py). Each versioned
+# file it can hold resolves to the same contract there as under schema-<engine>/v<N>/.
+ROUND = f"{DB}/{JOB}/wave-redesign/v3/round_1/schema-dynamodb"
+ROUND_FILES = {
+    "design_trace_group_0.json": DesignTraceGroup,
+    "design_trace.json": DesignTrace,
+}
+
+
+@pytest.mark.parametrize("name", sorted(ROUND_FILES))
+def test_a_redesign_rounds_trace_resolves_to_its_contract(name: str) -> None:
+    assert contract_for_artifact(f"{ROUND}/{name}") is ROUND_FILES[name]
+    assert contract_for_artifact(f"{DB}/{JOB}/schema-dynamodb/v3/{name}") is ROUND_FILES[name]
+
+
+@pytest.mark.parametrize(
+    "name", ["groups_manifest.json", "version_meta.json", "revision_request.json"]
+)
+def test_every_versioned_file_a_round_archives_has_its_contract_there(name: str) -> None:
+    """The round moves the whole v<N> folder for a whole-engine redesign, so each
+    versioned file in it keeps its registry entry under round_<n>/."""
+    assert contract_for_artifact(f"{ROUND}/{name}") is not None
+    assert contract_for_artifact(f"{ROUND}/{name}") is contract_for_artifact(
+        f"{DB}/{JOB}/schema-dynamodb/v3/{name}"
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "merge_record.json",
+        "finalize_record.json",
+        "changelog.json",
+        "revision_context.json",
+        "carried_forward.json",
+    ],
+)
+def test_every_unversioned_file_a_round_archives_is_still_declared(name: str) -> None:
+    assert is_internal_artifact(f"{ROUND}/{name}")
+    assert is_internal_artifact(f"{DB}/{JOB}/schema-dynamodb/v3/{name}")

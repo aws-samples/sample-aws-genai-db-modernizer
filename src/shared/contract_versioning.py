@@ -292,8 +292,8 @@ MODEL_IO_PATTERNS: tuple[str, ...] = (
     r"llm_input\.json",
     r"llm_response\.json",
     r"partial_output\.json",
-    r"schema-[^/]+/v\d+/schema_draft_group_\d+\.json",
-    r"schema-[^/]+/v\d+/input_group_\d+\.json",
+    r"schema-[^/]+/(?:v\d+/)?schema_draft_group_\d+\.json",
+    r"schema-[^/]+/(?:v\d+/)?input_group_\d+\.json",
 )
 _MODEL_IO = tuple(re.compile(rf"(?:^|/){pattern}$") for pattern in MODEL_IO_PATTERNS)
 
@@ -318,7 +318,7 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "synthesis into report.json's wave_redesign, which the contract types",
     ),
     (
-        r"schema-[^/]+/v\d+/redesign_request\.json",
+        r"schema-[^/]+/(?:v\d+/)?redesign_request\.json",
         "the failed checks one redesign round sends back to an engine's design: read only "
         "by that round's design input, and deleted when the rounds end",
     ),
@@ -349,23 +349,23 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
     ),
     # Schema design and post-schema routing
     (
-        r"schema-[^/]+/v\d+/merge_record\.json",
+        r"schema-[^/]+/(?:v\d+/)?merge_record\.json",
         "the last --merge of the DynamoDB group drafts (draft hashes, errors)",
     ),
     (
-        r"schema-[^/]+/v\d+/finalize_record\.json",
+        r"schema-[^/]+/(?:v\d+/)?finalize_record\.json",
         "the last --finalize of a single-pass engine (status, errors, response and output hashes)",
     ),
     (
-        r"schema-[^/]+/v\d+/changelog\.json",
+        r"schema-[^/]+/(?:v\d+/)?changelog\.json",
         "a schema revision's changelog, shown with the revision",
     ),
     (
-        r"schema-[^/]+/v\d+/revision_context\.json",
+        r"schema-[^/]+/(?:v\d+/)?revision_context\.json",
         "a schema revision's context for the designer, rewritten per revision",
     ),
     (
-        r"schema-[^/]+/v\d+/carried_forward\.json",
+        r"schema-[^/]+/(?:v\d+/)?carried_forward\.json",
         "the parts a post-schema reroute version kept from the version before, with their "
         "designs (#1650): an audit record the --split line reads",
     ),
@@ -467,6 +467,8 @@ _SYNTHESIS = "src.contracts.synthesis_output:SynthesisOutputContract"
 # artifact key at a ``/`` boundary, so it holds for ``<db>/<job>/...`` keys and
 # for filesystem paths alike. Classes are named, not imported, so the store
 # modules can import this one without importing every contract.
+# A schema-<engine>/ file's v<N>/ segment is optional: a wave redesign round sets the design
+# it redoes aside under wave-redesign/v<N>/round_<n>/schema-<engine>/ with none (#2051, #2107).
 _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"collector/output\.json", _COLLECTOR),
     # Usually a raw collection (no contract_version, read as legacy); checked for the
@@ -529,15 +531,15 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"referee-synthesis/report\.json", _SYNTHESIS),
     (r"deliverables/assessment-data\.json", _SYNTHESIS),
     (
-        r"schema-[^/]+/v\d+/groups_manifest\.json",
+        r"schema-[^/]+/(?:v\d+/)?groups_manifest\.json",
         "src.contracts.schema_design_input:SchemaDesignGroupsManifest",
     ),
     (
-        r"schema-[^/]+/v\d+/version_meta\.json",
+        r"schema-[^/]+/(?:v\d+/)?version_meta\.json",
         "src.contracts.schema_revision_models:SchemaVersionMeta",
     ),
     (
-        r"schema-[^/]+/v\d+/revision_request\.json",
+        r"schema-[^/]+/(?:v\d+/)?revision_request\.json",
         "src.contracts.schema_revision_models:SchemaRevisionRequest",
     ),
     (r"schema-[^/]+/confirmed\.json", "src.contracts.schema_revision_models:SchemaConfirmation"),
@@ -546,7 +548,7 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         "src.contracts.schema_design_trace:DesignTrace",
     ),
     (
-        r"schema-[^/]+/v\d+/design_trace_group_\d+\.json",
+        r"schema-[^/]+/(?:v\d+/)?design_trace_group_\d+\.json",
         "src.contracts.schema_design_trace:DesignTraceGroup",
     ),
     (
