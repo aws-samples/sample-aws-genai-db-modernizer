@@ -111,8 +111,10 @@ def test_the_summary_input_counts_the_details(sample):
     for before, after in zip(
         report["risk_assessment"]["risks"], out["risk_assessment"]["risks"], strict=True
     ):
-        # The routine risks' details are counted too (#1938; the sample's routines, #1954).
-        if before.get("rule") in SUMMARISED_DETAIL_RULES:
+        # A routine risk is one short line, with no details at all (#2132).
+        if str(before.get("rule") or "").startswith("routines."):
+            assert set(after) == {"risk_id", "severity", "rule", "wave"}, before["risk_id"]
+        elif before.get("rule") in SUMMARISED_DETAIL_RULES:
             assert after["detail_count"] == len(before["details"]) and "details" not in after
         else:
             assert after.get("details") == before.get("details"), before.get("risk_id")
