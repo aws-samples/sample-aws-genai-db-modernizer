@@ -20,11 +20,7 @@ from typing import Any
 from src.agents.collector.offline_ingest import build_offline_collector_output
 from src.contracts.routine_sources import RoutineSource
 from src.tools.database.offline_parser import parse_offline_collection
-from src.tools.routines.migration import (
-    listed_by_name_only,
-    name_only_routine_count,
-    run_routine_migration_deterministic,
-)
+from src.tools.routines.migration import run_routine_migration_deterministic
 
 REPO = Path(__file__).resolve().parents[4]
 
@@ -50,8 +46,10 @@ def test_the_discourse_names_are_no_routine_to_migrate(tmp_path: Path) -> None:
     assert len(schema["procedures"]) == 266 and len(schema["triggers"]) == 3
     # Its 240 C and internal functions (hstore, citext, pg_trgm, unaccent, vector) and
     # 6 aggregates are an extension's; none of the rows says which, and none has code.
-    assert name_only_routine_count(collector) == 269
     assert _run(collector) is None
+    from src.tools.routines.migration import name_only_routine_count
+
+    assert name_only_routine_count(collector) == 269
 
 
 def _row(name: str, language: str, **extra: Any) -> dict[str, Any]:
@@ -98,8 +96,6 @@ def test_only_the_rows_a_current_collection_lists_are_read() -> None:
         for name, lang, body in (("app_fn", "sql", "SELECT 1"), ("own_c_fn", "c", "x"))
     ]
     collector = _collector(old + current, [old_trigger])
-    assert [listed_by_name_only(r) for r in old + current] == [True] * 3 + [False] * 3
-    assert name_only_routine_count(collector) == 4
     artifact = _run(collector, sources)
     rows = {r.routine_id: r for r in artifact.routines}
     assert set(rows) == {"public.app_fn", "public.own_c_fn", "public.off_fn"}
@@ -107,6 +103,10 @@ def test_only_the_rows_a_current_collection_lists_are_read() -> None:
     assert rows["public.own_c_fn"].reasons == ["postgresql-routine-language"]
     assert rows["public.off_fn"].reasons == ["source_text_not_collected"]
     assert artifact.total == 3
+    from src.tools.routines.migration import listed_by_name_only, name_only_routine_count
+
+    assert [listed_by_name_only(r) for r in old + current] == [True] * 3 + [False] * 3
+    assert name_only_routine_count(collector) == 4
 
 
 def test_a_mysql_collection_before_1652_is_not_read_either() -> None:
@@ -122,8 +122,10 @@ def test_a_mysql_collection_before_1652_is_not_read_either() -> None:
             ],
         },
     }
-    assert name_only_routine_count(collector) == 1
     assert _run(collector) is None
+    from src.tools.routines.migration import name_only_routine_count
+
+    assert name_only_routine_count(collector) == 1
 
 
 def test_the_run_log_counts_the_rows_it_leaves_out(tmp_path: Path, monkeypatch) -> None:

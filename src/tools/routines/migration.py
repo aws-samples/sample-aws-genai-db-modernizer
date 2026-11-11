@@ -111,6 +111,7 @@ __all__ = [
     "latest_routine_migration",
     "listed_by_name_only",
     "name_only_routine_count",
+    "name_only_routines_of_job",
     "ensure_routine_migration",
     "read_routine_migration",
     "routine_migration_path",
@@ -242,6 +243,15 @@ def name_only_routine_count(collector: Mapping[str, Any]) -> int:
         for row in schema.get(key) or []
         if isinstance(row, Mapping) and listed_by_name_only(row)
     )
+
+
+def name_only_routines_of_job(store: Any, database_name: str, job_id: str) -> int:
+    """:func:`name_only_routine_count` of the job's collector output; 0 when it has none."""
+    key = f"{database_name}/{job_id}/collector/output.json"
+    if store.exists(key) is not True:
+        return 0
+    collector = store.read_json(key)
+    return name_only_routine_count(collector) if isinstance(collector, Mapping) else 0
 
 
 def _collect(schema: Mapping[str, Any], engine: str) -> list[_Routine]:
