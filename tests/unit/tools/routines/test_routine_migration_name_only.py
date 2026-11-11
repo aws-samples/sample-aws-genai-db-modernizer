@@ -1,13 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""A collection written before #1652 lists routines by name only (#2124).
+"""A routine row with neither a body status nor code is a name only (#2124).
 
-Its routine rows have no ``body_status``: no code, and the functions and aggregates an
+A collection written before #1652 lists routines so, the functions and aggregates an
 extension owns among them (``CREATE EXTENSION`` creates those on Aurora; today's
 collectors leave them out by ``pg_depend``'s extension membership). The routine phase
-reads none of them, so they are never routines to carry or to migrate yourself; a row a
-current collection lists, whatever its language, is still read and checked.
+reads none of them, so they are never routines to carry or to migrate yourself. A row
+with code is read, status or not: a DDL upload's and an ``assess()`` collection's
+routines still get their verdict, the HIGH to-do included.
 """
 
 from __future__ import annotations
@@ -45,11 +46,14 @@ def test_the_discourse_names_are_no_routine_to_migrate(tmp_path: Path) -> None:
     schema = collector["database_schema"]
     assert len(schema["procedures"]) == 266 and len(schema["triggers"]) == 3
     # Its 240 C and internal functions (hstore, citext, pg_trgm, unaccent, vector) and
-    # 6 aggregates are an extension's; none of the rows says which, and none has code.
-    assert _run(collector) is None
+    # 6 aggregates are an extension's; none of the 266 rows says which, and none has
+    # code. Its 3 triggers carry their action statement, so they are read.
+    artifact = _run(collector)
+    assert sorted(r.kind for r in artifact.routines) == ["trigger"] * 3
+    assert artifact.total == 3
     from src.tools.routines.migration import name_only_routine_count
 
-    assert name_only_routine_count(collector) == 269
+    assert name_only_routine_count(collector) == 266
 
 
 def _row(name: str, language: str, **extra: Any) -> dict[str, Any]:
@@ -79,7 +83,7 @@ CREATE = (
 
 def test_only_the_rows_a_current_collection_lists_are_read() -> None:
     old = [_row("akeys", "C"), _row("avg", "INTERNAL"), _row("legacy_fn", "PLPGSQL")]
-    old_trigger = {"trigger_name": "tg_old", "table_id": "orders", "definition": "EXECUTE x()"}
+    old_trigger = {"trigger_name": "tg_old", "table_id": "orders"}
     current = [
         _row("app_fn", "sql", body_status="collected", owner="postgres"),
         # A current collection never lists an extension's function: a C function it
@@ -109,22 +113,67 @@ def test_only_the_rows_a_current_collection_lists_are_read() -> None:
     assert name_only_routine_count(collector) == 4
 
 
-def test_a_mysql_collection_before_1652_is_not_read_either() -> None:
-    """An old MySQL collection kept the body (``definition``) but no status: no exact
-    CREATE, so it is not read either, as the PostgreSQL one."""
-    collector = {
+def _mysql_collector(schema: dict[str, Any]) -> dict[str, Any]:
+    return {
         "metadata": {"source_database": {"engine": "mysql", "version": "8.0.36"}},
-        "database_schema": {
-            "tables": [{"table_id": "orders", "table_name": "orders"}],
-            "procedures": [
-                {"procedure_id": "p", "procedure_name": "p", "procedure_type": "PROCEDURE",
-                 "definition": "BEGIN END", "sql_mode": ""}  # fmt: skip
-            ],
-        },
+        "database_schema": {"tables": [{"table_id": "orders", "table_name": "orders"}], **schema},
     }
-    assert _run(collector) is None
+
+
+DDL = """
+CREATE PROCEDURE shop.purge_orders()
+BEGIN
+  DELETE FROM orders WHERE id < 0;
+END;
+CREATE TRIGGER shop.tg_orders BEFORE INSERT ON orders FOR EACH ROW SET NEW.id = NEW.id;
+"""
+
+
+def test_a_ddl_upload_keeps_its_routines_and_the_to_do() -> None:
+    """A DDL upload's rows carry their code and no body status (``parse_ddl_routines``):
+    each is read, and with no routine sources each is the HIGH to-do, as on main."""
+    from src.tools.database.ddl_parser import parse_ddl_routines
+    from src.tools.routines.migration import listed_by_name_only
+
+    raw = parse_ddl_routines(DDL, "mysql")
+    assert raw["procedures"] and raw["triggers"]
+    assert all("body_status" not in r for r in raw["procedures"] + raw["triggers"])
+    procedures = [
+        {"procedure_id": r["routine_name"], "procedure_name": r["routine_name"],
+         "schema_name": r.get("schema_name"), "procedure_type": r["routine_type"],
+         "definition": r["definition"]}
+        for r in raw["procedures"]
+    ]  # fmt: skip
+    triggers = [
+        {"trigger_id": r["trigger_name"], "trigger_name": r["trigger_name"],
+         "schema_name": r.get("schema_name"), "table_id": r["table_name"],
+         "definition": r["definition"]}
+        for r in raw["triggers"]
+    ]  # fmt: skip
+    assert not any(listed_by_name_only(r) for r in procedures + triggers)
+    artifact = _run(_mysql_collector({"procedures": procedures, "triggers": triggers}))
+    assert {(r.kind, r.status) for r in artifact.routines} == {
+        ("procedure", "needs_attention"),
+        ("trigger", "needs_attention"),
+    }
+    assert all("source_text_not_collected" in r.reasons for r in artifact.routines)
+
+
+def test_an_assess_collection_with_code_and_no_status_keeps_its_routines() -> None:
+    """``body_status`` is optional in the collector contract an ``assess()`` caller
+    gives: a routine with code is read; one with neither is a name only."""
     from src.tools.routines.migration import name_only_routine_count
 
+    collector = _mysql_collector({
+        "procedures": [
+            {"procedure_id": "p", "procedure_name": "p", "procedure_type": "PROCEDURE",
+             "definition": "BEGIN END", "sql_mode": ""},
+            {"procedure_id": "q", "procedure_name": "q", "procedure_type": "PROCEDURE"},
+        ],
+    })  # fmt: skip
+    artifact = _run(collector)
+    assert [(r.kind, r.routine_id) for r in artifact.routines] == [("procedure", "p")]
+    assert artifact.routines[0].status == "needs_attention"
     assert name_only_routine_count(collector) == 1
 
 
@@ -142,5 +191,5 @@ def test_the_run_log_counts_the_rows_it_leaves_out(tmp_path: Path, monkeypatch) 
         lambda *_a: (1, None, None, False),
     )
     assert run_assessment.phase_routine_migration(store, "j", "db")["status"] == "skipped"
-    assert logged[0].startswith("1 routine is listed by name only (a collection")
-    assert "collect again with the current script" in logged[0]
+    assert logged[0].startswith("1 routine is listed by name only, with no code")
+    assert "run the current script" in logged[0] and "a DDL upload" in logged[0]

@@ -1107,12 +1107,13 @@ def phase_routine_migration(store, job_id: str, db: str) -> dict:
         return {"status": "unchanged", "assignment_version": version}
     name_only = _name_only_routines(store, db, job_id)
     if name_only:
-        # #2124: a collection before #1652 lists routines by name only: none is read.
+        # #2124: a routine row with no code and no body status is a name only: not read.
         _log(
             "routine_migration",
-            f"{name_only} routine{'s are' if name_only != 1 else ' is'} listed by name only "
-            "(a collection written before "
-            "routine code was collected): collect again with the current script to check them",
+            f"{name_only} routine{'s are' if name_only != 1 else ' is'} listed by name only, "
+            "with no code: not checked or carried. A collection script run before routine "
+            "code was collected lists routines this way: run the current script. From any "
+            "other source (a DDL upload, an assess() collection), include each routine's code",
         )
     if artifact is None:
         _log("routine_migration", "skipped: no routines this pipeline carries in the collection")
