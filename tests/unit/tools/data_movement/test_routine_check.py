@@ -126,12 +126,12 @@ def test_mysql_signatures_compare_modes_and_base_types_in_the_target_database():
         "shop.place_order": "signature_mismatch"}  # fmt: skip
 
 
-def test_a_mysql_trigger_or_event_created_before_cutover_is_named():
+def test_a_mysql_trigger_or_event_already_on_the_target_is_named():
     lines = [*_MY_OK, ["trigger", "shop_new", "orders", "orders_bi", "", "", ""],
              ["event", "shop_new", "", "nightly", "", "", "DISABLED"]]  # fmt: skip
     result = _result(_mysql_contract(), _output(MY, lines, database="shop_new"), MY, "shop_new")
-    assert _problems(result) == {"shop.orders_bi": "present_before_cutover",
-                                 "shop.nightly": "present_before_cutover"}  # fmt: skip
+    assert _problems(result) == {"shop.orders_bi": "present_before_triggers_enable",
+                                 "shop.nightly": "present_before_triggers_enable"}  # fmt: skip
 
 
 @pytest.mark.parametrize(

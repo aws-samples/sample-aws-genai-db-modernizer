@@ -335,23 +335,6 @@
     ],
     "version": "5.18"
   },
-  "cutover_check.CutoverLeftOutReason": {
-    "module": "cutover_check",
-    "values": [
-      "trigger_order_unknown",
-      "trigger_state_unknown"
-    ],
-    "version": "1.0"
-  },
-  "cutover_check.CutoverProblem": {
-    "module": "cutover_check",
-    "values": [
-      "event_status_differs",
-      "missing",
-      "trigger_state_differs"
-    ],
-    "version": "1.0"
-  },
   "dms_gate.GateStatus": {
     "module": "dms_gate",
     "values": [
@@ -937,10 +920,11 @@
     "values": [
       "missing",
       "present_before_cutover",
+      "present_before_triggers_enable",
       "signature_mismatch",
       "trigger_enabled"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "routine_migration.MigrationStatus": {
     "module": "routine_migration",
@@ -1258,6 +1242,23 @@
       "unread"
     ],
     "version": "1.5"
+  },
+  "triggers_enable_check.TriggersEnableLeftOutReason": {
+    "module": "triggers_enable_check",
+    "values": [
+      "trigger_order_unknown",
+      "trigger_state_unknown"
+    ],
+    "version": "1.1"
+  },
+  "triggers_enable_check.TriggersEnableProblem": {
+    "module": "triggers_enable_check",
+    "values": [
+      "event_status_differs",
+      "missing",
+      "trigger_state_differs"
+    ],
+    "version": "1.1"
   },
   "verify_result.VerifyStatus": {
     "module": "verify_result",

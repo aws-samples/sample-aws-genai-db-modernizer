@@ -626,7 +626,8 @@ def routines_check(inputs: Step1Inputs, result: RoutineCheckResult | None) -> Ga
     summary = (
         "routines: none in the collection" if section.total == 0
         else f"routines: {confirmed} of {section.carried} carried routines confirmed, "
-        f"{section.not_carried} not carried, {section.deferred} left to cutover; {STATIC_LABEL}"
+        f"{section.not_carried} not carried, {section.deferred} left to the triggers-enable script; "
+        f"{STATIC_LABEL}"
     )  # fmt: skip
     return _check("routines", reasons, summary, {
         "carried": section.carried, "confirmed": confirmed, "not_carried": section.not_carried,

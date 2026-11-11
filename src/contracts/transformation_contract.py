@@ -28,7 +28,7 @@ Version History:
   each other one is not carried; left out of the dump when None.
 - 1.4 (2026-11-10, #1948): Added optional ``StepRoutine.source_state``, ``fires`` and
   ``action_order`` (a PostgreSQL trigger's source state; a MySQL trigger's timing, event
-  and ACTION_ORDER), which the cutover script reads; left out of the dump when None.
+  and ACTION_ORDER), which the triggers-enable script reads; left out of the dump when None.
 - 1.5 (2026-11-10, #2107): Rule.moves_rows description no longer says when to rebuild
   (no cutover timing)
 """
@@ -204,9 +204,9 @@ class StepRoutine(BaseModel):
     carry: RoutineCarry = Field(
         ...,
         description=(
-            "carried: in the deploy script; not_carried: blocks cutover until a reason is "
-            "settled; deferred_to_cutover: a MySQL trigger or event, created by the cutover "
-            "script, since MySQL cannot create one disabled"
+            "carried: in the deploy script; not_carried: fails the routine checks until its "
+            "reasons are settled; deferred_to_cutover: a MySQL trigger or event, created by "
+            "the triggers-enable script, since MySQL cannot create one disabled"
         ),
     )
     order: int | None = Field(
@@ -219,20 +219,21 @@ class StepRoutine(BaseModel):
         None,
         description=(
             "The state step 1 leaves it in: enabled, disabled (a PostgreSQL trigger) or "
-            "absent (deferred to cutover); None when not carried"
+            "absent (left to the triggers-enable script); None when not carried"
         ),
     )
     reasons: list[str] = Field(
         default_factory=list,
         description="Why it is not carried: rule ids and reason codes, never text",
     )
-    # #1948: what the cutover script needs of a trigger, from the collection; each is left
+    # #1948: what the triggers-enable script needs of a trigger, from the collection; each is left
     # out of the dump when None, so a section written before them keeps its bytes.
     source_state: Literal["O", "A", "R", "D", "enabled", "disabled"] | None = Field(
         None,
         exclude_if=lambda value: value is None,
         description=(
-            "PostgreSQL trigger: its state on the source, which the cutover script sets: as "
+            "PostgreSQL trigger: its state on the source, which the triggers-enable script sets: "
+            "as "
             "pg_trigger.tgenabled spells it (O origin, A always, R replica, D disabled) when the "
             "collection gives the letter; enabled or disabled when it records only that (an "
             "always or replica-only trigger is then not told apart); None when not reported"
@@ -249,7 +250,8 @@ class StepRoutine(BaseModel):
         exclude_if=lambda value: value is None,
         description=(
             "MySQL trigger: its place among its table's triggers of one timing and event "
-            "(information_schema ACTION_ORDER), the order the cutover script creates them in"
+            "(information_schema ACTION_ORDER), the order the triggers-enable script creates "
+            "them in"
         ),
     )
 
@@ -288,8 +290,8 @@ class StepRoutines(BaseModel):
     )
     total: int = Field(0, ge=0, description="Routines in the section")
     carried: int = Field(0, ge=0, description="Routines in the deploy script")
-    not_carried: int = Field(0, ge=0, description="Routines that block cutover")
-    deferred: int = Field(0, ge=0, description="Routines the cutover script creates")
+    not_carried: int = Field(0, ge=0, description="Routines that fail the routine checks")
+    deferred: int = Field(0, ge=0, description="Routines the triggers-enable script creates")
     routines: list[StepRoutine] = Field(
         default_factory=list, description="Carried in deploy order, then the rest by id"
     )

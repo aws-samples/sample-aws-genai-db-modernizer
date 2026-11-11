@@ -117,7 +117,8 @@ def test_a_postgresql_trigger_is_carried_disabled_and_one_on_a_blocked_table_is_
     assert trigger.reasons == ["depends_on_table_not_in_step"]
 
 
-def test_mysql_triggers_and_events_are_left_to_the_cutover_script():
+@pytest.mark.passes_on_main  # renamed in #2113; the behaviour is #1947's
+def test_mysql_triggers_and_events_are_left_to_the_triggers_enable_script():
     section = _section([
         row("shop.place_order", "procedure", schema="shop", status="rewritten",
             dependencies=[dep_table("shop.orders")]),
@@ -378,7 +379,7 @@ def test_a_postgresql_trigger_carries_the_collected_tgenabled_letter_as_it_is():
 @pytest.mark.passes_on_main
 def test_a_collection_written_before_enabled_mode_still_gives_enabled_or_disabled(tmp_path):
     """A 5.16 collection (no ``enabled_mode``) loads, and its triggers keep today's
-    enabled / disabled state: the cutover then names them for a check by hand."""
+    enabled / disabled state: the triggers-enable script then names them for a check by hand."""
     from src.contracts.collector_output import Trigger
 
     old = [

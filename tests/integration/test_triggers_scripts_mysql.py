@@ -1,29 +1,29 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""The routine cutover scripts on a real MySQL (#1948), run as the customer runs them.
+"""The triggers-enable scripts on a real MySQL (#1948), run as the customer runs them.
 
 Needs ``mysqld`` and the ``mysql`` client on PATH (the throwaway server of
 ``test_routine_scripts_mysql.py``: a Unix socket in a temp folder, no TCP listener, no
 binary log). Step 1's deploy script creates the procedure; then ``mysql <
-cutover-routines.sql`` creates the trigger and the events step 1 deferred, each under its
+triggers-enable.sql`` creates the trigger and the events step 1 deferred, each under its
 own sql_mode with the DEFINER rewritten, and ``mysql --batch --skip-column-names <
-cutover-check.sql > cutover-check.tsv`` is read. Run it with ``uv run pytest -m
-integration tests/integration/test_cutover_scripts_mysql.py``.
+triggers-enable-check.sql > triggers-enable-check.tsv`` is read. Run it with ``uv run pytest -m
+integration tests/integration/test_triggers_scripts_mysql.py``.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from src.tools.data_movement.cutover_check import read_cutover_check
-from src.tools.data_movement.cutover_scripts import (
-    CUTOVER_CHECK_FILE,
-    CUTOVER_CHECK_OUTPUT,
-    CUTOVER_FILE,
-    write_cutover_scripts,
-)
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE
+from src.tools.data_movement.triggers_check import read_triggers_check
+from src.tools.data_movement.triggers_scripts import (
+    TRIGGERS_CHECK_FILE,
+    TRIGGERS_CHECK_OUTPUT,
+    TRIGGERS_FILE,
+    write_triggers_scripts,
+)
 from tests.integration import test_routine_scripts_mysql as twin
 from tests.unit.tools.data_movement.routine_fixtures import (
     SENTINEL,
@@ -40,7 +40,7 @@ _mysql = twin._mysql
 mysql_socket = twin.mysql_socket  # the throwaway mysqld fixture, one server for this module
 
 
-def test_the_cutover_creates_the_deferred_trigger_and_events_as_on_the_source(
+def test_the_triggers_enable_script_creates_the_deferred_trigger_and_events_as_on_the_source(
     mysql_socket, tmp_path
 ):
     client, sock = mysql_socket
@@ -78,23 +78,23 @@ def test_the_cutover_creates_the_deferred_trigger_and_events_as_on_the_source(
     step = tmp_path / "step"
     deployed = _mysql(client, sock, None, stdin=step / DEPLOY_FILE)
     assert deployed.returncode == 0, deployed.stderr.decode()
-    scripts = write_cutover_scripts(store, "shop", "job1", contract, SHA, step,
+    scripts = write_triggers_scripts(store, "shop", "job1", contract, SHA, step,
                                     target_database="cut_new")  # fmt: skip
     assert (scripts.expected, scripts.in_script, scripts.events_enabled) == (4, 4, 1)
 
     def check():
         ran = _mysql(client, sock, None, "--batch", "--skip-column-names",
-                     stdin=step / CUTOVER_CHECK_FILE)  # fmt: skip
+                     stdin=step / TRIGGERS_CHECK_FILE)  # fmt: skip
         assert ran.returncode == 0, ran.stderr.decode()
-        (step / CUTOVER_CHECK_OUTPUT).write_bytes(ran.stdout)
-        return read_cutover_check(step / CUTOVER_CHECK_OUTPUT, contract, store, job_id="job1",
+        (step / TRIGGERS_CHECK_OUTPUT).write_bytes(ran.stdout)
+        return read_triggers_check(step / TRIGGERS_CHECK_OUTPUT, contract, store, job_id="job1",
                                   database_name="shop", contract_sha=SHA,
                                   target_database="cut_new")  # fmt: skip
 
     assert {m.routine_id: m.problem for m in check().mismatches} == {
         "shop.orders_bi": "missing", "shop.nightly": "missing", "shop.paused": "missing",
         "shop.replica": "missing"}  # fmt: skip
-    ran = _mysql(client, sock, None, stdin=step / CUTOVER_FILE)
+    ran = _mysql(client, sock, None, stdin=step / TRIGGERS_FILE)
     assert ran.returncode == 0, ran.stderr.decode()
     result = check()
     assert (result.status, result.confirmed, result.mismatches) == ("pass", 4, [])
@@ -110,7 +110,7 @@ def test_the_cutover_creates_the_deferred_trigger_and_events_as_on_the_source(
     _mysql(client, sock, "INSERT INTO cut_new.orders (id) VALUES (1)")
     note = _mysql(client, sock, "SELECT note FROM cut_new.orders", "--batch", "--skip-column-names")
     assert note.stdout.decode().strip() == SENTINEL  # the trigger fires
-    assert SENTINEL not in (step / CUTOVER_CHECK_OUTPUT).read_text()
+    assert SENTINEL not in (step / TRIGGERS_CHECK_OUTPUT).read_text()
     _mysql(client, sock, "ALTER EVENT cut_new.nightly DISABLE")
     assert {m.routine_id: m.problem for m in check().mismatches} == {
         "shop.nightly": "event_status_differs"}  # fmt: skip
@@ -124,9 +124,11 @@ def test_the_cutover_creates_the_deferred_trigger_and_events_as_on_the_source(
     assert check().status == "pass"
 
 
-def test_a_cutover_that_stopped_part_way_resumes_in_firing_order(mysql_socket, tmp_path):
-    from src.tools.data_movement.cutover_check import parse_cutover_output
-    from src.tools.data_movement.cutover_scripts import EVENT_SCHEDULER, RESUME_FILE
+def test_a_triggers_enable_run_that_stopped_part_way_resumes_in_firing_order(
+    mysql_socket, tmp_path
+):
+    from src.tools.data_movement.triggers_check import parse_triggers_output
+    from src.tools.data_movement.triggers_scripts import EVENT_SCHEDULER, RESUME_FILE
 
     client, sock = mysql_socket
     # orders has no note column yet: a_bi's CREATE fails on it, after b_bi was created.
@@ -154,29 +156,29 @@ def test_a_cutover_that_stopped_part_way_resumes_in_firing_order(mysql_socket, t
         "shop.a_bi": {"fires": "BEFORE INSERT", "action_order": 2},
         "shop.b_bi": {"fires": "BEFORE INSERT", "action_order": 1}})  # fmt: skip
     step = tmp_path / "step"
-    write_cutover_scripts(store, "shop", "job1", contract, SHA, step, target_database="cut_two")
+    write_triggers_scripts(store, "shop", "job1", contract, SHA, step, target_database="cut_two")
 
     def check():
         ran = _mysql(client, sock, None, "--batch", "--skip-column-names",
-                     stdin=step / CUTOVER_CHECK_FILE)  # fmt: skip
+                     stdin=step / TRIGGERS_CHECK_FILE)  # fmt: skip
         assert ran.returncode == 0, ran.stderr.decode()
-        (step / CUTOVER_CHECK_OUTPUT).write_bytes(ran.stdout)
-        return read_cutover_check(step / CUTOVER_CHECK_OUTPUT, contract, store, job_id="job1",
+        (step / TRIGGERS_CHECK_OUTPUT).write_bytes(ran.stdout)
+        return read_triggers_check(step / TRIGGERS_CHECK_OUTPUT, contract, store, job_id="job1",
                                   database_name="shop", contract_sha=SHA,
                                   target_database="cut_two")  # fmt: skip
 
-    stopped = _mysql(client, sock, None, stdin=step / CUTOVER_FILE)
+    stopped = _mysql(client, sock, None, stdin=step / TRIGGERS_FILE)
     assert stopped.returncode != 0 and b"note" in stopped.stderr
     assert {m.routine_id for m in check().mismatches} == {"shop.a_bi", "shop.later"}
     # Running the whole script again stops at once, on the trigger it already created.
-    again = _mysql(client, sock, None, stdin=step / CUTOVER_FILE)
+    again = _mysql(client, sock, None, stdin=step / TRIGGERS_FILE)
     assert again.returncode != 0 and b"already exists" in again.stderr
     # The customer fixes the cause, runs the check, and resumes from what it shows missing.
     _mysql(client, sock, "ALTER TABLE cut_two.orders ADD COLUMN note varchar(64)")
     check()
-    parsed = parse_cutover_output(step / CUTOVER_CHECK_OUTPUT, contract, SHA, "cut_two")
+    parsed = parse_triggers_output(step / TRIGGERS_CHECK_OUTPUT, contract, SHA, "cut_two")
     present = {k for k in parsed if k != (EVENT_SCHEDULER,)}
-    resumed = write_cutover_scripts(store, "shop", "job1", contract, SHA, step,
+    resumed = write_triggers_scripts(store, "shop", "job1", contract, SHA, step,
                                     target_database="cut_two", present=present)  # fmt: skip
     assert (resumed.in_script, resumed.already_there) == (2, 1)
     ran = _mysql(client, sock, None, stdin=step / RESUME_FILE)

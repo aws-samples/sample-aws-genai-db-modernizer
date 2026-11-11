@@ -6,10 +6,10 @@
 A ``pgserver`` PostgreSQL (a Unix socket in a temp folder, no TCP listener) first plays the
 source: one trigger in each ``tgenabled`` mode (O, A, R, D), read by the live collector
 (#2071). The routines are then dropped and the same server plays the Aurora target: step
-1's deploy script creates every trigger disabled, then ``psql -X -f cutover-routines.sql``
-and ``psql -X -f cutover-check.sql -o cutover-check.tsv`` run as ``cutover.md`` says. With
+1's deploy script creates every trigger disabled, then ``psql -X -f triggers-enable.sql``
+and ``psql -X -f triggers-enable-check.sql -o triggers-enable-check.tsv`` run as ``triggers.md`` says. With
 the letters collected, each trigger ends in its own mode and the files name no hand check;
-with a collection that predates the letter, the cutover keeps the enabled / disabled
+with a collection that predates the letter, the triggers-enable script keeps the enabled / disabled
 fallback and names the hand check. ``pgserver`` is a dev dependency: this module fails,
 never skips, when it is missing or cannot start.
 """
@@ -20,17 +20,17 @@ import pgserver  # noqa: F401 -- imported first: a missing pgserver fails, never
 import pytest
 
 from src.agents.collector.postgres_collector import _build_triggers
-from src.tools.data_movement.cutover_check import read_cutover_check
-from src.tools.data_movement.cutover_scripts import (
-    CUTOVER_CHECK_FILE,
-    CUTOVER_CHECK_OUTPUT,
-    CUTOVER_FILE,
-    CUTOVER_INSTRUCTIONS,
-    SOURCE_ALWAYS_REPLICA_QUERY,
-    write_cutover_scripts,
-)
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE
 from src.tools.data_movement.step1_routines import attach_step_routines
+from src.tools.data_movement.triggers_check import read_triggers_check
+from src.tools.data_movement.triggers_scripts import (
+    SOURCE_ALWAYS_REPLICA_QUERY,
+    TRIGGERS_CHECK_FILE,
+    TRIGGERS_CHECK_OUTPUT,
+    TRIGGERS_FILE,
+    TRIGGERS_INSTRUCTIONS,
+    write_triggers_scripts,
+)
 from tests.unit.tools.data_movement import test_routine_scripts_engine as twin
 from tests.unit.tools.data_movement.dms_step_fixtures import make_contract
 from tests.unit.tools.data_movement.routine_fixtures import (
@@ -99,22 +99,22 @@ def _source_then_target(server, tmp_path, *, keep_letter: bool):
     return store, contract
 
 
-def _deploy_cutover_check(server, tmp_path, store, contract):
+def _deploy_and_check(server, tmp_path, store, contract):
     assert _write(tmp_path, store, contract).refused == []
     step = tmp_path / "step"
     deployed = _psql(server, "-f", str(step / DEPLOY_FILE))
     assert deployed.returncode == 0, deployed.stderr
     assert set(_tgenabled(server).values()) == {"D"}  # step 1 created every one disabled
-    scripts = write_cutover_scripts(store, "shop", "job1", contract, SHA, step)
-    ran = _psql(server, "-f", str(step / CUTOVER_FILE))
+    scripts = write_triggers_scripts(store, "shop", "job1", contract, SHA, step)
+    ran = _psql(server, "-f", str(step / TRIGGERS_FILE))
     assert ran.returncode == 0, ran.stderr
     checked = _psql(
-        server, "-f", str(step / CUTOVER_CHECK_FILE), "-o", str(step / CUTOVER_CHECK_OUTPUT)
+        server, "-f", str(step / TRIGGERS_CHECK_FILE), "-o", str(step / TRIGGERS_CHECK_OUTPUT)
     )
     assert checked.returncode == 0, checked.stderr
-    check = read_cutover_check(step / CUTOVER_CHECK_OUTPUT, contract, store, job_id="job1",
+    check = read_triggers_check(step / TRIGGERS_CHECK_OUTPUT, contract, store, job_id="job1",
                                database_name="shop", contract_sha=SHA, target_database=None)  # fmt: skip
-    files = {n: (step / n).read_text() for n in (CUTOVER_FILE, CUTOVER_INSTRUCTIONS)}
+    files = {n: (step / n).read_text() for n in (TRIGGERS_FILE, TRIGGERS_INSTRUCTIONS)}
     return scripts, check, files
 
 
@@ -123,11 +123,11 @@ def test_collected_always_and_replica_triggers_end_in_their_own_mode(server, tmp
     states = {r.name: r.source_state for r in contract.routines.routines if r.kind == "trigger"}
     assert states == {n: m for n, (m, _) in _MODES.items()}
     try:
-        scripts, check, files = _deploy_cutover_check(server, tmp_path, store, contract)
+        scripts, check, files = _deploy_and_check(server, tmp_path, store, contract)
         assert _tgenabled(server) == {n: m for n, (m, _) in _MODES.items()}  # A and R exactly
         assert (check.status, check.confirmed, check.mismatches) == ("pass", 4, [])
         assert (scripts.in_script, scripts.stays_disabled, scripts.state_folded) == (4, 1, 0)
-        sql = files[CUTOVER_FILE]
+        sql = files[TRIGGERS_FILE]
         assert 'ENABLE ALWAYS TRIGGER "trg_a";' in sql and 'ENABLE REPLICA TRIGGER "trg_r";' in sql
         assert "(source state A)" in sql and "(source state R)" in sql
         assert "created disabled to their source state;" in sql
@@ -137,9 +137,9 @@ def test_collected_always_and_replica_triggers_end_in_their_own_mode(server, tmp
         # The check reads the exact mode back: an A trigger set to O is drift.
         server.psql("ALTER TABLE public.orders ENABLE TRIGGER trg_a;")
         step = tmp_path / "step"
-        assert _psql(server, "-f", str(step / CUTOVER_CHECK_FILE), "-o",
-                     str(step / CUTOVER_CHECK_OUTPUT)).returncode == 0  # fmt: skip
-        drift = read_cutover_check(step / CUTOVER_CHECK_OUTPUT, contract, store, job_id="job1",
+        assert _psql(server, "-f", str(step / TRIGGERS_CHECK_FILE), "-o",
+                     str(step / TRIGGERS_CHECK_OUTPUT)).returncode == 0  # fmt: skip
+        drift = read_triggers_check(step / TRIGGERS_CHECK_OUTPUT, contract, store, job_id="job1",
                                    database_name="shop", contract_sha=SHA, target_database=None)  # fmt: skip
         assert {m.routine_id: m.problem for m in drift.mismatches} == {
             "public.orders.trg_a": "trigger_state_differs"}  # fmt: skip
@@ -154,19 +154,20 @@ def test_a_collection_without_the_letter_keeps_the_fallback_and_the_hand_check(s
     assert states == {"trg": "enabled", "trg_a": "enabled", "trg_r": "disabled",
                       "trg_d": "disabled"}  # fmt: skip
     try:
-        scripts, check, files = _deploy_cutover_check(server, tmp_path, store, contract)
+        scripts, check, files = _deploy_and_check(server, tmp_path, store, contract)
         # Never guessed: A is enabled as an ordinary trigger, R stays disabled ...
         assert _tgenabled(server) == {"trg": "O", "trg_a": "O", "trg_r": "D", "trg_d": "D"}
         assert (check.status, check.confirmed, check.mismatches) == ("pass", 4, [])
         assert (scripts.in_script, scripts.stays_disabled, scripts.state_folded) == (4, 2, 4)
         # ... and the files say so, with the read-only source query for the hand check.
-        assert SOURCE_ALWAYS_REPLICA_QUERY in files[CUTOVER_INSTRUCTIONS]
-        assert "check those by hand" in files[CUTOVER_FILE]
-        assert "(enabled on the source)" in files[CUTOVER_FILE]
+        assert SOURCE_ALWAYS_REPLICA_QUERY in files[TRIGGERS_INSTRUCTIONS]
+        assert "check those by hand" in files[TRIGGERS_FILE]
+        assert "(enabled on the source)" in files[TRIGGERS_FILE]
         assert (
-            "created disabled enabled or disabled as the collection records;" in files[CUTOVER_FILE]
+            "created disabled enabled or disabled as the collection records;"
+            in files[TRIGGERS_FILE]
         )
-        assert "to their source state" not in files[CUTOVER_FILE]
-        assert "(source state " not in files[CUTOVER_FILE]  # no trigger claims a letter
+        assert "to their source state" not in files[TRIGGERS_FILE]
+        assert "(source state " not in files[TRIGGERS_FILE]  # no trigger claims a letter
     finally:
         server.psql(_DROP)

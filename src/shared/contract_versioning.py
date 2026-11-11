@@ -581,10 +581,15 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     ),
     # #2123: the LOB sizes the customer's run of step 1's lob-sizes.sql measured (or skipped).
     (r"data-movement/step-\d+/lob-sizes\.json", "src.contracts.lob_sizes:LobSizes"),
-    # #1948: what the customer's run of the cutover routine check script shows.
+    # #1948: what the customer's run of the triggers-enable check script shows.
+    (
+        r"data-movement/step-\d+/triggers-enable-check\.json",
+        "src.contracts.triggers_enable_check:TriggersEnableCheckResult",
+    ),
+    # The same result saved before #2113 under its old name (legacy alias): it loads as is.
     (
         r"data-movement/step-\d+/cutover-check\.json",
-        "src.contracts.cutover_check:CutoverCheckResult",
+        "src.contracts.triggers_enable_check:TriggersEnableCheckResult",
     ),
     (r"data-movement/hub/plan\.json", "src.contracts.data_movement_plan:HubPlan"),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),

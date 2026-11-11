@@ -3,8 +3,8 @@
 
 """
 RoutineCheckResult Pydantic Models
-Version: 1.0
-Last Modified: 2026-11-09
+Version: 1.1
+Last Modified: 2026-11-11
 Description: What the customer's run of step 1's routine check script shows (#1947)
 
 Written at ``<db>/<job>/data-movement/step-<k>/routines-check.json`` by
@@ -18,7 +18,7 @@ is refused, never guessed).
 Each carried routine is confirmed when it exists on the target (its ``CREATE`` ran with
 the body checked: ``check_function_bodies`` on PostgreSQL, the whole body parsed on
 MySQL, so it compiled), with its source signature, and, for a PostgreSQL trigger,
-disabled. A MySQL trigger or event is deferred to the cutover script and must be absent.
+disabled. A MySQL trigger or event is left to the triggers-enable script and must be absent.
 A routine step 1 cannot carry fails the result as a mismatch does. ``proof`` is
 ``static``: checked, not load-tested, until the load-and-run proof (#1945) exists.
 
@@ -27,6 +27,9 @@ contract's routine ids, fixed problem codes and counts.
 
 Version History:
 - 1.0 (2026-11-09, #1947): First version.
+- 1.1 (2026-11-11, #2113): Added the problem code ``present_before_triggers_enable``,
+  written in place of ``present_before_cutover``, which a result saved before #2113
+  still holds and is read as the new code.
 """
 
 from __future__ import annotations
@@ -34,11 +37,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 RoutineProblem = Literal[
-    "missing", "signature_mismatch", "trigger_enabled", "present_before_cutover"
+    "missing",
+    "signature_mismatch",
+    "trigger_enabled",
+    "present_before_triggers_enable",
+    "present_before_cutover",  # legacy alias (#2113): read from saved files, never written
 ]
+#: Problem codes a result saved before #2113 holds, read as today's code.
+LEGACY_PROBLEMS = {"present_before_cutover": "present_before_triggers_enable"}  # legacy alias
 #: What the label of a routine check says while no load-and-run proof exists (#1945).
 STATIC_LABEL: Literal["checked, not load-tested"] = "checked, not load-tested"
 
@@ -55,10 +64,17 @@ class RoutineMismatch(BaseModel):
         description=(
             "missing: not on the target; signature_mismatch: on the target with other "
             "argument types; trigger_enabled: a PostgreSQL trigger left enabled during "
-            "replication; present_before_cutover: a MySQL trigger or event created before "
-            "the cutover script"
+            "replication; present_before_triggers_enable: a MySQL trigger or event the "
+            "triggers-enable script creates is already there (a result saved before #2113 "
+            "names it by its old code, read as this one)"
         ),
     )
+
+    @field_validator("problem", mode="before")
+    @classmethod
+    def _today_code(cls, value: object) -> object:
+        """A code a result saved before #2113 holds, as today's."""
+        return LEGACY_PROBLEMS.get(value, value) if isinstance(value, str) else value
 
 
 class RoutineNotCarried(BaseModel):
@@ -75,7 +91,7 @@ class RoutineCheckResult(BaseModel):
     """Step 1's routine check, read from the customer's output file."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     job_id: str = Field(..., min_length=1, description="The job")
     database_name: str = Field(..., min_length=1, description="The job's database name")
@@ -100,7 +116,9 @@ class RoutineCheckResult(BaseModel):
     )
     carried: int = Field(..., ge=0, description="Routines the deploy script carries")
     confirmed: int = Field(..., ge=0, description="Carried routines the check confirms")
-    deferred: int = Field(..., ge=0, description="MySQL triggers and events left to cutover")
+    deferred: int = Field(
+        ..., ge=0, description="MySQL triggers and events left to the triggers-enable script"
+    )
     rows_read: int = Field(..., ge=0, description="Routine lines in the output file")
     mismatches: list[RoutineMismatch] = Field(
         default_factory=list, description="Routines not confirmed, by routine id"

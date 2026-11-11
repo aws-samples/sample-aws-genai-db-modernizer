@@ -80,7 +80,7 @@ def _mysql(client, sock, sql: str | None = None, *args: str, stdin: Path | None 
     return subprocess.run(argv, input=data, capture_output=True, check=False)
 
 
-def test_the_scripts_deploy_and_confirm_on_mysql_with_triggers_left_to_cutover(
+def test_the_scripts_deploy_and_confirm_on_mysql_with_triggers_left_to_the_triggers_enable_script(
     mysql_socket, tmp_path
 ):
     from tests.unit.tools.data_movement.routine_fixtures import mysql_source
@@ -131,4 +131,4 @@ def test_the_scripts_deploy_and_confirm_on_mysql_with_triggers_left_to_cutover(
     _mysql(client, sock, "CREATE TRIGGER shop_new.orders_bi BEFORE INSERT ON shop_new.orders "
            "FOR EACH ROW SET NEW.id = NEW.id")  # fmt: skip
     assert {m.routine_id: m.problem for m in check().mismatches} == {
-        "shop.orders_bi": "present_before_cutover"}  # fmt: skip
+        "shop.orders_bi": "present_before_triggers_enable"}  # fmt: skip

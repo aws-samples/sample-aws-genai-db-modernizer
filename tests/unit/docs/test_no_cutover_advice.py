@@ -15,11 +15,17 @@ rendered from reports the current code built, and the skills whose model text re
 deliverable. "in sync" is banned there too, with no exception: a CDC copy is "kept current
 by CDC" from its owner (#2167). ``tests/e2e/test_no_cutover_advice.py`` runs the same check
 on the samples' real deliverables, a model's included on an e2e-llm run.
+
+The scripts that turn on the triggers and events step 1 left off are the triggers-enable
+scripts (#2113): nothing calls them cutover scripts, and #1948's names for them
+(``OLD_NAMES``) appear nowhere in the repository outside the pinned legacy-alias lines
+(``LEGACY_ALIASES``).
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -27,9 +33,9 @@ import pytest
 from scripts import render_dms_step
 from src.report.renderers import render_engineering_report_md
 from src.shared.cutover_message import CUTOVER_DISCLAIMER, CUTOVER_MESSAGE, cutover_message_text
-from src.tools.data_movement.cutover_scripts import CUTOVER_FILE, CUTOVER_INSTRUCTIONS
 from src.tools.data_movement.dms_gate import REPLICATING_MESSAGE
 from src.tools.data_movement.routine_scripts import DEPLOY_FILE, INSTRUCTIONS_FILE
+from src.tools.data_movement.triggers_scripts import TRIGGERS_FILE, TRIGGERS_INSTRUCTIONS
 from src.tools.data_movement.verify_scripts import write_verify_scripts
 from tests.executive_pdf import executive_text, normalize
 from tests.unit.report.test_cutover_responsibility import REPORTS
@@ -52,7 +58,13 @@ BANNED = {
     r"(?:the\s+|your\s+|their\s+)?cut\s*over\b(?!-)"
     r"|\b(?:after|before|once|until|when|as\s+soon\s+as)\s+(?:you|they|the\s+customer)\s+"
     r"cut\s*over\b",
+    # #2113: the triggers-enable scripts are not cutover scripts, and #1948's names for them
+    # stay only as pinned legacy aliases (LEGACY_ALIASES).
+    "cutover script": r"\bcutover[\s_-]+scripts?\b",
+    "old trigger script name": r"\bcutover[\s_-]+(?:routines?|check|resume)\b|\bcutover\.md\b",
 }
+#: The labels for #1948's names, checked in every tracked file (``test_no_tracked_file_...``).
+OLD_NAMES = ("cutover script", "old trigger script name")
 # Timing words model design text writes next to "in sync" about the plan's own waves or
 # CDC, not the cutover (``_model_text_flags``): a later wave or its gate ("dual-read by OpenSearch queries until wave 4", "via
 # CDC until then", "before this gate", "Before the Wave 3 gate", "before wave 3 starts",
@@ -108,8 +120,8 @@ ALLOWED = {
     ("scripts/run_dms_step.py", 'if scripts.status == "ready":'),
     ("src/tools/data_movement/routine_scripts.py", 'status: str  # "ready" or "nothing_to_deploy"'),
     ("src/tools/data_movement/routine_scripts.py", '        status="ready",'),
-    ("src/tools/data_movement/cutover_scripts.py", 'status: str  # "ready" or "nothing_to_do"'),
-    ("src/tools/data_movement/cutover_scripts.py", '            status="ready",'),
+    ("src/tools/data_movement/triggers_scripts.py", 'status: str  # "ready" or "nothing_to_do"'),
+    ("src/tools/data_movement/triggers_scripts.py", '            status="ready",'),
     # The disclaimer, split over two string literals in its source.
     (
         "src/tools/data_movement/dms_step.py",
@@ -133,6 +145,46 @@ ALLOWED = {
     ("src/agents/referee/synthesis_report.py", "reason, ready to sit next to its excerpt."),
     ("src/agents/referee/synthesis_report.py", 'application change) catches up", the same'),
     ("src/shared/migration_risk_rules.py", '# "Before cutover, close" no-wave line a report'),
+}
+# #1948's names for the triggers-enable scripts, kept only where a saved job or saved
+# instructions still need them (#2113): (file, a substring of the exact line), each still in its
+# file. Every other line naming them, in any tracked file, fails.
+LEGACY_ALIASES = {
+    # The hidden subcommand aliases.
+    ("scripts/run_dms_step.py", '"cutover-scripts": TRIGGERS_SCRIPTS,  # legacy alias'),
+    ("scripts/run_dms_step.py", '"cutover-check": TRIGGERS_CHECK,  # legacy alias'),
+    # The old check script's header, end line and file names, so its saved output is read.
+    ("src/tools/data_movement/triggers_scripts.py", '"modernizer-cutover-check",  # legacy alias'),
+    (
+        "src/tools/data_movement/triggers_scripts.py",
+        '"modernizer-cutover-check-end",  # legacy alias',
+    ),
+    ("src/tools/data_movement/triggers_scripts.py", '"cutover-check.sql",  # legacy alias'),
+    ("src/tools/data_movement/triggers_scripts.py", '"cutover-check.tsv",  # legacy alias'),
+    # The old result's path, which loads as the renamed model, and its row in the artifacts page.
+    ("src/shared/contract_versioning.py", 'r"data-movement/step-\\d+/cutover-check\\.json",'),
+    ("docs/contracts/artifacts.md", "| `data-movement/step-\\d+/cutover-check\\.json` |"),
+    (
+        "tests/contract/test_declared_artifacts.py",
+        'r"data-movement/step-\\d+/cutover-check\\.json": (',
+    ),
+    # The tests of those aliases.
+    (
+        "tests/unit/scripts/test_run_dms_step_triggers.py",
+        'assert LEGACY_COMMANDS == {"cutover-scripts": "triggers-scripts",  # legacy alias',
+    ),
+    (
+        "tests/unit/scripts/test_run_dms_step_triggers.py",
+        '"cutover-check": "triggers-check"}  # legacy alias',
+    ),
+    (
+        "tests/contract/test_triggers_enable_check_legacy_load.py",
+        'OLD_KEY = "shop/job1/data-movement/step-1/cutover-check.json"  # legacy alias',
+    ),
+    (
+        "tests/contract/test_triggers_enable_check_legacy_load.py",
+        "#1948 wrote the result at ``data-movement/step-1/cutover-check.json`` as",
+    ),
 }
 DOCS = (
     "infrastructure/cloudformation/data-movement/README.md",
@@ -230,6 +282,10 @@ def _allowed(
 ) -> bool:
     if any(path == name and pinned in line for path, pinned in ALLOWED):
         return True
+    if label in OLD_NAMES and any(
+        path == name and pinned in line for path, pinned in LEGACY_ALIASES
+    ):
+        return True
     if deliverable and label == "cutover timing":
         return bool(WAVE_ONE_COUNT.search(line[:end]))
     return label == "ready" and any(
@@ -276,21 +332,21 @@ def _help_page_step_1() -> str:
 
 def _rendered(tmp_path: Path) -> dict[str, str]:
     """Every file the step 1 generators write, for both engines."""
-    from tests.unit.tools.data_movement import test_cutover_scripts as cut
     from tests.unit.tools.data_movement import test_routine_scripts as rs
+    from tests.unit.tools.data_movement import test_triggers_scripts as te
     from tests.unit.tools.data_movement.verify_fixtures import SHA, mysql_contract, pg_contract
 
     out: dict[str, str] = {}
     for example in render_dms_step.example_dirs():
         for name, text in render_dms_step.render_example(example).items():
             out[f"{example.name}/{name}"] = text
-    pg_cut = cut._pg_case(tmp_path / "cut-pg", states={"public.orders.trg_b": "D"})
-    mysql_cut = cut._mysql_case(tmp_path / "cut-mysql", events={"nightly": "ENABLE"})
-    for engine, (store, contract) in (("pg", pg_cut), ("mysql", mysql_cut)):
-        root = tmp_path / f"cut-{engine}"
-        cut._cut(root, store, contract)
-        for name in (CUTOVER_FILE, CUTOVER_INSTRUCTIONS):
-            out[f"cutover-{engine}/{name}"] = cut._read(root, name)
+    pg_te = te._pg_case(tmp_path / "te-pg", states={"public.orders.trg_b": "D"})
+    mysql_te = te._mysql_case(tmp_path / "te-mysql", events={"nightly": "ENABLE"})
+    for engine, (store, contract) in (("pg", pg_te), ("mysql", mysql_te)):
+        root = tmp_path / f"te-{engine}"
+        te._write_scripts(root, store, contract)
+        for name in (TRIGGERS_FILE, TRIGGERS_INSTRUCTIONS):
+            out[f"triggers-{engine}/{name}"] = te._read(root, name)
     pg_rs = rs._pg_case(tmp_path / "routines-pg")
     mysql_rs = rs._mysql_case(tmp_path / "routines-mysql")
     for engine, (store, contract) in (("pg", pg_rs), ("mysql", mysql_rs)):
@@ -329,15 +385,15 @@ def test_the_step_1_scripts_and_tools_give_no_cutover_advice(name):
 
 def test_every_generated_step_1_file_gives_no_cutover_advice(tmp_path):
     rendered = _rendered(tmp_path)
-    assert len(rendered) >= 16  # both examples, both cutover, routine and verify sets
+    assert len(rendered) >= 16  # both examples, both triggers-enable, routine and verify sets
     findings = [f for name, text in rendered.items() for f in _findings(name, text)]
     assert findings == []
 
 
-def test_the_cutover_instructions_say_only_the_one_sentence_about_the_cutover(tmp_path):
+def test_the_triggers_instructions_say_only_the_one_sentence_about_the_cutover(tmp_path):
     rendered = _rendered(tmp_path)
     for engine in ("pg", "mysql"):
-        md = rendered[f"cutover-{engine}/{CUTOVER_INSTRUCTIONS}"]
+        md = rendered[f"triggers-{engine}/{TRIGGERS_INSTRUCTIONS}"]
         assert md.count(CUTOVER_MESSAGE) == 1
         assert "point your applications at Aurora" not in md
 
@@ -351,8 +407,8 @@ def test_each_cutover_facing_file_starts_with_the_disclaimer(tmp_path):
     firsts = {
         name: text.splitlines()[0]
         for name, text in rendered.items()
-        if name.rsplit("/", 1)[1] in (CUTOVER_INSTRUCTIONS, INSTRUCTIONS_FILE, "verify.md",
-                                      CUTOVER_FILE, DEPLOY_FILE, "step-1.sequences.sql")
+        if name.rsplit("/", 1)[1] in (TRIGGERS_INSTRUCTIONS, INSTRUCTIONS_FILE, "verify.md",
+                                      TRIGGERS_FILE, DEPLOY_FILE, "step-1.sequences.sql")
     }  # fmt: skip
     assert len(firsts) == 2 * 5 + 1  # both engines (sequences: Aurora PostgreSQL only)
     for name, first in firsts.items():
@@ -418,8 +474,10 @@ def test_the_guard_catches_each_kind_of_advice(advice):
     [
         "The cutover is your responsibility.",
         "Full load complete. Replication is in progress.",
-        "Run cutover-scripts to write cutover-routines.sql.",
-        "MySQL triggers and events are left to the cutover script.",
+        "Run triggers-scripts to write triggers-enable.sql.",
+        "MySQL triggers and events are left to the triggers-enable script.",
+        "Run triggers-check to read triggers-enable-check.tsv, then triggers.md says the rest.",
+        "triggers-scripts --resume writes triggers-enable-resume.sql.",
         "Every AWS write needs the customer's approval.",
         "`--until ready` stops once the preflight passes.",
         "MOVE_RESULT: stopped stage=check reason=until ready",
@@ -531,7 +589,7 @@ def test_a_deliverable_never_says_in_sync(copy: str) -> None:
         "them, so keep the OpenSearch copy current from DynamoDB via CDC until then.",
         "A read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a "
         "write only after CDC applies it.",
-        "The cutover script creates the triggers.",
+        "The triggers-enable script creates the triggers.",
         "Wave 1 moves the whole database in one cutover.",
         "1,234 rows, all 107 queries at cutover; 5 remain on Aurora MySQL at the end.",
     ],
@@ -650,3 +708,140 @@ def test_our_own_text_keeps_every_banned_word() -> None:
     """The deterministic text is checked strictly: the same uniqueness sentence fails."""
     note = "so (user_id, name) is not proven unique and keying on it could overwrite a row."
     assert _findings("ours", note, deliverable=True) != []
+
+
+# ---------------------------------------------------------------------------
+# The triggers-enable scripts (#2113): never cutover scripts, #1948's names only as aliases
+# ---------------------------------------------------------------------------
+
+_TEXT_SUFFIXES = {".py", ".md", ".json", ".toml", ".sh", ".yml", ".yaml", ".js", ".jsx", ".ts",
+                  ".tsx", ".sql", ".txt", ".cfg", ".ini", ".html", ".css", ".jsonl", ".tsv"}  # fmt: skip
+_THIS_FILE = Path(__file__).resolve().relative_to(REPO).as_posix()
+
+
+def _tracked_text_files() -> list[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    return sorted(
+        name
+        for name in out
+        if name
+        and Path(name).suffix in _TEXT_SUFFIXES
+        and name != _THIS_FILE
+        and (REPO / name).is_file()
+    )
+
+
+def _old_names(name: str, text: str) -> list[str]:
+    """Each line of ``text`` that calls the scripts cutover scripts or names #1948's files or
+    subcommands, outside the pinned LEGACY_ALIASES lines."""
+    found = []
+    for label in OLD_NAMES:
+        for m in re.finditer(BANNED[label], text, re.IGNORECASE):
+            first = text.rfind("\n", 0, m.start()) + 1
+            last = text.find("\n", m.end())
+            line = text[first : None if last < 0 else last]
+            if any(path == name and pinned in line for path, pinned in LEGACY_ALIASES):
+                continue
+            found.append(f"{name}:{text.count(chr(10), 0, m.start()) + 1}: {label}: {m.group(0)!r}")
+    return found
+
+
+def test_no_tracked_file_calls_them_cutover_scripts_or_uses_the_old_names() -> None:
+    files = _tracked_text_files()
+    assert "scripts/run_dms_step.py" in files and ".claude/commands/move.md" in files
+    found = [
+        f for name in files for f in _old_names(name, (REPO / name).read_text(errors="replace"))
+    ]
+    assert found == []
+
+
+def test_each_legacy_alias_line_is_still_there() -> None:
+    for path, pinned in LEGACY_ALIASES:
+        assert pinned in (REPO / path).read_text(), (path, pinned)
+
+
+@pytest.mark.parametrize(
+    "old",
+    [
+        "Run cutover-scripts to write cutover-routines.sql.",
+        "MySQL triggers and events are left to the cutover script.",
+        "The cutover scripts turn the triggers on.",
+        "Save its output as cutover-check.tsv.",
+        "Run run_dms_step.py cutover-check.",
+        "Then cutover-resume.sql creates the rest.",
+        "Read cutover.md first.",
+        "from src.tools.data_movement.cutover_scripts import write_cutover_scripts",
+        "-- Cutover routines: generated by the modernizer.",
+        "A read-only cutover check script confirms each trigger.",
+    ],
+)
+def test_the_old_names_fail_in_any_file_and_in_step_1_text(old: str) -> None:
+    for name in (
+        "sample",
+        "scripts/run_dms_step.py",
+        "src/tools/data_movement/triggers_scripts.py",
+    ):
+        assert _old_names(name, old) != [], name
+        assert _findings(name, old) != [], name
+    assert _findings("sample", old, deliverable=True) != []
+
+
+def test_a_pinned_legacy_alias_passes_only_on_its_own_line() -> None:
+    path, pinned = next(iter(sorted(LEGACY_ALIASES)))
+    assert _old_names(path, pinned) == []
+    assert _old_names(path, pinned + "\nRun cutover-scripts again.") != []
+    assert _old_names("sample", pinned) != []
+
+
+# The published codes (#2113): a code the customer sees never says "cutover". Two stored
+# values still do, and nothing renders them; each is named here with why it stays.
+STORED_ONLY = {
+    # StepRoutine.carry, in the step contract: stored and read, never printed (the status
+    # lines and files give only the deferred count).
+    "deferred_to_cutover",
+    # The routine check's code before #2113 (legacy alias): read from a saved result as
+    # present_before_triggers_enable, never written.
+    "present_before_cutover",
+}
+_STORED = re.compile("|".join(rf"\b{v}\b" for v in sorted(STORED_ONLY)))
+
+
+def test_no_published_code_says_cutover_but_the_stored_only_ones() -> None:
+    from scripts.contract_value_snapshot import contract_value_sets
+
+    found = {
+        value
+        for values in contract_value_sets().values()
+        for value in values
+        if "cutover" in str(value).lower()
+    }
+    assert found == STORED_ONLY
+
+
+def test_no_stored_only_value_is_rendered(tmp_path) -> None:
+    """Not in a generated file, the step 1 docs, the help page or a deliverable."""
+    texts = dict(_rendered(tmp_path))
+    texts.update({name: (REPO / name).read_text() for name in DOCS})
+    texts["docs/use-claude-code.md (/move)"] = _help_page_step_1()
+    for name in sorted(REPORTS):
+        report = REPORTS[name]()
+        texts[f"{name} engineering"] = render_engineering_report_md(report)
+        texts[f"{name} executive"] = normalize(executive_text(report))
+    leaks = [
+        f"{name}: {m.group(0)}" for name, text in texts.items() for m in _STORED.finditer(text)
+    ]
+    assert leaks == []
+
+
+def test_the_generated_step_1_files_say_cutover_only_in_the_disclaimer(tmp_path) -> None:
+    for name, text in _rendered(tmp_path).items():
+        rest = text.replace(CUTOVER_DISCLAIMER, "").replace(CUTOVER_MESSAGE, "")
+        assert "cutover" not in rest.lower(), name
+
+
+def test_the_stored_only_values_are_caught_when_rendered() -> None:
+    for value in STORED_ONLY:
+        assert _STORED.search(f"- shop.orders_bi: {value}")
+    assert not _STORED.search("present_before_triggers_enable")

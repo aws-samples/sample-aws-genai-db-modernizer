@@ -29,7 +29,7 @@ Then each carried routine is compared with the rows of its name:
   (``tgenabled = 'D'``).
 - MySQL procedures and functions: each parameter's mode and base type, and a function's
   return base type (``int(11)`` and ``INT`` are one type; lengths and character sets are
-  not compared). Triggers and events are deferred to the cutover script and must be
+  not compared). Triggers and events are left to the triggers-enable script and must be
   absent.
 
 A routine that exists compiled: PostgreSQL's ``CREATE`` ran with ``check_function_bodies``
@@ -114,7 +114,7 @@ def parse_check_output(
 ) -> dict[tuple[str, ...], list[Row]]:
     """The output's routine lines, by their check key, after the strict reading of the
     module docstring; :class:`RoutineCheckOutputError` on the first problem. ``asked`` and
-    ``spec`` read the output of another check script built the same way (the cutover
+    ``spec`` read the output of another check script built the same way (the triggers-enable
     check, #1948): the routines it asks for and its header and end lines. ``settings``
     names the setting lines it prints (their first field, every other field empty but the
     last, which is one of the values given), each at most once, under the key ``(name,)``."""
@@ -299,7 +299,7 @@ def _compare(
 ) -> str | None:
     """The problem with a carried or deferred routine, or None when it is confirmed."""
     if row.carry == "deferred_to_cutover":
-        return "present_before_cutover" if found else None
+        return "present_before_triggers_enable" if found else None
     if row.kind == "trigger":
         if not found:
             return "missing"
