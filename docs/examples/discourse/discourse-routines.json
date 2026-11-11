@@ -1,0 +1,85 @@
+{
+  "metadata": {
+    "routine_capture": {
+      "include_bodies": true,
+      "privileges_not_seen": []
+    }
+  },
+  "procedures": [
+    {
+      "routine_name": "topic_visible_post_count",
+      "schema_name": "public",
+      "specific_name": "topic_visible_post_count_91001",
+      "identity_arguments": "p_topic_id integer",
+      "routine_type": "FUNCTION",
+      "return_type": "integer",
+      "language": "SQL",
+      "owner": "postgres",
+      "security_definer": false,
+      "depends_on": [],
+      "body_chars": 242,
+      "definition": "CREATE OR REPLACE FUNCTION public.topic_visible_post_count(p_topic_id integer)\n RETURNS integer\n LANGUAGE sql\n STABLE\nAS $function$\n  SELECT count(*)::integer FROM public.posts\n   WHERE topic_id = p_topic_id AND deleted_at IS NULL\n$function$\n",
+      "body_status": "collected"
+    },
+    {
+      "routine_name": "prune_read_notifications",
+      "schema_name": "public",
+      "specific_name": "prune_read_notifications_91002",
+      "identity_arguments": "IN p_days integer",
+      "routine_type": "PROCEDURE",
+      "return_type": null,
+      "language": "PLPGSQL",
+      "owner": "postgres",
+      "security_definer": false,
+      "depends_on": [],
+      "body_chars": 240,
+      "definition": "CREATE OR REPLACE PROCEDURE public.prune_read_notifications(IN p_days integer)\n LANGUAGE plpgsql\nAS $procedure$\nBEGIN\n  DELETE FROM public.notifications\n   WHERE read AND created_at < now() - make_interval(days => p_days);\nEND;\n$procedure$\n",
+      "body_status": "collected"
+    },
+    {
+      "routine_name": "posts_bump_topic",
+      "schema_name": "public",
+      "specific_name": "posts_bump_topic_91003",
+      "identity_arguments": "",
+      "routine_type": "FUNCTION",
+      "return_type": "trigger",
+      "language": "PLPGSQL",
+      "owner": "discourse",
+      "security_definer": false,
+      "depends_on": [],
+      "body_chars": 251,
+      "definition": "CREATE OR REPLACE FUNCTION public.posts_bump_topic()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n  UPDATE public.topics SET bumped_at = NEW.created_at\n   WHERE id = NEW.topic_id AND bumped_at < NEW.created_at;\n  RETURN NEW;\nEND;\n$function$\n",
+      "body_status": "collected"
+    },
+    {
+      "routine_name": "begin_upload_snapshot",
+      "schema_name": "public",
+      "specific_name": "begin_upload_snapshot_91004",
+      "identity_arguments": "IN p_label text",
+      "routine_type": "PROCEDURE",
+      "return_type": null,
+      "language": "PLPGSQL",
+      "owner": "postgres",
+      "security_definer": false,
+      "depends_on": [],
+      "body_chars": 172,
+      "definition": "CREATE OR REPLACE PROCEDURE public.begin_upload_snapshot(IN p_label text)\n LANGUAGE plpgsql\nAS $procedure$\nBEGIN\n  PERFORM pg_backup_start(p_label, true);\nEND;\n$procedure$\n",
+      "body_status": "collected"
+    }
+  ],
+  "triggers": [
+    {
+      "trigger_name": "posts_bump_topic",
+      "schema_name": "public",
+      "table_name": "posts",
+      "event_type": "INSERT",
+      "timing": "AFTER",
+      "for_each": "ROW",
+      "is_enabled": "O",
+      "function_signature": "posts_bump_topic()",
+      "body_chars": 109,
+      "definition": "CREATE TRIGGER posts_bump_topic AFTER INSERT ON public.posts FOR EACH ROW EXECUTE FUNCTION posts_bump_topic()",
+      "body_status": "collected"
+    }
+  ]
+}

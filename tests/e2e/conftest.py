@@ -189,6 +189,12 @@ def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
 
 
 @pytest.fixture(scope="session")
+def wordpress_run(e2e_root: Path) -> PipelineResult:
+    """The cached wordpress run, for tests whose checks are specific to that sample."""
+    return _run_pipeline_cached("wordpress", e2e_root / "artifacts", job_id="e2e-word")
+
+
+@pytest.fixture(scope="session")
 def discourse_run(e2e_root: Path) -> PipelineResult:
     """The cached discourse run, for tests whose checks are specific to that sample."""
     return _run_pipeline_cached("discourse", e2e_root / "artifacts", job_id="e2e-disc")

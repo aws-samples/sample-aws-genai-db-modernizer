@@ -1,0 +1,165 @@
+{
+  "metadata": {
+    "routine_capture": {
+      "include_bodies": true,
+      "routines_counted": 5,
+      "parameters_counted": 4,
+      "privileges_not_seen": []
+    }
+  },
+  "procedures": [
+    {
+      "routine_name": "wp_post_comment_count",
+      "schema_name": "wordpress",
+      "specific_name": "wp_post_comment_count",
+      "routine_type": "FUNCTION",
+      "return_type": "int",
+      "definer": "admin@%",
+      "security_type": "DEFINER",
+      "is_deterministic": "NO",
+      "sql_data_access": "READS SQL DATA",
+      "routine_comment": "",
+      "external_language": "SQL",
+      "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+      "character_set_client": "utf8mb4",
+      "collation_connection": "utf8mb4_unicode_520_ci",
+      "database_collation": "utf8mb4_unicode_520_ci",
+      "body_chars": 125,
+      "definition": "BEGIN\n  DECLARE n INT DEFAULT 0;\n  SELECT COUNT(*) INTO n FROM wp_comments WHERE comment_post_ID = p_post_id;\n  RETURN n;\nEND",
+      "body_status": "collected"
+    },
+    {
+      "routine_name": "wp_bulk_import_mode",
+      "schema_name": "wordpress",
+      "specific_name": "wp_bulk_import_mode",
+      "routine_type": "PROCEDURE",
+      "return_type": "",
+      "definer": "admin@%",
+      "security_type": "DEFINER",
+      "is_deterministic": "NO",
+      "sql_data_access": "CONTAINS SQL",
+      "routine_comment": "",
+      "external_language": "SQL",
+      "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+      "character_set_client": "utf8mb4",
+      "collation_connection": "utf8mb4_unicode_520_ci",
+      "database_collation": "utf8mb4_unicode_520_ci",
+      "body_chars": 147,
+      "definition": "BEGIN\n  IF p_on = 1 THEN\n    SET GLOBAL innodb_flush_log_at_trx_commit = 2;\n  ELSE\n    SET GLOBAL innodb_flush_log_at_trx_commit = 1;\n  END IF;\nEND",
+      "body_status": "collected"
+    },
+    {
+      "routine_name": "wp_refresh_comment_count",
+      "schema_name": "wordpress",
+      "specific_name": "wp_refresh_comment_count",
+      "routine_type": "PROCEDURE",
+      "return_type": "",
+      "definer": "wp_user@localhost",
+      "security_type": "DEFINER",
+      "is_deterministic": "NO",
+      "sql_data_access": "MODIFIES SQL DATA",
+      "routine_comment": "",
+      "external_language": "SQL",
+      "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+      "character_set_client": "utf8mb4",
+      "collation_connection": "utf8mb4_unicode_520_ci",
+      "database_collation": "utf8mb4_unicode_520_ci",
+      "body_chars": 105,
+      "definition": "BEGIN\n  UPDATE wp_posts SET comment_count = wp_post_comment_count(p_post_id)\n   WHERE ID = p_post_id;\nEND",
+      "body_status": "collected"
+    }
+  ],
+  "routine_parameters": [
+    {
+      "routine_name": "wp_post_comment_count",
+      "schema_name": "wordpress",
+      "routine_type": "FUNCTION",
+      "ordinal": 0,
+      "mode": null,
+      "parameter_name": null,
+      "data_type": "int",
+      "dtd_identifier": "int",
+      "character_set_name": null,
+      "collation_name": null
+    },
+    {
+      "routine_name": "wp_post_comment_count",
+      "schema_name": "wordpress",
+      "routine_type": "FUNCTION",
+      "ordinal": 1,
+      "mode": "IN",
+      "parameter_name": "p_post_id",
+      "data_type": "bigint",
+      "dtd_identifier": "bigint unsigned",
+      "character_set_name": null,
+      "collation_name": null
+    },
+    {
+      "routine_name": "wp_bulk_import_mode",
+      "schema_name": "wordpress",
+      "routine_type": "PROCEDURE",
+      "ordinal": 1,
+      "mode": "IN",
+      "parameter_name": "p_on",
+      "data_type": "tinyint",
+      "dtd_identifier": "tinyint",
+      "character_set_name": null,
+      "collation_name": null
+    },
+    {
+      "routine_name": "wp_refresh_comment_count",
+      "schema_name": "wordpress",
+      "routine_type": "PROCEDURE",
+      "ordinal": 1,
+      "mode": "IN",
+      "parameter_name": "p_post_id",
+      "data_type": "bigint",
+      "dtd_identifier": "bigint unsigned",
+      "character_set_name": null,
+      "collation_name": null
+    }
+  ],
+  "triggers": [
+    {
+      "trigger_name": "wp_comments_count_after_insert",
+      "schema_name": "wordpress",
+      "event_type": "INSERT",
+      "table_name": "wp_comments",
+      "timing": "AFTER",
+      "for_each": "ROW",
+      "definer": "admin@%",
+      "action_order": 1,
+      "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+      "character_set_client": "utf8mb4",
+      "collation_connection": "utf8mb4_unicode_520_ci",
+      "database_collation": "utf8mb4_unicode_520_ci",
+      "body_chars": 85,
+      "definition": "UPDATE wp_posts SET comment_count = comment_count + 1\n WHERE ID = NEW.comment_post_ID",
+      "body_status": "collected"
+    }
+  ],
+  "events": [
+    {
+      "event_name": "wp_purge_action_logs",
+      "schema_name": "wordpress",
+      "definer": "admin@%",
+      "time_zone": "SYSTEM",
+      "event_type": "RECURRING",
+      "execute_at": null,
+      "interval_value": "1",
+      "interval_field": "DAY",
+      "starts": "2026-04-01 03:00:00",
+      "ends": null,
+      "status": "ENABLED",
+      "on_completion": "NOT PRESERVE",
+      "event_comment": "",
+      "sql_mode": "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+      "character_set_client": "utf8mb4",
+      "collation_connection": "utf8mb4_unicode_520_ci",
+      "database_collation": "utf8mb4_unicode_520_ci",
+      "body_chars": 91,
+      "definition": "DELETE FROM wp_actionscheduler_logs\n WHERE log_date_gmt < UTC_TIMESTAMP() - INTERVAL 30 DAY",
+      "body_status": "collected"
+    }
+  ]
+}

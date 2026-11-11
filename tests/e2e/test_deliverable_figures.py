@@ -57,7 +57,9 @@ from src.shared.engine_names import display_engine
 from src.shared.partition_load import busiest_key, hot_partition_rows
 from src.shared.rate_window import collection_rate_window_facts, rate_window_facts
 from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
+from src.shared.routine_facts import read_routine_facts
 from src.shared.row_counts import row_count_facts
+from src.storage.local_store import LocalArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from tests.e2e.deliverable_figures import (
     SEVERITIES,
@@ -261,6 +263,15 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
             rate_windows=collection_rate_window_facts(collector),
         ),
         growth_scenarios=stored["growth_scenarios"],
+        # #1954: the routine facts, from the job's routine-migration artifact, as
+        # synthesis reads them (none for a job with no routines).
+        routines=read_routine_facts(
+            LocalArtifactStore(base_dir=str(run.artifact_root)),
+            run.db,
+            run.job_id,
+            int((report.get("assignment_summary") or {}).get("version") or 0),
+            report.get("migration_waves"),
+        ),
     )
     assert stored == recomputed, [k for k in stored if stored[k] != recomputed.get(k)]
 

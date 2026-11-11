@@ -101,14 +101,18 @@ def test_the_risk_register_lists_each_carried_write_with_its_intent(sample):
 def test_the_summary_input_counts_the_details(sample):
     """The executive-summary request gets the risk's detail count, not its long list;
     every other risk keeps its details (#1362)."""
-    from src.agents.referee.summary_input_slim import slim_summary_input
+    from src.agents.referee.summary_input_slim import (
+        SUMMARISED_DETAIL_RULES,
+        slim_summary_input,
+    )
 
     report = _report(sample)
     out = slim_summary_input({"risk_assessment": report["risk_assessment"]})
     for before, after in zip(
         report["risk_assessment"]["risks"], out["risk_assessment"]["risks"], strict=True
     ):
-        if before.get("rule") == "design.carried_writes":
+        # The routine risks' details are counted too (#1938; the sample's routines, #1954).
+        if before.get("rule") in SUMMARISED_DETAIL_RULES:
             assert after["detail_count"] == len(before["details"]) and "details" not in after
         else:
             assert after.get("details") == before.get("details"), before.get("risk_id")
