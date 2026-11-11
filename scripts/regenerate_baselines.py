@@ -242,6 +242,13 @@ BASELINES: tuple[Baseline, ...] = (
         lambda: _check_script_is_stale("render_group_draft_agent.py"),
     ),
     Baseline(
+        "part-review-agent",
+        (".claude/agents/dynamodb-part-review.md",),
+        "uv run python scripts/render_part_review_agent.py --write",
+        lambda _reason: _python("scripts/render_part_review_agent.py", "--write"),
+        lambda: _check_script_is_stale("render_part_review_agent.py"),
+    ),
+    Baseline(
         "contract-schema-snapshot",
         ("tests/contract/schema_snapshot.json",),
         "uv run python scripts/contract_schema_snapshot.py --write",

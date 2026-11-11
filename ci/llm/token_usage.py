@@ -19,8 +19,8 @@ Bedrock path's ``token_usage`` names (``calls``, ``inputTokens``,
 
     {"source": "transcript", "output_tokens_note": "...", "total": {...},
      "session_model_usage": {...}, "phases": {"schema_design": {...}, ...},
-     "agents": [{"agent": "orchestrator", ...}, ...], "cost": {...},
-     "unattributed_calls": 0, "skipped_lines": 0}
+     "agents": [{"agent": "orchestrator", ...}, ...], "shared_prefix": {...},
+     "cost": {...}, "unattributed_calls": 0, "skipped_lines": 0}
 
 Output tokens are NOT available per phase or per agent: stream-json
 ``assistant`` records are written before a message finishes, so their
@@ -60,8 +60,20 @@ Attribution is deterministic and uses only what the transcript shows:
 it first appears, then the ``/explore`` session): its label (the dispatch's
 description), phases, the counters above, ``largest_context`` (the largest
 single turn's input + cache read + cache write), ``models`` (every model its turns
-name, in first-seen order: a subagent definition's ``model:`` shows here) and
-``input_cost_usd``.
+name, in first-seen order: a subagent definition's ``model:`` shows here),
+``subagent_type`` (the dispatch's, ``null`` for a general-purpose one),
+``first_turn`` (its first turn's cache-read and cache-write tokens: a subagent that
+starts on a shared cached prompt reads it there) and ``input_cost_usd``.
+
+``shared_prefix`` (#763, #2120) sums those rows for the DynamoDB parts, whose
+subagents share one cached prompt: ``dynamodb_drafts`` (dispatch description
+``DynamoDB design, part ...``, agent ``dynamodb-group-draft``) and
+``dynamodb_reviews`` (``DynamoDB review, part ...``, agent ``dynamodb-part-review``).
+Each has ``agents``, ``shared_agent`` (how many ran as that agent type rather than
+the general-purpose fallback), ``first_turn_cache_read`` and
+``first_turn_cache_write`` (summed over their first turns: the first part writes
+the shared prompt, every later part reads it), the rows' ``calls``,
+``cacheReadInputTokens`` and ``cacheWriteInputTokens``, and ``input_cost_usd``.
 
 Cost has two figures, kept apart on purpose:
 
@@ -133,6 +145,12 @@ FIELDS = {
 UNATTRIBUTED = "unattributed"
 ORCHESTRATOR = "orchestrator"
 EXPLORE = "explore"
+# The DynamoDB part subagents that share one cached prompt (#763, #2120): the
+# shared_prefix key, their dispatch description's start and their agent type.
+SHARED_PREFIX_AGENTS: tuple[tuple[str, str, str], ...] = (
+    ("dynamodb_drafts", "DynamoDB design, part ", "dynamodb-group-draft"),
+    ("dynamodb_reviews", "DynamoDB review, part ", "dynamodb-part-review"),
+)
 _SCRIPT_RE = re.compile(r"scripts/run_([a-z0-9_]+)\.py")
 # A slash command at the start of the prompt or after white space (never a path
 # segment such as artifacts/wordpress).
@@ -308,8 +326,9 @@ def _read_records(transcript: Path) -> tuple[list[dict[str, Any]], int]:
 
 
 def _dispatches(records: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """``{tool_use_id: {description, prompt}}`` for every subagent start the
-    transcript shows (Agent/Task tool calls, and ``task_started`` records)."""
+    """``{tool_use_id: {description, prompt, subagent_type}}`` for every subagent
+    start the transcript shows (Agent/Task tool calls, and ``task_started``
+    records; ``subagent_type`` is ``""`` when the start names none)."""
     found: dict[str, dict[str, str]] = {}
     for rec in records:
         if rec.get("type") == "system" and rec.get("subtype") == "task_started":
@@ -320,6 +339,7 @@ def _dispatches(records: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
                     {
                         "description": str(rec.get("description") or ""),
                         "prompt": str(rec.get("prompt") or ""),
+                        "subagent_type": str(rec.get("subagent_type") or ""),
                     },
                 )
         message = rec.get("message")
@@ -337,6 +357,7 @@ def _dispatches(records: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
                 found[block["id"]] = {
                     "description": str(block["input"].get("description") or ""),
                     "prompt": str(block["input"].get("prompt") or ""),
+                    "subagent_type": str(block["input"].get("subagent_type") or ""),
                 }
     return found
 
@@ -390,16 +411,20 @@ class _Table:
         self.total: dict[str, Any] = {**empty_usage(), "input_cost_usd": 0.0}
         self.unpriced_calls = 0
 
-    def agent_row(self, key: str, label: str, kind: str) -> dict[str, Any]:
+    def agent_row(
+        self, key: str, label: str, kind: str, subagent_type: str | None = None
+    ) -> dict[str, Any]:
         row = self.agents.get(key)
         if row is None:
             row = {
                 "agent": key,
                 "label": label,
                 "kind": kind,
+                "subagent_type": subagent_type or None,
                 "phases": [],
                 "models": [],
                 **empty_usage(),
+                "first_turn": None,
                 "largest_context": 0,
                 "input_cost_usd": 0.0,
             }
@@ -431,6 +456,11 @@ class _Table:
             target["input_cost_usd"] = None if prior is None or cost is None else prior + cost
         if phase not in row["phases"]:
             row["phases"].append(phase)
+        if row["first_turn"] is None:
+            row["first_turn"] = {
+                "cacheReadInputTokens": usage["cacheReadInputTokens"],
+                "cacheWriteInputTokens": usage["cacheWriteInputTokens"],
+            }
         model = turn.get("model")
         if (
             isinstance(model, str)
@@ -458,7 +488,12 @@ def _attribute(table: _Table, records: list[dict[str, Any]]) -> None:
             row = table.agents[ORCHESTRATOR]
         else:
             dispatch = dispatches.get(agent, {})
-            row = table.agent_row(agent, dispatch.get("description") or agent, "subagent")
+            row = table.agent_row(
+                agent,
+                dispatch.get("description") or agent,
+                "subagent",
+                dispatch.get("subagent_type"),
+            )
             if agent not in current:
                 current[agent] = (
                     _phase_of_prompt(dispatch.get("prompt", ""))
@@ -534,6 +569,36 @@ def _session_usage(records: list[dict[str, Any]]) -> tuple[dict[str, int], int]:
 
 def _round(value: float | None) -> float | None:
     return None if value is None else round(value, 6)
+
+
+def _shared_prefix(agents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The DynamoDB part subagents' rows summed per kind (see the module docstring)."""
+    section: dict[str, dict[str, Any]] = {}
+    for key, label_start, agent_type in SHARED_PREFIX_AGENTS:
+        rows = [
+            r for r in agents if r["kind"] == "subagent" and str(r["label"]).startswith(label_start)
+        ]
+        cost: float | None = 0.0
+        for r in rows:
+            cost = (
+                None if cost is None or r["input_cost_usd"] is None else cost + r["input_cost_usd"]
+            )
+        section[key] = {
+            "agent_type": agent_type,
+            "agents": len(rows),
+            "shared_agent": sum(1 for r in rows if r["subagent_type"] == agent_type),
+            "first_turn_cache_read": sum(
+                (r["first_turn"] or {}).get("cacheReadInputTokens", 0) for r in rows
+            ),
+            "first_turn_cache_write": sum(
+                (r["first_turn"] or {}).get("cacheWriteInputTokens", 0) for r in rows
+            ),
+            "calls": sum(r["calls"] for r in rows),
+            "cacheReadInputTokens": sum(r["cacheReadInputTokens"] for r in rows),
+            "cacheWriteInputTokens": sum(r["cacheWriteInputTokens"] for r in rows),
+            "input_cost_usd": _round(cost),
+        }
+    return section
 
 
 def _cost_section(
@@ -652,6 +717,7 @@ def summarize(
         "session_model_usage": session,
         "phases": phases,
         "agents": agents,
+        "shared_prefix": _shared_prefix(agents),
         "cost": _cost_section(table, sessions, explore_cost),
         "unattributed_calls": phases.get(UNATTRIBUTED, {}).get("calls", 0),
         "skipped_lines": skipped,

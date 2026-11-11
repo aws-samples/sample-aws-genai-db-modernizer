@@ -354,6 +354,16 @@ repos:
         files: '(\.claude/commands/design-schema-dynamodb\.md|src/skills/dynamodb-data-modeling\.md|src/contracts/dynamodb_model_output\.py|scripts/render_group_draft_agent\.py|\.claude/agents/dynamodb-group-draft\.md)'
         pass_filenames: false
 
+  # The DynamoDB part-review subagent is generated from /review-schema and its PE-review skill (#2120)
+  - repo: local
+    hooks:
+      - id: render-part-review-agent
+        name: DynamoDB part-review agent definition is fresh
+        entry: uv run python scripts/render_part_review_agent.py --check
+        language: system
+        files: '(\.claude/commands/review-schema\.md|src/skills/dynamodb-pe-review\.md|scripts/render_part_review_agent\.py|\.claude/agents/dynamodb-part-review\.md)'
+        pass_filenames: false
+
   # The assess() request and result JSON Schemas are generated from the public models (#1183)
   - repo: local
     hooks:

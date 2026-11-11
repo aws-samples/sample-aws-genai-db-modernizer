@@ -1432,3 +1432,67 @@ def test_an_error_engine_choices_line_wins_over_its_decisions() -> None:
     assert 'unless that line is an error (`"status": "error"`' in line
     assert line.index("unless that line is an error") < line.index("each `decided` entry")
     assert "wins over its `decided` and `schema_design_engines`" in line
+
+
+# ---------------------------------------------------------------------------
+# #2120: a shared cached prefix for the DynamoDB part reviews
+# ---------------------------------------------------------------------------
+
+REVIEW_AGENT = "dynamodb-part-review"
+_REVIEW_PLACEHOLDERS = ("{ENGINE}", "{GROUP}", "{REQUEST}", "{RESPONSE}", "{FINALIZE}")
+
+
+def _review_templates(text: str) -> list[str]:
+    return [
+        " ".join(t.split())
+        for t in _dispatch_templates(text)
+        if t.lstrip().startswith("Follow /review-schema")
+    ]
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "wave-edit.md"])
+def test_the_review_task_text_puts_the_shared_part_first_and_the_review_last(name: str) -> None:
+    """Every review's task text is word for word the same up to its own part: no
+    review-specific placeholder comes before the tool-use rule's end."""
+    (template,) = _review_templates((COMMANDS_DIR / name).read_text())
+    shared, _, own = template.partition("Your review, last: ")
+    assert TOOL_USE_RULE in shared
+    assert shared.rstrip().endswith(
+        "Use a search's output as is: never pipe, chain or post-process it."
+    )
+    for placeholder in _REVIEW_PLACEHOLDERS:
+        assert placeholder not in shared and placeholder in own, placeholder
+    assert own.startswith("engine={ENGINE} group={GROUP}.")
+    assert own.rstrip().endswith("then run exactly: {FINALIZE}.")
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "wave-edit.md", "design-schema-dynamodb.md"])
+def test_dynamodb_reviews_are_dispatched_as_the_shared_prefix_agent(name: str) -> None:
+    text = " ".join((COMMANDS_DIR / name).read_text().split())
+    assert (
+        f"`subagent_type` set to `{REVIEW_AGENT}`" in text
+        or f"`subagent_type` `{REVIEW_AGENT}`" in text
+    )
+    agent = REPO_ROOT / ".claude" / "agents" / f"{REVIEW_AGENT}.md"
+    assert f"name: {REVIEW_AGENT}" in agent.read_text()
+
+
+def test_6c_starts_the_first_dynamodb_review_first_and_the_others_in_the_next_message() -> None:
+    """The first DynamoDB review writes the shared prompt cache; the other parts'
+    reviews start a few seconds later and read it."""
+    review = " ".join(_phase_6(_modernize_text()).split("**6c.", 1)[1].split("**6d.", 1)[0].split())
+    assert "Launch one review subagent per entry, all in a SINGLE message" not in review
+    assert "in two messages, back to back" in review
+    assert "every non-DynamoDB review plus the first DynamoDB review in `reviews`" in review
+    assert "as your very next message, with no text and no other tool call between" in review
+    assert "Do not wait for that first DynamoDB review's report before the second message" in review
+    assert "Message 2 always comes right after message 1, before any Done signal" in review
+    assert "If that agent type is not available" in review
+    assert "dispatch the same task text as a general-purpose subagent" in review
+    # Only DynamoDB repeats a review's text: every other engine has one review per round.
+    assert "Every other engine's review is a general-purpose subagent" in review
+    standalone = " ".join((COMMANDS_DIR / "design-schema-dynamodb.md").read_text().split())
+    assert (
+        "the first review in one message, every other review in your very next message"
+        in standalone
+    )

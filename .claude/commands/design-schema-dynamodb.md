@@ -65,7 +65,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
    uv run python scripts/run_pe_review.py --job-id {job_id} --db {database_name} --engine dynamodb
    ```
 
-   If it prints `"status": "awaiting_llm"`, its `reviews` list one review per group draft. Run on your own, dispatch one subagent per review, all in a single message, with the `/modernize` 6c task text (`Follow /review-schema ...`), and wait for them all. If you are yourself a subagent, follow `/review-schema` for each review yourself, one after another. A review that fails leaves its group with no routing flags; it never fails the phase.
+   If it prints `"status": "awaiting_llm"`, its `reviews` list one review per group draft. Run on your own, dispatch one subagent per review with the `/modernize` 6c task text (`Follow /review-schema ...`) and `subagent_type` `dynamodb-part-review` (a general-purpose subagent if that type is unknown): the first review in one message, every other review in your very next message, so they read the first one's cached prompt. Then wait for them all. If you are yourself a subagent, follow `/review-schema` for each review yourself, one after another. A review that fails leaves its group with no routing flags; it never fails the phase.
 
 5. **Merge group drafts**
 

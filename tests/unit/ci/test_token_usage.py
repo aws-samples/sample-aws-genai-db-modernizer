@@ -296,7 +296,7 @@ def _session_result(
 
 
 def _one_hour_write(tokens: int) -> dict[str, Any]:
-    usage = _u(0, 1, cw=tokens)
+    usage: dict[str, Any] = _u(0, 1, cw=tokens)
     usage["cache_creation"] = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": tokens}
     return usage
 
@@ -784,3 +784,65 @@ def test_each_agent_row_records_the_models_its_turns_ran_on(tmp_path: Path) -> N
     rows = {row["agent"]: row for row in token_usage.summarize(transcript)["agents"]}
     assert rows["toolu_h"]["models"] == ["claude-haiku-5-5"]
     assert rows["orchestrator"]["models"] == [SONNET]
+
+
+def _typed_dispatch(msg_id: str, tool_id: str, description: str, agent_type: str | None):
+    rec = _dispatch(msg_id, tool_id, description, "Follow /review-schema for job_id=j")
+    if agent_type:
+        rec["message"]["content"][0]["input"]["subagent_type"] = agent_type
+    return rec
+
+
+def test_shared_prefix_reports_the_part_reviews_cache_reads(tmp_path: Path) -> None:
+    """#2120: the DynamoDB part reviews' cache reads and writes, summed, with each
+    one's first turn: the first part writes the shared prompt, the others read it.
+    The drafts get the same figures (#763); other subagents are left out."""
+    transcript = _write(
+        tmp_path / "t.jsonl",
+        [
+            _typed_dispatch("o1", "r1", "DynamoDB review, part 1 of 3", "dynamodb-part-review"),
+            _typed_dispatch("o2", "r2", "DynamoDB review, part 2 of 3", "dynamodb-part-review"),
+            _typed_dispatch("o3", "r3", "DynamoDB review, part 3 of 3", None),  # the fallback
+            _typed_dispatch("o4", "a1", "Aurora MySQL review", None),
+            _typed_dispatch("o5", "d1", "DynamoDB design, part 1 of 1 (queries 1-3 of 3)",
+                            "dynamodb-group-draft"),
+            _model_turn("r1a", _u(1, 1, cr=5000, cw=20000), agent="r1"),
+            _model_turn("r1b", _u(1, 1, cr=25000, cw=900), agent="r1"),
+            _model_turn("r2a", _u(1, 1, cr=19000, cw=6000), agent="r2"),
+            _model_turn("r3a", _u(1, 1, cr=5000, cw=20000), agent="r3"),
+            _model_turn("a1a", _u(1, 1, cr=7, cw=7), agent="a1"),
+            _model_turn("d1a", _u(1, 1, cr=4000, cw=50000), agent="d1"),
+            _session_result(1.0, 10),
+        ],
+    )  # fmt: skip
+    result = token_usage.summarize(transcript)
+    reviews = result["shared_prefix"]["dynamodb_reviews"]
+    assert reviews["agent_type"] == "dynamodb-part-review"
+    assert reviews["agents"] == 3 and reviews["shared_agent"] == 2
+    assert reviews["first_turn_cache_read"] == 5000 + 19000 + 5000
+    assert reviews["first_turn_cache_write"] == 20000 + 6000 + 20000
+    assert reviews["calls"] == 4
+    assert reviews["cacheReadInputTokens"] == 5000 + 25000 + 19000 + 5000
+    assert reviews["cacheWriteInputTokens"] == 20000 + 900 + 6000 + 20000
+    assert reviews["input_cost_usd"] > 0
+    drafts = result["shared_prefix"]["dynamodb_drafts"]
+    assert drafts["agents"] == 1 and drafts["shared_agent"] == 1
+    assert drafts["first_turn_cache_write"] == 50000
+    rows = {row["agent"]: row for row in result["agents"]}
+    assert rows["r1"]["subagent_type"] == "dynamodb-part-review"
+    assert rows["r1"]["first_turn"] == {
+        "cacheReadInputTokens": 5000,
+        "cacheWriteInputTokens": 20000,
+    }
+    assert rows["r3"]["subagent_type"] is None
+    assert rows["orchestrator"]["subagent_type"] is None
+    _assert_sums_match(result)
+
+
+def test_shared_prefix_is_empty_without_dynamodb_parts(tmp_path: Path) -> None:
+    transcript = _write(tmp_path / "t.jsonl", [_model_turn("o1", _u(3, 1, cr=50))])
+    shared = token_usage.summarize(transcript)["shared_prefix"]
+    assert set(shared) == {"dynamodb_drafts", "dynamodb_reviews"}
+    for entry in shared.values():
+        assert entry["agents"] == 0 and entry["first_turn_cache_read"] == 0
+        assert entry["input_cost_usd"] == 0

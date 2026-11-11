@@ -64,6 +64,10 @@ PROTECTED: dict[str, str] = {
     ".claude/agents/dynamodb-group-draft.md": (
         "uv run python scripts/render_group_draft_agent.py --write"
     ),
+    # The DynamoDB part-review subagent, rendered from /review-schema and its skill (#2120).
+    ".claude/agents/dynamodb-part-review.md": (
+        "uv run python scripts/render_part_review_agent.py --write"
+    ),
 }
 
 
