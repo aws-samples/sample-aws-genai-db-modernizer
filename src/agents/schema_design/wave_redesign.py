@@ -26,7 +26,8 @@ source, a wave 1 not suggested, a wave not designed yet.
    whose last review held the design (an ``open_review`` hold names them,
    :func:`_name_review_parts`), and every part sharing a placement group
    (``write_groups.placement_groups``: a co-dependency group, a write group or a
-   routine unit) with one of those, since the split can cut such a group across parts.
+   routine unit) with one of those. The split keeps each such group in one part unless
+   its manifest records the cut (``unit_cuts``, #2141), so this adds a part only there.
    One check that names no query keeps the whole engine. ``redesign_request.json``
    records the failed checks, which the design input carries (:func:`redesign_input`,
    risk text framed; in a parts round only the parts redesigned get it), and, in a
@@ -420,9 +421,11 @@ def _with_placement_groups(
 ) -> list[int]:
     """``affected`` with every part that shares a placement group (a co-dependency
     group, a write group or a routine unit, ``write_groups.placement_groups``) with one
-    of its parts, until none is left: the split clusters a co-dependency group's tables
-    together, but cuts a cluster over the part size into several parts, so a group's
-    statements can sit in two parts, and its parts are redesigned together."""
+    of its parts, until none is left. The split keeps a group's statements in one part
+    unless the group alone is too large for one and the manifest records the cut
+    (``unit_cuts``, #2141): only then do they sit in two parts, which are redesigned
+    together. A split written before #2141 can cut a group unrecorded; this reads the
+    parts' own statements, so it covers that too."""
     from src.agents.referee.write_groups import assignment_placement_groups
     from src.storage.assignment_versioning import assignment_artifact_path
     from src.storage.collector_for_models import read_collector_for_models

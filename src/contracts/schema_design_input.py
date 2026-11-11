@@ -530,6 +530,32 @@ class ExcludedQuery(BaseModel):
     reason: str
 
 
+class UnitCut(BaseModel):
+    """A placement unit the split designs in two or more parts (#2141).
+
+    The split keeps each placement unit (a co-dependency group, a write group or a
+    routine unit, merged where they share a statement: ``write_groups.placement_groups``)
+    in one part. It cuts one only when the unit alone is over a part's size
+    (``over_part_size``: more query patterns, or statements, than a part holds) or input
+    page budget (``over_input_budget``), at its weakest link, or when a post-schema
+    reroute keeps the parts of the version it came from (``kept_prior_parts``, #1650).
+    """
+
+    unit_id: str = Field(..., description="unit:<the unit's first statement id>")
+    kind: str = Field(
+        ...,
+        description=(
+            "The kinds the unit is merged from, '+'-joined in this order: co_dependency, "
+            "write_group, routine_unit"
+        ),
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The unit's statements designed in this split"
+    )
+    parts: list[int] = Field(..., description="The group_index of every part holding them")
+    reason: Literal["over_part_size", "over_input_budget", "kept_prior_parts"]
+
+
 class SchemaDesignGroupsManifest(BaseModel):
     """Manifest produced by prepare_schema_input.py --split.
 
@@ -580,6 +606,13 @@ class SchemaDesignGroupsManifest(BaseModel):
     excluded_queries: list[ExcludedQuery] = Field(
         default_factory=list,
         description="Queries left out of every group (not counted in total_groups)",
+    )
+    unit_cuts: list[UnitCut] = Field(
+        default_factory=list,
+        description=(
+            "Placement units designed in two or more parts, each with its reason (#2141); "
+            "none in a manifest written before, which still loads"
+        ),
     )
 
     # Read back across versions: unknown fields are kept, not refused (#976).

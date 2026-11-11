@@ -75,10 +75,7 @@ from src.tools.schema.design_metrics import (
     design_metrics_from_collector,
     in_scope_pattern_count,
 )
-from src.tools.schema.dynamodb_attribute_columns import (
-    ATTRIBUTE_COLUMNS_PREFIX,
-    check_columns,
-)
+from src.tools.schema.dynamodb_attribute_columns import ATTRIBUTE_COLUMNS_PREFIX, check_columns
 from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
 from src.tools.sql.query_pattern_groups import repeated_query_patterns
@@ -1071,6 +1068,7 @@ def run_schema_split(
     # Filter by assignment
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     co_dependency_groups: list[list[str]] | None = None
+    placement_units = None
     if assignment_version > 0:
         assignment_key = (
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
@@ -1079,6 +1077,11 @@ def run_schema_split(
         # Carry the assignment's co-dependency groups into clustering so
         # JOIN-related queries are designed together (ADR-027 amendment).
         co_dependency_groups = assignment.get("co_dependency_groups") or None
+        # #2141: every placement unit routing placed as one (co-dependency groups, write
+        # groups and routine units) is kept in one design part, or its cut recorded.
+        from src.agents.schema_design.placement_units import assignment_placement_units
+
+        placement_units = assignment_placement_units(assignment, collector_output)
         collector_output = filter_collector_for_assignment(
             collector_output, assignment, target_type
         )
@@ -1123,6 +1126,7 @@ def run_schema_split(
         co_dependency_groups=co_dependency_groups,
         decision_trace=_read_decision_trace(store, database_name, job_id, target_type),
         prior_parts=prior[1] if prior else None,
+        placement_units=placement_units,
     )
     carried = (
         carry_forward_parts(store, database_name, job_id, target_type, prior[0], artifact_version)
