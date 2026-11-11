@@ -188,7 +188,9 @@ jobs:
     # site; the report shards need neither. The required check is the `e2e` job
     # below, which waits for every shard.
     name: e2e-shard (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    # Pinned while Playwright's browser system packages don't install on Ubuntu
+    # 26.04, which ubuntu-latest now is (#2138). Unpin once Playwright supports it.
+    runs-on: ubuntu-24.04
     # A normal run takes well under 30 minutes; the extra headroom absorbs slow
     # Ubuntu package mirrors (#443) so a slow install doesn't cancel passing tests.
     timeout-minutes: 45
