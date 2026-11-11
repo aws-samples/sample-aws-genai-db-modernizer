@@ -187,6 +187,7 @@ def test_a_source_engine_routines_are_not_carried_from_writes_nothing():
     )
 
 
+@pytest.mark.passes_on_main  # a guard of existing behaviour, on current rows (#2124)
 def test_two_routines_with_no_signature_still_get_distinct_ids():
     # No specific name, no text, one name twice. (A collection from before #1652 has no
     # body status at all, and the phase reads none of its rows, #2124.)

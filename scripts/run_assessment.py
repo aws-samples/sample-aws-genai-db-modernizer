@@ -1079,10 +1079,10 @@ def phase_engine_choices(
 
 def _name_only_routines(store, db: str, job_id: str) -> int:
     """The collection's routine rows the routine phase does not read (#2124)."""
-    from src.tools.routines.migration import name_only_routine_count
+    from src.tools.routines.migration import name_only_routines_of_job
 
     try:
-        return name_only_routine_count(store.read_json(f"{db}/{job_id}/collector/output.json"))
+        return name_only_routines_of_job(store, db, job_id)
     except Exception:  # noqa: BLE001 -- a count for the log only
         return 0
 
