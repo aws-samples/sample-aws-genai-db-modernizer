@@ -27,7 +27,7 @@ this payload.
   the summary does not quote; the order, engines, counts and shares stay, and
   ``share_basis`` stays on every wave: it is the unit of the wave's share,
   queries or calls).
-- A risk, resolved risk or trade-off carries ``query_count`` (how many
+- An open risk or a trade-off carries ``query_count`` (how many
   queries) instead of the ``query_ids`` list; the IDs mean nothing to a
   reader of a 3-4 sentence summary.
 - A ``design.carried_writes`` risk (#1362) carries ``detail_count`` instead of its
@@ -40,9 +40,12 @@ this payload.
   yourself"). Its description, mitigation and tables repeat what the deliverables'
   Routines section states, and the summary names no routine; each risk stays, so its
   count and severity can still be stated.
-- A mitigation loses its closing pointer to the roadmap ("See the Wave 3 gate in the
-  roadmap.", #1510, #2132): it tells a report reader where to look, and the summary
-  quotes no mitigation.
+- An open risk loses its ``mitigation`` (#2132): the summary states risk counts and
+  severities only (the skill's risk rule), and the deliverables print each mitigation.
+- Resolved risks enter as ``resolved_risk_count`` and ``resolved_risks_by_severity``
+  instead of their entries (#2132): the summary states how many the assignment
+  resolved, of which severity, never which. The post-checks still count the full
+  deterministic result's ``resolved_risks``.
 - A trade-off's ``target_tables`` is dropped when it only repeats the bare
   names of its ``source_tables``.
 - A table mapping's alternatives are the engine names, without scores.
@@ -51,8 +54,9 @@ this payload.
 from __future__ import annotations
 
 import copy
-import re
 from typing import Any
+
+from src.shared.risk_severity import count_by_severity
 
 NO_MOVE_STATEMENT = (
     "This wave moves nothing to Aurora: the customer's engine scope leaves no Aurora move. "
@@ -84,8 +88,6 @@ SUMMARISED_DETAIL_RULES = frozenset(
 
 # A routine risk's fields the summary request keeps (#2132): one short line per risk.
 ROUTINE_RISK_KEEP = ("risk_id", "severity", "rule", "wave")
-# The pointer migration_risk_rules ends a mitigation with (#1510).
-_GATE_POINTER = re.compile(r"\s*See the Wave \d+ gate in the roadmap\.\s*\Z")
 
 
 def _routine_line(entry: dict[str, Any]) -> dict[str, Any]:
@@ -123,20 +125,17 @@ def slim_summary_input(payload: dict) -> dict:
             w["no_move"] = NO_MOVE_STATEMENT
 
     risk = out.get("risk_assessment") or {}
-    for section in ("risks", "resolved_risks"):
-        rows = risk.get(section)
-        if not isinstance(rows, list):
-            continue
+    rows = risk.get("risks")
+    if isinstance(rows, list):
         for r in rows:
             if not isinstance(r, dict):
                 continue
             _ids_to_count(r)
-            mitigation = r.get("mitigation")
-            if isinstance(mitigation, str) and _GATE_POINTER.search(mitigation):
-                r["mitigation"] = _GATE_POINTER.sub("", mitigation)
+            # #2132: the summary states no mitigation; the deliverables print each one.
+            r.pop("mitigation", None)
             if r.get("rule") in SUMMARISED_DETAIL_RULES and isinstance(r.get("details"), list):
                 r["detail_count"] = len(r.pop("details"))
-        risk[section] = [
+        risk["risks"] = [
             (
                 _routine_line(r)
                 if isinstance(r, dict) and str(r.get("rule") or "").startswith("routines.")
@@ -144,6 +143,14 @@ def slim_summary_input(payload: dict) -> dict:
             )
             for r in rows
         ]
+    resolved = risk.get("resolved_risks")
+    if isinstance(resolved, list):
+        # #2132: the summary states how many risks the assignment resolved, and of which
+        # severity, never which: their counts stand in for the entries.
+        kept = [r for r in resolved if isinstance(r, dict)]
+        del risk["resolved_risks"]
+        risk["resolved_risk_count"] = len(kept)
+        risk["resolved_risks_by_severity"] = count_by_severity(kept)
 
     for t in out.get("trade_offs") or []:
         _ids_to_count(t)

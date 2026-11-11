@@ -122,7 +122,7 @@ def test_query_ids_become_a_count_everywhere():
     out = slim_summary_input(_payload())
     risk = out["risk_assessment"]
     assert risk["risks"][0]["query_count"] == 2 and "query_ids" not in risk["risks"][0]
-    assert risk["resolved_risks"][0]["query_count"] == 0
+    assert "resolved_risks" not in risk  # #2132: counts by severity stand in for them
     assert [t.get("query_count") for t in out["trade_offs"]] == [1, 0, None]
     assert not any("query_ids" in t for t in out["trade_offs"])
 
@@ -234,11 +234,22 @@ def test_a_routine_risk_enters_as_one_short_line():
     assert risks[1]["mitigation"] and risks[1]["details"]
 
 
-def test_a_mitigation_loses_only_its_closing_pointer_to_the_roadmap():
+def test_open_risks_lose_their_mitigation_and_resolved_risks_become_counts():
+    """#2132: the summary states risk counts and severities only: an open risk keeps its
+    id, severity and description without its mitigation, and the resolved risks enter as
+    their count by severity."""
     payload = _payload()
-    risks = payload["risk_assessment"]["risks"]
-    risks[0]["mitigation"] = "Load-test the reads first. See the Wave 3 gate in the roadmap."
-    risks.append({"severity": "LOW", "mitigation": "See the Wave 2 gate in the roadmap. Then go."})
-    out = slim_summary_input(payload)["risk_assessment"]["risks"]
-    assert out[0]["mitigation"] == "Load-test the reads first."
-    assert out[1]["mitigation"] == "See the Wave 2 gate in the roadmap. Then go."
+    risk = payload["risk_assessment"]
+    risk["risks"][0]["mitigation"] = "Load-test the reads first. See the Wave 3 gate."
+    risk["resolved_risks"] = [
+        {"risk_id": "RISK-020", "severity": "HIGH", "description": "a", "mitigation": "m"},
+        {"risk_id": "RISK-021", "severity": "low", "description": "b"},
+        {"risk_id": "RISK-022", "severity": "HIGH", "description": "c"},
+    ]
+    out = slim_summary_input(payload)["risk_assessment"]
+    assert "mitigation" not in out["risks"][0]
+    assert out["risks"][0]["description"] == risk["risks"][0]["description"]
+    assert "resolved_risks" not in out
+    assert out["resolved_risk_count"] == 3
+    assert out["resolved_risks_by_severity"] == {"HIGH": 2, "LOW": 1}
+    assert risk["risks"][0]["mitigation"] and len(risk["resolved_risks"]) == 3  # not mutated

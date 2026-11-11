@@ -37,9 +37,10 @@ What the cap never touches: every scalar (``workload_percent``,
 ``assigned_queries``, wave ``query_count``/``table_count``/
 ``workload_share_percent``, costs), ``ranking``, ``tco_analysis``, the
 deterministic summary, ``schema_design_status``, ``mitigation_strategies``, and
-the risk entries themselves (every risk and resolved risk stays, with its
-severity and description, so a stated risk count still matches): only the
-lists inside each entry are cut. The summary post-checks
+the open risk entries themselves (every open risk stays, with its severity and
+description, so a stated risk count still matches; the resolved risks come as
+counts by severity, ``summary_input_slim``, #2132): only the lists inside each
+entry are cut. The summary post-checks
 (``apply_synthesis_llm_output``) read the full deterministic result, never this
 payload, so a table cut from a list here is still checked correctly.
 
