@@ -9,7 +9,8 @@ A headless session ends as soon as a turn ends with nothing running. Twice a sco
 run's orchestrator answered each DynamoDB part's report with "Still waiting on ..." and, after
 the last part reported, ended its turn the same way: nothing was running, so the session ended
 with no merge, no synthesis and no result line. The command text tells it to run the status
-command after every report; this hook makes the step deterministic.
+command once, after the last report (#2121), and once more whenever it is not sure every
+subagent has reported; this hook makes the step deterministic.
 
 Claude Code calls a Stop hook when the main agent finishes responding (a subagent's end is
 ``SubagentStop``, a separate event this hook is not wired to). Its input carries
@@ -30,13 +31,15 @@ The hook blocks only when all of these hold:
   interactive run legitimately stops to ask the user;
 - no top-level ``MODERNIZE_RESULT:`` line was written yet (the last message included).
 
-With no ``background_tasks`` field it blocks only when the job's latest DynamoDB split has a
-readable draft for every group, no merge has run on it and no group review request was written
-after the drafts: every part is done and nothing else can be running.
+With no ``background_tasks`` field it blocks only when the job's latest DynamoDB split, with no
+merge run on it, has a readable draft for every group and either no group review request written
+after the drafts (every part's design is done, 6c has not started) or a recorded review for every
+group (every part's review is done, 6c is over, #2121): nothing else can be running.
 
 The reason names the next step: when every DynamoDB part of the latest split has a readable
 draft and neither the group reviews nor the merge have started, the ``--status`` command and
-then steps 6c and 6d.
+then steps 6c and 6d; when every part's review is recorded and the merge has not run, the
+``run_pe_review.py`` command and then step 6d.
 
 Read-only, stdlib only, no repo imports. Any error, a missing state file or an unreadable
 transcript allows (fail open); the e2e-llm transcript check stays the backstop.
@@ -166,14 +169,49 @@ def dynamodb_parts_done(job_dir: Path) -> tuple[int, int] | None:
     return len(groups), len(groups)
 
 
-def _reason(job: str, db: str, parts: tuple[int, int] | None) -> str:
-    hint = (
-        f"Every DynamoDB part has its draft ({parts[0]} of {parts[1]}) and no review or merge "
-        "has started: run `uv run python scripts/run_schema_design.py --job-id "
-        f"{job} --db {db} --engine dynamodb --status`, then the 6c review and the 6d merge."
-        if parts
-        else "Run the documented status command of the current phase and its next step."
+def dynamodb_reviews_done(job_dir: Path) -> int | None:
+    """The group count of the latest DynamoDB split whose every group has a readable draft
+    and a recorded review (its ``design_trace_group_<G>.json`` holds ``pe_review``, which
+    ``run_pe_review.py --finalize`` writes), with no merge run: every part's review is done
+    and 6d has not started (#2121). None otherwise."""
+    base = job_dir / "schema-dynamodb"
+    versions = sorted(
+        (int(p.name[1:]), p) for p in base.glob("v*") if p.name[1:].isdigit() and p.is_dir()
     )
+    if not versions:
+        return None
+    vdir = versions[-1][1]
+    manifest = _read_json(vdir / "groups_manifest.json")
+    groups = manifest.get("groups") if isinstance(manifest, dict) else None
+    if not isinstance(groups, list) or not groups:
+        return None
+    if (vdir / "merge_record.json").exists() or (vdir / "schema_output.json").exists():
+        return None
+    for i, group in enumerate(groups):
+        index = group.get("group_index", i) if isinstance(group, dict) else i
+        if not isinstance(_read_json(vdir / f"schema_draft_group_{index}.json"), dict):
+            return None
+        trace = _read_json(vdir / f"design_trace_group_{index}.json")
+        if not (isinstance(trace, dict) and isinstance(trace.get("pe_review"), dict)):
+            return None
+    return len(groups)
+
+
+def _reason(job: str, db: str, parts: tuple[int, int] | None, reviewed: int | None = None) -> str:
+    if parts:
+        hint = (
+            f"Every DynamoDB part has its draft ({parts[0]} of {parts[1]}) and no review or "
+            "merge has started: run `uv run python scripts/run_schema_design.py --job-id "
+            f"{job} --db {db} --engine dynamodb --status`, then the 6c review and the 6d merge."
+        )
+    elif reviewed:
+        hint = (
+            f"Every DynamoDB part's review is recorded ({reviewed} of {reviewed}) and the merge "
+            f"has not run: run `uv run python scripts/run_pe_review.py --job-id {job} --db {db}`, "
+            "then the 6d merge."
+        )
+    else:
+        hint = "Run the documented status command of the current phase and its next step."
     return (
         "Blocked: nothing is running and this /modernize --auto run has no MODERNIZE_RESULT "
         f"line, so ending the turn ends the run. {hint} Continue now, or end with "
@@ -204,10 +242,12 @@ def decide(event: dict[str, Any], project: Path) -> str | None:
     root = Path(os.environ.get("ARTIFACT_DIR") or project / "artifacts")
     if not root.is_absolute():
         root = project / root
-    parts = dynamodb_parts_done(root / job[1] / job[0])
-    if not isinstance(tasks, list) and parts is None:
-        return None  # no background_tasks field: block only on the artifact test
-    return _reason(job[0], job[1], parts)
+    job_dir = root / job[1] / job[0]
+    parts = dynamodb_parts_done(job_dir)
+    reviewed = None if parts else dynamodb_reviews_done(job_dir)
+    if not isinstance(tasks, list) and parts is None and reviewed is None:
+        return None  # no background_tasks field: block only on the artifact tests
+    return _reason(job[0], job[1], parts, reviewed)
 
 
 def main() -> int:

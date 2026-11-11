@@ -1289,15 +1289,16 @@ def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
     # A scoped discourse run (45 DynamoDB parts) ended after its last part reported:
     # the orchestrator, told to write no progress text, kept no tally and replied
     # "Still waiting on the remaining design subagents." 21 times with nothing left
-    # running, and never ran --status. Each report now runs the status command, and
-    # its line decides whether to wait or go on.
+    # running, and never ran --status. The last report now runs the status command
+    # (#2121: once, not after every report), and its line decides whether to wait or
+    # go on; the Stop hook catches a tally that ends a turn with nothing running.
     text = " ".join(_modernize_text().split())
     phase_6 = " ".join(_phase_6(_modernize_text()).split())
     assert "reply with no text and wait for the next report" not in text
     assert "is never your own tally of reports: the status lines say it" in phase_6
     design = phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
     assert (
-        "After every design subagent's report, before anything else, run the DynamoDB `--status`"
+        "The report of the last subagent you dispatched in 6b: run the DynamoDB command of 6d"
         in design
     )
     assert "names a group whose part has not reported yet: that part is still running" in design
@@ -1309,16 +1310,95 @@ def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
     # manifest path; drafts_missing holds group indexes, so the part number is spelled out.
     assert "`drafts_missing` (group indexes; part = index + 1)" in design
     assert "`group_count`" in design and "`manifest` path" in design
-    assert "Never end a turn after a report without that status line" in design
+    assert "never end a turn after the last report without those status lines" in design
     review = phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
-    assert (
-        "**Done signal.** After every review subagent's report, run the same `scripts/run_pe_review.py` command again"
-        in review
-    )
+    assert "After the last report, run the same `scripts/run_pe_review.py` command again" in review
     assert '`"status": "complete"` means every review is in: go on at once' in review
     waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
-    assert "a subagent is still running only when the last status line" in waiting
+    assert "a subagent is still running when you dispatched it and it has not reported" in waiting
+    assert "After the last report, the status line" in waiting
     assert TOOL_USE_RULE in _modernize_text()
+
+
+# A sentence that has the orchestrator run a status or review check on each report,
+# or in a loop: the polling #2121 removed (11 --status calls in a row on discourse,
+# each one more turn that read the whole context again).
+_IN_SENTENCE = r"(?:[^.]|\.(?=\w))*?"  # a "." inside a path does not end the sentence
+_POLLING = re.compile(
+    r"(after|on|at) (every|each) (design |review |group |schema )?"
+    r"(subagent'?s?|part'?s?)?\s*(report|completion|notification)" + _IN_SENTENCE + r""
+    r"(--status|run_pe_review|status command)"
+    r"|\b(poll|polling|re-?check|keep checking|check again)\b" + _IN_SENTENCE + r""
+    r"(--status|run_pe_review|status)"
+    r"|(--status|run_pe_review)"
+    + _IN_SENTENCE
+    + r"\b(in a loop|until every|every few|repeatedly)\b",
+    re.IGNORECASE,
+)
+
+
+def _polling_sentences(text: str) -> list[str]:
+    """The polling matches in ``text``, except one the word "never" itself negates (it
+    starts the match or comes right before it): "never poll --status" is the rule, while
+    "After each report, never write text, then run --status" still polls."""
+    hits = []
+    for m in _POLLING.finditer(text):
+        before = text[: m.start()].rstrip().lower()
+        if m.group(0).lower().startswith("never") or before.endswith("never"):
+            continue
+        hits.append(m.group(0))
+    return hits
+
+
+@pytest.mark.parametrize(
+    ("sentence", "polls"),
+    [
+        ("After each report, never write text, then run the DynamoDB --status command.", True),
+        ("After every review subagent's report, run the same run_pe_review command again.", True),
+        ("Run --status repeatedly while the parts run.", True),
+        ("Keep checking the status until every part is in.", True),
+        ("Check once, never poll the --status command between reports.", False),
+        ("Check the status once, after the last report, never between reports.", False),
+    ],
+)
+def test_the_polling_guard_catches_a_poll_even_when_it_says_never(
+    sentence: str, polls: bool
+) -> None:
+    """Review of #2127: the guard skipped any match containing "never", so a polling
+    sentence that also said "never" got through."""
+    assert bool(_polling_sentences(sentence)) is polls, _polling_sentences(sentence)
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "wave-edit.md"])
+def test_the_orchestrator_checks_the_status_once_and_never_polls(name: str) -> None:
+    """#2121: the orchestrator is notified when each dispatched subagent reports, so it
+    checks --status (and run_pe_review.py) once, after the last report, never in a
+    loop while they run."""
+    text = " ".join((COMMANDS_DIR / name).read_text().split())
+    hits = _polling_sentences(text)
+    assert hits == [], hits
+    assert "after the last" in text.lower()
+    assert "never between reports" in text
+    if name == "modernize.md":
+        phase_6 = " ".join(_phase_6(_modernize_text()).split())
+        assert "check the status once, after the last of them has reported, never while" in phase_6
+        assert "Run no `--status` command, and no other check, between reports" in phase_6
+        assert "with `--wait 60` added" in phase_6
+        waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
+        assert "check nothing until it reports" in waiting
+        # Review of #2127: a wrong count of reports costs one status call, never a stall
+        # (#1574), headless or interactive.
+        unsure = "If you are not sure every subagent you dispatched has reported, run"
+        assert unsure in waiting
+        design = phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
+        assert unsure + " those status commands once" in design
+        review = phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
+        assert (
+            "If you are not sure every review subagent has reported, run the `run_pe_review.py`"
+            in review
+        )
+        # The Waiting Rule itself is unchanged.
+        assert "Never end a turn waiting unless a dispatched subagent is still running" in waiting
 
 
 def test_the_waiting_rule_names_the_stop_hook_that_holds_it() -> None:
