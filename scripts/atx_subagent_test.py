@@ -75,7 +75,12 @@ if not offline_input.exists():
     fail(f"Missing fixture: {offline_input}")
 
 input_key = f"{db_name}/{job_id}/uploads/collector-output.json"
-store.write_json(input_key, json.loads(offline_input.read_text()))
+from src.tools.database.offline_collection_check import read_collection_text
+
+# The collection scripts' reader: a MySQL or MariaDB file may hold a second object (#2128).
+store.write_json(
+    input_key, read_collection_text(offline_input.read_text(), source=str(offline_input))
+)
 ok("Seeded offline input")
 
 # ---------------------------------------------------------------------------

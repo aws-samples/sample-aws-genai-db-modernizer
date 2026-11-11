@@ -23,7 +23,7 @@ How to run each script, and what privileges it needs, is in [Analyzing your own 
 
 ## How the data flows
 
-1. The user runs a script against their own database. It writes one JSON object (`collection_version`, `metadata`, `tables`, `columns`, `indexes`, `foreign_keys`, `primary_keys`, `views`, `procedures`, `triggers`, `queries`, `global_stats`; SQL Server and Oracle add `io_stats`, `wait_events` and `os_stats`; since #1652 the scripts add `routine_stats` and `routine_stats_status` (SQL Server, PostgreSQL, MySQL), `routine_sources` and `query_routines` (Oracle), and `routine_parameters` and `events` (MySQL)).
+1. The user runs a script against their own database. It writes one JSON object (the MySQL and MariaDB script follows it with a second one, `{"lob_sizes": [...]}`, #2128; see the collection matrix) (`collection_version`, `metadata`, `tables`, `columns`, `indexes`, `foreign_keys`, `primary_keys`, `views`, `procedures`, `triggers`, `queries`, `global_stats`; SQL Server and Oracle add `io_stats`, `wait_events` and `os_stats`; since #1652 the scripts add `routine_stats` and `routine_stats_status` (SQL Server, PostgreSQL, MySQL), `routine_sources` and `query_routines` (Oracle), and `routine_parameters` and `events` (MySQL)).
 2. `run_assessment.py` (or `/collect`) recognises it as a raw collection and calls `parse_offline_collection`, then `build_offline_collector_output` builds the `CollectorOutputContract` (see the [collector guide](../guides/strands-collector-guide.md)).
 3. The contract is the interface the rest of the pipeline reads ([contracts](../contracts/agent-contracts-spec.md)).
 

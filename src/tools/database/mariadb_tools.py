@@ -35,6 +35,16 @@ def _mariadb_version_gte(version: str, minimum: str) -> bool:
 class MariaDBRemoteCollector(MySQLRemoteCollector):
     """MariaDB collector — overrides query pattern collection for correct feature flags."""
 
+    # MariaDB 10.5 shows each InnoDB tablespace's file size here (it needs PROCESS, as MySQL's).
+    _TABLESPACE_VIEW = "INNODB_SYS_TABLESPACES"
+
+    def _with_scan_limit(self, select: str, seconds: int) -> str:
+        """``select`` limited to ``seconds`` (0: not limited) by ``max_statement_time``, which
+        also ends a wait for a metadata lock (#2128)."""
+        if seconds <= 0:
+            return select
+        return f"SET STATEMENT max_statement_time={seconds} FOR {select}"
+
     def _statistics_has_expression(self) -> bool:
         """MariaDB has no functional key parts, and its ``information_schema.statistics``
         has no ``EXPRESSION`` column (#295)."""

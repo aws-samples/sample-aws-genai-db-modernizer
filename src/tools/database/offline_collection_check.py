@@ -46,7 +46,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from src.tools.database.collection_text import extract_json_object
+from src.tools.database.collection_addenda import merge_addenda
+from src.tools.database.collection_text import extract_json_objects
 
 logger = logging.getLogger(__name__)
 
@@ -168,21 +169,11 @@ def _refusal(source: str, reason: str) -> OfflineCollectionError:
     return OfflineCollectionError(f"The offline collection {source} ({STAGE}) {reason}")
 
 
-def extract_collection_object(text: str, *, source: str) -> str:
-    """The collection object's text in ``text`` (:func:`extract_json_object`: a header
-    line, a BOM or client chatter around it are ignored), with each control character
-    but a newline made a space, as Oracle's unescaped ones must be.
-
-    Raises:
-        OfflineCollectionError: ``text`` holds no single JSON object.
-    """
-    try:
-        return extract_json_object(text.translate(_CONTROL_CHARACTERS), source=source)
-    except ValueError as exc:
-        detail = str(exc).removeprefix(f"{source}: ")
-        if "no matching closing" in detail:
-            detail += " (the file looks cut short)"
-        raise _refusal(source, f"is not valid JSON: {detail}") from None
+def _not_valid(source: str, exc: ValueError) -> OfflineCollectionError:
+    detail = str(exc).removeprefix(f"{source}: ")
+    if "no matching closing" in detail:
+        detail += " (the file looks cut short)"
+    return _refusal(source, f"is not valid JSON: {detail}")
 
 
 def decode_collection_object(body: str, *, source: str, text: str | None = None) -> Any:
@@ -229,10 +220,17 @@ def read_collection_text(text: str, *, source: str) -> dict[str, Any]:
         OfflineCollectionError: ``text`` holds no JSON object, or its object is
             not valid JSON.
     """
-    body = extract_collection_object(text, source=source)
+    try:
+        body, later = extract_json_objects(text.translate(_CONTROL_CHARACTERS), source=source)
+    except ValueError as exc:
+        raise _not_valid(source, exc) from None
     data = decode_collection_object(body, source=source, text=text)
     if not isinstance(data, dict):  # never: the extracted text is one object
         raise _refusal(source, f"is {_kind(data)}, not a JSON object")
+    try:
+        merge_addenda(data, later, source=source)  # a second object some scripts print (#2128)
+    except ValueError as exc:
+        raise _not_valid(source, exc) from None
     cleaned: dict[str, Any] = without_sentinels(data)
     return cleaned
 

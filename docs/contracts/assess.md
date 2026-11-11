@@ -46,7 +46,7 @@ result = assess(
 
 A header line before the object, a leading BOM and client chatter after it are ignored. The result is the collection dict (it has `tables` and `queries`), ready for `AssessmentRequest.collection`. `AssessmentRequest` itself still takes a dict.
 
-Every problem raises `CollectionLoadError`, a `ValueError` subclass, with a message in your terms: no JSON object found, more than one JSON object (or, for a zip, more than one collection file), no collection file in the zip, not a valid zip, the JSON is invalid, not a collection (no `tables` or `queries` key), file not found, or not UTF-8. A test loads every bundled sample this way and runs `assess()` on it, so the example above runs as written.
+Every problem raises `CollectionLoadError`, a `ValueError` subclass, with a message in your terms: no JSON object found, more than one JSON object (a MySQL or MariaDB file may hold a second one, the LOB sizes `{"lob_sizes": [...]}`, which is merged in; a cut one is ignored; any other second object is an error) (or, for a zip, more than one collection file), no collection file in the zip, not a valid zip, the JSON is invalid, not a collection (no `tables` or `queries` key), file not found, or not UTF-8. A test loads every bundled sample this way and runs `assess()` on it, so the example above runs as written.
 
 ## What the result is for
 

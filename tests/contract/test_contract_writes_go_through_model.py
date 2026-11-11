@@ -78,13 +78,13 @@ NOT_THROUGH_MODEL: dict[tuple[str, str, str, str], str] = {
     (
         "scripts/atx_subagent_test.py",
         "<module>",
-        "json.loads(offline_input.read_text())",
+        "read_collection_text(offline_input.read_text(), source=str(offline_input))",
         "discourse/subagent1/uploads/collector-output.json",
     ): _UPLOAD,
     (
         "scripts/atx_tool_test.py",
         "<module>",
-        "json.loads(offline_input.read_text())",
+        "read_collection_text(offline_input.read_text(), source=str(offline_input))",
         "discourse/atxtool1/uploads/collector-output.json",
     ): _UPLOAD,
     (
