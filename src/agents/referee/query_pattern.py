@@ -51,13 +51,9 @@ from src.agents.referee.access_pattern import (
     SchemaKeys,
     classify_query,
 )
-from src.agents.referee.redesign_findings import (
-    FIXABLE,
-    VIA_EQUALITY,
-    QueryRedesign,
-    RedesignModel,
-)
+from src.agents.referee.redesign_findings import FIXABLE, VIA_EQUALITY, QueryRedesign, RedesignModel
 from src.shared.catalog.access_classes import class_engine_scores, class_parity_anchors
+from src.shared.placeholder_tables import is_placeholder_table
 from src.tools.analysis.score_weights import table_weights
 from src.tools.sql.query_facts import remember_collected_facts, source_engine_of
 from src.tools.sql.view_lineage import access_text
@@ -397,7 +393,12 @@ def access_patterns_record(
                 "class": result.name,
                 "reason": result.reason,
                 "facts": sorted(result.facts),
-                "tables": list(query.get("tables_accessed") or []),
+                # A placeholder (the collector's ``unknown``) is no table (#2147).
+                "tables": [
+                    str(t)
+                    for t in query.get("tables_accessed") or []
+                    if not is_placeholder_table(t)
+                ],
                 "class_scores": (
                     dict(class_engine_scores(result.facts)[result.name]) if classed else {}
                 ),

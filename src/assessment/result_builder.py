@@ -102,7 +102,7 @@ from src.contracts.move_ledger import Move
 from src.shared.engine_names import display_engine
 from src.shared.model_usage import USAGE_KEY
 from src.shared.package_version import get_package_version
-from src.shared.placeholder_tables import saved_write_groups
+from src.shared.placeholder_tables import is_placeholder_table, saved_write_groups
 from src.shared.row_counts import known_row_count
 
 # --------------------------------------------------------------------------- inputs
@@ -639,8 +639,14 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
 
     assignment = state.assignment
     if assignment is None:
+        # A placeholder (the collector's ``unknown``) is no table, as in the assignment's
+        # ``source_tables`` the later stages read (#2147).
         return [
-            statement(qid, q.get("tables_accessed") or [], scorer.score(q))
+            statement(
+                qid,
+                [t for t in q.get("tables_accessed") or [] if not is_placeholder_table(t)],
+                scorer.score(q),
+            )
             for qid, q in patterns.items()
         ]
 

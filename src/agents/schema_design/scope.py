@@ -55,6 +55,7 @@ from collections.abc import Iterator
 from typing import Any, NamedTuple
 
 # The one table-key rule lives in src/shared (#1780); re-exported for this package.
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.table_keys import normalize_table_name as normalize_table_name
 from src.storage.assignment_versioning import engine_scope
 
@@ -260,7 +261,9 @@ def _collect(
     for kind, value, location in _references(specs, schema_output):
         if kind == "table":
             key = normalize_table_name(value)
-            if not key or key in in_scope_tables:
+            # A placeholder (the collector's ``unknown``) designs no table, and no
+            # query's ``source_tables`` lists one (#2147).
+            if not key or key in in_scope_tables or is_placeholder_table(value):
                 continue
             locations = bad_tables.setdefault(key, (value, []))[1]
         else:
