@@ -386,6 +386,24 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
 
     cap_collection(collector_data)
 
+    # #2145: the same merge figures the scripts' collect status line reports; the
+    # collector output's ``metadata.query_capture`` (captured, query_shapes) holds them too.
+    from src.shared.query_capture import query_merge_summary
+
+    if not is_contract:
+        merge = query_merge_summary(
+            int(parsed.get("database_query_rows") or 0),
+            len(collector_data.get("queries", {}).get("query_patterns", [])),
+        )
+        if merge:
+            logger.info(
+                "collect: %d script rows -> %d query shapes, %d literal variants merged "
+                "(routing counts query shapes; executions and time are unchanged)",
+                merge["script_rows"],
+                merge["query_shapes"],
+                merge["literal_variants_merged"],
+            )
+
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     # An uploaded collector output may be at an older MINOR: written at today's (#1018).
     store.write_json(collector_key, stamp_artifact_version(collector_key, collector_data))

@@ -212,6 +212,8 @@ def main() -> None:
     job_id = args.job_id or str(uuid.uuid4())[:8]
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    other_db_rows = 0  # #2145: rows of other databases the parser dropped (SQL Server)
+    query_merge = None  # #2145: literal variants merged into query shapes, raw collections only
     sql_shadow = None  # the facade-vs-regex cross-check, raw collections only (#553)
     raw_collection = None  # #1652: the raw file as read, for its routine sources
     absent_sections: list[str] = []  # #131: common sections a raw collection lacks
@@ -293,6 +295,14 @@ def main() -> None:
             other_name = {"collected_database_name": collected_name}
         # #131: the common sections the file lacks, read as empty.
         absent_sections = parsed.get("absent_sections") or []
+        # #2145: the rows the script wrote against the query shapes routing counts.
+        from src.shared.query_capture import query_merge_summary
+
+        other_db_rows = int(parsed.get("queries_dropped_other_database") or 0)
+        query_merge = query_merge_summary(
+            int(parsed.get("database_query_rows") or 0),
+            len(collector_data.get("queries", {}).get("query_patterns", [])),
+        )
 
     # #384: the capture is recorded; only an explicit --query-limit cuts the collection.
     from src.tools.sql.shadow import write_shadow_artifact
@@ -341,6 +351,8 @@ def main() -> None:
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
             **({"absent_sections": absent_sections} if absent_sections else {}),
             **({"query_capture": capped.capture} if capped.cut else {}),
+            **({"query_merge": query_merge} if query_merge else {}),
+            **({"queries_dropped_other_database": other_db_rows} if other_db_rows else {}),
         }
     )
 

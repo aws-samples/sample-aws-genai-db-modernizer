@@ -132,6 +132,9 @@ Version History:
   PostgreSQL's exact tgenabled / evtenabled letter (O, D, R, A), next to is_enabled,
   which keeps its meaning; None for a collection that predates it and for engines with
   no such mode (#2071)
+- 5.18 (2026-11-11, #2145): Added optional ``QueryCapture.query_shapes``: the query
+  shapes held after literal variants merged; ``captured`` keeps the script's row count
+  (additive, defaults to None).
 """
 
 import re
@@ -466,9 +469,26 @@ class QueryCapture(BaseModel):
             "collection does not say"
         ),
     )
-    captured: int = Field(..., ge=0, description="Statements the collection holds")
+    captured: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Statements the collection holds: the rows its script wrote for this database, "
+            "before literal variants of one statement were merged into a query shape and "
+            "before any cap cut it (#2145)"
+        ),
+    )
+    query_shapes: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Query shapes kept after literal variants merged and any cap cut (#2145): the "
+            "unit routing counts, and the only one a cap cuts; None when the collection "
+            "does not say"
+        ),
+    )
     available: int | None = Field(
-        None, ge=0, description="Statements the cap chose from, when known"
+        None, ge=0, description="Query shapes the cap chose from, when known"
     )
     truncated: bool | None = Field(
         None,
@@ -1823,7 +1843,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="5.17",
+        default="5.18",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
