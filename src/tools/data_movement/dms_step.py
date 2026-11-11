@@ -59,8 +59,13 @@ from src.shared.cutover_message import CUTOVER_DISCLAIMER
 from src.shared.engine_names import display_engine
 from src.tools.data_movement.dms_sizing import (
     DMS_MAX_LOB_KB,
-    MEASURE_LOB,
+    LOB_SIZES_COMMAND,
+    LOB_SIZES_SQL,
+    SKIPPED,
     fails_on_lob_truncation,
+    limited_lob_only,
+    measure_lob_sql,
+    skipped_lob_tables,
     table_lob_limits,
     task_lob_mode,
     unmeasured_lob_tables,
@@ -535,9 +540,9 @@ def load_step1(store: Any, db: str, job_id: str, *, with_ddl: bool = True) -> St
 
 
 def table_mappings(inputs: Step1Inputs) -> dict[str, Any]:
-    """One explicit selection rule per moved table, then, from a PostgreSQL source, a limited LOB
-    rule for each table that needs a larger LOB limit than the task's
-    (:func:`_lob_settings_rules`) and a validation rule per character array column
+    """One explicit selection rule per moved table, then a limited LOB rule for each table that
+    needs a larger LOB limit than the task's (:func:`_lob_settings_rules`; PostgreSQL and MySQL
+    sources) and, from a PostgreSQL source, a validation rule per character array column
     (:func:`_array_validation_rules`).
 
     No ``table-settings`` rule runs a table in full LOB mode: DMS rejects the per-table full LOB
@@ -576,8 +581,9 @@ def _lob_mode(inputs: Step1Inputs) -> tuple[bool, int]:
 
 def _own_lob_limits(inputs: Step1Inputs) -> list[LobTable]:
     """The moved keyed tables whose plan LOB size is above the task's LobMaxSize (a PostgreSQL
-    source, #1918); a plan written before then sizes the task for every table, so none."""
-    if not fails_on_lob_truncation(_source_dialect(inputs)):
+    source, #1918, or a MySQL one, #2123); a plan written before then sizes the task for every
+    table, so none."""
+    if not limited_lob_only(_source_dialect(inputs)):
         return []
     keyed = {t.table_id for t in contract_tables(inputs.contract) if t.keyed}
     replication = _replication(inputs)
@@ -619,7 +625,7 @@ def _array_validation_rules(inputs: Step1Inputs, first_id: int) -> list[dict[str
     """A ``validation`` rule per character array column of a moved table (a PostgreSQL source,
     #1918) that validates ``CAST(upper(md5(CAST(column AS text))) AS VARCHAR(64))`` on both
     sides (``override-validation-function``): a bounded varchar, never a LOB to DMS (#2043)."""
-    if not fails_on_lob_truncation(_source_dialect(inputs)):
+    if _source_dialect(inputs) != "postgresql":
         return []
     moved = {t.table_id for t in contract_tables(inputs.contract)}
     cast = "CAST(upper(md5(CAST(${column-name} AS text))) AS VARCHAR(64))"
@@ -643,8 +649,23 @@ def task_settings(inputs: Step1Inputs) -> dict[str, Any]:
     """The fixed task settings (spec section 5); only the LOB mode and size come from the plan.
 
     Full LOB mode (never truncates) applies to the whole task when any moved table needs it,
-    otherwise limited LOB mode at the plan's size. A PostgreSQL source always runs limited LOB
-    mode, and its endpoint fails the task on a larger LOB (#1918, :func:`task_lob_mode`)."""
+    otherwise limited LOB mode at the plan's size. A PostgreSQL or MySQL source always runs
+    limited LOB mode (#1918, #2123, :func:`task_lob_mode`).
+
+    Why limited LOB mode, never full, from these sources: in full LOB mode DMS "creates a new row
+    in the target table and populates the row with all data except the associated LOB value",
+    then "updates the row in the target table with the LOB data", so "all LOB columns on the
+    target table must be nullable" (AWS DMS User Guide, "Best practices for AWS DMS",
+    "Migrating large binary objects (LOBs)"). Step 1's DDL keeps the source's NOT NULL, so a
+    NOT NULL LONGTEXT refused that first insert on Aurora MySQL (#2123), and Aurora PostgreSQL
+    got an empty value for a NULL LOB (#1918). In limited mode ("LimitedSizeLobMode": true,
+    "FullLobMode": false, and a ``lob-settings`` rule with mode ``limited`` for a larger table)
+    a full load migrates "all LOBs inline together with other column data types" (the guide's
+    "Table and collection settings rules and operations"), one insert per row. That page also
+    says that during change capture limited mode "migrates all LOBs using a source table
+    lookup, as in standard full LOB mode"; it does not say whether that lookup splits the insert,
+    so a live run checks a captured insert into a NOT NULL LOB column (#2123). LobChunkSize
+    applies to full LOB mode only and stays at the guide's recommended 64 KB."""
     full_lob, lob_max_kb = _lob_mode(inputs)
     return {
         "TargetMetadata": {
@@ -778,19 +799,21 @@ def _certificate(who: str, settings_key: str) -> dict[str, Any]:
                  "(verify-full), otherwise the connection is encrypted only (require)", "")  # fmt: skip
 
 
-def engine_rules(replication: DmsReplication) -> EngineRules:
-    """The plan's DMS engine version and reason; a plan written before contract 1.3 has none."""
+def engine_rules(replication: DmsReplication, dialect: str | None = None) -> EngineRules:
+    """The plan's DMS engine version and reason; a plan written before contract 1.3 has none,
+    so the catalog's applies, with the source ``dialect``'s own reasoning (#2123)."""
     catalog = dms_sizing().engine
     if replication.engine_version is None:
-        return catalog
+        return EngineRules(version=catalog.version, why=catalog.why_for(dialect))
     return EngineRules(
-        version=replication.engine_version, why=replication.engine_version_why or catalog.why
+        version=replication.engine_version,
+        why=replication.engine_version_why or catalog.why_for(dialect),
     )
 
 
 def _dms_parameters(inputs: Step1Inputs) -> dict[str, Any]:
     replication, database = _replication(inputs), inputs.plan.source.database
-    s, engine = replication.sizing, engine_rules(replication)
+    s, engine = replication.sizing, engine_rules(replication, _source_dialect(inputs))
     (_, source_key), (_, target_key) = _keys(inputs)
     secret = ("Full ARN of the Secrets Manager secret of the {who} (the DMS user): JSON keys username, password, "  # nosec B105 -- help text
               "host and port. Not the RDS-managed master secret, which has no host or port")  # fmt: skip
@@ -928,7 +951,8 @@ def _source_endpoint(inputs: Step1Inputs, engine_name: str, settings_key: str) -
     extra = {"CaptureDdls": False, "HeartbeatEnable": True}
     if fails_on_lob_truncation(_source_dialect(inputs)):
         # Limited LOB mode truncates a LOB above LobMaxSize with a warning; this stops the task
-        # instead, so no value is cut short silently (#1918).
+        # instead, so no value is cut short silently (#1918). PostgreSQL only: the MySQL source
+        # endpoint has no such setting (and this function returns above for it).
         extra["FailTasksOnLobTruncation"] = True
     limit = inputs.unbounded_varchar.max_bytes
     # CloudFormation's PostgreSqlSettings has no UnboundedVarcharMaxSize; the DMS guide
@@ -1512,42 +1536,75 @@ def render_sequences(inputs: Step1Inputs) -> str:
     return out
 
 
+# Per source family (#1918, #2123): the LOB types to name, why the task never runs full LOB
+# mode, and whether the source endpoint can stop the task on a truncated value.
+_LOB_KINDS = {"postgresql": "text, json, jsonb, arrays and the like",
+              "mysql": "mediumtext, longtext, mediumblob, longblob, json and spatial types"}  # fmt: skip
+_NO_FULL_LOB = {
+    "postgresql": "from a PostgreSQL source, full LOB mode writes a NULL LOB as an empty value",
+    "mysql": "from a MySQL source, full LOB mode inserts each row with its LOB columns NULL and "
+             "fills them in afterwards, which a NOT NULL LOB column on Aurora refuses",
+}  # fmt: skip
+
+
 def _lob_lines(inputs: Step1Inputs) -> list[str]:
-    """The LOB size step 1's task runs at and where it comes from (a PostgreSQL source, #1918)."""
-    if not fails_on_lob_truncation(_source_dialect(inputs)):
+    """The LOB size step 1's task runs at and where it comes from (a PostgreSQL source, #1918, or
+    a MySQL one, #2123)."""
+    dialect = _source_dialect(inputs)
+    if not limited_lob_only(dialect):
         return []
     moved = {t.table_id for t in contract_tables(inputs.contract)}
     lob = [t for t in _replication(inputs).lob_tables if t.table in moved]
     if not lob:
         return []
+    family = "postgresql" if dialect == "postgresql" else "mysql"
     _, size = _lob_mode(inputs)
     instance = _replication(inputs).sizing.instance_class
-    unmeasured = unmeasured_lob_tables(lob, _source_dialect(inputs))
-    head = (f"LOB columns: {len(lob)} moved table{'' if len(lob) == 1 else 's'} have LOB columns (text, json, "
-            f"jsonb, arrays and the like). The DMS task runs in limited LOB mode at {size} KB (LobMaxSize) on "
-            f"{instance}: from a PostgreSQL source, full LOB mode writes a NULL LOB as an empty value. ")  # fmt: skip
+    unmeasured = unmeasured_lob_tables(lob, dialect)
+    if unmeasured and family in dms_sizing().lob.measure_required:
+        # No stack and no size until every table is measured (#2123): never a 64 KB fallback.
+        return ["", (f"LOB columns: {len(lob)} moved table{'' if len(lob) == 1 else 's'} have LOB columns "
+                     f"({_LOB_KINDS[family]}). The DMS task runs in limited LOB mode, sized from each table's "
+                     f"longest value: {_NO_FULL_LOB[family]}. {len(unmeasured)} of them have a LOB column the "
+                     "collection did not measure: " + _first_tables(unmeasured) + ". This source endpoint "
+                     "truncates a longer value with no task error, so step 1 writes no DMS stack "
+                     "(dms-step-1.yaml) and preflight's lob_sizes check stops until they are measured: run the "
+                     f"read-only {LOB_SIZES_SQL} on the source (lob-sizes.md says how), then {LOB_SIZES_COMMAND}, "
+                     "which sizes each table from its output and writes this file and the stack.")]  # fmt: skip
+    head = (f"LOB columns: {len(lob)} moved table{'' if len(lob) == 1 else 's'} have LOB columns "
+            f"({_LOB_KINDS[family]}). The DMS task runs in limited LOB mode at {size} KB (LobMaxSize) on "
+            f"{instance}: {_NO_FULL_LOB[family]}. ")  # fmt: skip
     if own := _own_lob_limits(inputs):
         n = len(own)
         head += (f"{n} table{' gets' if n == 1 else 's get'} a larger limit of {'its' if n == 1 else 'their'} own "
                  "(a table-settings rule with lob-settings, mode limited, bulk-max-size in KB), sized from "
                  "the measured longest values: " + ", ".join(f"{t.table} at {t.max_size_kb} KB" for t in own)
                  + f". {dms_sizing().lob.table_settings_why} ")  # fmt: skip
+    skipped = skipped_lob_tables(lob)
     if unmeasured:
         head += (f"{len(unmeasured)} of them have a LOB column the collection did not measure, so this size is "
                  "not a measured one for them: "
-                 + _first_tables(unmeasured) + f". Before the full load, run {MEASURE_LOB} on the source for "
-                 f"each of their LOB columns; if 2 bytes per byte of the longest value is above that "
+                 + _first_tables(unmeasured) + f". Before the full load, run {measure_lob_sql(dialect)} on the "
+                 f"source for each of their LOB columns; if 2 bytes per byte of the longest value is above that "
                  f"size, raise the task's LobMaxSize (at most {DMS_MAX_LOB_KB} KB) and the stack's "
                  "InstanceClass with it, or collect again and write the plan again. ")  # fmt: skip
+    elif skipped:
+        head += (f"{SKIPPED}: {len(skipped)} of them run at {dms_sizing().lob.skipped_max_kb} KB: "
+                 + _first_tables(skipped) + f". {dms_sizing().lob.skipped_why} ")  # fmt: skip
     else:
         head += ("The size comes from the collection's measured longest values (the plan's "
                  "replication.lob_tables gives each table's); measure again before the full load if the data "
                  "grew. ")  # fmt: skip
     head += ("During change capture DMS allocates memory in proportion to the LOB limit times the LOB columns, "
-             "so the plan sizes the replication instance for the largest limit. A larger value is truncated: the source "
-             "endpoint sets FailTasksOnLobTruncation, but in a live full load DMS still truncated such a value "
-             "with only a warning in the task log, so DMS validation is what reports those rows (as "
-             "mismatched). The tables: " + _first_tables([t.table for t in lob]) + ".")  # fmt: skip
+             "so the plan sizes the replication instance for the largest limit. A larger value is truncated: ")  # fmt: skip
+    if fails_on_lob_truncation(dialect):
+        head += ("the source endpoint sets FailTasksOnLobTruncation, but in a live full load DMS still "
+                 "truncated such a value with only a warning in the task log, ")  # fmt: skip
+    else:
+        head += ("this source endpoint has no FailTasksOnLobTruncation setting (DMS truncates with only a "
+                 "warning in the task log), ")  # fmt: skip
+    head += ("so DMS validation is what reports those rows (as mismatched). The tables: "
+             + _first_tables([t.table for t in lob]) + ".")  # fmt: skip
     return ["", head]
 
 
@@ -1726,23 +1783,53 @@ def _enum_type_block(inputs: Step1Inputs) -> str:
     return "\n".join(lines) + "\n"
 
 
+def lob_measure_columns(inputs: Step1Inputs) -> list[Any]:
+    """The moved LOB columns ``lob-sizes.sql`` measures (#2123): a MySQL source's tables the
+    collection did not measure; none otherwise."""
+    from src.tools.data_movement.lob_sizes import measure_columns
+
+    moved = {t.table_id for t in contract_tables(inputs.contract)}
+    return measure_columns(_replication(inputs).lob_tables, _source_dialect(inputs), moved)
+
+
 def render_files(inputs: Step1Inputs) -> dict[str, str]:
-    """The files of step 1, by file name: three, and ``step-1.sequences.sql`` on Aurora
-    PostgreSQL."""
+    """The files of step 1, by file name: three, ``step-1.sequences.sql`` on Aurora
+    PostgreSQL; while a MySQL LOB table is unmeasured (#2123), ``lob-sizes.sql`` with
+    ``lob-sizes.md`` instead of the DMS stack, which is never written with a guessed size."""
     from src.tools.data_movement.debezium_connector import dump_template
+    from src.tools.data_movement.lob_sizes import (
+        INSTRUCTIONS_FILE,
+        SCRIPT,
+        render_instructions,
+        render_script,
+    )
 
     aurora = with_header(dump_template(render_aurora_template(inputs)), _disclaimer_lines(inputs))
-    dms = with_header(dump_template(render_dms_template(inputs)), [_GENERATED])
-    files = {AURORA_TEMPLATE: aurora, DDL_FILE: render_ddl(inputs), DMS_TEMPLATE: dms}
+    files = {AURORA_TEMPLATE: aurora, DDL_FILE: render_ddl(inputs)}
+    columns = lob_measure_columns(inputs)
+    if not columns:  # never a stack with a guessed LOB size (#2123)
+        files[DMS_TEMPLATE] = with_header(dump_template(render_dms_template(inputs)), [_GENERATED])
     if inputs.contract.target.engine == "aurora_postgresql":
         files[SEQUENCES_FILE] = render_sequences(inputs)
+    if columns:
+        step_dir = f"{inputs.plan.database_name}/{inputs.plan.job_id}/{STEP_DIR}"
+        files[SCRIPT] = render_script(columns, inputs.contract_sha256)
+        files[INSTRUCTIONS_FILE] = render_instructions(columns, step_dir)
     return files
 
 
-def step1_files(target_engine: str) -> tuple[str, ...]:
-    """The names of the files :func:`render_files` writes for a target engine."""
-    base = (AURORA_TEMPLATE, DDL_FILE, DMS_TEMPLATE)
-    return (*base, SEQUENCES_FILE) if target_engine == "aurora_postgresql" else base
+def step1_files(target_engine: str, inputs: Step1Inputs | None = None) -> tuple[str, ...]:
+    """The names of the files :func:`render_files` writes for a target engine (and, given the
+    step's ``inputs``, the LOB size files while a table needs measuring)."""
+    from src.tools.data_movement.lob_sizes import INSTRUCTIONS_FILE, SCRIPT
+
+    measuring = inputs is not None and bool(lob_measure_columns(inputs))
+    names = [AURORA_TEMPLATE, DDL_FILE] + ([] if measuring else [DMS_TEMPLATE])
+    if target_engine == "aurora_postgresql":
+        names.append(SEQUENCES_FILE)
+    if measuring:
+        names += [SCRIPT, INSTRUCTIONS_FILE]
+    return tuple(names)
 
 
 def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
@@ -1751,16 +1838,24 @@ def write_step1_delivery(store: Any, db: str, job_id: str) -> dict[str, Any]:
         inputs = load_step1(store, db, job_id)
     except DmsStepSkipped as skipped:
         return {"status": "skipped", "reason": str(skipped)}
+    from src.tools.data_movement.lob_sizes import INSTRUCTIONS_FILE, SCRIPT
+
     paths = []
-    for name, text in render_files(inputs).items():
+    files = render_files(inputs)
+    for name, text in files.items():
         path = f"{db}/{job_id}/{STEP_DIR}/{name}"
         store.write_bytes(path, text.encode("utf-8"))
         paths.append(path)
+    # No stale script once nothing is left to measure, and no stale stack while something is (#2123).
+    for name in (SCRIPT, INSTRUCTIONS_FILE, DMS_TEMPLATE):
+        if name not in files:
+            store.delete(f"{db}/{job_id}/{STEP_DIR}/{name}")
     replication = _replication(inputs)
     pg = inputs.contract.target.engine == "aurora_postgresql"
     return {
         "status": "complete",
         "files": paths,
+        "lob_sizes_needed": len({c.table for c in lob_measure_columns(inputs)}),
         "instance_class": replication.sizing.instance_class,
         "contract_sha256": inputs.contract_sha256,
         "replica_identity_recommended": len(contract_tables(inputs.contract)) if pg else 0,

@@ -28,7 +28,7 @@ NOW = dt.datetime(2026, 11, 3, 12, tzinfo=dt.UTC)
 
 
 def _run(cred, engine="aurora_mysql", confirmed=frozenset(), **request):
-    return run_preflight(make_step1_inputs(engine), s.request(**request), s.clients(cred), now=NOW,
+    return run_preflight(make_step1_inputs(engine, measured=True), s.request(**request), s.clients(cred), now=NOW,
                          confirmed=confirmed)  # fmt: skip
 
 
@@ -46,7 +46,7 @@ def test_a_ready_cluster_passes_and_a_self_managed_source_needs_confirmation():
     s.queue_ready(cred)
     result = _run(cred)
     assert [c.id for c in result.checks] == list(CHECK_ORDER)
-    assert [c.status for c in result.checks] == ["pass"] * 5 + ["confirm", "pass", "pass"]
+    assert [c.status for c in result.checks] == ["pass"] * 6 + ["confirm", "pass", "pass"]
     assert result.status == "needs_confirmation" and result.instance_class == "dms.t3.medium"
     assert result.contract_sha256 == make_step1_inputs().contract_sha256
     _done(cred)
@@ -103,8 +103,8 @@ def test_a_missing_cluster_fails_and_stops():
                                       http_status_code=404)  # fmt: skip
     result = _run(cred)  # nothing else is queued: any later call would raise
     assert result.status == "fail"
-    assert [c.status for c in result.checks] == ["fail"] + ["not_run"] * 7
-    assert "aurora-target.yaml" in (result.checks[0].message or "")
+    assert [c.status for c in result.checks] == ["pass", "fail"] + ["not_run"] * 7
+    assert "aurora-target.yaml" in (result.checks[1].message or "")
 
 
 def test_a_check_that_fails_in_the_middle_leaves_the_rest_not_run():
@@ -114,7 +114,7 @@ def test_a_check_that_fails_in_the_middle_leaves_the_rest_not_run():
     s.queue_instance_class(cred)
     s.queue_roles(cred, missing="dms-vpc-role")
     result = _run(cred)
-    assert [c.status for c in result.checks] == ["pass"] * 4 + ["fail"] + ["not_run"] * 3
+    assert [c.status for c in result.checks] == ["pass"] * 5 + ["fail"] + ["not_run"] * 3
     _done(cred)
 
 
@@ -462,10 +462,12 @@ def test_every_aws_call_is_a_read_and_never_a_secret_value():
     assert "get_secret_value" not in calls
 
 
+@pytest.mark.passes_on_main  # the write path is unchanged; the plan is now a measured one
 def test_the_result_is_written_under_the_step(tmp_path):
     b = make_bundle()
+    plan = make_step1_inputs(measured=True).plan  # its LOB tables measured: lob_sizes passes
     store = LocalArtifactStore(str(tmp_path))
-    store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))
+    store.write_json("shop/job1/data-movement/step-1/plan.json", plan.model_dump(mode="json"))
     store.write_bytes(
         "shop/job1/transformation-contract/v2/step-1.json", canonical_json(b.contract)
     )

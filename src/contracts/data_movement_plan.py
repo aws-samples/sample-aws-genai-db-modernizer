@@ -30,6 +30,8 @@ Version History:
   Aurora version line
 - 1.3 (2026-11-07, #2014): Added optional replication.engine_version and
   engine_version_why (the DMS engine version of step 1's replication instance, and why).
+- 1.4 (2026-11-11, #2123): Added optional LobTable.size_source (declared, measured,
+  unmeasured or skipped), so preflight stops on an unmeasured MySQL LOB table.
 """
 
 from typing import Literal
@@ -324,7 +326,8 @@ class LobTable(BaseModel):
         ...,
         description=(
             "limited: every LOB column declares a maximum within the catalog's limit, or the "
-            "source never runs full LOB mode (PostgreSQL, #1918); full otherwise"
+            "source never runs full LOB mode (PostgreSQL, #1918; MySQL and MariaDB, #2123); full "
+            "otherwise"
         ),
     )
     columns: list[str] = Field(default_factory=list, description="Its LOB columns, sorted")
@@ -332,11 +335,22 @@ class LobTable(BaseModel):
         None,
         ge=1,
         description=(
-            "The LOB size in KB (limited mode only): the largest declared one, or the catalog's "
-            "size when a PostgreSQL LOB declares none"
+            "The LOB size in KB (limited mode only): the measured or largest declared one, or the "
+            "catalog's size when a PostgreSQL or MySQL LOB has neither (a MySQL LOB type declares "
+            "its type's ceiling, which is not used)"
         ),
     )
     reason: str = Field("", description="Why this mode: the sizes it was judged on, in bytes")
+    size_source: Literal["declared", "measured", "unmeasured", "skipped"] | None = Field(
+        None,
+        description=(
+            "Where max_size_kb comes from (#2123): declared (the columns' declared maximums), "
+            "measured (the longest values, from the collection or lob-sizes.sql), unmeasured "
+            "(the catalog's size; a MySQL source stops at preflight until measured) or skipped "
+            "(the customer chose not to measure: the catalog's larger size). None in a plan "
+            "written before then"
+        ),
+    )
 
 
 class UnboundedVarchar(BaseModel):
@@ -415,7 +429,7 @@ class DataMovementPlan(BaseModel):
     ``cdc`` the physical capture it reads: after step 1 that is the hub plan's."""
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="The job the plan is built from")
     database_name: str = Field(..., description="The job's database name")

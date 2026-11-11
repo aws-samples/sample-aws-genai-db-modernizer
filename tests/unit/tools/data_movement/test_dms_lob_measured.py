@@ -107,12 +107,13 @@ def test_an_old_collection_without_measurements_falls_back_with_a_finding():
 
 
 @pytest.mark.parametrize("dialect", ["mysql", "mariadb"])
-def test_mysql_ignores_measured_sizes_and_keeps_full_lob_mode(dialect):
+def test_mysql_uses_measured_sizes_and_sizes_the_class_for_them(dialect):
+    # #2123: a MySQL source is sized like a PostgreSQL one.
     collector = _collector([_c("body", "longtext", 10)], engine=dialect)
     _, [t] = lob_plan(collector, ["public.cache"], dialect)
-    assert t.mode == "full"
-    assert unmeasured_lob_tables([t], dialect) == []
-    assert size_for_lob(_sizing(), 5120, dialect) == _sizing()
+    assert (t.mode, t.max_size_kb) == ("limited", dms_sizing().lob.undeclared_max_kb)
+    assert t.reason.startswith(MEASURED) and unmeasured_lob_tables([t], dialect) == []
+    assert size_for_lob(_sizing(), 5120, dialect).instance_class == "dms.r6i.large"
 
 
 def test_the_class_is_raised_so_the_lob_buffer_fits():

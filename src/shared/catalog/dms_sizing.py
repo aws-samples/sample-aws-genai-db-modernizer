@@ -72,6 +72,8 @@ class LobInstanceClass(BaseModel):
     # own (a table-settings rule) while the task runs at most at max_lob_kb.
     max_lob_kb: int = Field(ge=1, le=102400)
     max_table_lob_kb: int = Field(ge=1, le=102400)
+    # The largest sum, over every LOB column of the moved tables, of the limit each runs at (#2123).
+    max_total_lob_kb: int = Field(ge=1)
     included_storage_gb: int = Field(ge=0)
     why: str = Field(min_length=1, pattern=_ONE_LINE)
 
@@ -88,17 +90,28 @@ class LobRules(BaseModel):
     unbounded_varchar_max_bytes: int = Field(ge=1)
     why: str = Field(min_length=1, pattern=_ONE_LINE)
     scalars_why: str = Field(min_length=1, pattern=_ONE_LINE)
-    # Source dialects whose step 1 task never runs in full LOB mode (#1918): their tables with
-    # an unknown or larger LOB size run in limited mode at undeclared_max_kb, and the source
-    # endpoint fails the task on a larger value (FailTasksOnLobTruncation).
+    # Source dialects whose step 1 task never runs in full LOB mode (#1918, #2123): their
+    # tables with an unknown or larger LOB size run in limited mode at undeclared_max_kb.
     limited_only: tuple[str, ...] = ()
     undeclared_max_kb: int = Field(ge=1, le=102400)
     limited_only_why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # Source dialects whose endpoint has FailTasksOnLobTruncation, which step 1 sets (#1918).
+    fails_on_truncation: tuple[str, ...] = ()
+    # Source dialects whose LOB types declare their type's ceiling, not a bound on the values
+    # (MySQL: every LONGTEXT declares 4294967295, #2123).
+    declared_is_type_ceiling: tuple[str, ...] = ()
+    # Source dialects whose unmeasured LOB tables stop step 1 until measured (#2123), and the
+    # size such a table runs at when the customer explicitly skips measuring.
+    measure_required: tuple[str, ...] = ()
+    skipped_max_kb: int = Field(1024, ge=1, le=102400)
+    skipped_why: str = Field("", pattern=r"^[^\n]*$")
     # Measured sizes (#1918): bytes DMS counts per stored byte of a character LOB, the
     # headroom factor and the KB step LobMaxSize is rounded up to.
     measured_bytes_per_character: int = Field(ge=1, le=4)
     measured_headroom: float = Field(ge=1)
     measured_round_kb: int = Field(ge=1)
+    # Source dialect -> a finer rounding step for measured sizes (#2123: MySQL 64 KB).
+    measured_round_kb_by_source: dict[str, int] = Field(default_factory=dict)
     measured_why: str = Field(min_length=1, pattern=_ONE_LINE)
     # Why a table above the task's LobMaxSize gets its own limit (a table-settings rule, #1918).
     table_settings_why: str = Field(min_length=1, pattern=_ONE_LINE)
@@ -125,6 +138,7 @@ class LobRules(BaseModel):
                 after.memory_gib > before.memory_gib
                 and after.max_lob_kb > before.max_lob_kb
                 and after.max_table_lob_kb >= before.max_table_lob_kb
+                and after.max_total_lob_kb > before.max_total_lob_kb
             ):
                 raise ValueError(
                     f"lob.instance_classes: {after.instance_class} must have more memory, a "
@@ -135,6 +149,11 @@ class LobRules(BaseModel):
                 raise ValueError(
                     f"lob.instance_classes: {c.instance_class}'s max_table_lob_kb is below its max_lob_kb"
                 )
+        for name in ("fails_on_truncation", "measure_required"):
+            if extra := sorted(set(getattr(self, name)) - set(self.limited_only)):
+                raise ValueError(f"lob.{name}: {extra} not in lob.limited_only")
+        if self.measure_required and not self.skipped_why:
+            raise ValueError("lob.measure_required needs lob.skipped_why")
         for dialect, names in self.scalars.items():
             if both := sorted(set(names) & set(self.types.get(dialect, ()))):
                 raise ValueError(f"lob.scalars.{dialect}: {both} also listed as LOB types")
@@ -148,6 +167,20 @@ class EngineRules(BaseModel):
 
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     why: str = Field(min_length=1, pattern=_ONE_LINE)
+    # Source dialect -> the reasoning for that source, appended to ``why`` (#2123).
+    source_why: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _one_line(self) -> EngineRules:
+        if bad := sorted(d for d, w in self.source_why.items() if not w or "\n" in w):
+            raise ValueError(f"engine.source_why: {bad} must be one non-empty line")
+        return self
+
+    def why_for(self, dialect: str | None) -> str:
+        """``why`` plus the source dialect's own reasoning, if the catalog has one."""
+        family = {"mariadb": "mysql"}.get(dialect or "", dialect or "")
+        extra = self.source_why.get(family)
+        return f"{self.why} {extra}" if extra else self.why
 
 
 class NotMovedRules(BaseModel):

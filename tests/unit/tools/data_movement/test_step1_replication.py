@@ -39,7 +39,11 @@ def test_the_step1_plan_carries_its_sizing_lob_and_line() -> None:
     steps, _hub = build_step_plans(inputs, prices=None)
     rep = steps[0].replication
     assert rep is not None and rep.multi_az_default is True
-    assert rep.sizing == size_from_collector(inputs.collector)
+    # The collector's row, with the LOB limit's check appended (a MySQL source sizes its class for
+    # the LOB limit too since #2123).
+    base = size_from_collector(inputs.collector)
+    assert rep.sizing.instance_class == base.instance_class
+    assert rep.sizing.reason.startswith(base.reason) and "fits dms.t3.medium" in rep.sizing.reason
     assert rep.engine_version == "3.6.1" and "3.5.4" in (rep.engine_version_why or "")
     assert rep.target_engine == "aurora_mysql" and rep.lob_max_size_kb >= 1
     # aurora_versions.toml: MySQL 8.0 maps to the 8.0 line.

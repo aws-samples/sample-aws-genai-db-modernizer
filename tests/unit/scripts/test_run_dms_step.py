@@ -28,7 +28,12 @@ from src.tools.data_movement.dms_step import (
 from src.tools.transformation_contract.hashing import canonical_json
 from tests.unit.tools.aws.aws_stubs import REGION, StubbedCredMgr
 from tests.unit.tools.data_movement import preflight_stubs as s
-from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, write_job, write_pg_job
+from tests.unit.tools.data_movement.dms_step_fixtures import (
+    make_bundle,
+    make_step1_inputs,
+    write_job,
+    write_pg_job,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GONE = "DMS has no such task (the task is gone, not running)"
@@ -65,6 +70,9 @@ def _restore_aws_profile(monkeypatch):
 
 def _job(tmp_path: Path, **inputs) -> Path:
     b = make_bundle()
+    # Its LOB tables measured, so step 1 writes the stack (an unmeasured MySQL LOB table gets
+    # none, #2123: test_run_dms_step_lob_sizes.py).
+    b = b.model_copy(update={"plan": make_step1_inputs(measured=True).plan})
     # The finished job (report, assignment, collector) the summary reads the collection from.
     store = write_job(tmp_path, contract=False, plan=False)
     store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))

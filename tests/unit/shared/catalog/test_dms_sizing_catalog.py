@@ -30,12 +30,42 @@ def test_lob_rules_name_types_per_dialect():
     assert "bytea" in lob.types["postgresql"] and 1 <= lob.default_max_kb <= lob.limited_max_kb
 
 
-def test_only_postgresql_never_runs_full_lob_mode_and_its_size_is_within_dms_limit():
-    # #1918: full LOB mode turns a NULL LOB into an empty value on Aurora PostgreSQL. MySQL
-    # rehearsals passed in full LOB mode, so MySQL and MariaDB keep it.
+def test_postgresql_and_mysql_never_run_full_lob_mode_and_the_size_is_within_dms_limit():
+    # #1918: full LOB mode turns a NULL LOB into an empty value on Aurora PostgreSQL. #2123: it
+    # inserts NULL into a NOT NULL LONGTEXT column on Aurora MySQL (MariaDB reads MySQL's rules).
     lob = dms_sizing().lob
-    assert lob.limited_only == ("postgresql",)
-    assert 1 <= lob.undeclared_max_kb <= 102400 and "#1918" in lob.limited_only_why
+    assert set(lob.limited_only) == {"postgresql", "mysql"}
+    assert 1 <= lob.undeclared_max_kb <= 102400
+    assert "#1918" in lob.limited_only_why and "#2123" in lob.limited_only_why
+    # Only the PostgreSQL source endpoint has FailTasksOnLobTruncation; MySQL's LOB types
+    # declare their type's ceiling.
+    assert lob.fails_on_truncation == ("postgresql",)
+    assert lob.declared_is_type_ceiling == ("mysql",)
+
+
+def test_the_engine_version_has_its_reasoning_per_source():
+    engine = dms_sizing().engine
+    assert set(engine.source_why) == {"postgresql", "mysql"}
+    assert engine.why_for("mysql") == f"{engine.why} {engine.source_why['mysql']}"
+    assert engine.why_for("mariadb") == engine.why_for("mysql") and "#2123" in engine.why_for(
+        "mysql"
+    )
+    assert engine.why_for(None) == engine.why
+
+
+def test_truncation_failing_dialects_must_be_limited_only(tmp_path):
+    path = _write(tmp_path, _LAST)
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            "[lob]\n",
+            '[lob]\nlimited_only = ["postgresql"]\nfails_on_truncation = ["postgresql"]\n',
+        )
+    )
+    assert load_dms_sizing(path).lob.fails_on_truncation == ("postgresql",)
+    path.write_text(text.replace("[lob]\n", '[lob]\nfails_on_truncation = ["oracle"]\n'))
+    with pytest.raises(CatalogError, match="not in lob.limited_only"):
+        load_dms_sizing(path)
 
 
 def test_the_gate_lag_limit_is_30_seconds_with_a_reason():
@@ -48,7 +78,7 @@ def _write(tmp_path: Path, rows: str) -> Path:
     path.write_text(rows + '\n[engine]\nversion = "3.6.1"\nwhy = "w"\n[gate]\nmax_lag_seconds = 30\nwhy = "w"\n[lob]\nlimited_max_kb = 1024\ndefault_max_kb = 32\nwhy = "w"\n'
                     'scalars_why = "w"\nunbounded_varchar_max_bytes = 100\nundeclared_max_kb = 8192\nlimited_only_why = "w"\n'
                     'measured_bytes_per_character = 2\nmeasured_headroom = 1.25\nmeasured_round_kb = 1024\nmeasured_why = "w"\ntable_settings_why = "w"\n'
-                    '[[lob.instance_classes]]\ninstance_class = "dms.t3.medium"\nmemory_gib = 4\nmax_lob_kb = 64\nmax_table_lob_kb = 64\n'
+                    '[[lob.instance_classes]]\ninstance_class = "dms.t3.medium"\nmemory_gib = 4\nmax_lob_kb = 64\nmax_table_lob_kb = 64\nmax_total_lob_kb = 16384\n'
                     'included_storage_gb = 50\nwhy = "w"\n'
                     '[lob.types]\nmysql = ["text"]\npostgresql = ["text"]\n'
                     '[lob.scalars]\npostgresql = ["int4"]\n[not_moved]\npostgresql = ["tsvector"]\nwhy = "w"\n')  # fmt: skip

@@ -181,8 +181,11 @@ ROUTINES_CHECK = "routines-check"  # reads the customer's check output; no AWS c
 READS = ("preflight", "gate", "status", ROUTINES)
 VERIFY_SCRIPTS, VERIFY = "verify-scripts", "verify"  # optional, no AWS call (#1998)
 CUTOVER_SCRIPTS, CUTOVER_CHECK = "cutover-scripts", "cutover-check"  # no AWS call (#1948)
+LOB_SIZES = (
+    "lob-sizes"  # reads the customer's lob-sizes.tsv, or applies a skip; no AWS call (#2123)
+)
 LOCAL = ("steps", "summary", "plan", VERIFY_SCRIPTS, VERIFY, ROUTINES_CHECK, CUTOVER_SCRIPTS,
-         CUTOVER_CHECK)  # fmt: skip
+         CUTOVER_CHECK, LOB_SIZES)  # fmt: skip
 MAX_TEMPLATE_BODY = 51_200  # CloudFormation's TemplateBody limit (a TemplateURL takes 1 MB)
 MAX_WAIT_SECONDS = 540  # under the 600 s Bash timeout a command runs with
 TASK_STOPPED = {"failed", "stopped", "failed-move"}
@@ -341,6 +344,9 @@ class MoveInputs(BaseModel):
     write_profile: str | None = Field(None, pattern=_PROFILE)
     confirmed_checks: list[str] = Field(default_factory=list)
     template_bucket: str | None = Field(None, pattern=_BUCKET)
+    # #2123: "skip" only when the customer chose not to measure the LOB tables the collection did
+    # not: each then runs at the catalog's lob.skipped_max_kb (lob-sizes applies it).
+    lob_sizes: Literal["measure", "skip"] = "measure"
 
     def model_post_init(self, _context: Any) -> None:
         unknown = sorted(set(self.confirmed_checks) - set(CHECK_ORDER))
@@ -498,7 +504,8 @@ def summary(root: str, db: str, job_id: str) -> dict[str, Any]:
     blocked = [r.source_table for r in contract.rules if r.status == "blocked"]
     not_moved_tables = [{"table": n.table_id, "reason": n.reason} for n in inputs.not_moved]
     files = {
-        name: f"{db}/{job_id}/{STEP_DIR}/{name}" for name in step1_files(contract.target.engine)
+        name: f"{db}/{job_id}/{STEP_DIR}/{name}"
+        for name in step1_files(contract.target.engine, inputs)
     }
     missing = [n for n in files if not (Path(root) / files[n]).is_file()]
     return {
@@ -602,7 +609,30 @@ def _status_context(root: str, db: str, job_id: str, region: str) -> StepsContex
                         dms_version(step_plan(root, db, job_id)))  # fmt: skip
 
 
+def _lob_sizes_settled(root: str, db: str, job_id: str, inputs: MoveInputs) -> None:
+    """Refuse (no AWS call) while a MySQL LOB table of step 1 is unmeasured, or its plan
+    disagrees with the inputs file's lob_sizes (#2123): the stack is never deployed with a
+    guessed LOB size, nor with a skip the customer took back."""
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_sizing import skipped_lob_tables
+    from src.tools.data_movement.dms_step import _replication, load_step1, lob_measure_columns
+
+    step = load_step1(LocalArtifactStore(base_dir=root), db, job_id, with_ddl=False)
+    if step.plan.replication is None:
+        return
+    if columns := lob_measure_columns(step):
+        n = len({c.table for c in columns})
+        raise MoveError(f"{n} step 1 MySQL table{'' if n == 1 else 's'} {'has' if n == 1 else 'have'} LOB columns "
+                        "whose sizes are not measured, so no stack is deployed: run the read-only lob-sizes.sql "
+                        "on the source and run_dms_step.py lob-sizes (or, only if you choose to skip measuring, "
+                        "set \"lob_sizes\": \"skip\" in inputs.json and run lob-sizes)")  # fmt: skip
+    if skipped_lob_tables(_replication(step).lob_tables) and inputs.lob_sizes != "skip":
+        raise MoveError("the step 1 plan runs LOB tables at the skipped size, but inputs.json no longer says "
+                        "\"lob_sizes\": \"skip\": run run_dms_step.py lob-sizes, then measure")  # fmt: skip
+
+
 def deploy_plan(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
+    _lob_sizes_settled(root, db, job_id, inputs)
     path, body, template_params = _template(root, db, job_id)
     params = parameters(inputs, template_params)
     name = stack_name(inputs, job_id)
@@ -2062,6 +2092,100 @@ def routines_check(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[
             "result": str(Path(root) / key)}  # fmt: skip
 
 
+# --- LOB sizes (#2123): the customer's run of lob-sizes.sql; /move never runs it ----------
+
+
+def lob_sizes(root: str, db: str, job_id: str, inputs: MoveInputs) -> dict[str, Any]:
+    """Size step 1's unmeasured MySQL LOB tables: read the customer's ``lob-sizes.tsv``
+    strictly (a bad file is refused whole, its content never repeated), or, only while the
+    inputs file says ``"lob_sizes": "skip"``, run them at the catalog's skipped size. Writes
+    ``lob-sizes.json`` (the measured lengths, and whether this run skipped), the plans again
+    (``plan.write_plans``, with the inputs file's current choice) and step 1's files again.
+    No AWS call; it never connects to a database."""
+    from src.contracts.lob_sizes import LobSizes
+    from src.shared.catalog.dms_sizing import dms_sizing
+    from src.shared.contract_versioning import load_contract
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.dms_sizing import skipped_lob_tables
+    from src.tools.data_movement.dms_step import (
+        _replication,
+        load_step1,
+        lob_measure_columns,
+        write_step1_delivery,
+    )
+    from src.tools.data_movement.lob_sizes import (
+        OUTPUT,
+        LobSizesError,
+        measured,
+        parse_output,
+        skipped_choice,
+    )
+    from src.tools.data_movement.plan import write_plans
+
+    store = LocalArtifactStore(base_dir=root)
+    key = f"{db}/{job_id}/data-movement/step-1/lob-sizes.json"
+    earlier = (
+        load_contract(LobSizes, store.read_json(key), artifact="step 1 LOB sizes")
+        if store.exists(key)
+        else None
+    )
+    skip = inputs.lob_sizes == "skip"
+    if skip and (earlier is None or earlier.choice != "skipped"):
+        choice: LobSizes = skipped_choice(job_id=job_id, database_name=db, earlier=earlier)
+        store.write_json(key, choice.model_dump(mode="json"))
+    elif not skip and earlier is not None and earlier.choice == "skipped":
+        # The customer measures after all: keep what an earlier run measured, drop the record.
+        if earlier.columns and earlier.contract_sha256 and earlier.measured_at:
+            again: LobSizes = earlier.model_copy(update={"choice": "measured"})
+            store.write_json(key, again.model_dump(mode="json"))
+        else:
+            store.delete(key)
+    # The plan follows the inputs file's current choice, whatever an earlier run recorded.
+    write_plans(store, db, job_id, lob_skip=skip)
+    columns = lob_measure_columns(load_step1(store, db, job_id, with_ddl=False))
+    output = _step_dir(root, db, job_id) / OUTPUT
+    if columns and not skip:
+        if not output.is_file():
+            write_step1_delivery(store, db, job_id)  # lob-sizes.sql for exactly these columns
+            return {"status": "no_output", "expected": str(output), "tables": len({c.table for c in columns}),
+                    "columns": len(columns), "script": str(_step_dir(root, db, job_id) / "lob-sizes.sql")}  # fmt: skip
+        step = load_step1(store, db, job_id, with_ddl=False)
+        try:
+            started, rows = parse_output(output.read_bytes(), name=output.name,
+                                         contract_sha=step.contract_sha256, columns=columns)  # fmt: skip
+        except LobSizesError as exc:
+            write_step1_delivery(store, db, job_id)
+            raise MoveError(f"{output}: refused: {exc}") from None
+        current = (
+            load_contract(LobSizes, store.read_json(key), artifact="step 1 LOB sizes")
+            if store.exists(key)
+            else None
+        )
+        read: LobSizes = measured(columns, rows, started, job_id=job_id, database_name=db,
+                                  contract_sha=step.contract_sha256, earlier=current)  # fmt: skip
+        store.write_json(key, read.model_dump(mode="json"))
+        write_plans(store, db, job_id, lob_skip=False)
+    delivery = write_step1_delivery(store, db, job_id)
+    after = load_step1(store, db, job_id, with_ddl=False)
+    replication = _replication(after)
+    left = lob_measure_columns(after)
+    skipped = skipped_lob_tables(replication.lob_tables)
+    out: dict[str, Any] = {
+        "status": "skipped" if skipped else ("measured" if not left else "unmeasured"),
+        "lob_max_size_kb": replication.lob_max_size_kb,
+        "instance_class": replication.sizing.instance_class,
+        "tables": [{"table": t.table, "max_size_kb": t.max_size_kb, "size_source": t.size_source}
+                   for t in replication.lob_tables][:ROUTINES_SHOWN],
+        "unmeasured_tables": len({c.table for c in left}),
+        "files": delivery.get("files", []),
+        "result": str(Path(root) / key) if store.exists(key) else None,
+    }  # fmt: skip
+    if skipped:
+        out["warning"] = (f"{len(skipped)} LOB table{' runs' if len(skipped) == 1 else 's run'} at "
+                          f"{dms_sizing().lob.skipped_max_kb} KB, by your choice: {dms_sizing().lob.skipped_why}")  # fmt: skip
+    return out
+
+
 # --- Cutover routines (#1948): the customer's scripts; /move never runs them -------------
 
 
@@ -2238,7 +2362,8 @@ def _delegate(command: str, args: argparse.Namespace, inputs: MoveInputs) -> int
 
     argv = [*base, "--aurora-cluster-id", inputs.aurora_cluster_id,
             "--source-secret-arn", inputs.source_secret_arn, "--target-secret-arn", inputs.target_secret_arn,
-            "--source-kind", inputs.source_kind, "--subnet-ids", ",".join(inputs.subnet_ids)]  # fmt: skip
+            "--source-kind", inputs.source_kind, "--subnet-ids", ",".join(inputs.subnet_ids),
+            "--lob-sizes", inputs.lob_sizes]  # fmt: skip
     for flag, value in (
         ("--source-id", inputs.source_id),
         ("--source-secret-kms-key-arn", inputs.source_secret_kms_key_arn),
@@ -2316,6 +2441,12 @@ def main(argv: list[str] | None = None, *, clients: MoveClients | None = None,
                                         target_user=args.target_user, resume=args.resume))  # fmt: skip
         if args.command == CUTOVER_CHECK:
             return emit(cutover_check(args.artifact_root, db, job_id, inputs))
+        if args.command == LOB_SIZES:
+            return emit(lob_sizes(args.artifact_root, db, job_id, inputs))
+        if (
+            args.command == "deploy"
+        ):  # before any AWS client: no stack with a guessed LOB size (#2123)
+            _lob_sizes_settled(args.artifact_root, db, job_id, inputs)
         _use_profile(inputs.write_profile if args.command in WRITES else inputs.read_profile)
         if args.command in ("preflight", "gate"):
             return _delegate(args.command, args, inputs)

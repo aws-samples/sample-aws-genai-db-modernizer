@@ -48,6 +48,8 @@ Rules, per wave of the report's ``migration_waves`` (same count, same order):
 
 from __future__ import annotations
 
+import copy
+import json
 import math
 import re
 from collections.abc import Iterable, Mapping
@@ -88,6 +90,8 @@ from src.tools.data_movement.dms_sizing import (
     not_moved_columns,
     size_for_lob,
     size_from_collector,
+    skipped_lob_tables,
+    skipped_note,
     table_lob_limits,
     target_engine_line,
     unbounded_varchar,
@@ -263,6 +267,12 @@ class JobInputs:
     schema_designs: Mapping[str, tuple[str, Mapping[str, Any]]] = field(default_factory=dict)
     # The assignment version ``load_inputs`` resolved (0: not resolved, read the report's).
     assignment_version: int = 0
+    # Step 1's ``lob-sizes.json`` (#2123): the LOB sizes the customer measured, or the choice
+    # to skip measuring; None when the step has none.
+    lob_sizes: Mapping[str, Any] | None = None
+    # Whether the customer skips measuring now (#2123): step 1's inputs.json says
+    # ``"lob_sizes": "skip"``. Decided from the inputs each time, never from lob-sizes.json.
+    lob_skip: bool = False
 
     def resolved_version(self) -> int:
         """The assignment version: the one ``load_inputs`` resolved (from the report, else
@@ -603,42 +613,78 @@ def _dms_moved(job: _JobView, base_tables: list[str]) -> list[str]:
 
 
 def _dms_lob_notes(job: _JobView, replication: DmsReplication) -> list[str]:
-    """The plan's finding when the collection did not measure a moved table's LOB sizes (#1918)."""
-    unmeasured = unmeasured_lob_tables(replication.lob_tables, dialect_of(job.legacy))
-    note = lob_size_note(unmeasured, replication.lob_max_size_kb)
-    return [note] if note else []
+    """The plan's finding when the collection did not measure a moved table's LOB sizes
+    (#1918), the warning when the customer chose not to measure them (#2123), and where the
+    measured sizes came from when ``lob-sizes.sql`` measured them."""
+    dialect = dialect_of(job.legacy)
+    unmeasured = unmeasured_lob_tables(replication.lob_tables, dialect)
+    notes = [lob_size_note(unmeasured, replication.lob_max_size_kb, dialect),
+             skipped_note(skipped_lob_tables(replication.lob_tables), replication.lob_max_size_kb)]  # fmt: skip
+    overlay = job.inputs.lob_sizes or {}
+    if overlay.get("choice") == "measured" and overlay.get("columns"):
+        n = len({c["table"] for c in overlay["columns"]})
+        notes.append(f"LOB sizes measured by lob-sizes.sql: {n} step 1 table{'' if n == 1 else 's'} sized from "
+                     f"its output (the source's MAX(LENGTH()) at {overlay.get('measured_at')} UTC); measure "
+                     "again before the full load if the data grew.")  # fmt: skip
+    return [n for n in notes if n]
+
+
+def _with_lob_sizes(
+    collector: Mapping[str, Any], overlay: Mapping[str, Any] | None
+) -> Mapping[str, Any]:
+    """The collector with ``lob-sizes.json``'s measured lengths as its columns'
+    ``max_value_bytes`` (#2123): the larger of the two when the collection measured one too.
+    A column the collection no longer has is ignored."""
+    columns = (overlay or {}).get("columns") or []
+    if not columns:
+        return collector
+    measured = {(c["table"], c["column"]): int(c["max_value_bytes"]) for c in columns}
+    out = copy.deepcopy(dict(collector))
+    for t in (out.get("database_schema") or {}).get("tables") or []:
+        for c in t.get("columns") or []:
+            got = measured.get((t.get("table_id"), c.get("column_name")))
+            if got is not None:
+                c["max_value_bytes"] = max(got, int(c.get("max_value_bytes") or 0))
+    return out
 
 
 def _lob_sized(
     sizing: DmsSizing, lob_max: int, lob_tables: list[LobTable], dialect: str | None
 ) -> DmsSizing:
-    """The class for the largest LOB limit (#1918): the task's LobMaxSize, or the largest table
-    with a larger limit of its own (its table-settings rule)."""
+    """The class for the LOB limits (#1918): the task's LobMaxSize, or the largest table
+    with a larger limit of its own (its table-settings rule), and the sum over every LOB column
+    of the limit its table runs at (#2123: 60 tables at 1 MB need what one task-wide 1 MB does)."""
     own = table_lob_limits(lob_tables, lob_max)
+    mine = {t.table: int(t.max_size_kb or 0) for t in own}
+    limited = [t for t in lob_tables if t.mode == "limited"]
+    columns = sum(max(len(t.columns), 1) for t in limited)
+    total = sum(max(len(t.columns), 1) * mine.get(t.table, lob_max) for t in limited)
     if not own:
-        return size_for_lob(sizing, lob_max, dialect)
+        return size_for_lob(sizing, lob_max, dialect, total_kb=total, columns=columns)
     top = max(own, key=lambda t: (t.max_size_kb or 0, t.table))
-    return size_for_lob(
-        sizing, int(top.max_size_kb or 0), dialect, table=top.table, task_kb=lob_max
-    )
+    return size_for_lob(sizing, int(top.max_size_kb or 0), dialect, table=top.table, task_kb=lob_max,
+                        total_kb=total, columns=columns)  # fmt: skip
 
 
 def _dms_replication(
     job: _JobView, wave: Mapping[str, Any], base_tables: list[str]
 ) -> DmsReplication:
     """Step 1's instance size, LOB settings and Aurora line (#1798)."""
-    collector = job.inputs.collector
+    overlay = job.inputs.lob_sizes
+    collector = _with_lob_sizes(job.inputs.collector, overlay)
     # Wave 1 has one source-compatible Aurora engine (the catalog's relational role), so the
     # first relational engine it names is the target.
     target = next((e for e in _wave_engines(wave) if e in RELATIONAL_ENGINES), None)
     dialect = dialect_of(job.legacy)
-    lob_max, lob_tables = lob_plan(collector, _dms_moved(job, base_tables), dialect)
+    skip = job.inputs.lob_skip
+    lob_max, lob_tables = lob_plan(collector, _dms_moved(job, base_tables), dialect,
+                                   skip_unmeasured=skip)  # fmt: skip
     return DmsReplication(
         target_engine=target,
         target_engine_line=target_engine_line(collector, target) if target else None,
         sizing=_lob_sized(size_from_collector(collector), lob_max, lob_tables, dialect),
         engine_version=dms_sizing().engine.version,
-        engine_version_why=dms_sizing().engine.why,
+        engine_version_why=dms_sizing().engine.why_for(dialect),
         multi_az_default=True,
         lob_max_size_kb=lob_max,
         lob_tables=lob_tables,
@@ -1467,8 +1513,23 @@ def _schema_design_paths(store: Any, db: str, job_id: str, version: int) -> dict
     return {engine: rel for engine, (_, rel) in sorted(found.items())}
 
 
-def load_inputs(store: Any, db: str, job_id: str) -> JobInputs:
-    """Read a finished job's artifacts (every read checks its contract version)."""
+def _inputs_skip(store: Any, db: str, job_id: str) -> bool:
+    """Whether step 1's inputs.json says ``"lob_sizes": "skip"`` (#2123); False without one
+    (or with one that is not a JSON object: run_dms_step.py reports a malformed file)."""
+    key = f"{db}/{job_id}/data-movement/step-1/inputs.json"
+    if not store.exists(key):
+        return False
+    try:
+        data = json.loads(store.read_bytes(key))
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("lob_sizes") == "skip"
+
+
+def load_inputs(store: Any, db: str, job_id: str, *, lob_skip: bool | None = None) -> JobInputs:
+    """Read a finished job's artifacts (every read checks its contract version). ``lob_skip``:
+    the customer's current choice to skip measuring LOB sizes (#2123); by default, what step 1's
+    inputs.json says."""
     from src.report.deliverables import synthesis_report_key
 
     report_key = synthesis_report_key(store, db, job_id, 0)
@@ -1487,6 +1548,15 @@ def load_inputs(store: Any, db: str, job_id: str) -> JobInputs:
         engine: (rel, store.read_json(f"{db}/{job_id}/{rel}"))
         for engine, rel in _schema_design_paths(store, db, job_id, version).items()
     }
+    lob_key = f"{db}/{job_id}/data-movement/step-1/lob-sizes.json"
+    lob_sizes = None
+    if store.exists(lob_key):
+        from src.contracts.lob_sizes import LobSizes
+        from src.shared.contract_versioning import load_contract
+
+        lob_sizes = load_contract(
+            LobSizes, store.read_json(lob_key), artifact="step 1 LOB sizes"
+        ).model_dump(mode="json")
     return JobInputs(
         job_id=job_id,
         database_name=db,
@@ -1495,6 +1565,8 @@ def load_inputs(store: Any, db: str, job_id: str) -> JobInputs:
         collector=collector,
         schema_designs=designs,
         assignment_version=version,
+        lob_sizes=lob_sizes,
+        lob_skip=_inputs_skip(store, db, job_id) if lob_skip is None else lob_skip,
     )
 
 
@@ -1525,12 +1597,12 @@ def _contract_refs(store: Any, inputs: JobInputs) -> dict[int, ContractRef]:
     return {1: ContractRef(artifact=artifact, sha256=digest)}
 
 
-def write_plans(store: Any, db: str, job_id: str) -> list[str]:
+def write_plans(store: Any, db: str, job_id: str, *, lob_skip: bool | None = None) -> list[str]:
     """Build and write every step's plan, then the hub plan; the paths written.
 
     When no hub is built, a stale ``hub/plan.json`` from an earlier run is removed. The
     ``wave-<n>`` files written before #1797 are left alone."""
-    inputs = load_inputs(store, db, job_id)
+    inputs = load_inputs(store, db, job_id, lob_skip=lob_skip)
     plans, hub = build_step_plans(inputs, contracts=_contract_refs(store, inputs))
     written = [_write_plan(store, db, job_id, plan) for plan in plans]
     if hub is not None:

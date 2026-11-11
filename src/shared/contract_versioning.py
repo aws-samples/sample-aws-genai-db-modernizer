@@ -579,6 +579,8 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         r"data-movement/step-\d+/routines-check\.json",
         "src.contracts.routine_check:RoutineCheckResult",
     ),
+    # #2123: the LOB sizes the customer's run of step 1's lob-sizes.sql measured (or skipped).
+    (r"data-movement/step-\d+/lob-sizes\.json", "src.contracts.lob_sizes:LobSizes"),
     # #1948: what the customer's run of the cutover routine check script shows.
     (
         r"data-movement/step-\d+/cutover-check\.json",

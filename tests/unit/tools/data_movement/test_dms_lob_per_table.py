@@ -16,6 +16,8 @@ from __future__ import annotations
 import copy
 import dataclasses
 
+import pytest
+
 from src.contracts.data_movement_plan import LobTable
 from src.shared.catalog.dms_sizing import dms_sizing
 from src.tools.data_movement.dms_sizing import lob_plan, table_lob_limits, task_lob_kb
@@ -90,11 +92,12 @@ def test_a_large_table_without_a_primary_key_raises_the_task_size():
     assert size == 5120 and table_lob_limits(tables, size) == []
 
 
+@pytest.mark.passes_on_main  # small sizes stay task-wide on MySQL too
 def test_no_lob_table_keeps_the_catalogs_default_and_mysql_keeps_its_rule():
     assert task_lob_kb([]) == dms_sizing().lob.default_max_kb
     tables = [LobTable(table="s.a", mode="limited", columns=["c"], max_size_kb=8),
               LobTable(table="s.b", mode="limited", columns=["c"], max_size_kb=32)]  # fmt: skip
-    # MySQL keeps the largest size task-wide, with no table of its own.
+    # Tables within the catalog's size keep the largest of theirs from MySQL too (#2123).
     assert task_lob_kb(tables, dialect="mysql") == 32
     # Tables within the catalog's size keep the largest of theirs, as before.
     assert task_lob_kb(tables, dialect="postgresql") == 32
@@ -129,9 +132,18 @@ def test_the_task_mapping_gives_only_the_larger_table_its_own_limited_lob_rule()
     assert len(ids) == len(set(ids)) and [r["rule-type"] for r in mappings[:3]] == ["selection"] * 3
 
 
-def test_a_task_at_the_larger_size_gets_no_table_rule_nor_does_mysql():
+@pytest.mark.passes_on_main  # no table rule at or below the task size
+def test_a_task_at_the_larger_size_gets_no_table_rule():
     assert _lob_rules(_per_table_inputs(task_kb=5120)) == []
-    assert _lob_rules(_per_table_inputs("aurora_mysql")) == []
+    assert _lob_rules(_per_table_inputs("aurora_mysql", task_kb=5120)) == []
+
+
+def test_a_mysql_table_with_a_larger_limit_gets_its_own_rule_too():
+    # #2123: a MySQL source sizes its LOB tables like a PostgreSQL one.
+    assert _lob_rules(_per_table_inputs("aurora_mysql")) == [{
+        "rule-type": "table-settings", "rule-id": "4", "rule-name": "4",
+        "object-locator": {"schema-name": "shop", "table-name": "customers"},
+        "lob-settings": {"mode": "limited", "bulk-max-size": "5120"}}]  # fmt: skip
 
 
 def test_the_ddl_header_names_the_table_with_the_larger_limit_and_why():
@@ -230,6 +242,7 @@ def test_a_character_array_column_is_validated_as_text_on_both_sides():
     assert ids == [str(i) for i in range(1, len(ids) + 1)]
 
 
+@pytest.mark.passes_on_main  # array validation rules stay PostgreSQL-only
 def test_mysql_gets_no_array_validation_rule():
     inputs = _with_arrays(_per_table_inputs("aurora_mysql"))
-    assert all(r["rule-type"] == "selection" for r in table_mappings(inputs)["rules"])
+    assert all(r["rule-type"] != "validation" for r in table_mappings(inputs)["rules"])

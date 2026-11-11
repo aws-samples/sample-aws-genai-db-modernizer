@@ -15,7 +15,7 @@ from src.storage.local_store import LocalArtifactStore
 from src.tools.transformation_contract.hashing import canonical_json
 from tests.unit.tools.aws.aws_stubs import StubbedCredMgr
 from tests.unit.tools.data_movement import preflight_stubs as s
-from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle
+from tests.unit.tools.data_movement.dms_step_fixtures import make_bundle, make_step1_inputs
 
 PATH = "shop/job1/data-movement/step-1/preflight.json"
 
@@ -33,8 +33,9 @@ def _full(tmp_path, *extra):
 
 def _job(tmp_path):
     b = make_bundle()
+    plan = make_step1_inputs(measured=True).plan  # LOB sizes measured: lob_sizes passes (#2123)
     store = LocalArtifactStore(str(tmp_path))
-    store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))
+    store.write_json("shop/job1/data-movement/step-1/plan.json", plan.model_dump(mode="json"))
     store.write_bytes(
         "shop/job1/transformation-contract/v2/step-1.json", canonical_json(b.contract)
     )
@@ -190,3 +191,18 @@ def test_confirm_repeats(tmp_path, capsys):
     argv = _full(tmp_path, *[a for c in CHECK_ORDER for a in ("--confirm", c)])
     assert script.main(argv, clients=s.clients(cred)) == 0
     assert _out(capsys)["status"] == "pass"
+
+
+def test_an_unmeasured_mysql_lob_table_is_the_first_failure_before_any_aws_call(tmp_path, capsys):
+    # #2123: the plan lists customers.bio (LONGTEXT) unmeasured; nothing is queued, so an AWS
+    # call would raise: lob_sizes fails first and the rest are not run.
+    b = make_bundle()
+    store = LocalArtifactStore(str(tmp_path))
+    store.write_json("shop/job1/data-movement/step-1/plan.json", b.plan.model_dump(mode="json"))
+    store.write_bytes(
+        "shop/job1/transformation-contract/v2/step-1.json", canonical_json(b.contract)
+    )
+    assert script.main(_full(tmp_path), clients=s.clients(StubbedCredMgr())) == 0
+    out = _out(capsys)
+    assert out["status"] == "fail" and out["first_failure"] == "lob_sizes"
+    assert "lob-sizes.sql" in out["message"] and "run_dms_step.py lob-sizes" in out["message"]

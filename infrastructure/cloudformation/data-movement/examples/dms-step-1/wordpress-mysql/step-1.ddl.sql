@@ -81,6 +81,19 @@
 -- wordpress.wp_woocommerce_downloadable_product_permissions.access_granted,
 -- wordpress.wp_woocommerce_log.timestamp.
 --
+-- LOB columns: 16 moved tables have LOB columns (mediumtext, longtext, mediumblob, longblob,
+-- json and spatial types). The DMS task runs in limited LOB mode, sized from each table's
+-- longest value: from a MySQL source, full LOB mode inserts each row with its LOB columns NULL
+-- and fills them in afterwards, which a NOT NULL LOB column on Aurora refuses. 16 of them have
+-- a LOB column the collection did not measure: wordpress.wp_actionscheduler_actions,
+-- wordpress.wp_commentmeta, wordpress.wp_links, wordpress.wp_options, wordpress.wp_postmeta,
+-- wordpress.wp_posts, wordpress.wp_term_taxonomy, wordpress.wp_termmeta, wordpress.wp_usermeta,
+-- wordpress.wp_wc_admin_note_actions and 6 more (the plan's replication.lob_tables). This
+-- source endpoint truncates a longer value with no task error, so step 1 writes no DMS stack
+-- (dms-step-1.yaml) and preflight's lob_sizes check stops until they are measured: run the
+-- read-only lob-sizes.sql on the source (lob-sizes.md says how), then run_dms_step.py
+-- lob-sizes, which sizes each table from its output and writes this file and the stack.
+--
 -- Not moved by step 1 (DMS moves table rows only; counts from the collection):
 -- - procedures: 0 (none in the collection).
 -- - functions: 0 (none in the collection).
