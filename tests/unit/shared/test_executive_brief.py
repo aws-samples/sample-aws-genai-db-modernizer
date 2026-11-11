@@ -149,6 +149,32 @@ class TestTheDeterministicSummary:
             "test the CDC replication and confirm where those queries run before wave 3 starts."
         )
 
+    def test_two_reviews_in_two_waves_are_one_clause_in_wave_order(self) -> None:
+        """#2125: never "review them ... before wave 3 starts, and review them ... before
+        wave 1 starts"."""
+        facts = _facts(
+            overall_risk_level="HIGH",
+            exposures=[
+                {"severity": "HIGH", "risk_type": "PERFORMANCE_DEGRADATION", "rule": None,
+                 "engine": "dynamodb", "wave": 3},
+                {"severity": "HIGH", "risk_type": "MIGRATION_COMPLEXITY",
+                 "rule": "routines.migrate_yourself", "engine": "aurora_postgresql", "wave": 1},
+            ],
+        )  # fmt: skip
+        risk = _text(facts).split("\n\n")[1]
+        assert risk.count("review them in the risk register") == 1
+        assert risk.endswith(": review them in the risk register before waves 1 and 3 start.")
+
+    def test_actions_in_two_waves_come_in_wave_order(self) -> None:
+        facts = _facts(
+            exposures=[
+                {"severity": "MEDIUM", "rule": "routing.close_calls", "engine": None, "wave": 3},
+                {"severity": "MEDIUM", "rule": "sync.wave", "engine": "dynamodb", "wave": 1},
+            ]
+        )
+        risk = _text(facts).split("\n\n")[1]
+        assert risk.index("before wave 1 starts") < risk.index("before wave 3 starts")
+
     def test_a_risk_with_no_rule_is_named_in_plain_words(self) -> None:
         facts = _facts(
             overall_risk_level="HIGH",
