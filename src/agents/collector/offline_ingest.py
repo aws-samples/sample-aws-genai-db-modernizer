@@ -202,7 +202,10 @@ def build_offline_contract(
         settings=offline_meta.get("settings"),
         # #384: the cap and floor the collection script ran with, when it says.
         query_capture=offline_query_capture(
-            offline_meta, int(parsed.get("script_query_rows") or 0)
+            offline_meta,
+            int(parsed.get("script_query_rows") or 0),
+            # #2145: the rows of this database, not of the others the script also read.
+            held=parsed.get("database_query_rows"),
         ),
         # #1991: the server's own counters, which the rate window check reads.
         server_counters=parsed.get("server_counters"),

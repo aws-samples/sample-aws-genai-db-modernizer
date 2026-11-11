@@ -367,6 +367,24 @@ def _parse_offline_collection(
         )
         sample_rows_note = {"sample_rows_dropped": sample_rows_dropped}
 
+    queries = _transform_queries(
+        raw_queries,
+        db_name,
+        known_table_names,
+        table_schemas=table_schemas,
+        shadow=shadow,
+        source_engine=source_engine,
+        # #1893: the window a statement with no usable observed window falls back on.
+        server_window=_collection_server_window(data, source_engine),
+        # #1908: the script's two snapshots of the counters, when it took them.
+        sample=_collection_rate_sample(data, source_engine),
+        first_counts=_collection_first_counts(data),
+    )
+    # #2145: the rows this database holds (the other databases' are dropped above), and
+    # how many of them were folded into another by a shared digest or, for Oracle, a
+    # literal shape: ``database_query_rows - len(queries)``.
+    database_query_rows = len(raw_queries)
+    literal_variants_merged = database_query_rows - len(queries)
     routines = _routine_rows(data, metadata, source_engine)
     return {
         **other_db_note,
@@ -374,6 +392,8 @@ def _parse_offline_collection(
         "metadata": metadata,
         # #384: the statement rows the collection script wrote, which its cap counts.
         "script_query_rows": len(data.get("queries") or []),
+        "database_query_rows": database_query_rows,
+        "literal_variants_merged": literal_variants_merged,
         "collected_database_name": collected,
         "tables": tables,
         # #1625: string literals in stored definitions are redacted too.
@@ -387,19 +407,7 @@ def _parse_offline_collection(
         "event_triggers": routines["event_triggers"],
         "routine_capture": routines["routine_capture"],
         "routine_stats_status": routines["routine_stats_status"],
-        "queries": _transform_queries(
-            raw_queries,
-            db_name,
-            known_table_names,
-            table_schemas=table_schemas,
-            shadow=shadow,
-            source_engine=source_engine,
-            # #1893: the window a statement with no usable observed window falls back on.
-            server_window=_collection_server_window(data, source_engine),
-            # #1908: the script's two snapshots of the counters, when it took them.
-            sample=_collection_rate_sample(data, source_engine),
-            first_counts=_collection_first_counts(data),
-        ),
+        "queries": queries,
         "global_stats": global_stats,
         # #1991: the server's uptime, reset age and own statement count, and when read.
         "server_counters": offline_server_counters(data, source_engine),

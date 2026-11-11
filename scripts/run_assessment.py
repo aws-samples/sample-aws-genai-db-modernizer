@@ -348,6 +348,18 @@ def _reasks_to_run_log() -> Iterator[None]:
         REASK_LOGGER.setLevel(level)
 
 
+def _reset_run_state() -> None:
+    """Forget the run's ceilings and phase once ``main()`` is done. They are module
+    state, so a later call in the same process (a test, the library) would otherwise
+    start its first phase under the last run's ceilings and ledger: ``_start_phase``
+    checks the ending phase against them, and a stale breach ends the new phase with
+    the old phase's error line."""
+    global _LIMITS, _CURRENT_PHASE, _BREACH, _LINE_CHECKED
+    _LIMITS = RunLimits()
+    _CURRENT_PHASE = "init"
+    _BREACH, _LINE_CHECKED = None, None
+
+
 def _write_model_usage() -> None:
     """Write the run's model token usage as ``_logs/model_usage.json`` (#1675).
 
@@ -490,6 +502,8 @@ def phase_collect(
         )
     other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    other_db_rows = 0  # #2145: rows of other databases the parser dropped (SQL Server)
+    query_merge = None  # #2145: literal variants merged into query shapes, raw collections only
     sql_shadow = None  # the facade-vs-regex cross-check, raw collections only (#553)
     raw_collection = None  # #1652: the raw file as read, for its routine sources
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
@@ -560,6 +574,21 @@ def phase_collect(
             other_name = {"collected_database_name": collected_name}
         # #131: the common sections the file lacks, read as empty.
         absent_sections = parsed.get("absent_sections") or []
+        # #2145: the rows the script wrote against the query shapes routing counts.
+        from src.shared.query_capture import query_merge_summary
+
+        other_db_rows = int(parsed.get("queries_dropped_other_database") or 0)
+        query_merge = query_merge_summary(
+            int(parsed.get("database_query_rows") or 0),
+            len(collector_data.get("queries", {}).get("query_patterns", [])),
+        )
+        if query_merge:
+            _log(
+                "collect",
+                f"{query_merge['script_rows']} script rows -> {query_merge['query_shapes']} "
+                "query shapes, literal variants merged (routing counts query shapes; "
+                "executions and time are unchanged)",
+            )
 
     # #384: the capture is recorded; only an explicit --query-limit cuts the collection.
     from src.shared.query_capture import cap_collection
@@ -613,6 +642,8 @@ def phase_collect(
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
             **({"absent_sections": absent_sections} if absent_sections else {}),
             **({"query_capture": capped.capture} if capped.cut else {}),
+            **({"query_merge": query_merge} if query_merge else {}),
+            **({"queries_dropped_other_database": other_db_rows} if other_db_rows else {}),
         },
     )
     return job_id, db_name
@@ -1498,6 +1529,7 @@ def main() -> None:
             raise
         finally:
             _write_model_usage()
+            _reset_run_state()
             sys.stdout = sys.stdout._stream  # type: ignore[attr-defined]
         return
 
@@ -1526,6 +1558,7 @@ def main() -> None:
         raise
     finally:
         _write_model_usage()
+        _reset_run_state()
         sys.stdout, sys.stderr = console.stdout, console.stderr
         _CONSOLE = None
         console.close()

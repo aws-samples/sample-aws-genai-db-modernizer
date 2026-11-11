@@ -729,3 +729,18 @@ def test_a_line_checked_in_an_earlier_run_does_not_exempt_a_phase(run, clock, ca
     run(silent)
     lines = [line for line in _status_lines(capsys.readouterr().out) if line.get("phase")]
     assert [(line["phase"], line["status"]) for line in lines] == [("schema_design", "error")]
+
+
+def test_a_finished_run_leaves_no_ceiling_or_phase_behind(run, monkeypatch):
+    """The ceilings and the current phase are module state: a later call in the same
+    process must not start under the last run's (#2145)."""
+    monkeypatch.setenv("MODERNIZER_MAX_RUN_SECONDS", "4")
+
+    def phases(store) -> None:
+        run_assessment._start_phase("reality_check")
+        run_assessment._output("reality_check", {"status": "complete"})
+
+    run(phases)
+    assert not run_assessment._LIMITS.any_set
+    assert run_assessment._CURRENT_PHASE == "init"
+    assert run_assessment._BREACH is None and run_assessment._LINE_CHECKED is None

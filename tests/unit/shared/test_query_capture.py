@@ -82,6 +82,7 @@ def test_with_no_cap_every_statement_is_kept_and_the_capture_recorded():
         "query_limit": None,
         "min_executions": None,
         "captured": 30_000,
+        "query_shapes": 30_000,
         "available": None,
         "truncated": None,
         "error": None,
@@ -95,6 +96,7 @@ def test_with_no_cap_a_live_capture_is_kept_as_it_was():
         "query_limit": None,
         "min_executions": 10,
         "captured": 3,
+        "query_shapes": 3,
         "available": None,
         "truncated": False,
         "error": None,
@@ -123,7 +125,8 @@ def test_a_cap_keeps_the_costliest_reads_in_their_own_order():
     assert result.capture == {
         "query_limit": 3,
         "min_executions": None,
-        "captured": 3,
+        "captured": 5,  # the rows held; the cap cuts shapes
+        "query_shapes": 3,
         "available": 5,
         "truncated": True,
         "error": None,
@@ -178,6 +181,7 @@ def test_a_live_capture_is_kept_and_narrowed_by_a_smaller_ingest_cap():
         "query_limit": 10_000,
         "min_executions": 10,
         "captured": 4,
+        "query_shapes": 4,
         "available": None,
         "truncated": False,
         "error": None,
@@ -187,7 +191,8 @@ def test_a_live_capture_is_kept_and_narrowed_by_a_smaller_ingest_cap():
     assert result.capture == {
         "query_limit": 2,
         "min_executions": 10,
-        "captured": 2,
+        "captured": 4,  # the rows held; the cap cuts shapes, not this count
+        "query_shapes": 2,
         "available": 4,
         "truncated": True,
         "error": None,
@@ -352,7 +357,7 @@ def test_a_cap_below_the_writes_lists_every_table_that_lost_its_writes(discourse
     assert ((written_before & read_after) - written_after) <= set(dropped)
 
 
-def test_run_collect_applies_a_cap_and_counts_only_the_kept_statements(tmp_path):
+def test_run_collect_applies_a_cap_and_counts_the_kept_shapes(tmp_path):
     code, status = _run_collect(
         _sample("wordpress", tmp_path / "in"), tmp_path / "a", "--query-limit", "5"
     )
@@ -360,8 +365,9 @@ def test_run_collect_applies_a_cap_and_counts_only_the_kept_statements(tmp_path)
     stored = _stored(tmp_path / "a")
     assert len(stored["queries"]["query_patterns"]) == status["queries"] == 5
     capture = stored["metadata"]["query_capture"]
-    assert (capture["query_limit"], capture["captured"], capture["truncated"]) == (5, 5, True)
+    assert (capture["query_limit"], capture["query_shapes"], capture["truncated"]) == (5, 5, True)
     assert capture["available"] > 5
+    assert capture["captured"] == capture["available"]  # rows held, whatever the cap
     # The status line says this ingest cut the collection.
     assert status["query_capture"] == capture
     # The table-reference cross-check counts the kept statements, not the full file.
@@ -401,7 +407,8 @@ def test_run_collect_narrows_an_already_processed_collection(tmp_path):
     code, status = _run_collect(processed, tmp_path / "b", "--query-limit", "3")
     assert code == 0, status
     capture = _stored(tmp_path / "b")["metadata"]["query_capture"]
-    assert (capture["query_limit"], capture["captured"], capture["truncated"]) == (3, 3, True)
+    assert (capture["query_limit"], capture["query_shapes"], capture["truncated"]) == (3, 3, True)
+    assert capture["captured"] == capture["available"]
 
 
 def test_run_assessment_applies_an_explicit_cap(tmp_path):

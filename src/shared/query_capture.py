@@ -42,6 +42,7 @@ __all__ = [
     "cap_collection",
     "capture_settings",
     "live_query_capture",
+    "query_merge_summary",
     "offline_query_capture",
     "parse_query_limit",
     "query_stage_rows",
@@ -141,7 +142,9 @@ def _whole_count(value: object) -> int | None:
     return value if isinstance(value, int) and value >= 1 else None
 
 
-def offline_query_capture(metadata: object, rows: int) -> QueryCapture | None:
+def offline_query_capture(
+    metadata: object, rows: int, held: int | None = None
+) -> QueryCapture | None:
     """What a collection script captured: the settings it wrote into
     ``metadata.query_capture`` (``query_limit``, null when there was no cap, and
     ``min_executions``) and the ``rows`` of statements it wrote (#384).
@@ -155,10 +158,14 @@ def offline_query_capture(metadata: object, rows: int) -> QueryCapture | None:
     as a complete capture of nothing). A script that also says how many statements it
     selected (``statements``) records an error when it wrote fewer: the statement list
     came back short, as MySQL's does when it outgrows the server's
-    ``max_allowed_packet``.
+    ``max_allowed_packet``. ``held`` (default ``rows``) is how many of those rows this
+    database's collection holds, once the rows of other databases are dropped: it is
+    ``captured``, while the script's own cap and selected count are checked against
+    ``rows`` (#2145).
     """
     from src.contracts.collector_output import QueryCapture
 
+    held = rows if held is None else held
     settings = metadata.get("query_capture") if isinstance(metadata, Mapping) else None
     if not isinstance(settings, Mapping):
         return None
@@ -172,7 +179,7 @@ def offline_query_capture(metadata: object, rows: int) -> QueryCapture | None:
         return QueryCapture(
             query_limit=limit,
             min_executions=floor,
-            captured=rows,
+            captured=held,
             available=None,
             truncated=None,
             error=(
@@ -184,10 +191,24 @@ def offline_query_capture(metadata: object, rows: int) -> QueryCapture | None:
     return QueryCapture(
         query_limit=limit,
         min_executions=floor,
-        captured=rows,
+        captured=held,
         available=None,
         truncated=limit is not None and rows >= limit,
     )
+
+
+def query_merge_summary(script_rows: int, query_shapes: int) -> dict[str, int] | None:
+    """The literal-variant merge a collect phase reports (#2145): the rows this
+    database's collection holds, the query shapes routing counts and the variants folded
+    into them (``script_rows - query_shapes``, so the three always add up). ``None`` when
+    nothing merged. No statement, execution or elapsed time is lost by it."""
+    if script_rows <= query_shapes:
+        return None
+    return {
+        "script_rows": script_rows,
+        "query_shapes": query_shapes,
+        "literal_variants_merged": script_rows - query_shapes,
+    }
 
 
 def _total_time(pattern: Any) -> float | None:
@@ -276,7 +297,10 @@ def cap_collection(collector_data: dict, query_limit: int | None = None) -> CapR
         queries["query_patterns"] = kept
         kept_ids = {str(p.get("query_id") or "") for p in kept if isinstance(p, Mapping)}
 
-    captured = min(held, limit) if limit is not None else held
+    # ``captured`` counts the rows this database's collection holds and ``query_shapes``
+    # the shapes kept: the unit routing counts, and the only one a cap cuts (#2145).
+    shapes = min(held, limit) if limit is not None else held
+    captured = held
     if prior is not None:
         prior_limit = prior.get("query_limit")
         if isinstance(prior_limit, int) and limit is not None:
@@ -289,6 +313,11 @@ def cap_collection(collector_data: dict, query_limit: int | None = None) -> CapR
             dropped_writes.update(
                 {str(t): n for t, n in prior_dropped.items() if isinstance(n, int) and n > 0}
             )
+        prior_captured = prior.get("captured")
+        if isinstance(prior_captured, int) and prior_captured >= held:
+            # Rows the script wrote: literal variants merged into one shape stay counted,
+            # before and after any cut, so a merge or a cap never changes its unit.
+            captured = prior_captured
         if cut:
             truncated: bool | None = True
             # The collector's own cut hid how many the source held.
@@ -300,6 +329,7 @@ def cap_collection(collector_data: dict, query_limit: int | None = None) -> CapR
             "query_limit": recorded_limit,
             "min_executions": prior.get("min_executions"),
             "captured": captured,
+            "query_shapes": shapes,
             "available": available,
             "truncated": truncated,
             "error": prior.get("error"),
@@ -309,6 +339,7 @@ def cap_collection(collector_data: dict, query_limit: int | None = None) -> CapR
             "query_limit": limit,
             "min_executions": None,
             "captured": captured,
+            "query_shapes": shapes,
             "available": held if cut else None,
             "truncated": True if cut else None,
             "error": None,

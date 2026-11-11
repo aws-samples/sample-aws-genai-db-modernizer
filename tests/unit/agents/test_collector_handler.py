@@ -443,5 +443,6 @@ def test_an_offline_collection_keeps_at_most_query_limit_statements():
     output = store.write_json.call_args[0][1]
     assert len(output["queries"]["query_patterns"]) == 3
     capture = output["metadata"]["query_capture"]
-    assert (capture["query_limit"], capture["captured"], capture["truncated"]) == (3, 3, True)
+    assert (capture["query_limit"], capture["query_shapes"], capture["truncated"]) == (3, 3, True)
     assert capture["available"] > 3
+    assert capture["captured"] == capture["available"]  # the rows held, not the shapes kept

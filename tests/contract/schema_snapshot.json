@@ -7412,6 +7412,23 @@
                           ]
                         }
                       },
+                      "query_shapes": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
                       "truncated": {
                         "required": false,
                         "schema": {
@@ -10943,8 +10960,8 @@
         }
       }
     },
-    "schema_hash": "73691d4e7fe117c89ab4f3ea45ec589161f85d3f93c90f458f91616ac9110a4f",
-    "version": "5.17"
+    "schema_hash": "b300cd755dda8bc69736a92aec74b6bc01847f8a559e66e4bf9cd05e12d52423",
+    "version": "5.18"
   },
   "cutover_check.CutoverCheckResult": {
     "fields": {
