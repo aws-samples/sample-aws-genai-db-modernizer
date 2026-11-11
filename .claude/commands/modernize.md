@@ -267,7 +267,7 @@ uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name
 It prints one JSON line:
 
 - `"status": "complete"` (nothing a redesign can fix is held) or `"status": "exhausted"` (the rounds ran out, or the engines left are not sent back again; their waves stay held and the deliverables say so): set `phase_status.wave_redesign` = "complete" and go on to Completion.
-- `"status": "awaiting_redesign"`: a wave is held for a reason its design can fix, so round `round` of at most `max_rounds` sends it back. Design again exactly the engines in `engines`, the way 6a-6d design them: DynamoDB split → group drafts → reviews → merge, every other engine one `/design-schema-<engine>` subagent (6b task text) and then its review (6c). `parts` says what each engine redesigns: `null` is the whole engine; a list (DynamoDB) is the group indexes the failed checks name, with any group whose statements share a co-dependency group, a write group or a routine with one of them. On this `--split` line every other group has `carried_from` set (its own index): it keeps its draft and its review, so dispatch no group subagent for it, and 6c lists no review for it; launch the remaining groups as 6b does, then review them and run `--merge`. Their design input carries the failed checks (`redesign_request`); the engine and its queries stay, so run no post-schema reroute. Then dispatch the Phase 7 synthesis subagent again with the same task text, and run this command again once it has reported.
+- `"status": "awaiting_redesign"`: a wave is held for a reason its design can fix, so round `round` of at most `max_rounds` sends it back. Run that round now: `round` equal to `max_rounds` is the last round, still to run, never the end of the loop, and the round's design is set aside until it runs, so never go on to Completion from this line. Design again exactly the engines in `engines`, the way 6a-6d design them: DynamoDB split → group drafts → reviews → merge, every other engine one `/design-schema-<engine>` subagent (6b task text) and then its review (6c). `parts` says what each engine redesigns: `null` is the whole engine; a list (DynamoDB) is the group indexes the failed checks name, with any group whose statements share a co-dependency group, a write group or a routine with one of them. On this `--split` line every other group has `carried_from` set (its own index): it keeps its draft and its review, so dispatch no group subagent for it, and 6c lists no review for it; launch the remaining groups as 6b does, then review them and run `--merge`. Their design input carries the failed checks (`redesign_request`); the engine and its queries stay, so run no post-schema reroute. Then dispatch the Phase 7 synthesis subagent again with the same task text, and run this command again once it has reported.
 - `"status": "awaiting_synthesis"`: the round's design was missing or no better, and the earlier design is back in place (`restored`). Dispatch the Phase 7 synthesis subagent again, then run this command again.
 - `"status": "awaiting_review"`: `missing_reviews` lists the round's designs whose review is not recorded yet (`dynamodb group <G>` is part G + 1). Run 6c for them (and `--merge` again for a DynamoDB part), then dispatch the Phase 7 synthesis subagent again and run this command again once it has reported. The round stays open until its reviews are in.
 - A redesign that fails (its phase failure, after the one retry under `--auto`): put the earlier designs back once, then dispatch the Phase 7 synthesis subagent again and run the first command again. The run goes on with the earlier design, and the wave reads held with the failure:
@@ -276,11 +276,27 @@ It prints one JSON line:
   uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name} --rollback --reason "redesign round <round> failed: schema_design_<engine>"
   ```
 
+- A round you do not run (interactive only, when the user asks to stop the redesign; under `--auto` every round runs): close it, which puts the earlier designs back, records the round `stopped` and ends the loop. It prints `"status": "awaiting_synthesis"`: dispatch the Phase 7 synthesis subagent again, then run the first command again, which prints `complete` or `exhausted`:
+
+  ```bash
+  uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name} --stop --reason "<why the round did not run>"
+  ```
+
 - `"status": "error"` or a non-zero exit is a phase failure for `wave_redesign`.
+
+Go on to Completion only from `complete` or `exhausted`. A run never reaches the report with a redesign round pending.
 
 A run without a model has no design, so this prints `complete` at once. Claude Code's model calls are not counted against the run ceilings, so these rounds are bounded by `max_rounds` only.
 
 ### Completion
+
+First close any redesign round still open, so none is left pending:
+
+```bash
+uv run python scripts/run_wave_redesign.py --job-id {job_id} --db {database_name} --stop --reason "the run ended before the round ran"
+```
+
+`"status": "no_open_round"` (the usual case: 7b ended on `complete` or `exhausted`): go on. `"status": "awaiting_synthesis"`: a round was still open and is now closed, with the earlier design back: dispatch the Phase 7 synthesis subagent again, run the Phase 7b check once more (it prints `complete` or `exhausted`), then come back here.
 
 Print the final summary from the synthesis `report.json` facts, with `--mode {experience_mode}`:
 

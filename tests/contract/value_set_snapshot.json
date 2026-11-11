@@ -844,7 +844,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -852,7 +852,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -1093,7 +1093,7 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.KeptWholeKind": {
     "module": "synthesis_output",
@@ -1102,7 +1102,7 @@
       "routine_unit",
       "write_group"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.MoveUnitKind": {
     "module": "synthesis_output",
@@ -1113,7 +1113,7 @@
       "replica_reads",
       "whole_database"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.OneStepRule": {
     "module": "synthesis_output",
@@ -1122,7 +1122,7 @@
       "no_open_critical_high_risk",
       "no_reverse_replica_stage"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.RoutineCategory": {
     "module": "synthesis_output",
@@ -1136,7 +1136,7 @@
       "repaired",
       "rewritten"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.RoutineRiskClass": {
     "module": "synthesis_output",
@@ -1146,7 +1146,7 @@
       "migrate_yourself",
       "opted_out"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.SliceStageKind": {
     "module": "synthesis_output",
@@ -1158,7 +1158,7 @@
       "whole_database",
       "with_reverse_replica"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.SliceStepKind": {
     "module": "synthesis_output",
@@ -1168,7 +1168,7 @@
       "relational_step",
       "slice"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "synthesis_output.UnitDependencyKind": {
     "module": "synthesis_output",
@@ -1179,7 +1179,7 @@
       "reverse_replica",
       "shared_table"
     ],
-    "version": "1.98"
+    "version": "1.99"
   },
   "transformation_contract.InputSchema": {
     "module": "transformation_contract",

@@ -40851,6 +40851,25 @@
                             ]
                           }
                         },
+                        "stopped_by": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "enum",
+                                "values": [
+                                  "ceiling",
+                                  "closed"
+                                ]
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "wave_edit": {
                           "required": false,
                           "schema": {
@@ -41053,8 +41072,8 @@
         }
       }
     },
-    "schema_hash": "319aa60f2e144c5f616d6249021141139c164a3274c4817485bd9a4306e8cfcc",
-    "version": "1.98"
+    "schema_hash": "589e2a8646915d834272c8eadccc5b3488b648406eab9ba94d3588521a0a833a",
+    "version": "1.99"
   },
   "transformation_contract.StepContract": {
     "fields": {

@@ -704,6 +704,9 @@ Version History:
   pending_choice_no_table_count, auto_decided_table_count, auto_decided_no_table_count
   and table_count/no_table_count on PendingChoicePair and AutoDecidedEngine: the choices
   for a table and for a statement that reads no table
+- 1.99 (2026-11-12, #2122): Added optional ``WaveRedesignRound.stopped_by`` (ceiling or
+  closed): a round the run closes before its design is checked is recorded stopped and
+  ends the loop.
 """
 
 import re
@@ -1593,7 +1596,20 @@ class WaveRedesignRound(BaseModel):
         None, description="Per engine, why its redesign failed (a failed round)"
     )
     stopped: str | None = Field(
-        None, description="Why the round did not run (a run ceiling); None when it ran"
+        None,
+        description=(
+            "Why the round did not run (a run ceiling), or why it was closed before its "
+            "design was checked (#2122); None when it ran"
+        ),
+    )
+    stopped_by: Literal["ceiling", "closed"] | None = Field(
+        None,
+        description=(
+            "How a stopped round stopped (#2122): ceiling, a run ceiling left no room before "
+            "it started; closed, the run closed it with its design never checked, and the "
+            "earlier design put back. None for a round that was not stopped, and for a "
+            "stopped round saved before this field (a run ceiling)"
+        ),
     )
     wave_edit: int | None = Field(
         None,
@@ -1828,7 +1844,8 @@ class WaveFacts(BaseModel):
         None,
         description=(
             "Why the last redesign round kept no new design (#1992): it failed, did not "
-            "improve the design, or a run ceiling stopped it; None otherwise"
+            "improve the design, a run ceiling stopped it, or the run closed it before its "
+            "design was checked (#2122); None otherwise"
         ),
     )
     readiness_line: str | None = Field(
@@ -5017,7 +5034,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.98",
+        default="1.99",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

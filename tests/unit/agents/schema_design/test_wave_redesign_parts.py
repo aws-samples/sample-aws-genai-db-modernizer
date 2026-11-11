@@ -737,6 +737,60 @@ def test_a_parts_round_put_back_on_a_rerouted_version_keeps_the_part_carried(
     assert pe.missing_reviews(store, db, job, 3, ["dynamodb"]) == []
 
 
+def test_a_parts_round_the_run_closes_keeps_the_rerouted_part_carried(
+    run: dict[str, Any], tmp_path: Path  # noqa: F811
+) -> None:
+    """#2122: the same parts round on v3, closed with --stop after its split and a draft
+    of the part (no review, no synthesis): the part reads carried again, with its review,
+    and the round is stopped."""
+    import shutil
+
+    from src.agents.schema_design.carry_forward import carried_parts
+
+    db, job = "wordpress", "job-redesign-changed"
+    # A copy of the module's run, without the rounds another test ran on it.
+    root = tmp_path / "artifacts"
+    shutil.copytree(run["store"].base_dir, root)
+    shutil.rmtree(root / db / job / "wave-redesign", ignore_errors=True)
+    store = LocalArtifactStore(base_dir=str(root))
+    base = f"{db}/{job}/schema-dynamodb/v3"
+    carried = carried_parts(store, db, job, "dynamodb", 3)
+    target = sorted(carried)[0]
+    for idx in run["v3_parts"]:
+        key = f"{base}/design_trace_group_{idx}.json"
+        trace = store.read_json(key)
+        trace["pe_review"] = APPROVED
+        store.write_json(key, trace)
+    held = _report([_hold("open_high_risk")], query_ids=[sorted(run["v3_parts"][target])[0]])
+    held["facts"]["waves"][0]["engines"] = ["dynamodb"]
+    store.write_json(f"{db}/{job}/synthesis/v3/report.json", held)
+
+    def script(name: str, *args: str) -> dict[str, Any]:
+        done = subprocess.run(
+            [sys.executable, f"scripts/{name}", "--job-id", job, "--db", db]
+            + ["--artifact-root", str(root), *args],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        line: dict[str, Any] = json.loads(done.stdout.strip().splitlines()[-1])
+        return line
+
+    assert script("run_wave_redesign.py")["status"] == "awaiting_redesign"
+    script("run_schema_design.py", "--engine", "dynamodb", "--split")
+    store.write_json(f"{base}/schema_draft_group_{target}.json", {"table_definitions": []})
+    stopped = script("run_wave_redesign.py", "--stop")
+    assert stopped["status"] == "awaiting_synthesis" and stopped["restored"] == ["dynamodb"]
+    rnd = read_log(store, db, job, 3)["rounds"][-1]
+    assert rnd["outcome"] == {"dynamodb": "stopped"} and rnd["stopped_by"] == "closed"
+    assert target in carried_parts(store, db, job, "dynamodb", 3)
+    entry = next(e for e in _group_entries_at(store, base) if e["group_index"] == target)
+    assert entry["draft_state"] == "ok" and entry["carried_from"] is not None
+    assert pe.missing_reviews(store, db, job, 3, ["dynamodb"]) == []
+    assert not store.exists(request_key(db, job, "dynamodb", 3))
+
+
 def _group_entries_at(store: LocalArtifactStore, base: str) -> list[dict[str, Any]]:
     sys.path.insert(0, str(REPO))
     from scripts.run_schema_design import _group_entries as entries

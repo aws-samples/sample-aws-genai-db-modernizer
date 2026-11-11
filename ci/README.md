@@ -655,8 +655,9 @@ obvious entries lives here instead:
   own artifacts and print one JSON line.
 - `Bash(uv run python scripts/run_wave_redesign.py *)` (#1992): Phase 7b. It
   moves the job's design files (for DynamoDB in parts, only the parts the round
-  redesigns, #2119) to `wave-redesign/` and back (`--rollback`),
-  writes the round's checks and log, and prints one JSON line.
+  redesigns, #2119) to `wave-redesign/` and back (`--rollback`, and `--stop`,
+  which closes a round the run did not run, #2122), writes the round's checks
+  and log, and prints one JSON line.
 - `Bash(uv run python scripts/run_wave_edit.py *)` (#2067): `/wave-edit`. It
   shows one wave, records the customer's decision on its review warnings under
   `decisions/wave-edit/`, moves that wave's design files to `wave-redesign/` the

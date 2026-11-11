@@ -1,0 +1,105 @@
+{
+  "max_rounds": 2,
+  "rounds": [
+    {
+      "round": 1,
+      "assignment_version": 4,
+      "engines": [
+        "dynamodb"
+      ],
+      "requests": [
+        {
+          "engine": "dynamodb",
+          "waves": [
+            3
+          ],
+          "checks": [
+            {
+              "check": "open_high_risk",
+              "risk_id": "RISK-001",
+              "severity": "HIGH",
+              "line": "an open high risk on DynamoDB, flagged by the DocumentDB analysis (RISK-001, performance degradation)",
+              "detail": "[dynamodb] Flagged by the DocumentDB analysis for 1 query now on DynamoDB: Queries with correlated subqueries. A correlated $lookup (let/pipeline) runs its sub-pipeline for each input document, and needs DocumentDB 8.0.2 or later on an instance-based cluster (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types); otherwise pre-denormalize. (0% of queries resolved by schema design, 1 remaining)",
+              "mitigation": "Cover the 1 remaining query in the DynamoDB schema design or route it to an engine that serves it. Background (DocumentDB analysis): Pre-denormalize at write time. Use Extended Reference Pattern to embed frequently co-accessed fields.",
+              "query_ids": [
+                "2150880814507944816"
+              ],
+              "warning": null
+            },
+            {
+              "check": "open_review",
+              "risk_id": null,
+              "severity": null,
+              "line": "the last DynamoDB design review did not approve 1 design",
+              "detail": null,
+              "mitigation": null,
+              "query_ids": [],
+              "warning": null
+            }
+          ]
+        }
+      ],
+      "outcome": {
+        "dynamodb": "improved"
+      },
+      "before": {
+        "dynamodb": [
+          2,
+          0
+        ]
+      },
+      "parts": {
+        "dynamodb": null
+      }
+    },
+    {
+      "round": 2,
+      "assignment_version": 4,
+      "engines": [
+        "dynamodb"
+      ],
+      "requests": [
+        {
+          "engine": "dynamodb",
+          "waves": [
+            3
+          ],
+          "checks": [
+            {
+              "check": "open_high_risk",
+              "risk_id": "RISK-001",
+              "severity": "HIGH",
+              "line": "an open high risk on DynamoDB, flagged by the DocumentDB analysis (RISK-001, performance degradation)",
+              "detail": "[dynamodb] Flagged by the DocumentDB analysis for 1 query now on DynamoDB: Queries with correlated subqueries. A correlated $lookup (let/pipeline) runs its sub-pipeline for each input document, and needs DocumentDB 8.0.2 or later on an instance-based cluster (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types); otherwise pre-denormalize. (0% of queries resolved by schema design, 1 remaining)",
+              "mitigation": "Cover the 1 remaining query in the DynamoDB schema design or route it to an engine that serves it. Background (DocumentDB analysis): Pre-denormalize at write time. Use Extended Reference Pattern to embed frequently co-accessed fields.",
+              "query_ids": [
+                "2150880814507944816"
+              ],
+              "warning": null
+            },
+            {
+              "check": "open_review",
+              "risk_id": null,
+              "severity": null,
+              "line": "the last DynamoDB design review did not approve 1 design",
+              "detail": null,
+              "mitigation": null,
+              "query_ids": [],
+              "warning": null
+            }
+          ]
+        }
+      ],
+      "outcome": null,
+      "before": {
+        "dynamodb": [
+          1,
+          0
+        ]
+      },
+      "parts": {
+        "dynamodb": null
+      }
+    }
+  ]
+}
