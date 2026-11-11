@@ -37,6 +37,7 @@ from src.agents.referee.summary_input_budget import (
 )
 from src.agents.referee.summary_input_slim import slim_summary_input
 from src.agents.referee.synthesis_handler import prepare_synthesis_llm_input
+from src.shared.risk_severity import count_by_severity
 
 ENGINES = ("aurora_postgresql", "dynamodb", "documentdb", "opensearch")
 
@@ -365,7 +366,13 @@ class TestQuotedFiguresSurvive:
     def test_every_risk_is_kept_with_its_severity_and_counts(self, large):
         det, payload = large
         whole = _uncapped(det)
-        for key in ("risks", "resolved_risks"):
+        # #2132: the resolved risks enter as their counts by severity.
+        resolved = det["risk_assessment"]["resolved_risks"]
+        assert payload["risk_assessment"]["resolved_risk_count"] == len(resolved)
+        assert payload["risk_assessment"]["resolved_risks_by_severity"] == count_by_severity(
+            resolved
+        )
+        for key in ("risks",):
             got = payload["risk_assessment"][key]
             full = det["risk_assessment"][key]
             assert len(got) == len(full) == len(whole["risk_assessment"][key])
