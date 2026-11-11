@@ -89,8 +89,10 @@ def _check_deliverables(run: PipelineResult) -> None:
     decision = next(p for p in summary_paragraphs(report)[0] if p.startswith("Decision:"))
     for row in rows:
         line = row["readiness_line"]
-        # Once per wave that states it (waves in the same state can share a line).
-        times = sum(1 for r in rows if r["readiness_line"] == line)
+        # Once per wave that states it (waves in the same state can share a line), and
+        # once more per wave whose line starts with it: a suggested wave with a to-do
+        # reads "Suggested: no check holds it. To do: ..." (#1938, #1954).
+        times = sum(1 for r in rows if r["readiness_line"].startswith(line))
         assert md.count(f"- Readiness: {line}") == times, row["wave"]
         assert pdf.count(" ".join(f"Readiness: {line}".split())) == times, row["wave"]
         n = row["wave"]

@@ -941,6 +941,37 @@ def test_results_page_states_the_resolved_risks_by_severity(
     assert checked, "no sample resolved a risk"
 
 
+def test_results_page_states_the_routine_outcomes(
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
+) -> None:
+    """#1954: the results page states each sample's routine headline and to-do as
+    report.json's ``facts.routines`` holds them (the lines the engineering report
+    prints); a report with no routines has no Routines section."""
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        routines = (report.get("facts") or {}).get("routines")
+        if r.job_id in ("ui-word", "ui-disc"):
+            assert routines and routines["migrate_yourself_line"], (r.db, "the sample's routines")
+        page, ev = loaded_results(r)
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        section = page.locator("#routines-section")
+        if not routines:
+            assert section.count() == 0, r.db
+            continue
+        line = section.locator("[data-figure=routines-line]")
+        assert line.inner_text().strip() == routines["line"], r.db
+        to_do = routines.get("migrate_yourself_line")
+        shown = section.locator("[data-figure=routines-to-do-line]")
+        if to_do:
+            assert shown.inner_text().strip() == f"{to_do[0].upper()}{to_do[1:]}.", r.db
+        else:
+            assert shown.count() == 0, r.db
+        checked += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    assert checked or any(r.external for r in all_runs), "no sample has routines"
+
+
 def test_results_page_states_the_distinct_query_patterns(
     loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:

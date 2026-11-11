@@ -90,7 +90,9 @@ EXPECTED_RULES: dict[str, list[str]] = {
 # Discourse gains one MEDIUM (12 -> 13): single-access-pattern-table no longer covers its
 # whole-table ordered reads, so the 7 queries it still flags on DocumentDB are under
 # BROAD_FLAGGED_QUERIES and get their own risk instead of joining the coverage gap.
-EXPECTED_OPEN = {"wordpress": 4, "discourse": 13, "trailgear": 13}
+# #1954: wordpress and discourse also raise the two routine risks of their routine sets
+# (routines.migrate_yourself and routines.carried, tests/e2e/test_sample_routines.py).
+EXPECTED_OPEN = {"wordpress": 6, "discourse": 15, "trailgear": 13}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -109,8 +111,19 @@ def _report(r: PipelineResult) -> dict[str, Any]:
     return report
 
 
+_SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _routine(risk: dict[str, Any]) -> bool:
+    """A routine risk (ADR-034 Decision 7): it names the collected tables its routines
+    name, none when they name none, and no query; tests/e2e/test_sample_routines.py
+    checks them (#1954)."""
+    return str(risk.get("rule") or "").startswith("routines.")
+
+
 def _new(report: dict[str, Any]) -> list[dict[str, Any]]:
-    return [x for x in report["risk_assessment"]["risks"] if x.get("rule")]
+    """The risks the migration's shape raises (``RULES``), the routine risks left out."""
+    return [x for x in report["risk_assessment"]["risks"] if x.get("rule") and not _routine(x)]
 
 
 def test_each_sample_raises_its_migration_risks(run: PipelineResult) -> None:
@@ -189,7 +202,8 @@ def test_every_deliverable_shows_the_same_risks(run: PipelineResult) -> None:
         {**r, "affected_tables": None} for r in fresh_risks
     ]
     for b, f in zip(backfilled, fresh_risks, strict=True):
-        assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
+        assert b["affected_tables"] or _routine(f), b["risk_id"]
+        assert set(b["affected_tables"]) <= set(f["affected_tables"])
     for r in risks:
         _, body = risk_engine_and_body(r["description"])
         split = split_close_call_description(body) if r["rule"] == "routing.close_calls" else None
@@ -271,8 +285,11 @@ def test_the_designed_job_adds_the_design_risks(designed: PipelineResult) -> Non
     trade_offs = [r for r in risks if r["rule"] == "design.trade_offs"]
     assert all(r["severity"] == "MEDIUM" for r in trade_offs)
     assert "Cache-aside with a short TTL" in [d for r in trade_offs for d in r["details"]]
-    # The register is no longer empty on the designed job, which was LOW with no open risk.
-    assert report["risk_assessment"]["overall_risk_level"] == "MEDIUM"
+    # The register is no longer empty on the designed job, which was LOW with no open risk;
+    # its HIGH is the routine to-do of the sample's routine set (#1954), a to-do that holds
+    # no wave: without it the design risks leave it MEDIUM.
+    assert report["risk_assessment"]["overall_risk_level"] == "HIGH"
+    assert max(_SEVERITY_RANK[r["severity"]] for r in risks) == _SEVERITY_RANK["MEDIUM"]
     md = designed.deliverable("engineering-report.md").read_text(encoding="utf-8")
     for r in risks:
         assert f"**{r['risk_id']}**" in md, r["risk_id"]
@@ -499,7 +516,8 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
         f"RISK-{i:03d}" for i in range(1, len(backfilled) + 1)
     ]
     for b, f in zip(backfilled, fresh_risks, strict=True):
-        assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
+        assert b["affected_tables"] or _routine(f), b["risk_id"]
+        assert set(b["affected_tables"]) <= set(f["affected_tables"])
     assert data["risk_assessment"]["overall_risk_level"] == "HIGH"
     n = len(backfilled)
     sentence = f"{n} open migration risks (overall: HIGH)"
@@ -576,7 +594,7 @@ def test_no_risk_is_broad_and_generic(run: PipelineResult) -> None:
     from src.agents.referee.synthesis_report import BROAD_FLAGGED_QUERIES
 
     for r in _report(run)["risk_assessment"]["risks"]:
-        assert r["affected_tables"] and r["mitigation"], r["risk_id"]
+        assert (r["affected_tables"] or _routine(r)) and r["mitigation"], r["risk_id"]
         if r.get("rule"):
             continue
         broad = len(r.get("query_ids") or []) > BROAD_FLAGGED_QUERIES
