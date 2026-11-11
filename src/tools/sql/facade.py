@@ -169,6 +169,16 @@ _TSQL_DML_TOP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# T-SQL's ``OPTION (OPTIMIZE FOR (@p UNKNOWN, @q = 5))`` query hint: sqlglot's tsql
+# reader knows ``OPTIMIZE FOR UNKNOWN`` but not the per-variable list, and fails on the
+# whole statement (#2147), so the facade reads the list as ``OPTIMIZE FOR UNKNOWN``. A
+# plan hint names no table and states no fact; a list holding a literal or a comment is
+# left for the fallback.
+_TSQL_OPTIMIZE_FOR_RE = re.compile(
+    r"\bOPTIMIZE\s+FOR\s*\((?:[^()]|\([^()]*\))*\)",
+    re.IGNORECASE,
+)
+
 # MySQL ``REPLACE [LOW_PRIORITY | DELAYED] INTO t ...`` writes rows by key like
 # ``INSERT ... ON DUPLICATE KEY UPDATE`` (it deletes a row with the same key, then
 # inserts), but sqlglot reads it only as a generic command. The facade parses it as
@@ -1139,6 +1149,9 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
     elif dialect == "tsql":
         bridged = _sub_outside_quotes(_TSQL_DML_TOP_RE, r"\1", text, source_engine)
         dml_top_dropped, text = bridged != text, bridged
+        text = _sub_outside_quotes(
+            _TSQL_OPTIMIZE_FOR_RE, "OPTIMIZE FOR UNKNOWN", text, source_engine
+        )
     elif dialect == "mysql":
         # After the statement's leading comments (#1178): a tagged REPLACE is one too.
         body = strip_leading_comments(
