@@ -876,7 +876,8 @@ def test_every_cut_lists_the_statements_it_cannot_place(service: list[str]) -> N
         (qid, "no_tables_read") for qid in TRAILGEAR_UNPLACED
     ]
     assert not set(TRAILGEAR_UNPLACED) & set(cut.query_ids)
-    unread = {s.query_id for s in _whole().statements if s.tables == ["unknown"]}
+    # They list no table: the collector's `unknown` placeholder is none (#2147).
+    unread = {s.query_id for s in _whole().statements if s.tables == []}
     assert unread == set(TRAILGEAR_UNPLACED)
 
 

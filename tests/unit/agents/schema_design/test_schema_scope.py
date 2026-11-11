@@ -159,6 +159,21 @@ def test_in_scope_design_passes(engine):
 
 
 @pytest.mark.parametrize("engine", sorted(_ENGINES))
+def test_a_placeholder_table_on_a_query_with_no_resolved_table_is_no_violation(engine):
+    # #2147: such a query lists no table; a design that echoes the collector's
+    # ``unknown`` placeholder for it designs no table outside the scope.
+    build, other = _ENGINES[engine]
+    assignment = _assignment(engine, other)
+    assignment["query_assignments"].append(
+        {"query_id": "q-none", "assigned_engine": engine, "source_tables": [], "in_scope": True}
+    )
+    assert validate_schema_scope(engine, build("unknown", "q-none"), assignment) == []
+    assert _mentions(
+        validate_schema_scope(engine, build("Unknown", "q-none"), assignment), "'Unknown'"
+    )
+
+
+@pytest.mark.parametrize("engine", sorted(_ENGINES))
 def test_table_assigned_to_another_engine_is_flagged(engine):
     build, other = _ENGINES[engine]
     messages = validate_schema_scope(

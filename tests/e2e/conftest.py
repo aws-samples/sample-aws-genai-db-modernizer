@@ -19,7 +19,14 @@ from typing import Any
 import pytest
 
 from tests.e2e.pipeline import SAMPLES as PIPELINE_SAMPLES
-from tests.e2e.pipeline import PipelineResult, _env, from_existing_job, run_pipeline
+from tests.e2e.pipeline import (
+    PipelineResult,
+    _env,
+    from_existing_job,
+    run_pipeline,
+    run_pipeline_from_file,
+    unzip_sample,
+)
 
 # The UI smoke's API and UI ports (#1028): 8000 and 3000 by default, as the UI
 # build expects (ci/lib.sh's build_ui reads E2E_API_PORT too); set both to run
@@ -204,6 +211,21 @@ def discourse_run(e2e_root: Path) -> PipelineResult:
 def trailgear_run(e2e_root: Path) -> PipelineResult:
     """The cached trailgear run (the synthetic SQL Server sample), for heterogeneous-only checks."""
     return _run_pipeline_cached("trailgear", e2e_root / "artifacts", job_id="e2e-trai")
+
+
+@pytest.fixture(scope="session")
+def dnn_run(e2e_root: Path) -> PipelineResult:
+    """The DNN Platform sample (SQL Server, ``docs/examples/dnn``), run once per session
+    for the checks it alone exercises. Not one of ``pipeline.SAMPLES``: the suite and the
+    routing snapshot do not run it for every test."""
+    cached = _PIPELINE_CACHE.get("dnn")
+    if cached is None:
+        root = e2e_root / "artifacts"
+        src = unzip_sample("dnn", root.parent / "input-dnn")
+        cached = run_pipeline_from_file(src, "DNN", root, job_id="e2e-dnn")
+        _RESULTS.append(cached)
+        _PIPELINE_CACHE["dnn"] = cached
+    return cached
 
 
 @pytest.fixture(scope="session")

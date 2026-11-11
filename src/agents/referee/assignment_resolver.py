@@ -139,6 +139,7 @@ from src.contracts.move_ledger import (
 from src.shared import catalog
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
 from src.shared.move_reasons import render_group_gates
+from src.shared.placeholder_tables import is_placeholder_table
 from src.shared.progress import say
 from src.shared.signal_labels import signal_noun
 from src.tools.sql.view_lineage import access_text
@@ -1228,12 +1229,18 @@ class AssignmentResolver:
         for query in queries:
             qid = query["query_id"]
             # A pinned procedure-internal statement has no source table (#1876): it lists
-            # none, never the collector's ``unknown`` placeholder. With no Aurora engine to
-            # pin it to, it keeps its collected tables like any other routed query.
+            # none. With no Aurora engine to pin it to, it keeps its collected tables like
+            # any other routed query. A placeholder (the collector's ``unknown``, a dummy
+            # ``DUAL``) is no table, so no query lists one (#2147): a query whose tables
+            # did not resolve lists none.
             query_tables[qid] = (
                 []
                 if qid in procedure_internal_reasons and (utility_engine or qid in followers)
-                else query.get("tables_accessed", [])
+                else [
+                    str(t)
+                    for t in query.get("tables_accessed") or []
+                    if not is_placeholder_table(t)
+                ]
             )
 
         # Build query assignments

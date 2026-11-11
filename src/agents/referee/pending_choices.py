@@ -32,6 +32,14 @@ Queries tied on different engine sets share a choice only when they are one
 unit; the choice then ties between the engines they all tie on (or, with fewer
 than two in common, every engine any of them ties on).
 
+A placeholder table (``placeholder_tables.is_placeholder_table``: the collector's
+``unknown``, a dummy ``DUAL``) is no table, so it is never a choice's table (#2147). A
+choice whose queries read no table that resolved is no table's choice and is not built:
+those queries stay on the engine the tie placeholder gave them, their tie stays open
+(``QueryAssignment.tied_engines``), and the deliverables list them under "No source
+table". A decision ``--auto`` saved on a placeholder table before #2147 no longer holds
+(:func:`auto_decisions_still_holding`).
+
 A choice's scores are the shared scorer's (``score_query_for_engine``), averaged
 over its queries with the shared group rule (``co_dependency.group_engine_scores``,
 a write group's call-weighted mean): ``score`` is what routing compared,
@@ -70,6 +78,7 @@ from src.agents.referee.write_groups import (
 )
 from src.contracts.assignment_models import AutoDecidedChoice, ChoiceEngine, PendingEngineChoice
 from src.shared.engine_names import display_engine
+from src.shared.placeholder_tables import is_placeholder_table
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -230,8 +239,12 @@ def build_pending_choices(
             written_by.setdefault(qid, []).append(table)
 
     tie_of = {qid: tuple(sorted(_field(qa, "tied_engines"))) for qid, qa in tied.items()}
+    # A placeholder (the collector's ``unknown``, a dummy ``DUAL``) is no table, also in
+    # an assignment saved before the resolver stopped listing one (#2147).
     tables_of = {
-        qid: sorted({str(t) for t in (_field(qa, "source_tables") or []) if t})
+        qid: sorted(
+            {str(t) for t in (_field(qa, "source_tables") or []) if not is_placeholder_table(t)}
+        )
         for qid, qa in tied.items()
     }
     touches = Counter(t for qid in tied for t in tables_of[qid])
@@ -266,6 +279,12 @@ def build_pending_choices(
     components: dict[str, list[str]] = {}
     for qid in sorted(tied):
         components.setdefault(union.find(qid), []).append(qid)
+    # A choice is a table's (#2147): tied queries none of which reads a table that
+    # resolved are no table's choice. They stay where the tie placeholder put them,
+    # listed as open ties under "No source table".
+    components = {
+        root: members for root, members in components.items() if any(tables_of[q] for q in members)
+    }
 
     settled = settled_counts(
         qas, exclude=RoutineFollowers.from_collector(collector_output).routine_of
@@ -580,4 +599,10 @@ def auto_decisions_still_holding(
         )
         for qa in query_assignments
     }
-    return [d for d in decisions if all(state.get(q) == (d.engine, False) for q in d.query_ids)]
+    return [
+        d
+        for d in decisions
+        # A decision saved on a placeholder table before #2147 was no table's choice.
+        if not is_placeholder_table(d.table)
+        and all(state.get(q) == (d.engine, False) for q in d.query_ids)
+    ]
