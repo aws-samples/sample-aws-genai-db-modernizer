@@ -39,6 +39,11 @@ What each routine is checked against:
   attention, directly or through others, needs attention too
   (``depends_on_needs_attention``, the routines it names in ``blocked_by``).
 
+- **Rows read**: those a current collection lists. A row with no ``body_status`` comes
+  from a collection written before #1652, which holds no code and lists the functions
+  and aggregates an extension owns too (``CREATE EXTENSION`` creates them on Aurora;
+  today's collectors leave them out by ``pg_depend``'s extension membership): it is not
+  read (:func:`listed_by_name_only`, #2124), and the run log counts it.
 Status: only a failed check (one whose impact is not informational) or a reason code
 makes a routine ``needs_attention``. A check whose outcome is ``unknown`` (it could not be
 checked: an incomplete dependency list, the superuser flag) never changes the status, so
@@ -104,6 +109,8 @@ __all__ = [
     "RoutineMigrationError",
     "error_message",
     "latest_routine_migration",
+    "listed_by_name_only",
+    "name_only_routine_count",
     "ensure_routine_migration",
     "read_routine_migration",
     "routine_migration_path",
@@ -215,9 +222,33 @@ def _kind_of(row: Mapping[str, Any]) -> str:
     return "procedure" if _value(row.get("procedure_type")).upper() == "PROCEDURE" else "function"
 
 
+def listed_by_name_only(row: Mapping[str, Any]) -> bool:
+    """True for a routine row a collection written before #1652 lists: it has no
+    ``body_status``, which every PostgreSQL and MySQL collector has set on every routine
+    row since. Such a collection holds no code for any routine, and lists routines a
+    current collection leaves out (the functions and aggregates an extension owns, which
+    ``CREATE EXTENSION`` creates on Aurora), and it cannot tell which: so none of its
+    rows is a routine to carry or to migrate by hand (#2124). Collected again with the
+    current script, each routine gets its verdict."""
+    return _text(_value(row.get("body_status"))) is None
+
+
+def name_only_routine_count(collector: Mapping[str, Any]) -> int:
+    """How many of the collection's routine rows :func:`listed_by_name_only` leaves out."""
+    schema = collector.get("database_schema") or {}
+    return sum(
+        1
+        for key in ("procedures", "triggers", "events")
+        for row in schema.get(key) or []
+        if isinstance(row, Mapping) and listed_by_name_only(row)
+    )
+
+
 def _collect(schema: Mapping[str, Any], engine: str) -> list[_Routine]:
     routines: list[_Routine] = []
     for row in schema.get("procedures") or []:
+        if isinstance(row, Mapping) and listed_by_name_only(row):
+            continue  # #2124: a collection before #1652, names only
         if isinstance(row, Mapping) and _text(row.get("procedure_name")):
             routines.append(
                 _Routine(
@@ -230,6 +261,8 @@ def _collect(schema: Mapping[str, Any], engine: str) -> list[_Routine]:
                 )
             )
     for row in schema.get("triggers") or []:
+        if isinstance(row, Mapping) and listed_by_name_only(row):
+            continue
         if isinstance(row, Mapping) and _text(row.get("trigger_name")):
             table = _text(row.get("table_id"))
             routines.append(
@@ -244,6 +277,8 @@ def _collect(schema: Mapping[str, Any], engine: str) -> list[_Routine]:
             )
     if engine == "mysql":
         for row in schema.get("events") or []:
+            if isinstance(row, Mapping) and listed_by_name_only(row):
+                continue
             if isinstance(row, Mapping) and _text(row.get("event_name")):
                 routines.append(
                     _Routine(

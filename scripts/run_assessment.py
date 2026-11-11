@@ -1077,6 +1077,16 @@ def phase_engine_choices(
     _output("engine_choices", data)
 
 
+def _name_only_routines(store, db: str, job_id: str) -> int:
+    """The collection's routine rows the routine phase does not read (#2124)."""
+    from src.tools.routines.migration import name_only_routine_count
+
+    try:
+        return name_only_routine_count(store.read_json(f"{db}/{job_id}/collector/output.json"))
+    except Exception:  # noqa: BLE001 -- a count for the log only
+        return 0
+
+
 def phase_routine_migration(store, job_id: str, db: str) -> dict:
     """How each collected routine migrates (#1934, ADR-034): writes
     ``routines/v<N>/routine_migration.json`` for the effective assignment version, with
@@ -1095,6 +1105,15 @@ def phase_routine_migration(store, job_id: str, db: str) -> dict:
     if written is not None and not fresh:
         _log("routine_migration", f"v{version} already has its routine migration")
         return {"status": "unchanged", "assignment_version": version}
+    name_only = _name_only_routines(store, db, job_id)
+    if name_only:
+        # #2124: a collection before #1652 lists routines by name only: none is read.
+        _log(
+            "routine_migration",
+            f"{name_only} routine{'s are' if name_only != 1 else ' is'} listed by name only "
+            "(a collection written before "
+            "routine code was collected): collect again with the current script to check them",
+        )
     if artifact is None:
         _log("routine_migration", "skipped: no routines this pipeline carries in the collection")
         return {"status": "skipped", "assignment_version": version}

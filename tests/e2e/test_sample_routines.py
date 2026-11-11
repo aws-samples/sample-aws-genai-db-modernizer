@@ -263,3 +263,15 @@ def test_no_routine_text_reaches_report_json_or_the_deliverables(
     )
     for body in bodies:
         assert not any(body in t for t in texts), body
+
+
+def test_the_counts_hold_only_the_routines_with_code(sample_run: PipelineResult) -> None:
+    """#2124: discourse's collection lists 269 extension functions, aggregates and
+    triggers by name only (before #1652); none is a routine to carry or to migrate
+    yourself, so both samples count their routine set alone."""
+    facts = _report(sample_run)["facts"]["routines"]
+    assert facts["routine_count"] == len(EXPECTED[sample_run.db])
+    assert facts["migrate_yourself_count"] == 1
+    assert facts["migrate_yourself_line"] == (
+        "we could not translate 1 routine automatically; migrate it yourself before wave 1"
+    )

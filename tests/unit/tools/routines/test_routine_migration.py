@@ -188,9 +188,10 @@ def test_a_source_engine_routines_are_not_carried_from_writes_nothing():
 
 
 def test_two_routines_with_no_signature_still_get_distinct_ids():
-    # A collection from before #1652: no specific name, no text, one name twice.
+    # No specific name, no text, one name twice. (A collection from before #1652 has no
+    # body status at all, and the phase reads none of its rows, #2124.)
     old = [{"procedure_id": "f", "procedure_name": "f", "schema_name": "public",
-            "procedure_type": "FUNCTION"}] * 2  # fmt: skip
+            "procedure_type": "FUNCTION", "body_status": "opted_out"}] * 2  # fmt: skip
     rows = _run(_collector(old)).routines
     assert [r.routine_id for r in rows] == ["public.f", "public.f[2]"]
     assert all(r.reasons == ["source_text_not_collected"] for r in rows)
