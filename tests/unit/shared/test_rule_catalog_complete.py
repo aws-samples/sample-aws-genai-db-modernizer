@@ -545,6 +545,12 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _WORDING + ": how many cache candidates the approval gate names (#462), and how many "
         "table names a gate sentence lists (#551); display caps with no routing effect",
     ),
+    "src/agents/referee/assignment_validator.py": (
+        frozenset({"IDS_SHOWN", "MESSAGE_BUDGET"}),
+        "the length of a refused version's error message (#2152): how many query ids an "
+        "error line lists and how long the message gets on the commands' status line; "
+        "no routing rule, and no engine reads them",
+    ),
     "src/agents/referee/co_dependency.py": (
         frozenset({"GROUP_SCORE_PLACES"}),
         "the precision a group's mean is compared at (#992 round 4): float noise in a "

@@ -851,26 +851,44 @@ class TestCoDependencyPropagation:
         assert result.propagated_query_ids == ["q2", "q3"]
 
     def test_explicit_split_is_respected_no_propagation(self) -> None:
-        # The customer sets two group members to DIFFERENT engines -> respect both
-        # explicit picks and propagate nothing (they chose to split it).
+        # The customer sets two group members to DIFFERENT engines, the third already on
+        # one of them -> respect both explicit picks and propagate nothing.
         store = _MemStore()
-        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql", "aurora_mysql"])
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
         result = apply_assignment_overrides(
             store,
             DB,
             JOB,
             [
                 QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
-                QueryOverrideInput("q2", assigned_engine="aurora_mysql"),
+                QueryOverrideInput("q2", assigned_engine="dynamodb"),
             ],
         )
         by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
         assert by_id["q1"].assigned_engine == "aurora_postgresql"
-        assert by_id["q2"].assigned_engine == "aurora_mysql"
+        assert by_id["q2"].assigned_engine == "dynamodb"
         # q3 (untouched) is left alone because the group was explicitly split.
         assert by_id["q3"].co_dependency_propagated is False
         assert by_id["q3"].assigned_engine == "dynamodb"
         assert result.propagated_query_ids == []
+
+    def test_explicit_split_leaving_a_member_on_a_third_engine_is_refused(self) -> None:
+        # #2152 review: the split stands only on engines the customer picked; q3, left on
+        # a third engine nobody picked, makes the edit a hard error, and nothing is written.
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql", "aurora_mysql"])
+        with pytest.raises(AssignmentValidationFailed) as refused:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
+                    QueryOverrideInput("q2", assigned_engine="aurora_mysql"),
+                ],
+            )
+        assert any("form one placement unit" in e for e in refused.value.errors)
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
 
     def test_out_of_scope_group_member_not_propagated(self) -> None:
         store = _MemStore()

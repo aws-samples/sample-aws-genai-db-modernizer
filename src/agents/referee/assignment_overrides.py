@@ -29,7 +29,8 @@ from src.agents.referee.assignment_resolver import (
 from src.agents.referee.assignment_validator import (
     AssignmentValidator,
     InvalidAssignment,
-    legacy_engines,
+    LegacyBaseline,
+    legacy_baseline,
 )
 from src.agents.referee.aurora_choice import AURORA_ENGINES, source_database_engine
 from src.agents.referee.cache_overlay import (
@@ -492,6 +493,9 @@ class _EditInputs:
     # The new version's ledger, holding the normalisation's Moves (None when
     # the version is only read, not derived).
     ledger: MoveLedger | None
+    # Set when the job's history holds a version saved before whole units (#2152):
+    # the splits old routing made, carried while they gain no engine.
+    legacy: LegacyBaseline | None = None
 
 
 def _load_for_edit(
@@ -510,7 +514,8 @@ def _load_for_edit(
     # it left and has no ``pinned``: both are set in memory from the Moves of its
     # lineage (the stored artifact is not rewritten), so the review shows, and a
     # derived version keeps, each query's score on its own engine and its pin.
-    follow_moves(raw, _earlier_versions(store, database_name, job_id, raw) + [raw])
+    earlier = _earlier_versions(store, database_name, job_id, raw)
+    follow_moves(raw, earlier + [raw])
     stored_state = state_of(raw.get("query_assignments") or [])
     ledger = (
         ledger_for(raw.get("query_assignments") or [], raw.get("unservable_queries") or [])
@@ -548,13 +553,17 @@ def _load_for_edit(
         )
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
-    return _EditInputs(raw, collector_output, analysis_outputs, triage, stored_state, ledger)
-
-
-def _legacy_baseline(loaded: _EditInputs) -> dict[str, str] | None:
-    """The stored version's own engines (before any in-memory normalisation) when it
-    was saved before every unit was placed whole (``assignment_validator.legacy_engines``)."""
-    return legacy_engines(loaded.raw, {q: e for q, (e, _) in loaded.stored_state.items()})
+    # The start version as this pass reads it, its legacy cache owners moved.
+    legacy = legacy_baseline(
+        [*earlier, raw],
+        {
+            str(qa.get("query_id")): str(qa.get("assigned_engine") or "")
+            for qa in raw.get("query_assignments") or []
+        },
+    )
+    return _EditInputs(
+        raw, collector_output, analysis_outputs, triage, stored_state, ledger, legacy
+    )
 
 
 def _earlier_versions(store: _Store, database_name: str, job_id: str, raw: dict) -> list[dict]:
@@ -1058,7 +1067,7 @@ def apply_assignment_overrides(
         new_assignment,
         collector_output,
         analysis_outputs,
-        legacy_baseline=_legacy_baseline(loaded),
+        legacy=loaded.legacy,
     )
     if not validation.valid:
         raise AssignmentValidationFailed(validation.errors, validation.warnings, "customer gate")
@@ -1542,7 +1551,7 @@ def refresh_consolidated_assignment(
     dead_engines: set[str] | None = None,
     keep_cache_overlay: bool = False,
     writer: str = "reality check",
-    baseline: Mapping | None = None,
+    legacy: LegacyBaseline | None = None,
 ) -> dict:
     """Refresh a Reality-Check consolidated assignment dict (ADR-029 Layers B+E).
 
@@ -1566,8 +1575,8 @@ def refresh_consolidated_assignment(
 
     A hard validation error raises :class:`InvalidAssignment` naming ``writer`` (the
     pass that will write the dict, #2152), so the version is never written.
-    ``baseline`` is the stored version the dict derives from: a split it already had
-    is kept as a warning when it was saved before units were placed whole.
+    ``legacy`` (``assignment_validator.lineage_legacy_baseline`` of the version the
+    dict derives from) carries a split old routing made, as a warning.
     """
     qa_dicts = raw.get("query_assignments", [])
     qas = [
@@ -1611,7 +1620,7 @@ def refresh_consolidated_assignment(
         ],
     )
     validation = AssignmentValidator().validate(
-        probe, collector_output, analysis_outputs, legacy_baseline=legacy_engines(baseline)
+        probe, collector_output, analysis_outputs, legacy=legacy
     )
     if not validation.valid:
         raise InvalidAssignment(validation.errors, validation.warnings, writer)
@@ -1945,7 +1954,7 @@ def reroute_split_writes(
         new_assignment,
         collector_output,
         loaded.analysis_outputs,
-        legacy_baseline=_legacy_baseline(loaded),
+        legacy=loaded.legacy,
     )
     if not validation.valid:
         raise AssignmentValidationFailed(

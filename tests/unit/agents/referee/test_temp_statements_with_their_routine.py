@@ -868,8 +868,9 @@ def _unplaced(store: LocalArtifactStore, version: int) -> None:
 
 @pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_a_sweep_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
-    # Routing never splits a routine unit, and a version that does is refused (#2152):
-    # with no routine units, the sweep can still split the routine's leaders.
+    """With no routine units, the sweep splits the routine's leaders: a state no valid
+    version reaches since #2152 (a split routine unit is refused), kept as coverage of
+    the follower's handling when its leaders are apart."""
     with pytest.MonkeyPatch.context() as mp:
         _without_routine_units(mp)
         _sweep_moving(mp, "app-orders", "documentdb")
@@ -922,7 +923,8 @@ def test_a_customer_pick_of_one_statement_moves_its_routine_and_the_follower(tmp
 
 @pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_a_post_schema_reroute_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
-    # As the sweep's test: with no routine units, a reroute can split the leaders (#2152).
+    """As the sweep's test: with no routine units a reroute splits the leaders, a state no
+    valid version reaches since #2152, kept as coverage of the follower's handling."""
     with pytest.MonkeyPatch.context() as mp:
         _without_routine_units(mp)
         store, version = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())

@@ -296,6 +296,8 @@ def assess(
     limits = RunLimits.from_env()
 
     def run_phases(job: _Job) -> AssessmentResult:
+        from src.agents.referee.assignment_validator import InvalidAssignment
+
         model_usage.LEDGER.reset()
         try:
             for phase, work in PHASES:
@@ -303,6 +305,9 @@ def assess(
                 try:
                     with model_usage.phase(phase):
                         work(job)
+                except InvalidAssignment as exc:
+                    # A pass refused an assignment version (#2152): nothing was written.
+                    raise AssessmentRunError(f"{exc}; no result built") from exc
                 finally:
                     model_usage.LEDGER.stop_timing()
                 try:

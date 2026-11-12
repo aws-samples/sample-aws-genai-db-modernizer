@@ -32,6 +32,7 @@ from src.agents.referee import (
     write_groups,
 )
 from src.agents.referee.assignment_handler import run_assignment_resolver
+from src.agents.referee.engine_scope import record_engine_scope
 from src.agents.referee.reality_check_handler import run_reality_check_handler
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -87,11 +88,16 @@ def _queries() -> dict[str, dict]:
     return {q["query_id"]: q for q in collection["queries"]["query_patterns"]}
 
 
-def _run(base: Path, *, aurora: bool = True) -> tuple[LocalArtifactStore, int]:
+def _run(
+    base: Path, *, aurora: bool = True, scope: list[str] | None = None
+) -> tuple[LocalArtifactStore, int]:
     """The deterministic pipeline on the synthetic collection: the store and the
-    assignment version synthesis read. ``aurora=False`` analyses no Aurora engine."""
+    assignment version synthesis read. ``aurora=False`` analyses no Aurora engine;
+    ``scope`` is the job's engine scope."""
     store = LocalArtifactStore(base_dir=str(base))
     store.write_json(f"{DB}/{JOB}/collector/output.json", json.loads(FIXTURE.read_text()))
+    if scope is not None:
+        record_engine_scope(store, DB, JOB, scope, via="library")
     run_triage(JOB, DB, store)
     triage = store.read_json(f"{DB}/{JOB}/referee-triage/triage.json")
     for engine in [a["agent_type"] for a in triage["selected_agents"]]:
@@ -289,6 +295,27 @@ def test_the_ui_and_the_engineering_report_say_the_same_sentence(n: int) -> None
     assert en[key].replace("{{count}}", str(n)) == _procedure_internal_text(n)
 
 
+@pytest.fixture(scope="module")
+def no_aurora(tmp_path_factory) -> tuple[LocalArtifactStore, int]:
+    """An engine scope with no Aurora engine: the utility pin has no engine to pin to."""
+    return _run(
+        tmp_path_factory.mktemp("no-aurora"), scope=["dynamodb", "documentdb", "opensearch"]
+    )
+
+
+@pytest.mark.passes_on_main  # the guard the #2152 rewrite had dropped, restated for a scope
+def test_with_no_aurora_engine_nothing_is_labelled_procedure_internal(no_aurora) -> None:
+    store, version = no_aurora
+    v1 = _assignment(store)
+    for qid in PROCEDURE_INTERNAL:
+        # No engine in the scope serves it, so it is placed nowhere, never pinned.
+        assert qid not in v1
+    report = _report(store, version)
+    assert PROCEDURE_INTERNAL_GROUP_LABEL not in _group_names(report)
+    assert report["facts"]["query_group_counts"]["procedure_internal_queries"] == 0
+    assert "procedure-internal" not in render_engineering_report_md(report)
+
+
 def test_with_no_aurora_analysis_the_first_assignment_is_refused(tmp_path) -> None:
     """No Aurora engine analysed: every analysed engine is gated off these statements, so
     the Aurora fallback would place them on an engine that did not analyse them, a hard
@@ -297,8 +324,14 @@ def test_with_no_aurora_analysis_the_first_assignment_is_refused(tmp_path) -> No
         _run(tmp_path, aurora=False)
     assert type(refused.value).__name__ == "InvalidAssignment"
     assert "first assignment" in str(refused.value)
+    # One error per engine, readable (#2152 review): its name, the count, what to do.
     errors = getattr(refused.value, "errors", [])
-    assert any("which did not analyze it" in e for e in errors)
+    analysed = {e for e in errors if "has no analysis" in e}
+    assert analysed and all("Run its analysis again, then the assignment." in e for e in analysed)
+    assert len(analysed) == len({e.split(" has no analysis")[0] for e in analysed})
+    assert not any("aurora_" in e or "['" in e for e in errors)
+    # It fits run_assessment.py's status line, type name included.
+    assert len(f"InvalidAssignment: {refused.value}") <= 1000
     assert not LocalArtifactStore(base_dir=str(tmp_path)).exists(
         f"{DB}/{JOB}/assignment/v1/assignment.json"
     )

@@ -18,8 +18,9 @@ from src.agents.referee.assignment_overrides import (
     QueryOverrideInput,
     apply_assignment_overrides,
     load_assignment_for_edit,
+    reroute_split_writes,
 )
-from src.agents.referee.assignment_validator import AssignmentValidator, legacy_engines
+from src.agents.referee.assignment_validator import AssignmentValidator, legacy_baseline
 from src.agents.referee.cache_overlay import (
     CUSTOMER_CACHE_REASON,
     apply_cache_overlay,
@@ -92,10 +93,13 @@ class TestLegacy:
         assert not any(t["primary_engine"] == "elasticache" for t in raw["table_assignments"])
         assignment = Assignment.model_validate(raw)
         # Saved before units were placed whole, its old routing's splits are carried (#2152).
-        stored = legacy_store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        lineage = [
+            legacy_store.read_json(f"{DB}/{JOB}/assignment/v{v}/assignment.json") for v in (1, 2)
+        ]
+        engines = {qa["query_id"]: qa["assigned_engine"] for qa in raw["query_assignments"]}
         assert (
             AssignmentValidator()
-            .validate(assignment, collector, analysis, legacy_baseline=legacy_engines(stored))
+            .validate(assignment, collector, analysis, legacy=legacy_baseline(lineage, engines))
             .valid
         )
         # #572 review item 6: the engineering report reads cache_notes (unlike
@@ -119,6 +123,23 @@ class TestLegacy:
         assert result.assignment.version == 3
         assert "elasticache" not in _owners(result.assignment.query_assignments)
         assert result.assignment.cache_notes
+
+    def test_a_legacy_job_opened_then_edited_twice(self, legacy_store, main_wordpress):
+        """Checklist 6 (#2152 review): opening the review re-routes the old job's split
+        writes into a version stamped today, and the customer can still edit it, twice;
+        the splits old routing made are carried as warnings each time."""
+        rerouted = reroute_split_writes(legacy_store, DB, JOB)
+        start = rerouted.assignment.version if rerouted is not None else 2
+        qid = main_wordpress["assignment_v2"]["query_assignments"][0]["query_id"]
+        for n, in_scope in enumerate((False, True), start=1):
+            result = apply_assignment_overrides(
+                legacy_store, DB, JOB, [QueryOverrideInput(query_id=qid, in_scope=in_scope)]
+            )
+            assert result.assignment.version == start + n
+            assert any(
+                "this job was saved before that rule" in w
+                for w in result.assignment.validation_warnings
+            )
 
     def test_reality_check_on_a_legacy_v1_has_no_cache_owner(self, legacy_store):
         det = run_reality_check_deterministic(JOB, DB, legacy_store, assignment_version=1)
