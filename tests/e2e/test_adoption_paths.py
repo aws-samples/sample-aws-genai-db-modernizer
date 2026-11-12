@@ -75,6 +75,10 @@ def test_the_adoption_paths_pass_every_contract_validator(run: PipelineResult) -
     assert ids == expected, run.db
     assert adoption["default_path_id"] == "full_target"
     assert adoption["not_offered"] == [], run.db
+    # The capped view (#1133): every path when they fit, else the ends and three steps.
+    shown = adoption["summary_path_ids"]
+    assert len(shown) == min(len(ids), 5) and shown[0] == ids[0] and shown[-1] == ids[-1]
+    assert adoption["cost_basis"] == "full_target_estimates", run.db
 
 
 def test_the_full_target_agrees_with_the_headline_and_the_waves(run: PipelineResult) -> None:

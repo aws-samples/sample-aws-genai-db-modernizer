@@ -31,6 +31,7 @@ from src.contracts.synthesis_output import (
     SliceStep,
     check_adoption_against_plan,
     phase_facts,
+    summary_path_ids,
 )
 from src.contracts.transformation_contract import TableClass
 from src.tools.validation.customer_text_guard import scan_json
@@ -1210,6 +1211,9 @@ def test_paths_that_disagree_with_the_plan_are_refused(case: str) -> None:
     facts = copy.deepcopy(_fragment(name)["facts"])
     if on_adoption:
         on_adoption(facts["adoption"])
+        # The capped view follows the edited menu, so each break reaches its own check.
+        ids = [p["path_id"] for p in facts["adoption"]["paths"]]
+        facts["adoption"]["summary_path_ids"] = summary_path_ids(ids)
     plan = SlicePlanFacts.model_validate(facts["slice_plan"])
     if on_plan:
         plan = on_plan(plan)

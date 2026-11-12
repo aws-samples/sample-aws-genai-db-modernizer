@@ -1085,6 +1085,13 @@
     ],
     "version": "1.1"
   },
+  "synthesis_output.AdoptionCostBasis": {
+    "module": "synthesis_output",
+    "values": [
+      "full_target_estimates"
+    ],
+    "version": "1.96"
+  },
   "synthesis_output.GapImpactLevel": {
     "module": "synthesis_output",
     "values": [

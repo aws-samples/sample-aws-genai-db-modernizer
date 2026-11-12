@@ -2,5 +2,5 @@
 # uv run python scripts/resolve_contract_versions.py after the last rebase.
 contract = "synthesis_output.SynthesisOutputContract"
 kind = "minor"
-reason = "Relaxed: on a cross-engine source, ``facts.adoption``'s relational_only path ends on ``facts.no_migration``'s engines plus the relational step's engine, itself a migration target there (``check_plan_against_facts``); the adoption paths are now computed."
+reason = "Relaxed: on a cross-engine source, ``facts.adoption``'s relational_only path ends on ``facts.no_migration``'s engines plus the relational step's engine, itself a migration target there (``check_plan_against_facts``); added optional ``facts.adoption.summary_path_ids`` (the paths a view capped at five rows shows), ``cost_basis`` and ``cost_basis_note`` (every path's cost rests on each engine's full-target estimate, #2170); ``AdoptionPathFacts.cost_is_upper_bound`` now defaults to false; ``check_adoption_against_plan`` also checks ``not_offered`` against the plan; the adoption paths are now computed."
 issue = 1130
