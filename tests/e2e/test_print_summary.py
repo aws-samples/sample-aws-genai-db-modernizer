@@ -22,6 +22,7 @@ from typing import Any
 import pypdf
 import pytest
 
+from src.report.architecture import _architecture_engines
 from src.report.executive_report import _names_pattern, table_names, without_table_names
 from src.report.facts import report_facts
 from src.report.formatting import fmt_num
@@ -113,13 +114,16 @@ def test_the_engines_and_their_reasons_are_the_executive_pdfs(job: PipelineResul
     engines_section = _section(final, "Engines", "###")
     lines = [line for line in engines_section.splitlines() if line.startswith("- ")]
     assert len(lines) == len(facts["engines"])
+    # #2171: the PDF prints the wave plan, so its row refers to it for a staged cache front.
+    pdf_rows = {e["engine"]: e["rationale"] for e in _architecture_engines(report)}
     for line, engine in zip(lines, facts["engines"], strict=True):
         assert line.startswith(f"- {display_engine(engine['engine'])} ({engine['role']}")
         assert f"${engine['monthly_cost_usd']:,.2f}/mo" in line
         why = without_table_names(engine.get("rationale"), names)
         if why:
             assert prose(why) in line
-            assert _squash(why) in pdf_text  # the PDF's "Why this architecture" row
+            row = without_table_names(pdf_rows[engine["engine"]], names)
+            assert _squash(row) in pdf_text  # the PDF's "Why this architecture" row
 
 
 def test_every_figure_is_a_report_fact(job: PipelineResult) -> None:

@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import display_engine
+from src.shared.migration_wave_engines import (
+    cache_front_description,
+    cache_front_is_staged,
+    cache_front_reference,
+)
 from src.shared.report_facts import (
     MAP_CACHE_LAYER,
     MAP_KEPT_IN_SYNC,
@@ -97,6 +103,29 @@ def _scope_text(e: dict[str, Any], report: dict[str, Any]) -> str:
     return "\u2014"
 
 
+def _wave_plan_rationale(e: dict[str, Any], report: dict[str, Any]) -> str:
+    """An engine's "Why" text as a report that prints the wave plan shows it (#2171).
+
+    The stored cache-layer rationale states a staged front in full ("cache-aside in front
+    of Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads"), for
+    the chat summary and the summary model, which print no wave plan. The wave 2
+    rationale states it too, so here a staged front (``cache_front_is_staged``, decided
+    from the wave plan's retained engine and the overlay's owners) becomes a reference
+    to the wave plan. Any other text is returned as stored."""
+    text = str(e.get("rationale") or "")
+    if e.get("role") != "Cache layer":
+        return text
+    waves = report.get("migration_waves") or []
+    if not any(set(w.get("engines") or []) & CACHE_ENGINES for w in waves):
+        return text
+    retained = wave_retained_engine(waves)
+    owners = (report.get("cache_overlay") or {}).get("owners")
+    if not cache_front_is_staged(retained, owners):
+        return text
+    staged = f"in front of {cache_front_description(retained, owners)}"
+    return text.replace(staged, f"in front of {cache_front_reference(retained, owners)}", 1)
+
+
 def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The full target architecture, one row per engine, ordered by workload.
 
@@ -118,7 +147,7 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
             "moves_to": e.get("moves_to_tables"),
             "cost": e.get("monthly_cost_usd"),
             "cost_sizing": e.get("cost_sizing"),
-            "rationale": e.get("rationale") or "",
+            "rationale": _wave_plan_rationale(e, report),
         }
         for e in report_facts(report).get("engines") or []
     ]

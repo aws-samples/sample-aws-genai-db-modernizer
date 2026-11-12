@@ -13,7 +13,10 @@ layer (ADR-032). These tests read its text back with pypdf and compare it with
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess  # nosec B404 -- runs this repo's own print_summary.py script with fixed argv
+import sys
 from typing import Any
 
 import pytest
@@ -28,12 +31,11 @@ from src.report.formatting import _cost_baseline_text, _fmt_usd, cost_baseline_k
 from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
-from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.migration_wave_engines import CACHE_FRONT_REFERENCE
 from src.shared.report_facts import build_commit_line
 from src.tools.validation.customer_text_guard import scan_text
 from tests.branding import hits as found
-from tests.e2e.pipeline import PipelineResult
+from tests.e2e.pipeline import REPO, PipelineResult
 from tests.executive_pdf import (
     body_text,
     collected_table_names,
@@ -248,29 +250,19 @@ def test_no_collected_table_name_appears(run: PipelineResult) -> None:
     assert table_name_hits(_text(run), table_names(_report(run))) == []
 
 
-# The text of each wave's gate in the PDF: from its label to the wave's next field.
-_PDF_GATE = re.compile(r"Gate before the next wave: (.*?)(?= Open critical or high risks:|$)")
-
-
 @pytest.mark.deterministic
-def test_discourse_says_each_sentence_in_one_section_and_no_gate_lists_tables(
+def test_discourse_says_each_sentence_in_one_section_and_the_cache_front_once(
     discourse_run: PipelineResult,
 ) -> None:
     """#2171: the discourse judge scored concision 2 on the whole executive PDF. No
-    sentence one section prints is printed again in another, and no wave gate prints
-    more than ``GATE_LIST_MAX`` table names (it prints none: this report never names a
-    table, and a long list is a count). The cache's staged front is said once in each
-    report, by its wave plan, and the PDF's "Why" cell refers to it."""
+    sentence one section prints is printed again in another. The cache's staged front
+    is said once in each report, by its wave plan, and the PDF's "Why" cell refers to
+    it; the chat summary, which prints no wave plan, says it once itself (review).
+    (The gate name cap is an engineering report rule, guarded in
+    ``tests/e2e/test_report_concision.py``: this report prints no table name at all.)"""
     sections = section_texts(_pdf(discourse_run), discourse_run.db)
     assert set(sections) >= {executive_report.H_RECOMMENDATION, executive_report.H_WAVES}
     assert repeated_across_sections(sections) == []
-    names = collected_table_names(_collected(discourse_run)) | table_names(_report(discourse_run))
-    gates = _PDF_GATE.findall(sections[executive_report.H_WAVES])
-    assert len(gates) == len(resolve_migration_waves(_report(discourse_run)))
-    for gate in gates:
-        assert len(table_name_hits(gate, names)) <= GATE_LIST_MAX, gate[:120]
-    # The cache's staged front ("... in wave 2, then ... once wave 3 moves these reads")
-    # is stated once, by the wave plan; the "Why" cell refers to it.
     staged = "once wave 3 moves these reads"
     assert sections[executive_report.H_WAVES].count(staged) == 1
     assert sum(body.count(staged) for body in sections.values()) == 1
@@ -278,6 +270,26 @@ def test_discourse_says_each_sentence_in_one_section_and_no_gate_lists_tables(
     md = discourse_run.deliverable("engineering-report.md").read_text(encoding="utf-8")
     assert md.count(staged) == 1
     assert staged in section(md, "Migration roadmap")
+    final = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script
+        [
+            sys.executable,
+            "scripts/print_summary.py",
+            "--job-id",
+            discourse_run.job_id,
+            "--db",
+            discourse_run.db,
+            "--final",
+            "--artifact-root",
+            str(discourse_run.artifact_root),
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "AWS_DEFAULT_REGION": "us-east-1"},
+    ).stdout
+    assert final.count(staged) == 1
+    assert CACHE_FRONT_REFERENCE not in final
 
 
 def test_no_sql_and_no_traceability_appendix(run: PipelineResult) -> None:

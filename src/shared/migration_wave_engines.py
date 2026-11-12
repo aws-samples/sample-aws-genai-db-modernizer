@@ -73,24 +73,31 @@ def primary_owner_engine(counts: Mapping[str, int], retained_engine: str | None)
     return min(owners, key=lambda e: (-owners[e], e != retained_engine, e))
 
 
-# #2171: the short reference the "Why" cell gives when the wave 2 rationale states the
-# staged front ("Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these
-# reads"), so each deliverable says the staging once, in its wave plan.
+# #2171: what a report that prints the wave plan says in place of a staged front
+# ("Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads"), which its
+# wave 2 rationale states.
 CACHE_FRONT_REFERENCE = "the engines that own these reads, in the order the wave plan gives"
+
+
+def cache_front_is_staged(
+    retained_engine: str | None, final_owners: Mapping[str, int] | Iterable[str] | None
+) -> bool:
+    """Whether the cache fronts two stages: wave 2's retained engine, then an owner engine
+    wave 3 moves some of its reads to (the data ``cache_front_description`` words)."""
+    if not retained_engine:
+        return False
+    return any(e and e != retained_engine for e in (final_owners or []))
 
 
 def cache_front_reference(
     retained_engine: str | None, final_owners: Mapping[str, int] | Iterable[str] | None
 ) -> str:
-    """What the cache fronts, for a sentence outside the wave plan (#2171).
-
-    ``cache_front_description`` when it names one stage; ``CACHE_FRONT_REFERENCE``
-    when it names two (wave 2's front, then the engines wave 3 moves the reads to),
-    which the wave 2 rationale states in full."""
-    staged = cache_front_description(retained_engine, final_owners)
-    if retained_engine and " in wave 2, then " in staged:
+    """What the cache fronts, where the wave plan is printed too (#2171):
+    ``CACHE_FRONT_REFERENCE`` for a staged front (``cache_front_is_staged``), else
+    ``cache_front_description``."""
+    if cache_front_is_staged(retained_engine, final_owners):
         return CACHE_FRONT_REFERENCE
-    return staged
+    return cache_front_description(retained_engine, final_owners)
 
 
 def cache_front_description(

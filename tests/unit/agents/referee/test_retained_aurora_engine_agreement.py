@@ -110,11 +110,12 @@ def test_wave1_architecture_and_cache_note_agree_on_the_tied_engine():
     assert "Aurora MySQL" not in cache_row["rationale"]
 
 
-def test_a_staged_cache_front_is_stated_by_wave_2_and_referred_to_by_the_why_cell():
-    """#2171: the discourse "Why" cell and the wave 2 rationale both said "cache-aside
-    in front of Aurora PostgreSQL in wave 2, then DocumentDB, DynamoDB once wave 3
-    moves these reads". The wave plan states the stages; the cell refers to it and
-    still names no other front."""
+def test_a_staged_cache_front_stays_in_the_stored_why_cell_and_wave_2():
+    """#2171 review: the chat summary and the summary model print the stored "Why" cell
+    and no wave plan, so the cell keeps the staged front ("Aurora PostgreSQL in wave 2,
+    then DocumentDB, DynamoDB once wave 3 moves these reads"); the wave 2 rationale states
+    it too. The reports, which print both, refer to the wave plan in the cell
+    (``src.report.architecture``, tested in tests/unit/report)."""
     ranking = [dict(r) for r in RANKING]
     cache = next(r for r in ranking if r["target"] == "elasticache")
     cache["cache_overlay_owners"] = {"dynamodb": 2, "documentdb": 1}
@@ -131,8 +132,8 @@ def test_a_staged_cache_front_is_stated_by_wave_2_and_referred_to_by_the_why_cel
     architecture = build_architecture_recommendation(data, ranking, [])
     why = next(d for d in architecture["databases"] if d["service"] == "elasticache")
     staged = cache_front_description("aurora_postgresql", cache["cache_overlay_owners"])
-    assert staged not in why["rationale"]
-    assert f"cache-aside in front of {CACHE_FRONT_REFERENCE}" in why["rationale"]
+    assert f"cache-aside in front of {staged}" in why["rationale"]
+    assert CACHE_FRONT_REFERENCE not in why["rationale"]
     waves = build_migration_waves(
         ranking=ranking,
         table_assignments=[],
