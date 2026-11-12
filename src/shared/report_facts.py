@@ -4008,7 +4008,7 @@ def compute_report_facts(
         "growth_scenarios": dict(growth_scenarios) if growth_scenarios is not None else None,
         # #1128: the steps, stages and move units (#1129, #1698), from the effective
         # assignment and this block's own costs and risks; the adoption paths and the
-        # one-step form (#1130) are empty until their computation lands.
+        # one-step form (#1130), the plan stopped after each step.
         "slice_plan": (
             plan := slice_plan_facts(
                 report,
@@ -4018,7 +4018,7 @@ def compute_report_facts(
                 risks_by_engine=by_engine,
             )
         ),
-        "adoption": adoption_facts(report, plan),
+        "adoption": adoption_facts(report, plan, slice_inputs),
     }
 
 

@@ -38,11 +38,12 @@ from src.agents.referee.migration_waves import build_migration_waves, wave_table
 from src.agents.referee.query_pattern import (
     ACCESS_PATTERNS_FILE,
     fixable_findings,
+    read_analysis_outputs,
     redesign_requirements,
 )
 from src.agents.referee.routine_units import following, routine_unit_facts, routine_units_of
 from src.agents.referee.schema_fields import field_list
-from src.agents.referee.slice_inputs import slice_inputs
+from src.agents.referee.slice_inputs import relational_gate_failures, slice_inputs
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.summary_input_slim import slim_summary_input
 from src.agents.referee.synthesis_data import SynthesisData, load_synthesis_data
@@ -1713,7 +1714,17 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # assignment and the collection.
         slice_inputs=(
             slice_inputs(
-                data.assignment, data.collector, output_data.get("routine_followers") or []
+                data.assignment,
+                data.collector,
+                output_data.get("routine_followers") or [],
+                # #1130: the queries the relational engine could not take back, which
+                # keep an adoption path that leaves them there from being offered.
+                gate_failures=relational_gate_failures(
+                    data.assignment,
+                    data.collector,
+                    read_analysis_outputs(store, result["database_name"], result["job_id"]),
+                    data.triage,
+                ),
             )
             if data.assignment
             else None

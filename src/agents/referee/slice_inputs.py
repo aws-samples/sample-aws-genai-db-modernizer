@@ -9,6 +9,11 @@ written table's one writer (ADR-031 Amendment 9), the co-dependency groups, the 
 units, each routine's temporary-object followers with its leaders (Amendment 20, from
 ``report.json``'s ``routine_followers``) and the collection's foreign keys. The facts
 layer computes the plan from them (``src.shared.slice_plan``); nothing here routes.
+
+The adoption paths (#1130) also need to know which queries off the relational engine it
+could not take back: ``relational_gate_failures`` asks the customer gate, the same
+hard exclusion, capability and ownership checks a customer's pick onto that engine
+passes (``assignment_overrides.customer_gate_failure``).
 """
 
 from __future__ import annotations
@@ -22,19 +27,22 @@ from src.agents.referee.write_groups import sources_of_truth
 from src.shared.move_units import SliceInputs, SliceQuery
 from src.shared.placeholder_tables import is_placeholder_table, saved_write_groups
 
-__all__ = ["slice_inputs"]
+__all__ = ["relational_gate_failures", "slice_inputs"]
 
 
 def slice_inputs(
     assignment: Mapping[str, Any] | None,
     collector: Mapping[str, Any] | None,
     followers: Iterable[Mapping[str, Any]] = (),
+    gate_failures: Mapping[str, Iterable[str]] | None = None,
 ) -> SliceInputs:
     """The slice plan's inputs from ``assignment`` (an artifact dict) and ``collector``.
 
     ``followers`` are ``report.json``'s ``routine_followers`` (#1891): each
     temporary-object statement that sits on its routine's engine, unpinned. Each
-    joins its routine's statements as one kept-whole group (Amendment 20)."""
+    joins its routine's statements as one kept-whole group (Amendment 20).
+    ``gate_failures`` is :func:`relational_gate_failures`' answer, which synthesis
+    passes; without it no query is gated."""
     assignment = assignment or {}
     collector = collector or {}
     patterns = (collector.get("queries") or {}).get("query_patterns") or []
@@ -94,7 +102,56 @@ def slice_inputs(
             for r, qids in sorted(routine_followers.items())
         },
         foreign_keys=_foreign_keys(collector),
+        relational_gate_failures={
+            str(e): tuple(sorted({str(q) for q in qids}))
+            for e, qids in sorted((gate_failures or {}).items())
+        },
     )
+
+
+def relational_gate_failures(
+    assignment: Mapping[str, Any] | None,
+    collector: Mapping[str, Any] | None,
+    analysis_outputs: Mapping[str, Mapping[str, Any]] | None,
+    triage: Mapping[str, Any] | None,
+) -> dict[str, tuple[str, ...]]:
+    """By Aurora engine, the in-scope queries on another engine that
+    it cannot take back: the customer gate (``customer_gate_failure``: the shared
+    scorer's hard exclusion and capability gate, then the ownership gate) refuses the
+    query on it. An adoption path that leaves such a query on the relational engine is
+    not offered (#1130). Engines with no failing query are left out."""
+    from src.agents.referee.assignment_overrides import customer_gate_failure
+    from src.agents.referee.aurora_choice import AURORA_ENGINES
+    from src.agents.referee.query_scoring import ScoringContext
+    from src.agents.referee.write_groups import assignment_sources_of_truth
+
+    assignment = assignment or {}
+    collector = collector or {}
+    in_scope = [
+        qa
+        for qa in assignment.get("query_assignments") or []
+        if qa.get("in_scope", True) and qa.get("query_id") and qa.get("assigned_engine")
+    ]
+    if not in_scope:
+        return {}
+    patterns = (collector.get("queries") or {}).get("query_patterns") or []
+    query_by_id = {str(q.get("query_id")): q for q in patterns if isinstance(q, Mapping)}
+    ctx = ScoringContext.from_pipeline(
+        analysis_outputs or {}, triage, collector
+    ).with_sources_of_truth(assignment_sources_of_truth(assignment))
+    out: dict[str, tuple[str, ...]] = {}
+    for engine in sorted(AURORA_ENGINES):
+        failing = sorted(
+            str(qa["query_id"])
+            for qa in in_scope
+            if qa["assigned_engine"] not in (engine, "unservable")
+            and customer_gate_failure(
+                str(qa["query_id"]), query_by_id.get(str(qa["query_id"])), engine, ctx
+            )
+        )
+        if failing:
+            out[engine] = tuple(failing)
+    return out
 
 
 def _collected_tables(collector: Mapping[str, Any]) -> set[str]:
