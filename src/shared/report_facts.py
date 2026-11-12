@@ -1787,11 +1787,27 @@ def _choice_table(table: object) -> str:
     return NO_SOURCE_TABLE_LABEL if is_placeholder_table(table) else str(table)
 
 
+def _no_table(choice: Mapping[str, Any]) -> bool:
+    """Whether a choice is for a statement that reads no table (#2147)."""
+    from src.shared.placeholder_tables import is_placeholder_table
+
+    return is_placeholder_table(choice.get("table"))
+
+
+def _choice_split(rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    """How many of ``rows`` are a table's choice and how many a statement's that reads
+    no table (#2147), computed once here for every renderer (ADR-032)."""
+    no_table = sum(1 for c in rows if _no_table(c))
+    return {"table_count": len(rows) - no_table, "no_table_count": no_table}
+
+
 def engine_choice_facts(report: Mapping[str, Any]) -> dict[str, Any]:
     """The pending engine choices' figures (#1003): how many choices (one per
     table) and the tied queries they cover, the same grouped by tied engines
     (``pending_choice_pairs``), and the choices ``--auto`` decided, grouped by the
-    engine it placed them on (``auto_decided_by_engine``)."""
+    engine it placed them on (``auto_decided_by_engine``). Each count is split into
+    the tables' choices and those of statements that read no table (#2147:
+    ``*_table_count`` and ``*_no_table_count``, which add up to the choice count)."""
     pending = [c for c in report.get("pending_engine_choices") or [] if isinstance(c, Mapping)]
     decided = [d for d in report.get("auto_decided_choices") or [] if isinstance(d, Mapping)]
     pairs: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
@@ -1800,24 +1816,32 @@ def engine_choice_facts(report: Mapping[str, Any]) -> dict[str, Any]:
     by_engine: dict[str, list[Mapping[str, Any]]] = {}
     for d in decided:
         by_engine.setdefault(str(d.get("engine") or ""), []).append(d)
+    pending_split = _choice_split(pending)
+    decided_split = _choice_split(decided)
     return {
         "pending_choice_count": len(pending),
+        "pending_choice_table_count": pending_split["table_count"],
+        "pending_choice_no_table_count": pending_split["no_table_count"],
         "pending_choice_query_count": sum(len(c.get("query_ids") or []) for c in pending),
         "pending_choice_pairs": [
             {
                 "engines": list(engines),
                 "choice_count": len(rows),
+                **_choice_split(rows),
                 "query_count": sum(len(c.get("query_ids") or []) for c in rows),
                 "tables": sorted(_choice_table(c.get("table")) for c in rows),
             }
             for engines, rows in sorted(pairs.items())
         ],
         "auto_decided_choice_count": len(decided),
+        "auto_decided_table_count": decided_split["table_count"],
+        "auto_decided_no_table_count": decided_split["no_table_count"],
         "auto_decided_query_count": sum(len(d.get("query_ids") or []) for d in decided),
         "auto_decided_by_engine": [
             {
                 "engine": engine,
                 "choice_count": len(rows),
+                **_choice_split(rows),
                 "query_count": sum(len(d.get("query_ids") or []) for d in rows),
                 "tables": sorted(_choice_table(d.get("table")) for d in rows),
             }

@@ -20,7 +20,7 @@ from src.shared.report_facts import (
 
 from . import escaping
 from .facts import report_facts
-from .formatting import plural_noun
+from .formatting import choice_scope_text, plural_noun
 
 # The engine-name maps and the reality-check line patterns live in the facts
 # layer (#615), which reads the reality check's text once; re-exported here.
@@ -92,9 +92,11 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
     facts = report_facts(report)
     n = int(facts.get("pending_choice_count") or 0)
     q = int(facts.get("pending_choice_query_count") or 0)
+    # A report saved before #2147 has no split: every choice was a table's.
+    tables = int(facts.get("pending_choice_table_count", n) or 0)
+    no_table = int(facts.get("pending_choice_no_table_count") or 0)
     out = [
-        f"## Pending engine choices ({n} {plural_noun(n, 'table')}, "
-        f"{q} {plural_noun(q, 'query', 'queries')})",
+        f"## Pending engine choices ({choice_scope_text(tables, no_table, q)})",
         "",
         PENDING_CHOICES_NOTE,
         "",
@@ -173,9 +175,10 @@ def auto_decided_md(report: dict[str, Any]) -> list[str]:
     facts = report_facts(report)
     n = int(facts.get("auto_decided_choice_count") or 0)
     q = int(facts.get("auto_decided_query_count") or 0)
+    tables = int(facts.get("auto_decided_table_count", n) or 0)
+    no_table = int(facts.get("auto_decided_no_table_count") or 0)
     out = [
-        f"## Decided automatically, review if needed ({n} {plural_noun(n, 'table')}, "
-        f"{q} {plural_noun(q, 'query', 'queries')})",
+        f"## Decided automatically, review if needed ({choice_scope_text(tables, no_table, q)})",
         "",
         AUTO_DECIDED_NOTE,
         "",

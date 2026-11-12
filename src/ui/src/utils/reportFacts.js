@@ -315,11 +315,20 @@ export function unreviewedMoveCountOf(synthesis) {
 export function engineChoiceCountsOf(synthesis) {
   const f = factsOf(synthesis) || {};
   const n = (k) => (typeof f[k] === 'number' ? f[k] : 0);
+  // #2147: the split into tables' choices and statements' that read no table; a report
+  // written before it has none, and every choice there was a table's.
+  const split = (k, all) => (typeof f[k] === 'number' ? f[k] : all);
+  const pendingTables = n('pending_choice_count');
+  const decidedTables = n('auto_decided_choice_count');
   return {
-    pendingTables: n('pending_choice_count'),
+    pendingTables,
     pendingQueries: n('pending_choice_query_count'),
-    decidedTables: n('auto_decided_choice_count'),
+    pendingTableChoices: split('pending_choice_table_count', pendingTables),
+    pendingNoTable: n('pending_choice_no_table_count'),
+    decidedTables,
     decidedQueries: n('auto_decided_query_count'),
+    decidedTableChoices: split('auto_decided_table_count', decidedTables),
+    decidedNoTable: n('auto_decided_no_table_count'),
   };
 }
 

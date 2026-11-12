@@ -95,6 +95,7 @@ from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
     _retired_in_use_lines,
+    choice_scope_text,
     cost_baseline_known,
     cost_caveat_text,
     cost_note_text,
@@ -1470,9 +1471,11 @@ def _decisions(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any
 
 
 def _choice_count_text(group: dict[str, Any]) -> str:
-    tables = int(group.get("choice_count") or 0)
+    choices = int(group.get("choice_count") or 0)
     queries = int(group.get("query_count") or 0)
-    return f"{tables} {plural_noun(tables, 'table')}, {queries} {plural_noun(queries, 'query', 'queries')}"
+    # A report saved before #2147 has no split: every choice was a table's.
+    tables = int(group.get("table_count", choices) or 0)
+    return choice_scope_text(tables, int(group.get("no_table_count") or 0), queries)
 
 
 def _engine_choice_cards(
@@ -1498,8 +1501,16 @@ def _engine_choice_cards(
             _Panel(
                 [
                     _para(
-                        f"Pending engine choices ({n} {plural_noun(n, 'table')}, "
-                        f"{q} {plural_noun(q, 'query', 'queries')})",
+                        "Pending engine choices ("
+                        + _choice_count_text(
+                            {
+                                "choice_count": n,
+                                "query_count": q,
+                                "table_count": facts.get("pending_choice_table_count", n),
+                                "no_table_count": facts.get("pending_choice_no_table_count"),
+                            }
+                        )
+                        + ")",
                         st["card_title"],
                     ),
                     _para(PENDING_CHOICES_NOTE, st["body"]),
@@ -1524,8 +1535,16 @@ def _engine_choice_cards(
             _Panel(
                 [
                     _para(
-                        f"Decided automatically, review if needed ({n} {plural_noun(n, 'table')}, "
-                        f"{q} {plural_noun(q, 'query', 'queries')})",
+                        "Decided automatically, review if needed ("
+                        + _choice_count_text(
+                            {
+                                "choice_count": n,
+                                "query_count": q,
+                                "table_count": facts.get("auto_decided_table_count", n),
+                                "no_table_count": facts.get("auto_decided_no_table_count"),
+                            }
+                        )
+                        + ")",
                         st["card_title"],
                     ),
                     _para(AUTO_DECIDED_NOTE, st["body"]),

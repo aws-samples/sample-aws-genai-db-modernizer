@@ -59,8 +59,24 @@ test('a choice for a statement that reads no table is shown as No source table',
 });
 
 test('reads the stored choice counts, 0 for an older report', () => {
+  // An older report has no split (#2147): every choice was a table's.
   expect(engineChoiceCountsOf({ facts: { pending_choice_count: 9, pending_choice_query_count: 32 } })).toEqual({
-    pendingTables: 9, pendingQueries: 32, decidedTables: 0, decidedQueries: 0,
+    pendingTables: 9, pendingQueries: 32, pendingTableChoices: 9, pendingNoTable: 0,
+    decidedTables: 0, decidedQueries: 0, decidedTableChoices: 0, decidedNoTable: 0,
   });
-  expect(engineChoiceCountsOf({})).toEqual({ pendingTables: 0, pendingQueries: 0, decidedTables: 0, decidedQueries: 0 });
+  expect(engineChoiceCountsOf({})).toEqual({
+    pendingTables: 0, pendingQueries: 0, pendingTableChoices: 0, pendingNoTable: 0,
+    decidedTables: 0, decidedQueries: 0, decidedTableChoices: 0, decidedNoTable: 0,
+  });
+});
+
+// #2147, the DNN shape: 2 tables and 1 statement that reads no table.
+test('reads the facts split of tables and statements with no source table', () => {
+  const facts = {
+    auto_decided_choice_count: 3, auto_decided_table_count: 2, auto_decided_no_table_count: 1,
+    auto_decided_query_count: 3,
+  };
+  expect(engineChoiceCountsOf({ facts })).toMatchObject({
+    decidedTables: 3, decidedTableChoices: 2, decidedNoTable: 1, decidedQueries: 3,
+  });
 });

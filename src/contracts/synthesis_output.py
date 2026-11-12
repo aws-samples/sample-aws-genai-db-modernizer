@@ -700,6 +700,10 @@ Version History:
   one kind that share a long sentence, as {list, sentences, indexes}; the entries stay
   as the design wrote them and every renderer states the sentences once, then each
   entry. Backward compatible: a summary without it has no group.
+- 1.98 (2026-11-12, #2147): Added optional facts.pending_choice_table_count,
+  pending_choice_no_table_count, auto_decided_table_count, auto_decided_no_table_count
+  and table_count/no_table_count on PendingChoicePair and AutoDecidedEngine: the choices
+  for a table and for a statement that reads no table
 """
 
 import re
@@ -3103,6 +3107,10 @@ class PendingChoicePair(BaseModel):
 
     engines: list[str] = Field(default_factory=list, description="The tied engines, sorted")
     choice_count: int = Field(0, ge=0, description="Choices (tables) in the group")
+    table_count: int = Field(0, ge=0, description="Of them, the choices for a table (#2147)")
+    no_table_count: int = Field(
+        0, ge=0, description="Of them, the choices for a statement that reads no table (#2147)"
+    )
     query_count: int = Field(0, ge=0, description="Queries those choices cover")
     tables: list[str] = Field(default_factory=list, description="Their tables, sorted")
 
@@ -3112,6 +3120,10 @@ class AutoDecidedEngine(BaseModel):
 
     engine: str = Field(..., description="The engine --auto placed them on")
     choice_count: int = Field(0, ge=0, description="Choices (tables) placed there")
+    table_count: int = Field(0, ge=0, description="Of them, the choices for a table (#2147)")
+    no_table_count: int = Field(
+        0, ge=0, description="Of them, the choices for a statement that reads no table (#2147)"
+    )
     query_count: int = Field(0, ge=0, description="Queries those choices cover")
     tables: list[str] = Field(default_factory=list, description="Their tables, sorted")
 
@@ -4669,6 +4681,14 @@ class ReportFacts(BaseModel):
     pending_choice_count: int = Field(
         0, ge=0, description="Pending engine choices, one per table (#1003)"
     )
+    pending_choice_table_count: int = Field(
+        0, ge=0, description="Of the pending choices, those for a table (#2147)"
+    )
+    pending_choice_no_table_count: int = Field(
+        0,
+        ge=0,
+        description="Of the pending choices, those for a statement that reads no table (#2147)",
+    )
     pending_choice_query_count: int = Field(
         0, ge=0, description="The tied queries those choices cover (#1003)"
     )
@@ -4678,6 +4698,14 @@ class ReportFacts(BaseModel):
     )
     auto_decided_choice_count: int = Field(
         0, ge=0, description="Choices --auto decided for the customer, still holding (#1003)"
+    )
+    auto_decided_table_count: int = Field(
+        0, ge=0, description="Of the decided choices, those for a table (#2147)"
+    )
+    auto_decided_no_table_count: int = Field(
+        0,
+        ge=0,
+        description="Of the decided choices, those for a statement that reads no table (#2147)",
     )
     auto_decided_query_count: int = Field(
         0, ge=0, description="The queries those decided choices placed (#1003)"
@@ -4989,7 +5017,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.97",
+        default="1.98",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

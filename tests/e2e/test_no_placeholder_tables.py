@@ -168,6 +168,14 @@ def test_the_dnn_sample_names_no_placeholder_table_before_or_after_decide_for_me
     md = (job / "deliverables" / "engineering-report.md").read_text()
     for q in qids:
         assert f"| No source table (`{q}`) | 1 |" in md
+    # The heading counts the statements apart from the tables, from the facts' split.
+    facts = report["facts"]
+    assert facts["pending_choice_no_table_count"] == 2
+    tables = facts["pending_choice_table_count"]
+    assert (
+        f"## Pending engine choices ({tables} {'table' if tables == 1 else 'tables'} and 2 "
+        f"statements with no source table, {facts['pending_choice_query_count']} queries)"
+    ) in md
     # The deliverables list the statements under "No source table" with their reason.
     assert re.search(r"^\| No source table \| 2 \| [0-9.]+ \| .*pending your choice", md, re.M)
 
@@ -189,6 +197,11 @@ def test_the_dnn_sample_names_no_placeholder_table_before_or_after_decide_for_me
     assert [reasons[q] for q in qids] == [NO_TABLE_DECIDED] * 2
     md = (auto / "deliverables" / "engineering-report.md").read_text()
     assert "| No source table | 2 | " in md and NO_TABLE_DECIDED in md
+    decided_facts = _report(auto)["facts"]
+    assert decided_facts["auto_decided_no_table_count"] == 2
+    assert (
+        "statements with no source table" in md.split("## Decided automatically")[1].split("\n")[0]
+    )
 
     # A job saved before #2147 (one decision for ``unknown``) re-synthesizes to the same
     # per-statement decisions, its reasons worded to match.
