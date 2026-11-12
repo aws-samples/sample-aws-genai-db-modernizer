@@ -4384,7 +4384,7 @@ class AdoptionPathFacts(BaseModel):
         None, description="None when the current cost is not known"
     )
     cost_is_upper_bound: bool = Field(
-        True,
+        False,
         description=(
             "Whether its cost is an upper bound. False while each engine's estimate is "
             "sized for the queries it serves in the full target (#1130, #2170), so a path that "
@@ -4437,6 +4437,35 @@ class NotOfferedPath(BaseModel):
         return self
 
 
+# What every path's cost rests on (#1130, #2170), with the one customer-safe line that
+# states it. The TCO sizes each engine for the queries it serves in the full target, and
+# no path re-estimates an engine for the queries an earlier stop leaves on it.
+AdoptionCostBasis = Literal["full_target_estimates"]
+ADOPTION_COST_BASIS_NOTES: dict[str, str] = {
+    "full_target_estimates": (
+        "Each path's cost adds up its engines' estimates for the full target. An engine "
+        "is not estimated again for the queries an earlier path leaves on it, so an "
+        "earlier path's cost, and its difference from another path, rest on those "
+        "estimates."
+    ),
+}
+# The most paths a capped view (#1133's table) shows (``summary_path_ids``).
+SUMMARY_PATH_LIMIT = 5
+
+
+def summary_path_ids(path_ids: list[str], limit: int = SUMMARY_PATH_LIMIT) -> list[str]:
+    """The paths a view capped at ``limit`` rows shows, in path order: every path when
+    they fit, else the first (``relational_only``) and the last (``full_target``) with
+    ``limit - 2`` paths evenly spaced between them. The one function that picks them, so
+    no renderer chooses."""
+    if len(path_ids) <= limit:
+        return list(path_ids)
+    middle = path_ids[1:-1]
+    picks = limit - 2
+    chosen = [middle[(i + 1) * (len(middle) + 1) // (picks + 1) - 1] for i in range(picks)]
+    return [path_ids[0], *chosen, path_ids[-1]]
+
+
 class AdoptionFacts(BaseModel):
     """The menu of adoption paths and the one-step form of the full target (#1130, #473).
     Nothing ranks the paths: the staged full target is the default, as today."""
@@ -4444,6 +4473,21 @@ class AdoptionFacts(BaseModel):
     default_path_id: str | None = Field(None, description="full_target, when paths exist")
     paths: list[AdoptionPathFacts] = Field(default_factory=list)
     path_count: int = Field(0, ge=0)
+    summary_path_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The paths a view capped at SUMMARY_PATH_LIMIT rows shows, in order: "
+            "relational_only, full_target and evenly spaced steps between them "
+            "(summary_path_ids); every path when they fit"
+        ),
+    )
+    cost_basis: AdoptionCostBasis | None = Field(
+        None,
+        description="What every path's cost rests on (#2170); None when no path is offered",
+    )
+    cost_basis_note: str | None = Field(
+        None, description="The cost basis as one customer-safe sentence"
+    )
     not_offered: list[NotOfferedPath] = Field(default_factory=list)
     one_step: OneStepFacts | None = Field(None)
 
@@ -4468,6 +4512,13 @@ class AdoptionFacts(BaseModel):
         for n in self.not_offered:
             if n.offered_instead is not None and n.offered_instead not in ids:
                 raise ValueError(f"{n.path_id}'s closure {n.offered_instead} is not offered")
+        if self.summary_path_ids != summary_path_ids(ids):
+            raise ValueError("summary_path_ids are the paths summary_path_ids picks")
+        if (self.cost_basis is None) != (not self.paths):
+            raise ValueError("a cost basis is stated exactly when paths exist")
+        expected_note = ADOPTION_COST_BASIS_NOTES.get(self.cost_basis or "")
+        if self.cost_basis_note != expected_note:
+            raise ValueError("cost_basis_note is the cost basis's own sentence")
         return self
 
 
@@ -4563,6 +4614,7 @@ def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -
             raise ValueError(f"{path.path_id}: every stage has one gate")
         if path.first_gate is not None and path.first_gate != steps[0].step_stages[0].gate:
             raise ValueError(f"{path.path_id}: first_gate is its first stage's gate")
+    _check_not_offered(adoption, plan, lead)
     one = adoption.one_step
     if one is None:
         return
@@ -4587,6 +4639,61 @@ def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -
     }
     if observed != expected_observed:
         raise ValueError("the one-step checks state the plan's own figures")
+
+
+def _stop_path_id(stop: int, lead: int, last: int, relational: bool) -> str:
+    if relational and stop == lead:
+        return "relational_only"
+    return "full_target" if stop == last else f"through_step_{stop}"
+
+
+def _check_not_offered(adoption: AdoptionFacts, plan: SlicePlanFacts, lead: int) -> None:
+    """The paths not offered agree with the plan (#1130): together with the offered ones
+    they name every stop once; a path held by the relational gates leaves each of its
+    failing queries to a later step, on the engines it names, and its closure stops at
+    the latest of those steps. The gate's own answer is synthesis's; this checks what
+    the plan can show. The empty structure (no path, none withheld) states nothing."""
+    if not adoption.paths and not adoption.not_offered:
+        return
+    steps = plan.plan_steps
+    last = len(steps)
+    relational = bool(steps) and steps[0].kind == "relational_step"
+    stops = [lead, *range(lead + 1, last)] if relational else []
+    if last > lead or not relational:
+        stops.append(last)
+    expected = [_stop_path_id(k, lead, last, relational) for k in dict.fromkeys(stops)]
+    gated = [n for n in adoption.not_offered if n.reason == "fails_relational_gates"]
+    stated = [p.path_id for p in adoption.paths] + [n.path_id for n in gated]
+    _unique(stated, "offered and not offered path ids")
+    if sorted(stated) != sorted(expected):
+        raise ValueError("the offered and not offered paths name every stop of the plan once")
+    held = [n for n in adoption.not_offered if n.reason == "no_relational_engine"]
+    if [n.path_id for n in held] != ([] if relational else ["relational_only"]):
+        raise ValueError("relational_only is not offered for no relational engine exactly then")
+    units = {u.key: u for u in plan.move_units}
+    step_of: dict[str, int] = {}
+    engine_of: dict[str, str] = {}
+    for step in steps:
+        for stage in step.step_stages:
+            for key in stage.unit_keys:
+                if units[key].kind in MOVING_UNIT_KINDS:
+                    for qid in units[key].query_ids:
+                        step_of[qid], engine_of[qid] = step.step_number, units[key].engine
+    stop_of = {_stop_path_id(k, lead, last, relational): k for k in dict.fromkeys(stops)}
+    for n in gated:
+        if n.path_id == "full_target" or not n.failing_query_ids:
+            raise ValueError(f"{n.path_id} leaves no query on the relational engine to fail")
+        stop = stop_of[n.path_id]
+        moved_later = [q for q in n.failing_query_ids if step_of.get(q, 0) > stop]
+        if moved_later != n.failing_query_ids:
+            raise ValueError(f"{n.path_id}: a failing query is one a later step moves")
+        if n.serving_engines != sorted({engine_of[q] for q in n.failing_query_ids}):
+            raise ValueError(f"{n.path_id}: serving_engines are its failing queries' engines")
+        closure = _stop_path_id(
+            max(step_of[q] for q in n.failing_query_ids), lead, last, relational
+        )
+        if n.offered_instead != closure:
+            raise ValueError(f"{n.path_id}'s closure is {closure}, the first path moving them")
 
 
 def check_plan_against_facts(

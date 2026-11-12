@@ -22,10 +22,13 @@ import pytest
 from src.agents.referee import capability_registry
 from src.agents.referee.slice_inputs import relational_gate_failures, slice_inputs
 from src.contracts.synthesis_output import (
+    ADOPTION_COST_BASIS_NOTES,
     AdoptionFacts,
+    AdoptionPathFacts,
     SlicePlanFacts,
     check_adoption_against_plan,
     check_plan_against_facts,
+    summary_path_ids,
 )
 from src.shared.adoption_facts import adoption_facts
 from src.shared.slice_plan import build_slice_plan
@@ -402,3 +405,182 @@ def test_synthesis_asks_the_customer_gate_and_passes_its_answer(
     ((assignment, collector, analyses, triage),) = asked
     assert assignment["query_assignments"] and collector["queries"]
     assert set(analyses) == {"dynamodb"} and "selected_agents" in triage
+
+
+def _with_relational_only_engines(engines: list[str]) -> AdoptionFacts:
+    """The job's adoption with relational_only ending on ``engines`` instead."""
+    adoption = AdoptionFacts.model_validate(_adoption())
+    adoption.paths[0].engines = engines
+    return adoption
+
+
+def _plan_check(adoption: AdoptionFacts, no_migration: list[str], targets: set[str]) -> None:
+    check_plan_against_facts(
+        SlicePlanFacts.model_validate(_plan()),
+        adoption,
+        dict(job.COSTS),
+        {"dynamodb": 1},
+        no_migration,
+        targets,
+    )
+
+
+def test_a_cross_engine_relational_only_with_a_purpose_built_engine_is_refused() -> None:
+    # Aurora is added because it is the plan's relational engine, not because it is a
+    # migration target: DynamoDB, also a target, stays out.
+    adoption = _with_relational_only_engines(["aurora_mysql", "elasticache", "dynamodb"])
+    with pytest.raises(ValueError, match="no_migration"):
+        _plan_check(adoption, ["elasticache"], {"aurora_mysql", "dynamodb"})
+
+
+def test_a_relational_only_path_without_the_cache_is_refused() -> None:
+    # Equality, not "within": a path that drops one of the expected engines fails.
+    adoption = _with_relational_only_engines(["aurora_mysql"])
+    with pytest.raises(ValueError, match="no_migration"):
+        _plan_check(adoption, ["elasticache"], {"aurora_mysql", "dynamodb"})
+    with pytest.raises(ValueError, match="no_migration"):
+        _plan_check(adoption, ["aurora_mysql", "elasticache"], {"dynamodb"})
+
+
+def test_a_homogeneous_relational_only_with_an_extra_engine_is_refused() -> None:
+    adoption = _with_relational_only_engines(["aurora_mysql", "elasticache", "dynamodb"])
+    with pytest.raises(ValueError, match="no_migration"):
+        _plan_check(adoption, ["aurora_mysql", "elasticache"], {"dynamodb"})
+
+
+def test_every_path_states_its_cost_basis_once() -> None:
+    adoption = _adoption()
+    assert adoption["cost_basis"] == "full_target_estimates"
+    assert adoption["cost_basis_note"] == ADOPTION_COST_BASIS_NOTES["full_target_estimates"]
+    assert adoption["cost_basis_note"].startswith("Each path's cost adds up its engines'")
+    # No path, no basis; and the sentence is the basis's own.
+    assert AdoptionFacts().cost_basis is None and AdoptionFacts().cost_basis_note is None
+    with pytest.raises(ValueError, match="cost_basis_note"):
+        AdoptionFacts.model_validate({**adoption, "cost_basis_note": "Costs are exact."})
+    with pytest.raises(ValueError, match="cost basis is stated"):
+        AdoptionFacts.model_validate({**adoption, "cost_basis": None, "cost_basis_note": None})
+
+
+def test_cost_is_upper_bound_defaults_to_false() -> None:
+    path = _paths(_adoption())["full_target"]
+    del path["cost_is_upper_bound"]
+    assert AdoptionPathFacts.model_validate(path).cost_is_upper_bound is False
+
+
+def test_a_capped_view_shows_the_ends_and_evenly_spaced_steps() -> None:
+    eight = ["relational_only", *(f"through_step_{k}" for k in range(3, 9)), "full_target"]
+    assert summary_path_ids(eight) == [
+        "relational_only",
+        "through_step_3",
+        "through_step_5",
+        "through_step_7",
+        "full_target",
+    ]
+    assert summary_path_ids(eight[:5]) == eight[:5]
+    assert summary_path_ids(eight[:2]) == eight[:2] and summary_path_ids([]) == []
+    six = eight[:5] + ["full_target"]
+    assert summary_path_ids(six) == [
+        "relational_only",
+        "through_step_3",
+        "through_step_4",
+        "through_step_5",
+        "full_target",
+    ]
+    assert _adoption()["summary_path_ids"] == [p["path_id"] for p in _adoption()["paths"]]
+    with pytest.raises(ValueError, match="summary_path_ids"):
+        AdoptionFacts.model_validate({**_adoption(), "summary_path_ids": ["full_target"]})
+
+
+def _refused_not_offered(adoption: dict[str, Any], match: str) -> None:
+    facts = AdoptionFacts.model_validate(adoption)
+    with pytest.raises(ValueError, match=match):
+        check_adoption_against_plan(facts, SlicePlanFacts.model_validate(_plan()))
+
+
+def test_paths_not_offered_must_agree_with_the_plan() -> None:
+    gated = _adoption(gated={"aurora_mysql": ("q12", "q10")})
+    check_adoption_against_plan(
+        AdoptionFacts.model_validate(gated), SlicePlanFacts.model_validate(_plan())
+    )
+    by_id = {n["path_id"]: n for n in gated["not_offered"]}
+    # A stop dropped from both lists.
+    dropped = {**gated, "not_offered": [by_id["relational_only"]]}
+    _refused_not_offered(dropped, "every stop")
+    # A closure that is not the first path moving every failing query.
+    early = {**by_id["relational_only"], "offered_instead": "full_target"}
+    early["failing_query_ids"], early["failing_query_count"] = ["q10"], 1
+    early["serving_engines"] = ["documentdb"]
+    paths = [_paths(_adoption())["through_step_3"], *gated["paths"]]
+    menu = {
+        **gated,
+        "paths": paths,
+        "path_count": 2,
+        "summary_path_ids": [p["path_id"] for p in paths],
+    }
+    _refused_not_offered({**menu, "not_offered": [early]}, "closure is through_step_3")
+    # A failing query the path itself moves (q10 moves in step 3).
+    moved = {**by_id["through_step_3"], "failing_query_ids": ["q10", "q12"]}
+    moved["failing_query_count"] = 2
+    moved["serving_engines"] = ["documentdb", "dynamodb"]
+    _refused_not_offered(
+        {**gated, "not_offered": [by_id["relational_only"], moved]}, "later step moves"
+    )
+    # The engines the failing queries need, misnamed.
+    wrong = {**by_id["through_step_3"], "serving_engines": ["documentdb"]}
+    _refused_not_offered(
+        {**gated, "not_offered": [by_id["relational_only"], wrong]}, "serving_engines"
+    )
+    # No relational engine claimed while the plan has one.
+    claimed = {
+        "path_id": "relational_only",
+        "reason": "no_relational_engine",
+        "offered_instead": "full_target",
+    }
+    _refused_not_offered({**gated, "not_offered": [by_id["through_step_3"], claimed]}, "stop")
+
+
+def test_the_ownership_gate_holds_a_write_aurora_could_not_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every Aurora engine is a system of record today, so the ownership gate never fires
+    on it. With Aurora MySQL declared one that owns no write, the write of app.sessions
+    (q13, moved in step 4) cannot go back, the read beside it (q12) can, and the paths
+    that would leave q13 on Aurora give way to the full target."""
+    from src.agents.referee import cache_overlay
+
+    monkeypatch.setattr(
+        cache_overlay,
+        "NON_SYSTEM_OF_RECORD_ENGINES",
+        frozenset(cache_overlay.NON_SYSTEM_OF_RECORD_ENGINES) | {"aurora_mysql"},
+    )
+    assignment = {
+        "query_assignments": [
+            {"query_id": "q12", "assigned_engine": "dynamodb", "source_tables": ["app.sessions"]},
+            {"query_id": "q13", "assigned_engine": "dynamodb", "source_tables": ["app.sessions"]},
+        ],
+        "write_groups": {"app.sessions": ["q13"]},
+    }
+    collector = {
+        "queries": {
+            "query_patterns": [
+                {
+                    "query_id": "q12",
+                    "query_type": "SELECT",
+                    "query_text": "SELECT * FROM app.sessions WHERE id = ?",
+                },
+                {
+                    "query_id": "q13",
+                    "query_type": "UPDATE",
+                    "query_text": "UPDATE app.sessions SET seen = ? WHERE id = ?",
+                },
+            ]
+        }
+    }
+    answer = relational_gate_failures(assignment, collector, {}, {"query_capabilities": {}})
+    assert answer.get("aurora_mysql") == ("q13",)
+    adoption = _adoption(gated=answer)
+    assert [p["path_id"] for p in adoption["paths"]] == ["full_target"]
+    assert {n["path_id"]: n["offered_instead"] for n in adoption["not_offered"]} == {
+        "relational_only": "full_target",
+        "through_step_3": "full_target",
+    }

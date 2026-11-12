@@ -1194,6 +1194,12 @@
         }
       ],
       "path_count": 2,
+      "summary_path_ids": [
+        "through_step_2",
+        "full_target"
+      ],
+      "cost_basis": "full_target_estimates",
+      "cost_basis_note": "Each path's cost adds up its engines' estimates for the full target. An engine is not estimated again for the queries an earlier path leaves on it, so an earlier path's cost, and its difference from another path, rest on those estimates.",
       "not_offered": [
         {
           "path_id": "relational_only",

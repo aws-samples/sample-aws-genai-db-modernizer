@@ -25,7 +25,9 @@ on the relational engine a query the customer gate refuses there
 (``SliceInputs.relational_gate_failures``) is not offered; its closure, the first path that
 moves every such query, is offered instead. The one-step form of the full target states
 the plan's counts and the three "suits one step" checks, which describe the workload's
-shape only: no figure here says how or when to cut over.
+shape only: no figure here says how or when to cut over. Every cost rests on each
+engine's full-target estimate (``cost_basis``, #2170), and ``summary_path_ids`` names the
+paths a view capped at five rows shows.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from src.contracts.synthesis_output import (
+    ADOPTION_COST_BASIS_NOTES,
     MOVING_STEP_KINDS,
     MOVING_UNIT_KINDS,
     NO_MOVE_STEP_KINDS,
@@ -41,6 +44,7 @@ from src.contracts.synthesis_output import (
     SlicePlanFacts,
     SliceStep,
     check_adoption_against_plan,
+    summary_path_ids,
 )
 from src.shared.slice_plan import build_slice_plan
 
@@ -176,6 +180,13 @@ def _adoption(
             "default_path_id": default,
             "paths": paths,
             "path_count": len(paths),
+            # #1133's capped table: the first and last paths and evenly spaced steps.
+            "summary_path_ids": summary_path_ids(ids),
+            # #2170: every cost is the full target's per-engine estimates, stated once.
+            "cost_basis": "full_target_estimates" if paths else None,
+            "cost_basis_note": (
+                ADOPTION_COST_BASIS_NOTES["full_target_estimates"] if paths else None
+            ),
             "not_offered": not_offered,
             "one_step": _one_step(plan) if "full_target" in ids else None,
         }
