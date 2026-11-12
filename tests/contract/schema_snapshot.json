@@ -26127,10 +26127,66 @@
           "minimum": 0,
           "type": "integer"
         }
+      },
+      "unit_cuts": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "kind": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "parts": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "integer"
+                  },
+                  "kind": "array"
+                }
+              },
+              "query_ids": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "kept_prior_parts",
+                    "over_input_budget",
+                    "over_part_size"
+                  ]
+                }
+              },
+              "unit_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
       }
     },
-    "schema_hash": "fb03486c2d38bd24e3424182dd12dd66624d2426aac8371f2937c94a8c50e8fd",
-    "version": "1.7"
+    "schema_hash": "fc75a76f38bb0b13edbce01289cf60b1883294b4018ae7793169747b4a30b4e9",
+    "version": "1.8"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {
