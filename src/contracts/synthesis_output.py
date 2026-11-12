@@ -684,15 +684,19 @@ Version History:
 - 1.95 (2026-11-11, #2119): Added optional WaveRedesignCheck.parts: an open_review check
   on a DynamoDB design in parts names the parts whose last review held the design, with
   their statements in query_ids, so a redesign round redesigns only those parts.
-- 1.96 (2026-11-11, #1130): Added optional facts.slice_plan (SlicePlanFacts: steps with
-  ordered stages a to d, move units that never split a write group, co-dependency group
-  or routine unit, wave 1's table classes, the dependency graph's edges and metrics;
-  #1129, #1698, ADR-033's slice_plan keyed by step_number) and facts.adoption
-  (AdoptionFacts: the adoption paths, those not offered and the one-step form of the
-  full target; #1130, #473). Synthesis writes both empty until their computation lands.
-  Backward compatible: both default to None.
+- 1.96 (2026-11-11, #1130): Added optional facts.slice_plan (SlicePlanFacts: the
+  relational step and the slice or cache steps with ordered stages a to d, move units
+  that never split a write group, co-dependency group or routine unit and keep one
+  writer per table, wave 1's table classes, the steps rolled up by wave (wave_phases),
+  the dependency graph's edges and metrics, and the per-engine cost and risks the paths
+  sum; #1129, #1698, ADR-033's slice_plan keyed by step_number) and facts.adoption
+  (AdoptionFacts: the adoption paths with their replicated tables, those not offered and
+  the one-step form of the full target; #1130, #473). Synthesis writes both empty until
+  their computation lands, and the reader fills both for an older report. Backward
+  compatible: both default to None.
 """
 
+import re
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -3545,10 +3549,14 @@ class ExecutiveBriefFacts(BaseModel):
 # adoption_facts.py``); a model may explain it, never decide it. Step numbers and slice
 # keys are a public key: the transformation contract (ADR-033 Decision 1) writes one file
 # per step, ``transformation-contract/v<N>/step-<k>.json``, keyed on ``step_number``.
+#
+# Field names are owned by the renderers-only-format guards by their bare name (ADR-032
+# Decision 2), so the lists are ``plan_steps`` and ``step_stages``: ``steps`` and
+# ``stages`` already name the UI's own walkthrough and job-progress lists.
 
-SliceStepKind = Literal["relational_cutover", "cache", "slice", "engine_wave"]
+SliceStepKind = Literal["relational_step", "cache", "slice", "engine_wave"]
 SliceStageKind = Literal[
-    "cutover",
+    "whole_database",
     "cache_reads",
     "replica_reads",
     "self_contained",
@@ -3568,9 +3576,9 @@ OneStepRule = Literal[
 
 # A stage's letter inside its step ("3b"), fixed by its kind so a letter always means
 # the same kind of work (an empty stage is skipped, never relettered), and the order the
-# stages run in. The relational cutover is the whole step ("1").
+# stages run in. The relational step's one stage is the whole step ("1").
 STAGE_LETTERS: dict[str, str] = {
-    "cutover": "",
+    "whole_database": "",
     "cache_reads": "a",
     "replica_reads": "a",
     "self_contained": "b",
@@ -3578,7 +3586,7 @@ STAGE_LETTERS: dict[str, str] = {
     "risk_held": "d",
 }
 STAGE_RANKS: dict[str, int] = {
-    "cutover": 0,
+    "whole_database": 0,
     "cache_reads": 1,
     "replica_reads": 1,
     "self_contained": 2,
@@ -3587,7 +3595,7 @@ STAGE_RANKS: dict[str, int] = {
 }
 # The unit kinds each stage kind may hold.
 STAGE_UNIT_KINDS: dict[str, frozenset[str]] = {
-    "cutover": frozenset({"whole_database"}),
+    "whole_database": frozenset({"whole_database"}),
     "cache_reads": frozenset({"cache_reads"}),
     "replica_reads": frozenset({"replica_reads", "read_model"}),
     "self_contained": frozenset({"owner"}),
@@ -3596,9 +3604,14 @@ STAGE_UNIT_KINDS: dict[str, frozenset[str]] = {
 }
 # The unit kinds that move queries to their engine. A query sits in at most one of
 # them, and they keep write groups, co-dependency groups and routine units whole. The
-# whole-database cutover carries every query to Aurora first, and the cache only
-# fronts reads that still run on their owner, so neither splits a group.
+# whole-database unit carries every query to Aurora first, and the cache only fronts
+# reads that still run on their owner, so neither splits a group.
 MOVING_UNIT_KINDS: frozenset[str] = frozenset({"owner", "replica_reads", "read_model"})
+# The step kinds that move queries off the relational engine, and the ones that leave
+# every query where the relational step put it (the relational-only path's steps).
+MOVING_STEP_KINDS: frozenset[str] = frozenset({"slice", "engine_wave"})
+NO_MOVE_STEP_KINDS: frozenset[str] = frozenset({"relational_step", "cache"})
+PATH_ID_RE = re.compile(r"^(?:relational_only|full_target|through_step_([1-9][0-9]*))$")
 
 
 def _count_matches(count: int, items: list[Any], what: str) -> None:
@@ -3620,16 +3633,18 @@ class ReplicatedInTable(BaseModel):
 
 
 class ReverseReplica(BaseModel):
-    """Reads on another engine that keep reading a table the unit owns, through a CDC
-    copy fed from the unit's engine once the unit's writes move."""
+    """Reads on another engine that keep reading tables the unit owns, through a CDC copy
+    fed from the unit's engine once the unit's writes move."""
 
     engine: str = Field(..., description="The engine whose reads stay")
+    tables: list[str] = Field(..., min_length=1, description="The owned tables those reads read")
     query_ids: list[str] = Field(default_factory=list, description="Those reads")
     read_count: int = Field(0, ge=0, description="len(query_ids)")
 
     @model_validator(mode="after")
     def _counts(self) -> "ReverseReplica":
         _count_matches(self.read_count, self.query_ids, "read_count")
+        _unique(self.tables, "reverse replica tables")
         return self
 
 
@@ -3650,8 +3665,9 @@ class UnitMetrics(BaseModel):
 class MoveUnit(BaseModel):
     """The smallest set of queries and tables that moves to one engine on its own (#1129).
 
-    A unit never splits a write group, a co-dependency group or a routine unit
-    (ADR-031 Amendment 9): ``SlicePlanFacts`` checks it against ``kept_whole``.
+    A unit never splits a write group, a co-dependency group or a routine unit, and a
+    table has one writer (ADR-031 Amendment 9): ``SlicePlanFacts`` checks both against
+    ``kept_whole``.
     """
 
     key: str = Field(..., description="Stable key: the engine and the first table id")
@@ -3659,7 +3675,7 @@ class MoveUnit(BaseModel):
     kind: MoveUnitKind = Field(
         ...,
         description=(
-            "whole_database: the relational cutover, every query and table at once; owner: "
+            "whole_database: the relational step, every query and table at once; owner: "
             "moves the writes of the tables it owns; replica_reads: reads only tables "
             "another engine owns; cache_reads: reads the cache fronts; read_model: a "
             "search read model's queries"
@@ -3712,6 +3728,8 @@ class MoveUnit(BaseModel):
         _count_matches(self.owned_table_count, self.owned_tables, "owned_table_count")
         if self.reverse_read_count != sum(r.read_count for r in self.reverse_replicas):
             raise ValueError("reverse_read_count must sum the reverse replicas' reads")
+        if any(not set(r.tables) <= set(self.owned_tables) for r in self.reverse_replicas):
+            raise ValueError("a reverse replica copies only tables the unit owns")
         replicated = [r.table for r in self.replicated_in]
         _unique(replicated, "replicated_in")
         if set(replicated) & set(self.owned_tables):
@@ -3725,17 +3743,25 @@ class MoveUnit(BaseModel):
 
 class KeptWholeGroup(BaseModel):
     """A group of queries routing placed as one, so a move unit holds all of it or none
-    of it (ADR-031 Amendment 9: ``write_groups.placement_groups``' sources)."""
+    of it (ADR-031 Amendment 9: ``write_groups.placement_groups``' sources). A write
+    group names its table: the unit that holds it is the table's one writer."""
 
     group_id: str = Field(..., description="Stable id, e.g. 'write:wp_posts' or 'co_dependency:1'")
     kind: KeptWholeKind
     query_ids: list[str] = Field(..., min_length=1)
-    table: str | None = Field(None, description="A write group's table")
+    table: str | None = Field(None, description="A write group's table; None for the others")
+
+    @model_validator(mode="after")
+    def _table(self) -> "KeptWholeGroup":
+        if (self.kind == "write_group") != (self.table is not None):
+            raise ValueError("a write group, and only it, names its table")
+        return self
 
 
 class UnitDependency(BaseModel):
     """An edge of the dependency graph (#1698): ``unit_key`` needs ``depends_on`` in place
-    first, so ``depends_on`` never moves in a later stage."""
+    first, so ``depends_on`` always runs earlier: in an earlier step or stage, or before it
+    in the same stage. The graph is therefore acyclic."""
 
     unit_key: str
     depends_on: str
@@ -3757,7 +3783,7 @@ class CutCost(BaseModel):
     replica_table_count: int = Field(
         ..., ge=0, description="Tables that need a CDC copy across the cut, either way"
     )
-    write_site_count: int = Field(..., ge=0, description="Write statements to switch")
+    write_site_count: int = Field(..., ge=0, description="Write statements that change engine")
     transactions_split: int | None = Field(
         None, ge=0, description="Captured transactions the cut splits; None until #1682 lands"
     )
@@ -3781,7 +3807,7 @@ class SliceStage(BaseModel):
     self-contained ownership; c, ownership with a reverse replica; d, held by a risk."""
 
     label: str = Field(
-        ..., description="Step number and stage letter, e.g. '3b'; '1' for the cutover"
+        ..., description="Step number and stage letter, e.g. '3b'; '1' for the relational step"
     )
     kind: SliceStageKind
     unit_keys: list[str] = Field(
@@ -3792,7 +3818,7 @@ class SliceStage(BaseModel):
     owned_table_count: int = Field(0, ge=0, description="The sum of its units' owned_table_count")
     call_share_percent: float = Field(0.0, ge=0, le=100)
     holding_risk_ids: list[str] = Field(
-        default_factory=list, description="Stage d: the risks that hold it"
+        default_factory=list, description="Stage d: its units' holding risks, sorted"
     )
     gate: str = Field(..., description="The condition before the next stage, a filled template")
     stage_gate_parts: list[GatePart] | None = Field(
@@ -3818,15 +3844,17 @@ class SliceStage(BaseModel):
 
 
 class LeavingTable(BaseModel):
-    """A table wave 1 carries to Aurora that leaves it later, and the stage it leaves in."""
+    """A table the relational step carries to Aurora that leaves it later, and the stage
+    it leaves in."""
 
     table: str
     stage_label: str
 
 
 class RelationalTableClasses(BaseModel):
-    """Which of the tables the relational cutover carries matter, and how (#1129): each
-    collected table is in exactly one class."""
+    """Which of the tables the relational step carries matter, and how (#1129): each
+    collected table is in exactly one class. The classes are
+    ``transformation_contract.TableClass``'s values, one list each."""
 
     stays: list[str] = Field(
         default_factory=list,
@@ -3858,22 +3886,26 @@ class RelationalTableClasses(BaseModel):
 
 
 class SliceStep(BaseModel):
-    """One step of the plan (#1698, ADR-033 Decision 1): step 1 is the relational
-    cutover (wave 1); each later step moves one slice, or the cache's reads, to one
-    engine through its stages."""
+    """One step of the plan (#1698, ADR-033 Decision 1): step 1 is the relational step
+    (wave 1); each later step moves one slice, or the cache's reads, to one engine
+    through its stages."""
 
     step_number: int = Field(..., ge=1, description="k: the public key a step's files use")
     kind: SliceStepKind = Field(
         ...,
         description=(
-            "relational_cutover: wave 1; cache: the cache's fronted reads; slice: one slice "
+            "relational_step: wave 1; cache: the cache's fronted reads; slice: one slice "
             "of move units; engine_wave: one engine's whole wave, when the plan follows "
             "the migration waves (no slice plan yet)"
         ),
     )
     engine: str = Field(..., description="The one engine the step moves to")
     new_engine: bool = Field(
-        ..., description="An engine the customer does not run yet (at most one per step)"
+        ...,
+        description=(
+            "An engine the customer does not run yet, introduced by this step: only the "
+            "first step on an engine introduces it, so a step introduces at most one"
+        ),
     )
     movement: Literal["homogeneous", "heterogeneous"] = Field(
         ...,
@@ -3899,7 +3931,7 @@ class SliceStep(BaseModel):
     call_share_percent: float = Field(0.0, ge=0, le=100)
     metrics: SliceMetrics | None = Field(None, description="A slice step's order metrics")
     table_classes: RelationalTableClasses | None = Field(
-        None, description="The relational cutover only"
+        None, description="The relational step only"
     )
 
     @model_validator(mode="after")
@@ -3918,36 +3950,84 @@ class SliceStep(BaseModel):
             if stage.label != f"{self.step_number}{STAGE_LETTERS[stage.kind]}":
                 raise ValueError(f"stage {stage.label} must be labelled by its step and kind")
         kinds = {s.kind for s in self.step_stages}
-        if self.kind == "relational_cutover":
-            if self.step_number != 1 or kinds != {"cutover"} or self.step_stages[0].unit_count != 1:
-                raise ValueError("the relational cutover is step 1: one cutover stage, one unit")
-        elif "cutover" in kinds:
-            raise ValueError("only the relational cutover has a cutover stage")
+        if self.kind == "relational_step":
+            if (
+                self.step_number != 1
+                or kinds != {"whole_database"}
+                or self.step_stages[0].unit_count != 1
+            ):
+                raise ValueError(
+                    "the relational step is step 1: one whole_database stage, one unit"
+                )
+        elif "whole_database" in kinds:
+            raise ValueError("only the relational step has a whole_database stage")
         if (self.kind == "cache") != (kinds == {"cache_reads"}):
             raise ValueError("the cache step, and only it, is one cache_reads stage")
         if (self.kind == "slice") != (self.slice_key is not None):
             raise ValueError("a slice step, and only it, has a slice_key")
         if self.metrics is not None and self.kind != "slice":
             raise ValueError("only a slice step carries slice metrics")
-        if self.table_classes is not None and self.kind != "relational_cutover":
-            raise ValueError("only the relational cutover carries table classes")
+        if self.table_classes is not None and self.kind != "relational_step":
+            raise ValueError("only the relational step carries table classes")
         return self
 
 
-def _stage_position(step: SliceStep, stage: SliceStage) -> tuple[int, int]:
-    return (step.step_number, STAGE_RANKS[stage.kind])
+class PhaseFacts(BaseModel):
+    """One engine phase: a migration wave's steps rolled up (the executive view, #1133;
+    the engineering report's per-wave stages, #1131), so no renderer counts them."""
+
+    phase_wave: int = Field(..., ge=1, description="The migration_waves[].wave")
+    step_numbers: list[int] = Field(..., min_length=1, description="Its steps, in order")
+    engines: list[str] = Field(..., min_length=1, description="Its steps' engines, in order")
+    stage_labels: list[str] = Field(..., min_length=1, description="Its steps' stages, in order")
+    stage_kinds: list[SliceStageKind] = Field(
+        ..., min_length=1, description="The distinct stage kinds, in run order"
+    )
+    stage_count: int = Field(..., ge=1)
+    query_count: int = Field(..., ge=0, description="The sum of its steps' query_count")
+
+
+def _stage_position(step: SliceStep, stage: SliceStage, index: int) -> tuple[int, int, int]:
+    return (step.step_number, STAGE_RANKS[stage.kind], index)
+
+
+def phase_facts(steps: list[SliceStep]) -> list[PhaseFacts]:
+    """The phases ``steps`` roll up into, by wave: the one function that computes them."""
+    by_wave: dict[int, list[SliceStep]] = {}
+    for step in steps:
+        if step.phase_wave is not None:
+            by_wave.setdefault(step.phase_wave, []).append(step)
+    out = []
+    for wave in sorted(by_wave):
+        members = by_wave[wave]
+        stages = [s for step in members for s in step.step_stages]
+        kinds = sorted({s.kind for s in stages}, key=lambda k: (STAGE_RANKS[k], k))
+        out.append(
+            PhaseFacts(
+                phase_wave=wave,
+                step_numbers=[s.step_number for s in members],
+                engines=[s.engine for s in members],
+                stage_labels=[s.label for s in stages],
+                stage_kinds=kinds,  # type: ignore[arg-type]
+                stage_count=len(stages),
+                query_count=sum(s.query_count for s in members),
+            )
+        )
+    return out
 
 
 class SlicePlanFacts(BaseModel):
     """The plan of steps, stages and move units, and the dependency graph behind its
     order (#1129, #1698; ADR-033's ``slice_plan``). ``migration_waves`` stays the engine
-    roll-up the deliverables show today; every step names its phase wave."""
+    roll-up the deliverables show today; every step names its phase wave, and ``wave_phases``
+    rolls the steps up by it."""
 
     step_basis: Literal["slices", "engine_waves"] = Field(
         ...,
         description=(
-            "slices: later steps are slices from the dependency graph; engine_waves: they "
-            "follow the migration waves (before #1698, and the engine-first scenario lever)"
+            "slices: later steps are slices from the dependency graph; engine_waves: one "
+            "step per migration wave, numbered as the wave (before #1698, and the "
+            "engine-first scenario lever)"
         ),
     )
     slice_basis: Literal["community"] | None = Field(
@@ -3959,14 +4039,25 @@ class SlicePlanFacts(BaseModel):
     )
     plan_steps: list[SliceStep] = Field(default_factory=list)
     step_count: int = Field(0, ge=0)
+    wave_phases: list[PhaseFacts] = Field(
+        default_factory=list, description="The steps rolled up by phase wave (phase_facts)"
+    )
     move_units: list[MoveUnit] = Field(default_factory=list)
     dependencies: list[UnitDependency] = Field(default_factory=list)
     kept_whole: list[KeptWholeGroup] = Field(
         default_factory=list, description="The groups no move unit splits"
     )
+    engine_monthly_cost_usd: dict[str, float] = Field(
+        default_factory=dict,
+        description="Each step engine's cost_breakdown estimate, the one the paths sum",
+    )
+    engine_critical_high_risks: dict[str, int] = Field(
+        default_factory=dict,
+        description="Each step engine's open critical and high risks, the ones the paths sum",
+    )
 
     @model_validator(mode="after")
-    def _consistent(self) -> "SlicePlanFacts":  # noqa: C901 -- one check per invariant
+    def _consistent(self) -> "SlicePlanFacts":
         _count_matches(self.step_count, self.plan_steps, "step_count")
         if [s.step_number for s in self.plan_steps] != list(range(1, len(self.plan_steps) + 1)):
             raise ValueError("steps are numbered 1, 2, ... in order")
@@ -3975,65 +4066,99 @@ class SlicePlanFacts(BaseModel):
         wrong_kind = "engine_wave" if self.step_basis == "slices" else "slice"
         if any(s.kind == wrong_kind for s in self.plan_steps):
             raise ValueError(f"a {self.step_basis} plan has no {wrong_kind} step")
+        if self.step_basis == "engine_waves" and any(
+            s.phase_wave != s.step_number for s in self.plan_steps
+        ):
+            # The data movement plans number their steps by wave (plan._steps): one
+            # numbering, so step k's files are the same step everywhere.
+            raise ValueError("an engine_waves step is numbered as its wave")
         _unique([s.slice_key for s in self.plan_steps if s.slice_key], "slice keys")
+        seen: set[str] = set()
+        for step in self.plan_steps:
+            if step.new_engine and step.engine in seen:
+                raise ValueError(f"step {step.step_number} reintroduces {step.engine}")
+            seen.add(step.engine)
+        if [p.model_dump() for p in self.wave_phases] != [
+            p.model_dump() for p in phase_facts(self.plan_steps)
+        ]:
+            raise ValueError("wave_phases must roll the steps up by phase wave (phase_facts)")
         units = {u.key: u for u in self.move_units}
         if len(units) != len(self.move_units):
             raise ValueError("move unit keys are unique")
-        position: dict[str, tuple[int, int]] = {}
-        stage_of: dict[str, SliceStage] = {}
-        for step in self.plan_steps:
-            pilots = 0
-            for i, stage in enumerate(step.step_stages):
-                members = []
-                for j, key in enumerate(stage.unit_keys):
-                    if key not in units:
-                        raise ValueError(f"stage {stage.label} names unknown unit {key}")
-                    if key in position:
-                        raise ValueError(f"unit {key} is in more than one stage")
-                    unit = units[key]
-                    position[key], stage_of[key] = _stage_position(step, stage), stage
-                    members.append(unit)
-                    if unit.engine != step.engine:
-                        raise ValueError(f"unit {key} moves to {unit.engine}, not {step.engine}")
-                    if unit.kind not in STAGE_UNIT_KINDS[stage.kind]:
-                        raise ValueError(f"a {stage.kind} stage holds no {unit.kind} unit")
-                    if unit.pilot:
-                        pilots += 1
-                        if (i, j) != (0, 0):
-                            raise ValueError("the pilot is the first unit of the first stage")
-                    _check_stage_shape(stage, unit)
-                if stage.query_count != sum(u.query_count for u in members):
-                    raise ValueError(f"stage {stage.label}: query_count must sum its units'")
-                if stage.owned_table_count != sum(u.owned_table_count for u in members):
-                    raise ValueError(f"stage {stage.label}: owned_table_count must sum its units'")
-            if pilots > 1:
-                raise ValueError(f"step {step.step_number} names more than one pilot")
+        position, stage_of = _place_units(self.plan_steps, units)
         missing = sorted(set(units) - set(position))
         if missing:
             raise ValueError(f"units in no stage: {missing}")
         _check_queries_and_groups(self.move_units, self.kept_whole)
+        _check_one_writer(self.move_units, self.kept_whole)
         for dep in self.dependencies:
             for key in (dep.unit_key, dep.depends_on):
                 if key not in units:
                     raise ValueError(f"dependency names unknown unit {key}")
-            if position[dep.depends_on] > position[dep.unit_key]:
+            if position[dep.depends_on] >= position[dep.unit_key]:
                 raise ValueError(
-                    f"{dep.unit_key} depends on {dep.depends_on}, which moves in a later stage"
+                    f"{dep.unit_key} depends on {dep.depends_on}, which does not run before it"
                 )
         _check_table_classes(self.plan_steps, units, stage_of)
+        engines = {s.engine for s in self.plan_steps}
+        for name, figures in (
+            ("engine_monthly_cost_usd", self.engine_monthly_cost_usd),
+            ("engine_critical_high_risks", self.engine_critical_high_risks),
+        ):
+            if set(figures) != engines:
+                raise ValueError(f"{name} names exactly the steps' engines")
         return self
+
+
+def _place_units(
+    steps: list[SliceStep], units: dict[str, MoveUnit]
+) -> tuple[dict[str, tuple[int, int, int]], dict[str, SliceStage]]:
+    """Each unit's run position (step, stage, place in the stage) and stage, with the
+    per-stage and per-step checks that need the units."""
+    position: dict[str, tuple[int, int, int]] = {}
+    stage_of: dict[str, SliceStage] = {}
+    for step in steps:
+        pilots = 0
+        for i, stage in enumerate(step.step_stages):
+            members = []
+            for j, key in enumerate(stage.unit_keys):
+                if key not in units:
+                    raise ValueError(f"stage {stage.label} names unknown unit {key}")
+                if key in position:
+                    raise ValueError(f"unit {key} is in more than one stage")
+                unit = units[key]
+                position[key], stage_of[key] = _stage_position(step, stage, j), stage
+                members.append(unit)
+                if unit.engine != step.engine:
+                    raise ValueError(f"unit {key} moves to {unit.engine}, not {step.engine}")
+                if unit.kind not in STAGE_UNIT_KINDS[stage.kind]:
+                    raise ValueError(f"a {stage.kind} stage holds no {unit.kind} unit")
+                if unit.pilot:
+                    pilots += 1
+                    if (i, j) != (0, 0):
+                        raise ValueError("the pilot is the first unit of the first stage")
+                _check_stage_shape(stage, unit)
+            if stage.query_count != sum(u.query_count for u in members):
+                raise ValueError(f"stage {stage.label}: query_count must sum its units'")
+            if stage.owned_table_count != sum(u.owned_table_count for u in members):
+                raise ValueError(f"stage {stage.label}: owned_table_count must sum its units'")
+            risks = sorted({r for u in members for r in u.holding_risk_ids})
+            if stage.holding_risk_ids != risks:
+                raise ValueError(f"stage {stage.label}: holding_risk_ids are its units' risks")
+        if step.kind == "slice" and step.unit_count > 1 and pilots == 0:
+            raise ValueError(f"slice step {step.step_number} names no pilot")
+    return position, stage_of
 
 
 def _check_stage_shape(stage: SliceStage, unit: MoveUnit) -> None:
     """The stage rules of #1129, first that applies: a risk holds its unit; a unit that
-    owns no table reads on a replica; one with no copy either way is self-contained."""
+    owns no table reads on a replica (STAGE_UNIT_KINDS and MoveUnit already keep an owner
+    out of stage a); one with no copy either way is self-contained."""
     if unit.kind not in MOVING_UNIT_KINDS:
         return
     if (stage.kind == "risk_held") != bool(unit.holding_risk_ids):
         raise ValueError(f"unit {unit.key}: a risk holds its unit in stage d, and only there")
     copies = bool(unit.replicated_in or unit.reverse_replicas)
-    if stage.kind == "replica_reads" and unit.owned_tables:
-        raise ValueError(f"unit {unit.key} owns tables, so it does not only read a replica")
     if stage.kind in ("self_contained", "with_reverse_replica") and not unit.owned_tables:
         raise ValueError(f"unit {unit.key} owns no table")
     if stage.kind == "self_contained" and copies:
@@ -4045,19 +4170,13 @@ def _check_stage_shape(stage: SliceStage, unit: MoveUnit) -> None:
 def _check_queries_and_groups(units: list[MoveUnit], groups: list[KeptWholeGroup]) -> None:
     """A query sits in at most one moving unit (and one cache unit); a kept-whole group is
     in one moving unit entirely, or in none (ADR-031 Amendment 9)."""
-    holder: dict[str, str] = {}
+    holder = _query_holders(units)
     cached: set[str] = set()
     for unit in units:
         if unit.kind == "cache_reads":
             if cached & set(unit.query_ids):
                 raise ValueError(f"unit {unit.key}: a cached read is in two cache units")
             cached |= set(unit.query_ids)
-        if unit.kind not in MOVING_UNIT_KINDS:
-            continue
-        for qid in unit.query_ids:
-            if qid in holder:
-                raise ValueError(f"query {qid} is in units {holder[qid]} and {unit.key}")
-            holder[qid] = unit.key
     _unique([g.group_id for g in groups], "kept_whole group ids")
     by_key = {u.key: u for u in units}
     known = {g.group_id for g in groups}
@@ -4080,20 +4199,54 @@ def _check_queries_and_groups(units: list[MoveUnit], groups: list[KeptWholeGroup
             )
 
 
+def _query_holders(units: list[MoveUnit]) -> dict[str, str]:
+    holder: dict[str, str] = {}
+    for unit in units:
+        if unit.kind not in MOVING_UNIT_KINDS:
+            continue
+        for qid in unit.query_ids:
+            if qid in holder:
+                raise ValueError(f"query {qid} is in units {holder[qid]} and {unit.key}")
+            holder[qid] = unit.key
+    return holder
+
+
+def _check_one_writer(units: list[MoveUnit], groups: list[KeptWholeGroup]) -> None:
+    """A table has one writer (ADR-031 Amendment 9): at most one moving unit owns it, and
+    a unit owns a table exactly when it holds the table's write group."""
+    owner: dict[str, str] = {}
+    for unit in units:
+        if unit.kind not in MOVING_UNIT_KINDS:
+            continue
+        for table in unit.owned_tables:
+            if table in owner:
+                raise ValueError(f"table {table} is owned by units {owner[table]} and {unit.key}")
+            owner[table] = unit.key
+    held = {g: u.key for u in units if u.kind in MOVING_UNIT_KINDS for g in u.kept_whole_ids}
+    for group in groups:
+        if group.kind != "write_group" or group.table is None:
+            continue
+        holder, table_owner = held.get(group.group_id), owner.get(group.table)
+        if holder is not None and table_owner != holder:
+            raise ValueError(f"unit {holder} moves {group.table}'s writes but does not own it")
+        if table_owner is not None and holder != table_owner:
+            raise ValueError(f"unit {table_owner} owns {group.table} without its write group")
+
+
 def _check_table_classes(
     steps: list[SliceStep], units: dict[str, MoveUnit], stage_of: dict[str, SliceStage]
 ) -> None:
     """Wave 1's table classes agree with the units: every table a later unit owns leaves
     in that unit's stage, and every table replicated out is one a later unit reads from
     the relational engine."""
-    cutover = next((s for s in steps if s.kind == "relational_cutover"), None)
-    if cutover is None or cutover.table_classes is None:
+    relational = next((s for s in steps if s.kind == "relational_step"), None)
+    if relational is None or relational.table_classes is None:
         return
-    classes = cutover.table_classes
-    whole = units[cutover.step_stages[0].unit_keys[0]]
+    classes = relational.table_classes
+    whole = units[relational.step_stages[0].unit_keys[0]]
     classified = [*classes.stays, *(t.table for t in classes.leaves), *classes.replicated_out]
     if set(classified + classes.unread) != set(whole.owned_tables):
-        raise ValueError("the table classes sort exactly the tables the cutover carries")
+        raise ValueError("the table classes sort exactly the tables the relational step carries")
     owned = {
         t: stage_of[k].label
         for k, u in units.items()
@@ -4107,7 +4260,7 @@ def _check_table_classes(
         r.table
         for u in units.values()
         for r in u.replicated_in
-        if r.source_of_truth == cutover.engine
+        if r.source_of_truth == relational.engine
     }
     if set(classes.replicated_out) != read_from_relational - set(owned):
         raise ValueError("replicated_out must be the relational tables a later unit reads")
@@ -4129,15 +4282,17 @@ class OneStepCheck(BaseModel):
 
 
 class OneStepFacts(BaseModel):
-    """The full target taken in one step instead of staged (#473): same end state, so the
-    same cost, engines, queries and tables; one cutover with every gate verified first."""
+    """The full target as one step instead of staged (#473, "modernize in one step"): the
+    same end state, so the same cost, engines, queries and tables, in one step whose gate
+    holds every stage gate of the staged form."""
 
-    cutovers: int = Field(1, ge=1, le=1, description="One cutover")
-    staged_cutovers: int = Field(..., ge=0, description="The staged form's cutovers: its stages")
-    gate_count: int = Field(..., ge=0, description="The stage gates, verified together")
+    step_count: int = Field(1, ge=1, le=1, description="One step")
+    staged_step_count: int = Field(..., ge=0, description="The staged form's steps")
+    staged_stage_count: int = Field(..., ge=0, description="The staged form's stages")
+    gate_count: int = Field(..., ge=0, description="The stage gates the one step's gate holds")
     temporary_stream_count: int = Field(0, ge=0, le=0, description="One step needs none")
     staged_temporary_stream_count: int = Field(
-        ..., ge=0, description="The reverse streams the staged form's stage c needs until it ends"
+        ..., ge=0, description="The reverse streams the staged form's stage c needs"
     )
     suits_one_step: bool
     one_step_checks: list[OneStepCheck] = Field(..., min_length=1)
@@ -4151,6 +4306,15 @@ class OneStepFacts(BaseModel):
         if self.suits_one_step != all(c.passed for c in self.one_step_checks):
             raise ValueError("suits_one_step means every check passed")
         return self
+
+
+def _path_step(path_id: str) -> int | None:
+    match = PATH_ID_RE.match(path_id)
+    if match is None:
+        raise ValueError(
+            f"path id {path_id!r} is not relational_only, through_step_<k> or full_target"
+        )
+    return int(match.group(1)) if match.group(1) else None
 
 
 class AdoptionPathFacts(BaseModel):
@@ -4176,6 +4340,10 @@ class AdoptionPathFacts(BaseModel):
         description="Aurora stays sized for the whole workload, so its cost is an upper bound",
     )
     critical_high_risks: int = Field(..., ge=0)
+    replicated_tables: list[str] = Field(
+        default_factory=list,
+        description="The tables it reads through a CDC copy, either way, sorted (#1131 caps them)",
+    )
     replicated_table_count: int = Field(..., ge=0)
     temporary_stream_count: int = Field(..., ge=0)
     first_gate: str | None = Field(None)
@@ -4183,12 +4351,18 @@ class AdoptionPathFacts(BaseModel):
     @model_validator(mode="after")
     def _consistent(self) -> "AdoptionPathFacts":
         _unique(self.engines, "engines")
+        step = _path_step(self.path_id)
+        if step is not None and step != self.stops_after_step:
+            raise ValueError(f"{self.path_id} stops after step {step}")
         if self.step_count != self.stops_after_step:
             raise ValueError("a path takes steps 1 to stops_after_step")
-        if sum(self.queries_by_engine.values()) < self.queries_moved:
-            raise ValueError("queries_by_engine counts at least the queries moved")
         if set(self.queries_by_engine) - set(self.engines):
             raise ValueError("queries_by_engine names only the path's engines")
+        _count_matches(
+            self.replicated_table_count, self.replicated_tables, "replicated_table_count"
+        )
+        if self.replicated_tables != sorted(set(self.replicated_tables)):
+            raise ValueError("replicated_tables are sorted, each once")
         return self
 
 
@@ -4206,6 +4380,7 @@ class NotOfferedPath(BaseModel):
 
     @model_validator(mode="after")
     def _counts(self) -> "NotOfferedPath":
+        _path_step(self.path_id)
         _count_matches(self.failing_query_count, self.failing_query_ids, "failing_query_count")
         return self
 
@@ -4225,6 +4400,10 @@ class AdoptionFacts(BaseModel):
         _count_matches(self.path_count, self.paths, "path_count")
         ids = [p.path_id for p in self.paths]
         _unique(ids, "path ids")
+        if "full_target" in ids and ids[-1] != "full_target":
+            raise ValueError("full_target goes last")
+        if "relational_only" in ids and ids[0] != "relational_only":
+            raise ValueError("relational_only goes first")
         stops = [p.stops_after_step for p in self.paths]
         if stops != sorted(set(stops)):
             raise ValueError("paths are listed by the step they stop after, one per step")
@@ -4232,8 +4411,6 @@ class AdoptionFacts(BaseModel):
             raise ValueError("a default path is named exactly when paths exist")
         if self.default_path_id is not None and self.default_path_id not in ids:
             raise ValueError("the default path is an offered path")
-        if "full_target" in ids and ids[-1] != "full_target":
-            raise ValueError("full_target goes last")
         if set(ids) & {n.path_id for n in self.not_offered}:
             raise ValueError("a path is offered or not offered, not both")
         for n in self.not_offered:
@@ -4242,34 +4419,145 @@ class AdoptionFacts(BaseModel):
         return self
 
 
-def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -> None:
-    """The paths agree with the steps they stop after (#1130): a path takes steps 1 to k,
-    its stages, gates and end-state engines are theirs, and the one-step form counts the
-    full target's stages."""
+def _moving_units(plan: SlicePlanFacts, steps: list[SliceStep]) -> list[tuple[str, MoveUnit]]:
+    units = {u.key: u for u in plan.move_units}
+    return [
+        (stage.kind, units[k])
+        for step in steps
+        for stage in step.step_stages
+        for k in stage.unit_keys
+        if units[k].kind in MOVING_UNIT_KINDS
+    ]
+
+
+def _streams(plan: SlicePlanFacts, steps: list[SliceStep]) -> int:
+    return sum(
+        len(u.reverse_replicas)
+        for kind, u in _moving_units(plan, steps)
+        if kind == "with_reverse_replica"
+    )
+
+
+def _expected_path(plan: SlicePlanFacts, stop: int) -> dict[str, Any]:
+    """Every figure of the path that stops after step ``stop``, from the plan alone."""
     steps = plan.plan_steps
+    taken = steps[:stop]
+    moving = [s for s in taken if s.kind in MOVING_STEP_KINDS]
+    moved = sum(s.query_count for s in moving)
+    by_engine: dict[str, int] = {}
+    for s in moving:
+        by_engine[s.engine] = by_engine.get(s.engine, 0) + s.query_count
+    relational = steps[0] if steps and steps[0].kind == "relational_step" else None
+    if relational is not None:
+        by_engine[relational.engine] = relational.query_count - moved
+    engines = list(dict.fromkeys(s.engine for s in taken))
+    baseline = [s.engine for s in steps if s.kind in NO_MOVE_STEP_KINDS]
+    try:
+        cost = round(sum(plan.engine_monthly_cost_usd[e] for e in engines), 2)
+        relational_cost = round(sum(plan.engine_monthly_cost_usd[e] for e in set(baseline)), 2)
+        risks = sum(plan.engine_critical_high_risks[e] for e in engines)
+    except KeyError as missing:
+        raise ValueError(f"the plan states no cost or risks for {missing}") from None
+    replicated = {
+        t
+        for _, u in _moving_units(plan, taken)
+        for t in [
+            *(r.table for r in u.replicated_in),
+            *(t for r in u.reverse_replicas for t in r.tables),
+        ]
+    }
+    return {
+        "engines": set(engines),
+        "stage_count": sum(s.stage_count for s in taken),
+        "queries_moved": moved,
+        "queries_by_engine": by_engine,
+        "tables_migrate": sum(s.owned_table_count for s in moving),
+        "monthly_cost_usd": cost,
+        "cost_delta_vs_relational_usd": round(cost - relational_cost, 2),
+        "critical_high_risks": risks,
+        "replicated_tables": sorted(replicated),
+        "temporary_stream_count": _streams(plan, taken),
+    }
+
+
+def check_adoption_against_plan(adoption: AdoptionFacts, plan: SlicePlanFacts) -> None:
+    """The paths are the plan stopped after a step (#1130): every figure a path states is
+    the one its steps 1 to k give, its id names where it stops, and the one-step form
+    states the plan's own counts."""
+    steps = plan.plan_steps
+    lead = 0
+    while lead < len(steps) and steps[lead].kind in NO_MOVE_STEP_KINDS:
+        lead += 1
     for path in adoption.paths:
         if path.stops_after_step > len(steps):
             raise ValueError(f"{path.path_id} stops after a step the plan does not have")
-        taken = steps[: path.stops_after_step]
-        if path.stage_count != sum(s.stage_count for s in taken):
-            raise ValueError(f"{path.path_id}: stage_count must count its steps' stages")
+        if path.path_id == "relational_only" and path.stops_after_step != lead:
+            raise ValueError("relational_only stops after the steps that move no query")
+        if path.path_id == "full_target" and path.stops_after_step != len(steps):
+            raise ValueError("full_target takes every step")
+        if path.path_id.startswith("through_step_") and not (
+            lead < path.stops_after_step < len(steps)
+        ):
+            raise ValueError(f"{path.path_id} must stop between relational_only and full_target")
+        expected = _expected_path(plan, path.stops_after_step)
+        stated = path.model_dump()
+        stated["engines"] = set(path.engines)
+        for name, value in expected.items():
+            if stated[name] != value:
+                raise ValueError(
+                    f"{path.path_id}: {name} is {stated[name]}, the steps give {value}"
+                )
         if path.gate_count != path.stage_count:
             raise ValueError(f"{path.path_id}: every stage has one gate")
-        if set(path.engines) != {s.engine for s in taken}:
-            raise ValueError(f"{path.path_id}: engines must be its steps' engines")
-        if path.first_gate is not None and path.first_gate != taken[0].step_stages[0].gate:
+        if path.first_gate is not None and path.first_gate != steps[0].step_stages[0].gate:
             raise ValueError(f"{path.path_id}: first_gate is its first stage's gate")
-    full = next((p for p in adoption.paths if p.path_id == "full_target"), None)
-    if full is not None and full.stops_after_step != len(steps):
-        raise ValueError("full_target takes every step")
-    if adoption.one_step is not None:
-        stages = sum(s.stage_count for s in steps)
-        if adoption.one_step.staged_cutovers != stages or adoption.one_step.gate_count != stages:
-            raise ValueError("the one-step form compares against every stage of the plan")
-        if full is not None and (
-            adoption.one_step.staged_temporary_stream_count != full.temporary_stream_count
-        ):
-            raise ValueError("the staged form's temporary streams are the full target's")
+    one = adoption.one_step
+    if one is None:
+        return
+    stages = sum(s.stage_count for s in steps)
+    if (one.staged_step_count, one.staged_stage_count, one.gate_count) != (
+        len(steps),
+        stages,
+        stages,
+    ):
+        raise ValueError("the one-step form states the plan's step, stage and gate counts")
+    if one.staged_temporary_stream_count != _streams(plan, steps):
+        raise ValueError("the staged form's temporary streams are the plan's stage c streams")
+    observed = {c.rule: c.observed for c in one.one_step_checks}
+    expected_observed = {
+        "no_open_critical_high_risk": sum(plan.engine_critical_high_risks.values()),
+        "at_most_one_purpose_built_target": len(
+            {s.engine for s in steps if s.kind in MOVING_STEP_KINDS}
+        ),
+        "no_reverse_replica_stage": sum(
+            1 for s in steps for st in s.step_stages if st.kind == "with_reverse_replica"
+        ),
+    }
+    if observed != expected_observed:
+        raise ValueError("the one-step checks state the plan's own figures")
+
+
+def check_plan_against_facts(
+    plan: SlicePlanFacts,
+    adoption: AdoptionFacts | None,
+    engine_costs: dict[str, float | None],
+    risks_by_engine: dict[str, int],
+    no_migration_engines: list[str],
+) -> None:
+    """The plan's per-engine figures are the report's (``facts.engines``' costs and
+    ``critical_high_risks_by_engine``), and the relational-only path ends on the engines
+    that need no data migration (``facts.no_migration``)."""
+    for engine, cost in plan.engine_monthly_cost_usd.items():
+        if engine_costs.get(engine) != cost:
+            raise ValueError(f"{engine}'s cost is {engine_costs.get(engine)} in facts.engines")
+    for engine, count in plan.engine_critical_high_risks.items():
+        if risks_by_engine.get(engine, 0) != count:
+            raise ValueError(f"{engine}'s critical and high risks differ from the facts'")
+    path = next(
+        (p for p in (adoption.paths if adoption else []) if p.path_id == "relational_only"), None
+    )
+    if path is not None and set(path.engines) != set(no_migration_engines):
+        raise ValueError("relational_only ends on facts.no_migration's engines")
 
 
 class ReportFacts(BaseModel):
@@ -4640,6 +4928,14 @@ class ReportFacts(BaseModel):
     def _adoption_follows_the_plan(self) -> "ReportFacts":
         if self.adoption is not None and self.slice_plan is not None:
             check_adoption_against_plan(self.adoption, self.slice_plan)
+        if self.slice_plan is not None and self.slice_plan.plan_steps:
+            check_plan_against_facts(
+                self.slice_plan,
+                self.adoption,
+                {e.engine: e.monthly_cost_usd for e in self.engines},
+                self.critical_high_risks_by_engine,
+                self.no_migration.engines,
+            )
         return self
 
 

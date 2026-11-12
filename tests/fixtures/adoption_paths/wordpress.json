@@ -190,7 +190,7 @@
       "plan_steps": [
         {
           "step_number": 1,
-          "kind": "relational_cutover",
+          "kind": "relational_step",
           "engine": "aurora_mysql",
           "new_engine": true,
           "movement": "homogeneous",
@@ -199,7 +199,7 @@
           "step_stages": [
             {
               "label": "1",
-              "kind": "cutover",
+              "kind": "whole_database",
               "unit_keys": [
                 "aurora_mysql:whole-database"
               ],
@@ -469,6 +469,63 @@
         }
       ],
       "step_count": 3,
+      "wave_phases": [
+        {
+          "phase_wave": 1,
+          "step_numbers": [
+            1
+          ],
+          "engines": [
+            "aurora_mysql"
+          ],
+          "stage_labels": [
+            "1"
+          ],
+          "stage_kinds": [
+            "whole_database"
+          ],
+          "stage_count": 1,
+          "query_count": 107
+        },
+        {
+          "phase_wave": 2,
+          "step_numbers": [
+            2
+          ],
+          "engines": [
+            "elasticache"
+          ],
+          "stage_labels": [
+            "2a"
+          ],
+          "stage_kinds": [
+            "cache_reads"
+          ],
+          "stage_count": 1,
+          "query_count": 15
+        },
+        {
+          "phase_wave": 3,
+          "step_numbers": [
+            3
+          ],
+          "engines": [
+            "dynamodb"
+          ],
+          "stage_labels": [
+            "3a",
+            "3b",
+            "3c"
+          ],
+          "stage_kinds": [
+            "replica_reads",
+            "self_contained",
+            "with_reverse_replica"
+          ],
+          "stage_count": 3,
+          "query_count": 40
+        }
+      ],
       "move_units": [
         {
           "key": "aurora_mysql:whole-database",
@@ -734,6 +791,9 @@
           "reverse_replicas": [
             {
               "engine": "aurora_mysql",
+              "tables": [
+                "wordpress.wp_comments"
+              ],
               "query_ids": [
                 "q020",
                 "q021"
@@ -791,6 +851,9 @@
           "reverse_replicas": [
             {
               "engine": "aurora_mysql",
+              "tables": [
+                "wordpress.wp_wc_orders"
+              ],
               "query_ids": [
                 "q023",
                 "q024",
@@ -864,6 +927,10 @@
           "reverse_replicas": [
             {
               "engine": "aurora_mysql",
+              "tables": [
+                "wordpress.wp_postmeta",
+                "wordpress.wp_posts"
+              ],
               "query_ids": [
                 "q016",
                 "q017",
@@ -1075,7 +1142,17 @@
           ],
           "table": "wordpress.wp_woocommerce_order_items"
         }
-      ]
+      ],
+      "engine_monthly_cost_usd": {
+        "aurora_mysql": 251.24,
+        "elasticache": 184.59,
+        "dynamodb": 76.75
+      },
+      "engine_critical_high_risks": {
+        "aurora_mysql": 0,
+        "elasticache": 0,
+        "dynamodb": 0
+      }
     },
     "adoption": {
       "default_path_id": "full_target",
@@ -1100,6 +1177,7 @@
           "cost_delta_vs_current_usd": null,
           "cost_is_upper_bound": true,
           "critical_high_risks": 0,
+          "replicated_tables": [],
           "replicated_table_count": 0,
           "temporary_stream_count": 0,
           "first_gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility."
@@ -1126,6 +1204,15 @@
           "cost_delta_vs_current_usd": null,
           "cost_is_upper_bound": true,
           "critical_high_risks": 0,
+          "replicated_tables": [
+            "wordpress.wp_comments",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_terms",
+            "wordpress.wp_users",
+            "wordpress.wp_wc_orders"
+          ],
           "replicated_table_count": 7,
           "temporary_stream_count": 3,
           "first_gate": "Full load complete and replication in progress from MySQL to Aurora MySQL for 50 tables. The cutover is your responsibility."
@@ -1134,8 +1221,9 @@
       "path_count": 2,
       "not_offered": [],
       "one_step": {
-        "cutovers": 1,
-        "staged_cutovers": 5,
+        "step_count": 1,
+        "staged_step_count": 3,
+        "staged_stage_count": 5,
         "gate_count": 5,
         "temporary_stream_count": 0,
         "staged_temporary_stream_count": 3,

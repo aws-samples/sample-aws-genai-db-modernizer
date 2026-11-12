@@ -1167,10 +1167,10 @@
     "module": "synthesis_output",
     "values": [
       "cache_reads",
-      "cutover",
       "replica_reads",
       "risk_held",
       "self_contained",
+      "whole_database",
       "with_reverse_replica"
     ],
     "version": "1.96"
@@ -1180,7 +1180,7 @@
     "values": [
       "cache",
       "engine_wave",
-      "relational_cutover",
+      "relational_step",
       "slice"
     ],
     "version": "1.96"
