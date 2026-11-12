@@ -11,6 +11,7 @@ from __future__ import annotations
 from src.shared.migration_wave_engines import (
     CACHE_FRONT_REFERENCE,
     cache_front_description,
+    cache_front_is_staged,
     cache_front_reference,
 )
 
@@ -81,3 +82,18 @@ class TestCacheFrontReference:
             assert cache_front_reference(retained, owners) == cache_front_description(
                 retained, owners
             )
+
+
+def test_staging_is_decided_from_the_data_not_the_sentence() -> None:
+    """#2171 review (ADR-032 Decision 6): whether the front is staged is read from the
+    retained engine and the owners, the same data the sentence is worded from."""
+    cases = [
+        ("aurora_postgresql", {"dynamodb": 1}, True),
+        ("aurora_mysql", {"aurora_mysql": 16, "dynamodb": 4}, True),
+        ("aurora_postgresql", {"aurora_postgresql": 3}, False),
+        ("aurora_mysql", {}, False),
+        (None, {"dynamodb": 3}, False),
+    ]
+    for retained, owners, staged in cases:
+        assert cache_front_is_staged(retained, owners) is staged
+        assert ("once wave 3" in cache_front_description(retained, owners)) is staged
