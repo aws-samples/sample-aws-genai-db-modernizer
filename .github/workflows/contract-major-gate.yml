@@ -1,10 +1,12 @@
 name: Contract MAJOR gate
 
-# Fails when a PR moves the assess() contract MAJOR (request or result) without a
-# a maintainer's approval: the "Contract Major Approved" label on it when the check
-# runs (#1648). The logic and its tests: ci/contract_major_gate.py,
-# tests/unit/ci/test_contract_major_gate.py. Labels are read from the API with a
-# read-only token, not from the event payload, so a rerun sees the current labels.
+# Fails when a PR moves the assess() contract version (request or result) without a
+# maintainer's approval: "contract-major" for a MAJOR ("Contract Major Approved" still
+# counts), "contract-minor" for a MINOR, on the PR when the check runs and applied by a
+# user with the maintain or admin role (#1648, #2176). Internal contracts need no label. The logic
+# and its tests: ci/contract_major_gate.py, tests/unit/ci/test_contract_major_gate.py.
+# Labels, label events and roles are read from the API with a read-only token, not
+# from the event payload, so a rerun sees the current labels.
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
@@ -34,20 +36,28 @@ jobs:
           # the script reads the revision before them.
           fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '2' }}
           persist-credentials: false
-      - name: Check the assess() contract MAJOR
+      - name: Check the assess() contract version approvals
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_REF: ${{ github.event.merge_group.head_ref }}
+        # The gate never runs the pull request's own copy of its script (#2176): it takes
+        # ci/contract_major_gate.py from the base (main's tip for a pull request, the
+        # group's base in the merge queue) and runs it on the tree under test. The
+        # script is standard library only, so that one file is all it needs.
         run: |
           case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            merge_group) base="$MERGE_GROUP_BASE" ;;
+            *) echo "::error::unexpected event $EVENT"; exit 2 ;;
+          esac
+          gate="$RUNNER_TEMP/contract_major_gate.py"
+          git show "$base:ci/contract_major_gate.py" > "$gate"
+          case "$EVENT" in
             pull_request)
-              python3 ci/contract_major_gate.py --base HEAD^1 --head HEAD --pr "$PR_NUMBER" ;;
+              python3 "$gate" --base "$base" --head HEAD --pr "$PR_NUMBER" ;;
             merge_group)
-              python3 ci/contract_major_gate.py --base "$MERGE_GROUP_BASE" --head HEAD \
-                --merge-group-ref "$MERGE_GROUP_REF" ;;
-            *)
-              echo "::error::unexpected event $EVENT"; exit 2 ;;
+              python3 "$gate" --base "$base" --head HEAD --merge-group-ref "$MERGE_GROUP_REF" ;;
           esac

@@ -144,16 +144,21 @@ else
     printf '%s\n' "$contract_out" | sed 's/^/       /'
   fi
 fi
-# Pending bumps (ADR-008 Decision 8): fine while the PR is open, refused by the merge queue.
+# Pending bumps (ADR-008 Decision 8, #2176): a MINOR merges as it is and the release resolves
+# it; the merge queue refuses a pending MAJOR, which the pull request resolves itself.
 pending="$(helper pending)"
 if [ -n "$pending" ]; then
-  note "warn contracts: $(printf '%s\n' "$pending" | wc -l | tr -d ' ') pending bump(s); after the last rebase, before the merge queue, run: uv run python scripts/resolve_contract_versions.py --base $compare_ref"
+  if printf '%s\n' "$pending" | grep -q ' major$'; then
+    note "warn contracts: a pending MAJOR is refused by the merge queue; after the last rebase, run: uv run python scripts/resolve_contract_versions.py --base $compare_ref"
+  else
+    note "info contracts: $(printf '%s\n' "$pending" | wc -l | tr -d ' ') pending bump(s); they merge as they are and the release resolves them"
+  fi
   printf '%s\n' "$pending" | sed 's/^/       /'
 fi
-# Every contract change since the merge base moves its version or has a pending bump,
-# even when the branch regenerated its own snapshot (ADR-008 Decision 8).
+# Every contract change since the merge base has a pending file of its own or a resolved
+# version, and nothing only a resolve writes was written by hand (ADR-008 Decision 8).
 if against_out="$(uv run python scripts/resolve_contract_versions.py --check --against "$(git merge-base HEAD "$compare_ref")" 2>&1)"; then
-  note "ok   contracts: every contract change since the merge base is versioned or declared"
+  note "ok   contracts: every contract change since the merge base is declared or resolved, none by hand"
 else
   fail "contracts: a contract changed without a version bump or a pending bump"
   printf '%s\n' "$against_out" | grep -v '^ok\|^pending' | sed 's/^/       /'

@@ -5,8 +5,8 @@
 """PreToolUse hook (Edit/Write): refuse hand edits of contract versions (#1408).
 
 A contract's ``contract_version`` default and its Version History entries are
-written by ``scripts/resolve_contract_versions.py`` after the last rebase, from
-the pending bumps ``scripts/bump_contract.py`` declares (ADR-008 Decision 8). A
+written by ``scripts/resolve_contract_versions.py --release`` at release (a MAJOR by
+``scripts/resolve_contract_versions.py`` in its pull request), from the pending bumps ``scripts/bump_contract.py`` declares (ADR-008 Decision 8). A
 hand edit collides with main's next number and was sent back in review, so an
 Edit, MultiEdit or Write of ``src/contracts/<module>.py`` that changes an existing
 model's default, or a Version History line, is refused. The resolver runs as a
@@ -31,8 +31,9 @@ hand-bumped set is module-wide for Version History: in a module that has one, a 
 edit passes even next to a resolvable contract. ``aurora_design_delta`` keeps its version
 only in ``DELTA_VERSION``, which the hook does not watch. A Version History conflict on a
 rebase: take main's side of the version hunks with git (or edit out the markers, which
-the hook allows while they are in the file), keep the branch's pending files, then re-run
-``uv run python scripts/resolve_contract_versions.py`` after the last rebase.
+the hook allows while they are in the file), keep the branch's pending files, and do
+nothing more: the release resolves them (``uv run python scripts/resolve_contract_versions.py
+--release``; a MAJOR is resolved in its pull request after the last rebase).
 
 Only a call that moves a version line loads that repo code; every other call
 stays stdlib-only. The patterns are copies of ``scripts/contract_bumps.py``'s;
@@ -65,7 +66,8 @@ _CONFLICT_RE = re.compile(r"^(<<<<<<<|>>>>>>>) ", re.MULTILINE)
 MESSAGE = (
     "Blocked: {name}: do not change {what} by hand. Declare the bump with: "
     'uv run python scripts/bump_contract.py <contract> minor|major --reason "..." '
-    "--issue N; after the last rebase, uv run python scripts/resolve_contract_versions.py "
+    "--issue N; the release resolve (uv run python scripts/resolve_contract_versions.py "
+    "--release; a MAJOR: the same script without --release, in its pull request) "
     "writes the version and the history entry. Adding or removing a versioned model, "
     "and a contract bump_contract.py says to bump by hand, are allowed."
 )

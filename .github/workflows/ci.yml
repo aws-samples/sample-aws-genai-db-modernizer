@@ -367,15 +367,17 @@ jobs:
         # `git archive` of src/ at the tag.
         run: git fetch -q --no-tags --depth=1 origin 'refs/tags/*:refs/tags/*'
       - name: Check pending contract bumps
-        # A pull request declares a bump kind in src/contracts/pending/ and the number is
-        # assigned after its last rebase (ADR-008 Decision 8). Pending files are valid on
-        # a pull request; the merge queue and main refuse them, so main never holds one.
-        # It also compares the contracts with main's committed snapshots (--against), so
-        # a shape change with no version move and no pending file fails even when the
-        # branch regenerated its own snapshot. The base is main's tip: HEAD^1 of a pull
-        # request's merge commit, the merge group's base, or the commit before a push.
+        # A pull request declares a bump kind in src/contracts/pending/ and the release
+        # resolves every pending file once (ADR-008 Decision 8, #2176). A pending MINOR
+        # may reach main; the merge queue and main refuse a pending MAJOR, which the pull
+        # request that makes it resolves. --against compares the contracts with main's
+        # committed snapshots and with the snapshots main's own code builds, so a shape or
+        # value change with no pending file of its own fails, and refuses a version,
+        # Version History line or snapshot entry written by hand. The base is main's tip:
+        # HEAD^1 of a pull request's merge commit, the merge group's base, or the commit
+        # before a push.
         env:
-          REQUIRE_RESOLVED: ${{ github.event_name != 'pull_request' && '--require-resolved' || '' }}
+          PENDING_MAJOR: ${{ github.event_name != 'pull_request' && '--refuse-pending-major' || '' }}
           EVENT: ${{ github.event_name }}
           MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
@@ -423,7 +425,7 @@ jobs:
             git cat-file -e "$base^{commit}" 2>/dev/null || git fetch -q --depth=1 origin "$base"
             against=(--against "$base")
           fi
-          uv run python scripts/resolve_contract_versions.py --check $REQUIRE_RESOLVED "${against[@]}"
+          uv run python scripts/resolve_contract_versions.py --check $PENDING_MAJOR "${against[@]}"
       - name: Check no test pins a contract version
         # Bumps every contract one MINOR in a scratch worktree, as the resolver does
         # after the last rebase, and runs the tests that mention a contract version,

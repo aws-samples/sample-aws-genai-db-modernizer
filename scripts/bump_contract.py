@@ -11,8 +11,9 @@ or a contract module (``synthesis_output``) when the module has one versioned mo
 or none and a Version History of its own. The script writes
 ``src/contracts/pending/<contract>.<slug>.toml`` (the slug defaults to the branch
 name) and changes nothing else: the version number, the Version History entry and
-the snapshots are written by ``scripts/resolve_contract_versions.py`` after the last
-rebase. Running it again for the same contract and slug replaces the file.
+the snapshots are written by ``scripts/resolve_contract_versions.py --release`` at
+release (a MAJOR: by ``scripts/resolve_contract_versions.py`` in its own pull request,
+after the last rebase; #2176). Running it again for the same contract and slug replaces the file.
 """
 
 from __future__ import annotations
@@ -125,7 +126,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{'replaced' if replaced else 'wrote'} {shown} ({contract}, {args.kind})")
     if args.kind == "major":
         print("note: a MAJOR bump ships its reader adapter in the same change (ADR-008 Decision 4)")
-    print(f"after your last rebase, before the merge queue: {RESOLVE_COMMAND}")
+    if args.kind == "major":
+        print(
+            f"a MAJOR is resolved in this pull request, after your last rebase: {RESOLVE_COMMAND}"
+        )
+    else:
+        print(
+            "leave the version, the Version History and the snapshots at main's: the release "
+            f"resolves it ({RESOLVE_COMMAND} --release)"
+        )
     return 0
 
 

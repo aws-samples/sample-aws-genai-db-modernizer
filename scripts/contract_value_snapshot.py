@@ -213,7 +213,8 @@ def evaluate_snapshot(
 
     ``pending_modules`` maps a contract module to the strongest bump kind its pending
     files declare (ADR-008 Decision 8): a value change that kind covers is accepted
-    with the version left at main's until ``scripts/resolve_contract_versions.py``.
+    with the version left at main's until the release resolve
+    (``scripts/resolve_contract_versions.py --release``).
     The version a pending module's committed entry records is not compared either
     (#1393): the resolver writes it, and it goes stale whenever another pull request's
     bump of the same module lands first (a new set records main's version of the day);

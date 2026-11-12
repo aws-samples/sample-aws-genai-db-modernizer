@@ -5,7 +5,8 @@
 
 A scratch clone of this repository gets branch A (a resolved bump of one contract plus a
 field) and branch B on top of A with its own pending file for the same contract, the
-#1640 shape. A fake ``gh`` lists A as an open pull request. The real
+#1640 shape. Since #2176 only a MAJOR is resolved in its pull request (a MINOR waits for
+the release), so A's bump is a MAJOR. A fake ``gh`` lists A as an open pull request. The real
 ``ci/pre_merge.py stacked``, ``ci/pre_merge.py contracts`` and
 ``resolve_contract_versions.py --check --against`` run, and so does the ``run:`` text of
 the ``Check pending contract bumps`` step read from ``.github/workflows/ci.yml``, on a
@@ -132,8 +133,8 @@ class Scratch:
             path.read_text() + f'    {name}: str | None = Field(default=None, description="x")\n'
         )
 
-    def declare(self, reason: str) -> None:
-        proc = self.py("scripts/bump_contract.py", CONTRACT, "minor", "--reason", reason)
+    def declare(self, reason: str, kind: str = "minor") -> None:
+        proc = self.py("scripts/bump_contract.py", CONTRACT, kind, "--reason", reason)
         assert proc.returncode == 0, proc.stderr + proc.stdout
 
     def resolve(self) -> None:
@@ -143,11 +144,12 @@ class Scratch:
 
 @pytest.fixture(scope="module")
 def stack(tmp_path_factory):
-    """main, A (resolved bump + field) and B on A (its own pending file for the same contract)."""
+    """main, A (resolved MAJOR + field) and B on A (its own pending file for the same
+    contract)."""
     s = Scratch(tmp_path_factory.mktemp("stacked"))
     s.git("checkout", "-q", "-b", "a")
     s.add_field("scratch_a")
-    s.declare("Added scratch_a.")
+    s.declare("Added scratch_a.", "major")
     s.resolve()
     s.a = s.commit("a: bump resolved")
     s.git("checkout", "-q", "-b", "b")
@@ -194,11 +196,12 @@ def test_local_checks_pass_against_the_stack_and_fail_against_main(stack):
     assert wrong.returncode == 1 and "moved the version by hand" in wrong.stdout
 
 
+@pytest.mark.passes_on_main  # #2176 only renames the step's env flag
 def test_the_ci_step_compares_a_pull_request_with_the_stacked_on_head(stack):
     s = stack
     merge = _merge(s, "b")
     s.set_prs([(101, "a", s.a)])
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="")
     assert got.returncode == 0, got.stdout + got.stderr
     assert "stacked on #101: re-check after #101 merges" in got.stdout
     assert "not checked here" in got.stdout
@@ -214,7 +217,7 @@ def test_the_merge_queue_always_compares_with_main(stack):
     s.set_prs([(101, "a", s.a)])
     s.log.write_text("")
     got = _run_step(
-        s, EVENT="merge_group", MERGE_GROUP_BASE=s.main, REQUIRE_RESOLVED="--require-resolved"
+        s, EVENT="merge_group", MERGE_GROUP_BASE=s.main, PENDING_MAJOR="--refuse-pending-major"
     )
     assert got.returncode == 1
     assert "moved the version by hand" in got.stdout  # compared with main, not with A
@@ -228,7 +231,7 @@ def test_a_push_compares_with_the_commit_before_it(stack):
     _merge(s, "b")
     s.set_prs([(101, "a", s.a)])
     s.log.write_text("")
-    got = _run_step(s, EVENT="push", PUSH_BEFORE=s.main, REQUIRE_RESOLVED="--require-resolved")
+    got = _run_step(s, EVENT="push", PUSH_BEFORE=s.main, PENDING_MAJOR="--refuse-pending-major")
     assert got.returncode == 1 and s.log.read_text() == ""
 
 
@@ -240,7 +243,7 @@ def test_when_a_moves_there_is_no_stack_and_the_check_compares_with_main(stack):
     s.set_prs([(101, "a", "f" * 40)])
     assert s.py("ci/pre_merge.py", "stacked", "--main-ref", "main").stdout == ""
     _merge(s, "b")
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="")
     assert got.returncode == 1 and "moved the version by hand" in got.stdout
     assert "stacked on" not in got.stdout
 
@@ -253,7 +256,7 @@ def test_a_draft_or_fork_pr_is_not_a_stack_base(stack, flags):
     s.set_prs([(101, "a", s.a)], **flags)
     assert s.py("ci/pre_merge.py", "stacked", "--main-ref", "main").stdout == ""
     _merge(s, "b")
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="")
     assert got.returncode == 1
 
 
@@ -273,11 +276,12 @@ def test_a_throwaway_pr_cannot_hide_a_shape_change(stack):
     assert _against(s, "main").returncode == 1
     s.git("checkout", "-q", "--detach", "main")
     s.git("merge", "-q", "--no-ff", "-m", "merge", c)
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="", HEAD_REF="c")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="", HEAD_REF="c")
     assert got.returncode == 1 and "stacked on" not in got.stdout
     assert "error:" in got.stdout
 
 
+@pytest.mark.passes_on_main  # #2176 only renames the step's env flag
 def test_a_shape_change_with_no_bump_on_the_stack_still_fails(stack):
     """What the stacked comparison enforces: a change on top of A with neither a version
     move nor a pending bump fails against A as it does against main."""
@@ -291,10 +295,11 @@ def test_a_shape_change_with_no_bump_on_the_stack_still_fails(stack):
     assert got.returncode == 1 and "version" in got.stdout
     s.git("checkout", "-q", "--detach", "main")
     s.git("merge", "-q", "--no-ff", "-m", "merge", e)
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="", HEAD_REF="e")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="", HEAD_REF="e")
     assert got.returncode == 1
 
 
+@pytest.mark.passes_on_main  # #2176 only renames the step's env flag
 def test_a_stacked_on_head_that_cannot_be_fetched_warns_and_uses_main(stack):
     s = stack
     s.git("checkout", "-q", "b")
@@ -323,7 +328,7 @@ def test_a_stacked_on_head_that_cannot_be_fetched_warns_and_uses_main(stack):
             ]
         )
     )
-    got = _run_step(s, EVENT="pull_request", REQUIRE_RESOLVED="")
+    got = _run_step(s, EVENT="pull_request", PENDING_MAJOR="")
     assert "::warning::stacked on #101" in got.stdout
     assert "comparing with main" in got.stdout
 

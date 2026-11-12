@@ -84,9 +84,9 @@ per line)::
     uv run python scripts/contract_schema_snapshot.py --write
 
 A pull request declares its bump with ``scripts/bump_contract.py`` and leaves this
-file at main's until ``scripts/resolve_contract_versions.py`` assigns the number and
-regenerates it after the last rebase (ADR-008 Decision 8, #1158), so two concurrent
-contract-changing pull requests no longer both rewrite it.
+file's entry at main's until the release resolve (``scripts/resolve_contract_versions.py
+--release``) assigns the number and regenerates it (ADR-008 Decision 8, #1158, #2176), so
+two concurrent contract-changing pull requests no longer both rewrite it.
 """
 
 from __future__ import annotations
@@ -619,8 +619,8 @@ def evaluate_snapshot(
     ``pending`` maps a contract to the bump kind a pending file declares for it
     (``scripts/contract_bumps.py``, ADR-008 Decision 8). A shape change that a
     pending bump covers is accepted with the version and the snapshot left at
-    main's; ``scripts/resolve_contract_versions.py`` writes both after the last
-    rebase. A pending kind smaller than the change requires is a problem. The version
+    main's; the release resolve (``scripts/resolve_contract_versions.py --release``)
+    writes both. A pending kind smaller than the change requires is a problem. The version
     a pending contract's committed entry records is not compared (#1393): the resolver
     writes it, and it goes stale whenever another pull request's bump of the same
     contract lands first; ``resolve_contract_versions.py --check --against`` checks

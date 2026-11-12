@@ -371,6 +371,7 @@ def test_bump_contract_writes_only_the_pending_file(tmp_path: Path, monkeypatch,
     assert "resolve_contract_versions.py" in capsys.readouterr().out
 
 
+@pytest.mark.passes_on_main  # --require-resolved is kept for after a release resolve
 def test_check_accepts_pending_files_and_require_resolved_refuses_them(monkeypatch, capsys) -> None:
     real = PendingBump(
         "synthesis_output.SynthesisOutputContract.x.toml",
@@ -571,6 +572,7 @@ def test_check_against_a_ref_refuses_a_hand_bump_next_to_a_pending_file(
 
     monkeypatch.setattr(rcv, "load_pending", lambda: [real])
     monkeypatch.setattr(rcv, "_against", lambda ref, pending: [])
+    monkeypatch.setattr(rcv, "_since_ref", lambda ref, bumps, seen=(): [])
     monkeypatch.setattr(rcv, "_git", lambda *args: Proc(here))
     assert rcv.main(["--check", "--against", "REF"]) == 0
     capsys.readouterr()
@@ -597,6 +599,7 @@ def test_check_against_a_ref_refuses_a_contract_the_ref_does_not_have(monkeypatc
 
     monkeypatch.setattr(rcv, "load_pending", lambda: [real])
     monkeypatch.setattr(rcv, "_against", lambda ref, pending: [])
+    monkeypatch.setattr(rcv, "_since_ref", lambda ref, bumps, seen=(): [])
     monkeypatch.setattr(rcv, "_git", git(128, 0))
     assert rcv.main(["--check", "--against", "REF"]) == 1
     out = capsys.readouterr().out
@@ -614,10 +617,10 @@ def test_check_refuses_a_pending_file_for_an_unknown_contract(monkeypatch, capsy
     assert "not a versioned contract" in capsys.readouterr().out
 
 
-def test_the_merge_queue_refuses_a_pending_bump() -> None:
+def test_the_merge_queue_refuses_a_pending_major_and_accepts_a_pending_minor() -> None:
     """The validate-contracts job (a required check) runs the check with
-    --require-resolved on every event but a pull request, so a pending file never
-    reaches main."""
+    --refuse-pending-major on every event but a pull request: a pending MINOR reaches
+    main and waits for the release resolve; a pending MAJOR never does (#2176)."""
     import yaml
 
     workflow = Path(__file__).resolve().parents[3] / ".github/workflows/ci.yml"
@@ -627,9 +630,9 @@ def test_the_merge_queue_refuses_a_pending_bump() -> None:
     (step,) = [
         s for s in job["steps"] if "resolve_contract_versions.py --check" in s.get("run", "")
     ]
-    assert "$REQUIRE_RESOLVED" in step["run"]
-    assert step["env"]["REQUIRE_RESOLVED"] == (
-        "${{ github.event_name != 'pull_request' && '--require-resolved' || '' }}"
+    assert "$PENDING_MAJOR" in step["run"] and "--require-resolved" not in str(step)
+    assert step["env"]["PENDING_MAJOR"] == (
+        "${{ github.event_name != 'pull_request' && '--refuse-pending-major' || '' }}"
     )
     # ... and compares with main's snapshots (HEAD^1 of the PR merge needs depth 2).
     assert '--against "$base"' in step["run"] and "HEAD^1" in step["run"]

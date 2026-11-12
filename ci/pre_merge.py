@@ -23,9 +23,11 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
   higher than main's, and one that collides with main's, or a pending file next to a
   hand-written version, is an error. ``ci/pre_merge.sh`` then runs
   ``scripts/resolve_contract_versions.py --check --against <merge base>``, which fails a
-  shape or value change since the merge base with neither a version move nor a pending
-  bump, even when the branch regenerated its own snapshot, and a pending contract whose
-  version the branch also moved by hand.
+  shape or value change since the merge base with no pending file of its own, even when
+  the branch regenerated its own snapshot, a ``contract_version``, Version History line
+  or snapshot entry written by hand (only a resolve writes them, #2176), and a pending
+  contract whose version the branch also moved by hand. A plain hand bump is ``ok``
+  here; that check refuses it for a contract the resolver can edit, unless it is a MAJOR.
 * ``pending``: list the pending contract bumps HEAD carries
   (``src/contracts/pending/*.toml``, ADR-008 Decision 8), one ``contract kind`` per line.
 * ``stacked --main-ref REF`` (local) or ``stacked --api-repo OWNER/NAME --head-sha SHA
@@ -93,7 +95,7 @@ PENDING_DIR = "src/contracts/pending"
 RESOLVE_COMMAND = "uv run python scripts/resolve_contract_versions.py"
 BUMP_HINT = (
     "uv run python scripts/bump_contract.py <contract> minor|major --reason ..., "
-    "then resolve after the last rebase; ADR-008 Decision 8"
+    "and leave the version to the release resolve; ADR-008 Decision 8"
 )
 
 # `contract_version: str = Field(default="1.0", ...)`, possibly over several lines.
@@ -180,7 +182,8 @@ def check_contract(
         return (
             "ok",
             f"{path}: pending {pending} bump declared, still at main's version; "
-            f"run {RESOLVE_COMMAND} --base <main> after the last rebase",
+            "the release resolves it (a MAJOR: run "
+            f"{RESOLVE_COMMAND} --base <main> after the last rebase)",
         )
     if pending is not None and mine_max != base_max:
         return (
