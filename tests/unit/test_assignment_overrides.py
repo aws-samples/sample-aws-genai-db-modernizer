@@ -850,6 +850,7 @@ class TestCoDependencyPropagation:
             assert by_id[q].customer_override is False, q
         assert result.propagated_query_ids == ["q2", "q3"]
 
+    @pytest.mark.passes_on_main  # a split on picked engines stands, as before #2152
     def test_explicit_split_is_respected_no_propagation(self) -> None:
         # The customer sets two group members to DIFFERENT engines, the third already on
         # one of them -> respect both explicit picks and propagate nothing.

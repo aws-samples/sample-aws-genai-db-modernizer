@@ -20,7 +20,7 @@ from src.agents.referee.assignment_overrides import (
     load_assignment_for_edit,
     reroute_split_writes,
 )
-from src.agents.referee.assignment_validator import AssignmentValidator, legacy_baseline
+from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.cache_overlay import (
     CUSTOMER_CACHE_REASON,
     apply_cache_overlay,
@@ -93,6 +93,8 @@ class TestLegacy:
         assert not any(t["primary_engine"] == "elasticache" for t in raw["table_assignments"])
         assignment = Assignment.model_validate(raw)
         # Saved before units were placed whole, its old routing's splits are carried (#2152).
+        from src.agents.referee.assignment_validator import legacy_baseline  # new in #2152
+
         lineage = [
             legacy_store.read_json(f"{DB}/{JOB}/assignment/v{v}/assignment.json") for v in (1, 2)
         ]
