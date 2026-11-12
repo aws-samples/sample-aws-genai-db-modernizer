@@ -67,17 +67,30 @@ def _needs_table_split(e: Any) -> bool:
 
 
 def _with_table_split(e: dict[str, Any], split: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """``e`` with its split recounted; a row that states no served count gains no
-    ``kept_in_sync_counted_under`` key it never had, so it reads back as stored."""
+    """``e`` with the split fields it lacks, its stored figures kept (ADR-032 D4).
+
+    A row written before 1.42 (#1169) has no split: it gets all of it. A row written
+    before #2162 keeps its ``moves_to_tables`` as stored and gains only
+    ``kept_in_sync_counted_under``, the shared reads its stored ``kept_in_sync_tables``
+    counted, which are subtracted from that count. A row that states no served count
+    gains no key it never had, so it reads back as stored.
+    """
     fields = engine_table_split_facts(
         str(e.get("engine")),
         e.get("engine_source_tables"),
         int(e.get("tables_migrate") or 0),
         split,
     )
-    if fields["kept_in_sync_counted_under"] is None and "kept_in_sync_counted_under" not in e:
-        del fields["kept_in_sync_counted_under"]
-    return {**e, **fields}
+    if "kept_in_sync_tables" not in e:
+        if fields["kept_in_sync_counted_under"] is None:
+            del fields["kept_in_sync_counted_under"]
+        return {**e, **fields}
+    under = fields["kept_in_sync_counted_under"] or {}
+    out = {**e, "kept_in_sync_counted_under": under}
+    stored = e.get("kept_in_sync_tables")
+    if isinstance(stored, int) and under:
+        out["kept_in_sync_tables"] = max(stored - sum(under.values()), 0)
+    return out
 
 
 def report_facts(report: dict[str, Any]) -> dict[str, Any]:
