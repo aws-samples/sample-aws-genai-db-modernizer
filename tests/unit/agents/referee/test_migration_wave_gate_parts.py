@@ -27,6 +27,7 @@ from src.agents.referee.migration_wave_tables import (
 from src.contracts.synthesis_output import MigrationWave, SynthesisOutputContract
 from src.report.engineering_report import render_engineering_report_md
 from src.report.escaping import md_text
+from src.shared.gate_facts import GATE_LIST_MAX
 from tests.unit.agents.referee.test_migration_waves import (
     KNOWN_TABLES,
     QUERY_ASSIGNMENTS,
@@ -380,3 +381,20 @@ def test_a_long_remainder_is_counted_not_listed():
         3,
     )
     assert "The other 2 tables (b, c) move with" in few
+
+
+def test_the_remainder_follows_the_one_gate_list_cap():
+    """#2171 review: synthesis cut "the other k tables" at 5 names while the rendered
+    gate cut at 8. One rule: up to ``GATE_LIST_MAX`` names are listed, more are counted."""
+    queries = [{"query_id": "q1", "assigned_engine": "aurora_mysql", "source_tables": ["t_00"]}]
+
+    def remainder(n: int) -> str:
+        owned = {f"t_{i:02d}" for i in range(n + 1)}
+        parts = _table_group_coverage_parts(owned, [], queries, "dynamodb", {"aurora_mysql": 1}, 3)
+        return gate_parts_text(parts)
+
+    listed = ", ".join(f"t_{i:02d}" for i in range(1, GATE_LIST_MAX + 1))
+    assert f"The other {GATE_LIST_MAX} tables ({listed}) move with" in remainder(GATE_LIST_MAX)
+    counted = remainder(GATE_LIST_MAX + 1)
+    assert f"The other {GATE_LIST_MAX + 1} tables move with" in counted
+    assert "t_05" not in counted

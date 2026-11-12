@@ -9,7 +9,7 @@ from typing import Any
 
 from src.contracts.synthesis_output import join_gate_parts
 from src.shared.engine_names import display_engine
-from src.shared.gate_facts import GATE_TABLES_SHOWN
+from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.migration_risk_rules import join_words
 from src.shared.migration_wave_engines import KV_ENGINES, NON_OWNER_ENGINES, RELATIONAL_ENGINES
 
@@ -513,7 +513,7 @@ def _table_group_coverage_parts(
                     {
                         "text": f"The other {k} tables" if k > 1 else "The other table",
                         # A long remainder is a count; the tables are in the wave's table list.
-                        "items": sorted(rest) if k <= GATE_TABLES_SHOWN else [],
+                        "items": sorted(rest) if k <= GATE_LIST_MAX else [],
                     },
                     {
                         "text": f" {'move' if k > 1 else 'moves'} with no further "

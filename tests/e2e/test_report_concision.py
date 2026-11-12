@@ -59,7 +59,7 @@ def test_the_sources_of_truth_state_each_risk_once(run: PipelineResult) -> None:
     assert repeated_sentences(body) == []
 
 
-# The pointer a gate with a long list ends with (#1642, #2171, ``roadmap._gate_text``).
+# The pointer after a gate's last long list (#1642, #2171, ``roadmap._gate_text``).
 MAP_POINTER = GATE_LIST_POINTER
 
 
@@ -82,7 +82,7 @@ def _check_wave_lists(md: str, report: dict) -> None:
                 assert md_text(", ".join(items)) not in gate, heading
             pointed = (
                 len(items) > GATE_LIST_MAX
-                and gate.endswith(md_text(MAP_POINTER))
+                and gate.count(md_text(MAP_POINTER)) == 1
                 and md_text(items[0]) not in gate
             )
             if pointed:
