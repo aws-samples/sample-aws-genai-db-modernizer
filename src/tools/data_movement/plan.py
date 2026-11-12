@@ -8,7 +8,11 @@ synthesis report, the assignment, the collector output and the schema designs) a
 the local price table; :func:`write_plans` loads them from the artifact store and
 writes ``<db>/<job>/data-movement/step-<k>/plan.json`` per step and ``<db>/<job>/data-movement/hub/plan.json``. No AWS call, no clock.
 
-Rules, per wave of the report's ``migration_waves`` (same count, same order):
+The steps are ``facts.slice_plan``'s (#1698, ADR-033 Decision 1 and Amendment 1), each
+planned from the wave it rolls up into; without a slice plan, one step per wave of the
+report's ``migration_waves`` (same count, same order). A wave of several steps is
+planned once per step, narrowed to the step's engine, the tables its move units own or
+read, and its queries (``_steps``). Rules, per wave or step:
 
 - **The Aurora wave** (the wave with a ``homogeneity``, normally wave 1) is a DMS
   move from the legacy source: full load, then ongoing replication, straight into
@@ -52,6 +56,7 @@ import copy
 import json
 import math
 import re
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -1225,6 +1230,7 @@ def _gates(
     read_tables: set[str],
     base_tables: list[str],
     is_first: bool,
+    step_queries: frozenset[str] | None = None,
 ) -> tuple[Gates, list[UnsupportedItem]]:
     lagging: list[LaggingRead] = []
     unsupported: list[UnsupportedItem] = []
@@ -1248,6 +1254,8 @@ def _gates(
                     for i in r.get("read_query_ids") or []
                 }
                 ids = sorted(replicated | set(job.reads.get(tg.engine, {}).get(t, [])))
+                if step_queries is not None:
+                    ids = [i for i in ids if i in step_queries]
                 if ids:
                     lagging.append(LaggingRead(table=t, engine=tg.engine, read_query_ids=ids))
                 sot = tg.source_of_truth
@@ -1288,7 +1296,10 @@ def _plan_wave(
     step: int,
     hub_plan: HubPlan | None,
     contract: ContractRef | None,
+    step_queries: frozenset[str] | None = None,
 ) -> DataMovementPlan:
+    """One step's plan from its wave (or the step's view of it, ``_steps``): a narrowed
+    step's lagging reads are its own queries' (``step_queries``)."""
     engines = _wave_engines(wave)
     tool = "dms" if is_first else "debezium"
     source_engine = job.legacy if is_first else _cdc_source_engine(wave, job.legacy)
@@ -1349,7 +1360,9 @@ def _plan_wave(
     unsupported.extend(gaps)
     targets, gaps = _targets(job, wave, per_engine, source_engine, is_first)
     unsupported.extend(gaps)
-    gates, gaps = _gates(job, wave, source_engine, targets, read_tables, base_tables, is_first)
+    gates, gaps = _gates(
+        job, wave, source_engine, targets, read_tables, base_tables, is_first, step_queries
+    )
     unsupported.extend(gaps)
     notes.append(
         f"The lag gate is {_max_lag_seconds(tool == 'dms')} seconds of capture lag, a default to tune against "
@@ -1390,23 +1403,57 @@ def _plan_wave(
 
 def _steps(
     waves: list[Mapping[str, Any]], slice_plan: Mapping[str, Any] | None = None
-) -> list[tuple[int, Mapping[str, Any]]]:
-    """The job's migration steps, in order: one per migration wave until data movement
-    plans per slice step (#1698, ADR-033 Decision 1), which replaces this function.
+) -> list[tuple[int, Mapping[str, Any], frozenset[str] | None]]:
+    """The job's migration steps, in order: ``(k, the wave view it plans, its queries)``.
 
-    Step k names one step everywhere (``step-<k>/plan.json``, the transformation
-    contract, ``facts.slice_plan``): a slice plan whose steps are numbered other than one
-    per wave (step k in wave k) is refused rather than planned by wave, until then."""
-    steps = [(int(w["wave"]), w) for w in waves]
+    Step k names one step everywhere (ADR-033 Decision 1): ``step-<k>/plan.json``, the
+    transformation contract and ``facts.slice_plan.plan_steps[].step_number``. Without a
+    slice plan the steps are the migration waves (``None``: the whole wave). With one, each
+    step is planned from its phase wave: as that wave when it is the wave's one step on
+    the wave's one engine, else as the wave narrowed to the step's engine, the tables its
+    move units own or read, and its queries (#1698)."""
     planned = [s for s in (slice_plan or {}).get("plan_steps") or [] if isinstance(s, Mapping)]
-    if planned and [(s.get("step_number"), s.get("phase_wave")) for s in planned] != [
-        (k, k) for k, _ in steps
-    ]:
-        raise ValueError(
-            "facts.slice_plan numbers its steps apart from the migration waves; data "
-            "movement plans per slice step come with #1698 (ADR-033 Decision 1)"
-        )
-    return steps
+    if not planned:
+        return [(int(w["wave"]), w, None) for w in waves]
+    by_wave = {int(w["wave"]): w for w in waves}
+    per_wave = Counter(s.get("phase_wave") for s in planned)
+    units = {
+        str(u.get("key")): u
+        for u in (slice_plan or {}).get("move_units") or []
+        if isinstance(u, Mapping)
+    }
+    out: list[tuple[int, Mapping[str, Any], frozenset[str] | None]] = []
+    for step in planned:
+        k, phase, engine = int(step["step_number"]), step.get("phase_wave"), str(step["engine"])
+        wave = by_wave.get(int(phase)) if phase is not None else None
+        if wave is None:
+            raise ValueError(f"facts.slice_plan step {k} names no migration wave")
+        if per_wave[phase] == 1 and _wave_engines(wave) == [engine]:
+            out.append((k, wave, None))
+            continue
+        members = [
+            units[key]
+            for stage in step.get("step_stages") or []
+            for key in stage.get("unit_keys") or []
+            if key in units
+        ]
+        tables = {
+            str(t)
+            for u in members
+            for t in [
+                *(u.get("owned_tables") or []),
+                *(r.get("table") for r in u.get("replicated_in") or []),
+            ]
+        }
+        listed = [str(t) for t in wave.get("tables") or []]
+        view = {
+            **wave,
+            "engines": [engine],
+            "tables": [t for t in listed if t in tables] if listed else sorted(tables),
+        }
+        queries = frozenset(str(q) for u in members for q in u.get("query_ids") or [])
+        out.append((k, view, queries))
+    return out
 
 
 def build_step_plans(
@@ -1433,12 +1480,20 @@ def build_step_plans(
     steps = _steps(waves, (inputs.report.get("facts") or {}).get("slice_plan"))
     job = _JobView.build(inputs, prices)
     aurora = _aurora_wave(waves)
+    first = int(aurora["wave"]) if aurora is not None else None
     hub = _hub_plan(job, waves)
     plans = [
         _plan_wave(
-            job, w, w is aurora, len(waves), step=k, hub_plan=hub, contract=(contracts or {}).get(k)
+            job,
+            w,
+            int(w["wave"]) == first,
+            len(waves),
+            step=k,
+            hub_plan=hub,
+            contract=(contracts or {}).get(k),
+            step_queries=queries,
         )
-        for k, w in steps
+        for k, w, queries in steps
     ]
     return plans, hub
 

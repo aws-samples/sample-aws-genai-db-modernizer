@@ -80,6 +80,16 @@ The runtime is Amazon Managed Service for Apache Flink (Flink 2.2). Our compiler
 
 This release is one-way: data flows from the engine that holds the writes to the targets, and nothing is written back to the source or to Aurora. Reverse feeds (the replicas of tables whose writes move to a non-relational engine, #1425, and trigger side effects reproduced by the pipeline) come later; after a cutover, reads elsewhere of a moved table stop getting fresh data, and the deliverables say so. This release does not support source schema changes during the migration window: the deliverables require a schema freeze while steps run, and a detected change stops the rules it touches and asks for a re-assessment. Cutover itself stays the customer's decision; there is no cutover tooling.
 
+## Amendment 1 (2026-11-11, #1129, #1698): the slice plan is computed
+
+Synthesis computes `facts.slice_plan` deterministically from the effective assignment and the report's own facts (ADR-032). No model decides it and nothing records a Move, so routing and the routing snapshot do not change.
+
+- **Move units** (`src/shared/move_units.py`): each purpose-built engine's in-scope queries, seeded by the groups routing places as one (co-dependency groups, write groups of two or more statements and routine units: `write_groups.placement_groups`' sources) and by each routine's temporary-object statements with the statements they follow (ADR-031 Amendment 20), then joined over the tables the engine owns. A table's owner is its one writer (ADR-031 Amendment 9). A query on no owned table reads copies, and joins the other queries that read the same copies. A table nobody writes stays with the relational step, and the engines that read it read a copy. A unit holds every such group whole or none of it, and the plan lists the groups as `kept_whole`.
+- **Dependency graph** (`src/shared/dependency_graph.py`): units are tied by replica reads, reverse replicas, shared copies, foreign keys and the cache's fronted reads. Each edge is weighted by the share of the two units' statements that run through it, a foreign key counting as one statement. Gravity, blast radius, hub score (betweenness), cut cost (copies across the cut and write sites; split transactions wait for #1682) and value (call share) follow from it.
+- **Slices and steps** (`src/shared/slice_plan.py`): a slice is a Louvain community (networkx, fixed seed) of two or more units of one engine, and the units left on their own form that engine's one standalone slice. For a homogeneous source, step 1 is the relational step and each later step is one slice or the cache's fronted reads. The steps follow the migration waves, and inside a wave slices run by value against cut cost, hub-heavy slices last. Any other source keeps one step per migration wave (`engine_waves`) until #1702, and a plan that cannot be numbered that way is stated empty. Each step's stages run a to d with filled gate templates.
+- **One step numbering**: the data movement plans number their steps by the slice plan (`data-movement/step-<k>/plan.json`). A wave of several steps is planned once per step, narrowed to the step's engine, the tables its units own or read, and its queries.
+- A report rebuilt without the assignment (an older report filled at read time) states the empty plan.
+
 ## Enforcement
 
 | Decision | Enforced by |
@@ -95,6 +105,7 @@ This release is one-way: data flows from the engine that holds the writes to the
 | 9. The cache step | none yet -- #1770 |
 | 10. Debezium on MSK Connect into compacted topics, DMS for step 1 | `tests/unit/tools/data_movement/test_plan.py::test_wave_one_is_dms_from_the_legacy_source_with_no_hub`<br>`tests/unit/tools/data_movement/test_plan.py::test_later_waves_are_debezium_from_the_aurora_engine`<br>`tests/unit/tools/data_movement/test_debezium_connector.py::test_every_table_topic_is_created_compacted_with_its_partitions` |
 | 11. Release limits | by design -- a scope limit of this release (one-way, no source schema changes during the migration window); the deliverables state it with #1426 |
+| Amendment 1. The slice plan is computed | `tests/e2e/test_slice_plan.py::test_the_slice_plan_passes_every_contract_validator`<br>`tests/e2e/test_slice_plan.py::test_every_moving_query_is_in_one_unit_and_no_group_is_split`<br>`tests/unit/agents/referee/test_move_units.py::test_a_temporary_object_statement_stays_with_its_routine`<br>`tests/unit/shared/test_slice_plan.py::test_the_plan_s_steps_follow_the_waves_and_its_stages_run_a_b_c_d`<br>`tests/unit/tools/data_movement/test_plan_step_numbering.py::test_build_step_plans_numbers_its_plans_by_the_slice_plan` |
 
 ## Consequences
 

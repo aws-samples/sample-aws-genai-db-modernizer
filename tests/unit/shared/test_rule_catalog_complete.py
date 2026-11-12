@@ -367,6 +367,12 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/shared/dependency_graph.py": (
+        frozenset({"HUB_HEAVY", "LOUVAIN_SEED", "ROUND"}),
+        "the slice plan's ordering, not a routing rule: the hub score from which a slice runs "
+        "after the others, Louvain's fixed seed and the metrics' rounding (#1698). The plan "
+        "is a projection of the effective assignment; routing reads none of it",
+    ),
     "src/shared/wave_readiness.py": (
         frozenset({"_WARNING_CHARS"}),
         "a wording length, not a routing rule: how many characters of a design review "

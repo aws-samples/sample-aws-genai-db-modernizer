@@ -170,6 +170,8 @@ ASSESSMENT_SOURCES = (
     # #1128: the slice plan's stage gates and the adoption paths, and the fixtures the
     # renderers are built against.
     "src/shared/adoption_facts.py",
+    # #1129, #1698: the slice plan's stage gate templates.
+    "src/shared/slice_plan.py",
     "tests/fixtures/adoption_paths/wordpress.json",
     "tests/fixtures/adoption_paths/discourse.json",
 )

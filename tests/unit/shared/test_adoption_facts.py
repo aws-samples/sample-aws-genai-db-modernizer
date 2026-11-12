@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT-0
 
 """``facts.slice_plan`` and ``facts.adoption`` (#1128): one entry point in the facts
-layer (ADR-032), empty until the computation lands, and None for an older report."""
+layer (ADR-032). The slice plan is computed from the assignment synthesis passes (#1129,
+#1698); a report filled at read time has no assignment, so it states the empty plan. The
+adoption paths stay empty until #1130."""
 
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ def test_a_report_written_before_the_slice_plan_loads_and_is_filled_at_read_time
 ) -> None:
     # ADR-032 Decision 4: one reader, one answer. A stored block written before 1.96 has
     # neither block; it loads, and the reader fills both from the same functions
-    # synthesis calls, so an old job and a fresh run state the same plan.
+    # synthesis calls. With no assignment to read, the slice plan is the empty one.
     report = _load(path)
     assert "slice_plan" not in report["facts"] and "adoption" not in report["facts"]
     contract = SynthesisOutputContract.model_validate(report)
@@ -51,6 +53,7 @@ def test_a_report_written_before_the_slice_plan_loads_and_is_filled_at_read_time
     assert contract.facts.slice_plan is None and contract.facts.adoption is None
     facts = report_facts(report)
     plan = slice_plan_facts(report)
+    assert plan["plan_steps"] == []
     assert facts["slice_plan"] == plan
     assert facts["adoption"] == adoption_facts(report, plan)
     ReportFacts.model_validate(facts)
@@ -65,7 +68,7 @@ def test_a_stored_block_is_read_as_stored() -> None:
     assert facts["adoption"] == adoption_facts(report, stored)
 
 
-def test_the_stub_returns_empty_validated_structures() -> None:
+def test_without_the_assignment_both_blocks_are_empty_and_valid() -> None:
     report = _load(SAVED_REPORTS[1])
     plan = slice_plan_facts(report)
     adoption = adoption_facts(report, plan)

@@ -40,7 +40,7 @@ import subprocess  # nosec B404 - one fixed git command, no shell (build_commit)
 from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.shared import catalog
 from src.shared.adoption_facts import adoption_facts, slice_plan_facts
@@ -81,6 +81,9 @@ from src.shared.trade_off_topics import (
     trade_off_group,
 )
 from src.shared.wave_readiness import redesign_facts, risk_wave, wave_edit_facts, wave_readiness
+
+if TYPE_CHECKING:
+    from src.shared.move_units import SliceInputs
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -3751,6 +3754,7 @@ def compute_report_facts(
     growth_scenarios: Mapping[str, Any] | None = None,
     readiness: bool = True,
     routines: Mapping[str, Any] | None = None,
+    slice_inputs: SliceInputs | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3790,6 +3794,9 @@ def compute_report_facts(
     them, and a report rebuilt later has None. ``routines`` is the routine-migration facts
     (``src.shared.routine_facts.read_routine_facts``, #1938), read from the job's artifact:
     synthesis passes it, and a report rebuilt later keeps the block it stored.
+    ``slice_inputs`` is what the slice plan reads of the assignment and the collection
+    (``src.shared.move_units.SliceInputs``, #1129, #1698): synthesis passes it, and
+    a report rebuilt without it states the empty plan.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3968,9 +3975,18 @@ def compute_report_facts(
         # #1990: the assumptions block and the growth scenario, stated once.
         "assumptions": assumptions_block(assumptions),
         "growth_scenarios": dict(growth_scenarios) if growth_scenarios is not None else None,
-        # #1128: the steps, stages and move units (#1129, #1698), and the adoption paths
-        # and one-step form (#1130); empty until their computation lands.
-        "slice_plan": (plan := slice_plan_facts(report)),
+        # #1128: the steps, stages and move units (#1129, #1698), from the effective
+        # assignment and this block's own costs and risks; the adoption paths and the
+        # one-step form (#1130) are empty until their computation lands.
+        "slice_plan": (
+            plan := slice_plan_facts(
+                report,
+                slice_inputs,
+                waves=waves,
+                engine_costs={e["engine"]: e["monthly_cost_usd"] for e in engines},
+                risks_by_engine=by_engine,
+            )
+        ),
         "adoption": adoption_facts(report, plan),
     }
 
