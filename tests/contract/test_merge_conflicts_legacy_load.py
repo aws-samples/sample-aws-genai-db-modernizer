@@ -27,6 +27,7 @@ from src.agents.schema_design.group_merger import merge_group_drafts
 from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.facts import report_facts
+from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import trade_off_topic_facts
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
@@ -97,6 +98,8 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     )
     # #2107: and the cutover sentence, which a block written before it reads back with.
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
-    assert {k: v for k, v in facts.items() if k not in ("trade_off_topics", SAID)} == (
-        with_cache_role_sentence(stored)
-    )
+    # #1128: and the slice plan and adoption paths, filled at read time (ADR-032 Decision 4).
+    assert facts["slice_plan"] == (plan := slice_plan_facts(old))
+    assert facts["adoption"] == adoption_facts(old, plan)
+    filled = ("trade_off_topics", SAID, "slice_plan", "adoption")
+    assert {k: v for k, v in facts.items() if k not in filled} == (with_cache_role_sentence(stored))

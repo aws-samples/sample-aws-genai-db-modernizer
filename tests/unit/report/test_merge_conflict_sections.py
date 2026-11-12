@@ -312,7 +312,9 @@ def test_an_old_job_loads_and_renders_without_the_section() -> None:
     # #1221 gains from the same function.
     # #2107: and the cutover sentence, which a block written before it reads back with.
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
-    rest = {k: v for k, v in facts.items() if k not in ("trade_off_topics", SAID)}
+    # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
+    READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption")
+    rest = {k: v for k, v in facts.items() if k not in READ_TIME_FILLED}
     assert rest == with_cache_role_sentence(old["facts"])
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, old["facts"]["reality_check_trade_offs"]
