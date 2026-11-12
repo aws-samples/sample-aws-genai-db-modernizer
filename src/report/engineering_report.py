@@ -25,6 +25,7 @@ from src.shared.report_facts import (
     query_group_at,
     same_label_places,
 )
+from src.shared.shared_sentences import GROUPS_KEY, shared_layout
 from src.shared.target_databases import engine_scope_statement
 from src.shared.trade_off_topics import DEFAULT_TOPIC, REVIEW_NOTE_TOPIC
 from src.shared.unsupported_pattern import (
@@ -610,6 +611,20 @@ def _table_reason_cell(reasons: list[str]) -> str:
     return "; ".join(shown) + (f" (+{more} more)" if more else "")
 
 
+def _shared_lines(
+    design: dict[str, Any],
+    entries: list[Any],
+    list_name: str,
+    line: Any,
+    query_ids: Collection[str] = (),
+) -> list[str]:
+    """A design list's bullets (#2165): a group of entries that share a sentence is a lead
+    bullet stating it once, then each entry under it with its own text; every other entry
+    is its own bullet. ``line`` formats one entry (no bullet)."""
+    blocks = shared_layout(entries, design.get(GROUPS_KEY), list_name)
+    return _blocks_md(blocks, lambda ms: [line(m) for m in ms], query_ids)
+
+
 def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ()) -> list[str]:
     """An Aurora design's app-layer notes, column defaults listed on their own (#156).
 
@@ -626,13 +641,20 @@ def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ())
     out: list[str] = []
     if others:
         out += [f"**Application-layer notes ({len(others)}):**", ""]
-        for n in others:
+
+        def note_line(n: dict[str, Any]) -> str:
             feature = str(n.get("feature") or "note").replace("_", " ")
-            out.append(
-                f"- {escaping.md_text(feature.capitalize())} on "
+            return (
+                f"{escaping.md_text(feature.capitalize())} on "
                 f"`{escaping.md_code(n.get('source_object') or '?')}`: "
                 f"{escaping.md_text_with_ids(n.get('recommendation') or '', query_ids)}"
             )
+
+        out += _blocks_md(
+            _note_blocks(design, defaults=False),
+            lambda ms: [note_line(m) for m in ms],
+            query_ids,
+        )
         out.append("")
     if defaults:
         out += [
@@ -640,20 +662,71 @@ def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ())
             "where the application relies on them.",
             "",
         ]
-        # #1410: columns whose note reads the same share one bullet that lists them.
-        by_note: dict[str, list[str]] = {}
-        for n in defaults:
-            by_note.setdefault(str(n.get("recommendation") or ""), []).append(
-                f"`{escaping.md_code(n.get('source_object') or '?')}`"
-            )
-        for note, columns in by_note.items():
-            text = escaping.md_text_with_ids(note.strip(), query_ids)
-            if len(columns) == 1 or not text:
-                out.append(f"- {', '.join(columns)}" + (f": {text}" if text else ""))
-            else:
-                stop = "" if text.endswith((".", "!", "?")) else "."
-                out.append(f"- {text}{stop} Columns: {', '.join(columns)}.")
+        out += _blocks_md(
+            _note_blocks(design, defaults=True),
+            lambda ms: _default_texts(ms, query_ids),
+            query_ids,
+        )
         out.append("")
+    return out
+
+
+def _note_blocks(
+    design: dict[str, Any], defaults: bool
+) -> list[tuple[list[str], list[dict[str, Any]]]]:
+    """The app-layer notes laid out with their shared sentences (``shared_layout``), only
+    the column-default notes (``defaults``) or only the others. A group holds notes of
+    one feature, so each block is one or the other."""
+    notes = design.get("app_layer_notes") or []
+    out: list[tuple[list[str], list[dict[str, Any]]]] = []
+    loose: list[dict[str, Any]] | None = None  # the notes in no group, one block
+    for sentences, members in shared_layout(notes, design.get(GROUPS_KEY), "app_layer_notes"):
+        kept = [
+            m
+            for m in members
+            if isinstance(m, dict) and (m.get("feature") == "column_default") == defaults
+        ]
+        if kept and sentences:
+            out.append((sentences, kept))
+        elif kept:
+            if loose is None:
+                loose = []
+                out.append(([], loose))
+            loose += kept
+    return out
+
+
+def _blocks_md(
+    blocks: list[tuple[list[str], list[Any]]], lines: Any, query_ids: Collection[str]
+) -> list[str]:
+    """Each block's bullets: a shared-sentence lead, then its entries' lines under it;
+    ``lines`` gives an entry list's lines (no bullet)."""
+    out: list[str] = []
+    for sentences, members in blocks:
+        if not sentences:
+            out += [f"- {text}" for text in lines(members)]
+            continue
+        lead = " ".join(escaping.md_text_with_ids(s, query_ids) for s in sentences)
+        out.append(f"- For each of these: {lead}")
+        out += [f"  - {text}" for text in lines(members)]
+    return out
+
+
+def _default_texts(defaults: list[dict[str, Any]], query_ids: Collection[str]) -> list[str]:
+    """Column-default lines: columns whose note reads the same share one line (#1410)."""
+    by_note: dict[str, list[str]] = {}
+    for n in defaults:
+        by_note.setdefault(str(n.get("recommendation") or ""), []).append(
+            f"`{escaping.md_code(n.get('source_object') or '?')}`"
+        )
+    out = []
+    for note, columns in by_note.items():
+        text = escaping.md_text_with_ids(note.strip(), query_ids)
+        if len(columns) == 1 or not text:
+            out.append(f"{', '.join(columns)}" + (f": {text}" if text else ""))
+        else:
+            stop = "" if text.endswith((".", "!", "?")) else "."
+            out.append(f"{text}{stop} Columns: {', '.join(columns)}.")
     return out
 
 
@@ -1522,10 +1595,17 @@ def render_engineering_report_md(
             unsupported = _unsupported_entries(dz)
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
-                out += [
-                    f"- {_unsupported_pattern_md(u, query_ids) if isinstance(u, dict) else escaping.md_text_with_ids(u, query_ids)}"
-                    for u in unsupported
-                ]
+                out += _shared_lines(
+                    dz,
+                    unsupported,
+                    "unsupported_patterns",
+                    lambda u: (
+                        _unsupported_pattern_md(u, query_ids)
+                        if isinstance(u, dict)
+                        else escaping.md_text_with_ids(u, query_ids)
+                    ),
+                    query_ids,
+                )
                 out.append("")
             # #1650: entries the post-schema router kept through a catalog waiver are
             # served as routed (synthesis moved them out of ``unsupported_patterns``).
@@ -1538,7 +1618,9 @@ def render_engineering_report_md(
                     "stay on this engine.",
                     "",
                 ]
-                out += [f"- {_unsupported_pattern_md(u, query_ids)}" for u in waived]
+                out += _shared_lines(
+                    dz, waived, "served_by_waiver", lambda u: _unsupported_pattern_md(u, query_ids)
+                )
                 out.append("")
             notes = dz.get("migration_notes") or []
             if isinstance(notes, str):
@@ -1550,10 +1632,17 @@ def render_engineering_report_md(
                 notes = []
             if notes:
                 out += ["**Migration notes:**", ""]
-                out += [
-                    f"- {_migration_note_md(mn, said, query_ids) if isinstance(mn, dict) else escaping.md_text_with_ids(mn, query_ids)}"
-                    for mn in notes
-                ]
+                out += _shared_lines(
+                    dz,
+                    notes,
+                    "migration_notes",
+                    lambda mn: (
+                        _migration_note_md(mn, said, query_ids)
+                        if isinstance(mn, dict)
+                        else escaping.md_text_with_ids(mn, query_ids)
+                    ),
+                    query_ids,
+                )
                 out.append("")
             out += _app_layer_notes_md(dz, query_ids)
             er = _mermaid_er(eng, dz)

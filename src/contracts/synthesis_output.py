@@ -694,14 +694,12 @@ Version History:
   the one-step form of the full target; #1130, #473). Synthesis writes both empty until
   their computation lands, and the reader fills both for an older report. Backward
   compatible: both default to None.
-- 1.97 (2026-11-12, #2165): schema_designs[engine] entries of unsupported_patterns,
-  served_by_waiver and migration_notes that share a long sentence are written as one
-  entry (every query id or object name, the shared sentence once, each entry's own
-  sentences kept) with an optional grouped_from: the entries it groups, as the design
-  wrote them. An Aurora design's column-default app_layer_notes keep one entry per
-  column (those sharing a sentence get one text), and another note drops a sentence a
-  column-default note states. Backward compatible: an entry without grouped_from is one
-  design entry.
+- 1.97 (2026-11-12, #2165): Added optional
+  schema_designs[engine].shared_sentence_groups: each group of sibling
+  unsupported_patterns, served_by_waiver, migration_notes or app_layer_notes entries of
+  one kind that share a long sentence, as {list, sentences, indexes}; the entries stay
+  as the design wrote them and every renderer states the sentences once, then each
+  entry. Backward compatible: a summary without it has no group.
 """
 
 import re
@@ -5040,9 +5038,8 @@ class SynthesisOutputContract(BaseModel):
     schema_designs: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Per-engine schema design summaries; sibling entries that share a long "
-            "sentence are one entry, with the entries it groups in its optional "
-            "grouped_from (#2165)"
+            "Per-engine schema design summaries; a summary's optional "
+            "shared_sentence_groups records the sentences sibling entries share (#2165)"
         ),
     )
     trade_offs: list[TradeOff] = Field(default_factory=list, description="Collected trade-offs")
