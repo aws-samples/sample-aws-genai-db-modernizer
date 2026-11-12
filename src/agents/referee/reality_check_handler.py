@@ -22,6 +22,7 @@ from src.agents.prompt_framing import (
     with_untrusted_notice,
 )
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+from src.agents.referee.assignment_validator import lineage_legacy_baseline
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import normalize_cache_owners
 from src.agents.referee.capability_registry import triage_query_capabilities
@@ -652,7 +653,9 @@ def write_reality_check_result(
         result["collector_output"],
         result["analysis_outputs"],
         dead_engines=eliminated,
-        baseline=result["assignment"],
+        legacy=lineage_legacy_baseline(
+            lambda v: _read_version(store, database_name, job_id, v), result["assignment"]
+        ),
     )
     # #1327: checked again on what is written, after the refresh recomputed each
     # query's cache fields (the check in ``_check_replay`` ran before it).
@@ -1246,3 +1249,11 @@ def _generate_executive_summary(det: dict) -> str | None:
         say("[reality-check] Set SUMMARY_MODEL_ID env var to override the model.")
 
     return None
+
+
+def _read_version(
+    store: ArtifactStore, database_name: str, job_id: str, version: int
+) -> dict | None:
+    """Assignment version ``version`` of the job, or ``None``."""
+    path = f"{database_name}/{job_id}/assignment/v{version}/assignment.json"
+    return store.read_json(path) if store.exists(path) else None

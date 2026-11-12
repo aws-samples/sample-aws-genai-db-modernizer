@@ -464,6 +464,7 @@ class PostSchemaRouting:
         from datetime import UTC, datetime
 
         from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+        from src.agents.referee.assignment_validator import lineage_legacy_baseline
         from src.agents.referee.move_ledger import (
             apply_to_assignment,
             check_replay,
@@ -588,7 +589,9 @@ class PostSchemaRouting:
             dead_engines=before - after,
             keep_cache_overlay=True,
             writer="post-schema reroute",
-            baseline=assignment,
+            legacy=lineage_legacy_baseline(
+                lambda v: self._read_version(database_name, job_id, v), assignment
+            ),
         )
         # Refuse a version whose engines do not follow from ``version`` plus
         # its own Moves (an engine set without move_ledger, #616).
@@ -790,6 +793,44 @@ class PostSchemaRouting:
             if engine in designed:
                 self._copy_schema_artifacts(job_id, database_name, engine, version, new_version)
 
+    def _read_version(self, database_name: str, job_id: str, version: int) -> dict | None:
+        from src.storage.assignment_versioning import assignment_artifact_path
+
+        path = assignment_artifact_path(database_name, job_id, version)
+        return self.store.read_json(path) if self.store.exists(path) else None
+
+    def _check_restated(
+        self, job_id: str, database_name: str, assignment: dict, restated: dict
+    ) -> None:
+        """Validate a rollback before it is written, as every writer is (#2152): it
+        restates ``assignment`` (a checked version), so a split that one carried from a
+        job saved before whole units is carried here too. The same refresh check the
+        reroute runs, on a copy, so ``restated`` itself is written as it is."""
+        from copy import deepcopy
+
+        from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+        from src.agents.referee.assignment_validator import lineage_legacy_baseline
+
+        prefix = f"{database_name}/{job_id}"
+        collector_key = f"{prefix}/collector/output.json"
+        collector = self.store.read_json(collector_key) if self.store.exists(collector_key) else {}
+        engines = {qa["assigned_engine"] for qa in restated.get("query_assignments", [])}
+        analysis_outputs = {
+            e: self.store.read_json(f"{prefix}/analysis-{e}/analysis.json")
+            for e in engines
+            if self.store.exists(f"{prefix}/analysis-{e}/analysis.json")
+        }
+        refresh_consolidated_assignment(
+            deepcopy(restated),
+            collector,
+            analysis_outputs,
+            keep_cache_overlay=True,
+            writer="post-schema rollback",
+            legacy=lineage_legacy_baseline(
+                lambda v: self._read_version(database_name, job_id, v), assignment
+            ),
+        )
+
     def _roll_back_post_schema_reroute(
         self,
         job_id: str,
@@ -828,6 +869,7 @@ class PostSchemaRouting:
             scope_from_store(self.store, database_name, job_id),
             "post-schema rollback",
         )
+        self._check_restated(job_id, database_name, assignment, restated)
         rollback_key = assignment_artifact_path(database_name, job_id, rollback)
         self.store.write_json(rollback_key, stamp_artifact_version(rollback_key, restated))
         write_access_patterns(self.store, database_name, job_id, rollback)

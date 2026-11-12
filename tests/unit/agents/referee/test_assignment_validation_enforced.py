@@ -8,8 +8,9 @@ or non-system-of-record owner, a placeholder engine, an engine that did not anal
 query, and a co-dependency group, write group or routine unit on more than one engine
 (ADR-031 Decision 4, Amendments 9 and 21). The check fails closed: when the units cannot
 be built, the version is refused, never written unchecked. A customer's own split of a
-unit stands (Amendment 21), and a split a version saved before units were placed whole
-already had is carried as a warning.
+unit stands while every engine it is on is one the customer picked (Amendment 21), and
+a split a version saved before units were placed whole already had is carried as a
+warning while the unit gains no engine, on every version derived from it.
 """
 
 from __future__ import annotations
@@ -189,7 +190,10 @@ def test_an_engine_that_did_not_analyse_the_query_stops_it(prepared, monkeypatch
     # DocumentDB's analysis is missing (its run failed), and a query is put on it anyway.
     Path(prepared.base_dir, DB, JOB, "analysis-documentdb", "analysis.json").unlink()
     _resolving_with(monkeypatch, lambda a: {"app-stock-report": "documentdb"})
-    _refused_first_assignment(prepared, "Query app-stock-report assigned to engine 'documentdb'")
+    exc = _refused_first_assignment(
+        prepared, "DocumentDB has no analysis (it failed or did not run), yet 1 statement"
+    )
+    assert any("Run its analysis again, then the assignment." in e for e in exc.errors)
 
 
 def test_a_co_dependency_group_on_two_engines_stops_it(prepared, monkeypatch) -> None:
@@ -212,7 +216,9 @@ def test_a_routine_unit_on_two_engines_stops_it(prepared, monkeypatch) -> None:
         monkeypatch, lambda a: {"po-insert-item": _other(_engine_of(a, "po-insert-order"))}
     )
     exc = _refused_first_assignment(prepared, "form one placement unit")
-    assert any(all(q in e for q in PROCEDURE) for e in exc.errors)
+    # The unit's six members: three ids, then the count, so the line stays short.
+    (unit_error,) = [e for e in exc.errors if "form one placement unit" in e]
+    assert "and 3 more" in unit_error
 
 
 def test_units_that_cannot_be_built_stop_it(prepared, monkeypatch) -> None:
@@ -359,12 +365,149 @@ def test_an_edit_of_a_saved_version_with_a_split_group_is_refused(routed) -> Non
     assert not routed.exists(_path(2))
 
 
-@pytest.mark.passes_on_main
-def test_a_split_saved_before_units_were_whole_is_carried_as_a_warning(routed) -> None:
-    """Checklist 6: a job saved before the rule still edits; its old split is a warning."""
+CARRIED = "this job was saved before that rule"
+
+
+def test_a_split_saved_before_units_were_whole_is_carried_version_after_version(routed) -> None:
+    """Checklist 6: a job saved before the rule still edits, again and again; each new
+    version carries the old split as a warning, never as an error."""
     _split_saved_group(routed, legacy=True)
-    result = apply_assignment_overrides(
-        routed, DB, JOB, [QueryOverrideInput("app-stock-report", in_scope=False)]
+    for scope in (False, True, False):
+        result = apply_assignment_overrides(
+            routed, DB, JOB, [QueryOverrideInput("app-stock-report", in_scope=scope)]
+        )
+        version = result.assignment.version
+        assert routed.exists(_path(version))
+        carried = [w for w in result.assignment.validation_warnings if CARRIED in w]
+        assert len(carried) == 1 and all(q in carried[0] for q in JOINED), carried
+    assert version == 4  # three edits on v1, the last two from versions stamped today
+
+
+def test_a_carried_split_that_gains_an_engine_is_an_error(routed) -> None:
+    """A split old routing made is carried only while its unit stays on engines it had:
+    a member the pass moves to a third engine is an error."""
+    from src.agents.referee.assignment_validator import legacy_baseline  # new in #2152
+
+    legacy_raw = _split_saved_group(routed, legacy=True)
+    on = {_engines(legacy_raw)[q] for q in JOINED}
+    third = next(e for e in ("documentdb", "dynamodb", "aurora_postgresql") if e not in on)
+    moved = json.loads(json.dumps(legacy_raw))
+    for qa in moved["query_assignments"]:
+        if qa["query_id"] == JOINED[1]:
+            qa["assigned_engine"] = third
+    moved["contract_version"] = "1.26"
+    result = _validate(routed, moved, legacy=legacy_baseline([legacy_raw]))
+    assert any(
+        "form one placement unit" in e and all(q in e for q in JOINED) for e in result.errors
     )
-    assert routed.exists(_path(result.assignment.version))
-    assert any("Co-dependent queries" in w for w in result.assignment.validation_warnings)
+    assert not any(CARRIED in w for w in result.warnings)
+    # Unmoved, the same version carries it.
+    kept = _validate(
+        routed, {**legacy_raw, "contract_version": "1.26"}, legacy=legacy_baseline([legacy_raw])
+    )
+    assert kept.valid and any(CARRIED in w for w in kept.warnings)
+
+
+def _validate(store: LocalArtifactStore, raw: dict, **kwargs: Any) -> Any:
+    collector = store.read_json(f"{DB}/{JOB}/collector/output.json")
+    analysis = {
+        e: store.read_json(f"{DB}/{JOB}/analysis-{e}/analysis.json")
+        for e in ("aurora_mysql", "aurora_postgresql", "dynamodb", "documentdb", "opensearch")
+        if store.exists(f"{DB}/{JOB}/analysis-{e}/analysis.json")
+    }
+    return AssignmentValidator().validate(
+        Assignment.model_validate(raw), collector, analysis, **kwargs
+    )
+
+
+def _picked(raw: dict, picks: dict[str, str], moves: dict[str, str] | None = None) -> dict:
+    """``raw`` with ``picks`` set as customer picks and ``moves`` set as routing would."""
+    out: dict = json.loads(json.dumps(raw))
+    for qa in out["query_assignments"]:
+        if qa["query_id"] in picks:
+            qa["assigned_engine"] = picks[qa["query_id"]]
+            qa["customer_override"] = True
+        if qa["query_id"] in (moves or {}):
+            qa["assigned_engine"] = (moves or {})[qa["query_id"]]
+    return out
+
+
+def test_a_customer_split_leaves_no_unpicked_member_on_a_third_engine(routed) -> None:
+    """The customer exception covers only the engines the customer picked: an unpicked
+    member on any other engine is an error."""
+    raw = routed.read_json(_path(1))
+    engine = _engines(raw)["po-insert-order"]
+    other = _other(engine)
+    third = next(e for e in ("documentdb", "opensearch") if e not in (engine, other))
+    picks = {"po-insert-item": other, "po-insert-order": engine}
+    assert _validate(routed, _picked(raw, picks)).valid
+    result = _validate(routed, _picked(raw, picks, {"trg-audit": third}))
+    assert any("form one placement unit" in e for e in result.errors), result.errors
+
+
+def test_a_later_pass_cannot_hide_behind_a_customer_split(routed, monkeypatch) -> None:
+    """``customer_override`` stays set on later versions: a reality check that moves an
+    unpicked member of a customer-split unit to a third engine is still refused."""
+    engine = _engines(routed.read_json(_path(1)))["po-insert-order"]
+    other = _other(engine)
+    result = apply_assignment_overrides(
+        routed,
+        DB,
+        JOB,
+        [
+            QueryOverrideInput("po-insert-item", assigned_engine=other),
+            QueryOverrideInput("po-insert-order", assigned_engine=engine),
+        ],
+    )
+    assert result.assignment.version == 2
+    third = next(e for e in ("documentdb", "opensearch") if e not in (engine, other))
+    _sweep_moving(monkeypatch, "trg-audit", third)
+    with pytest.raises(RuntimeError) as refused:
+        run_reality_check_handler(JOB, DB, routed, llm_mode="none", assignment_version=2)
+    exc = _refused(refused)
+    assert any("form one placement unit" in e for e in exc.errors)
+    assert not routed.exists(_path(3))
+
+
+def test_a_customer_split_of_a_tables_writes_is_an_error(routed) -> None:
+    """The customer exception never covers a table's writes (ADR-031 Amendment 9)."""
+    raw = routed.read_json(_path(1))
+    engine = _engines(raw)[INVENTORY_WRITES[1]]
+    picks = {INVENTORY_WRITES[0]: _other(engine), INVENTORY_WRITES[1]: engine}
+    result = _validate(routed, _picked(raw, picks))
+    assert any("a table has one writer" in e for e in result.errors), result.errors
+
+
+def test_a_split_group_is_reported_once(prepared, monkeypatch) -> None:
+    """A co-dependency group in a refused unit gives the error only, not the old
+    warning as well."""
+    _resolving_with(monkeypatch, lambda a: {JOINED[1]: _other(_engine_of(a, JOINED[0]))})
+    exc = _refused_first_assignment(prepared, "form one placement unit")
+    assert not any("Co-dependent queries" in w for w in exc.warnings)
+
+
+def test_assess_reports_a_refused_version_as_a_run_error(monkeypatch) -> None:
+    """``assess()`` raises its own ``AssessmentRunError`` with the refusal's message."""
+    from src.assessment import assess
+    from src.assessment.runner import AssessmentRunError
+    from tests.unit.assessment.conftest import collection
+
+    _resolving_with(monkeypatch, lambda a: {a.query_assignments[0].query_id: "neptune"})
+    with pytest.raises(AssessmentRunError) as refused:
+        assess({"database_name": "trailgear", "collection": collection("trailgear")})
+    message = str(refused.value)
+    assert message.startswith("first assignment: assignment validation failed")
+    assert "a future placeholder engine" in message and message.endswith("; no result built")
+    assert type(refused.value.__cause__).__name__ == "InvalidAssignment"
+
+
+def test_a_post_schema_rollback_that_restates_a_split_is_refused(routed) -> None:
+    """The rollback is checked as every writer is: a restated version that splits a
+    unit (here, a saved file edited by hand) is refused before it is written."""
+    raw = _split_saved_group(routed)
+    handler = PostSchemaRouting(routed, redesign=lambda *a, **k: None)
+    with pytest.raises(RuntimeError) as refused:
+        handler._check_restated(JOB, DB, raw, {**raw, "version": 3, "previous_version": 2})
+    exc = _refused(refused)
+    assert str(exc).startswith("post-schema rollback: ")
+    assert any(all(q in e for q in JOINED) for e in exc.errors)
