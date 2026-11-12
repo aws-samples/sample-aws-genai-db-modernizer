@@ -92,7 +92,7 @@ def _run_reality_check(store: LocalArtifactStore) -> dict:
         "after_distribution": {"dynamodb": 2, "documentdb": 1},
         "assignment": {"version": 1, "query_assignments": before},
         "collector_output": {},
-        "analysis_outputs": {},
+        "analysis_outputs": {"dynamodb": {}, "documentdb": {}},
     }
     write_reality_check_result(store, JOB, DB, result, 1)
     return store.read_json(f"{DB}/{JOB}/reality-check/output.json")

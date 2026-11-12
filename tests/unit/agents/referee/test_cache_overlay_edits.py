@@ -19,7 +19,7 @@ from src.agents.referee.assignment_overrides import (
     apply_assignment_overrides,
     load_assignment_for_edit,
 )
-from src.agents.referee.assignment_validator import AssignmentValidator
+from src.agents.referee.assignment_validator import AssignmentValidator, legacy_engines
 from src.agents.referee.cache_overlay import (
     CUSTOMER_CACHE_REASON,
     apply_cache_overlay,
@@ -91,7 +91,13 @@ class TestLegacy:
         assert raw["cache_overlay"]["query_count"] > 0
         assert not any(t["primary_engine"] == "elasticache" for t in raw["table_assignments"])
         assignment = Assignment.model_validate(raw)
-        assert AssignmentValidator().validate(assignment, collector, analysis).valid
+        # Saved before units were placed whole, its old routing's splits are carried (#2152).
+        stored = legacy_store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        assert (
+            AssignmentValidator()
+            .validate(assignment, collector, analysis, legacy_baseline=legacy_engines(stored))
+            .valid
+        )
         # #572 review item 6: the engineering report reads cache_notes (unlike
         # every other deliverable, which reads cache_safety_net_notes instead) --
         # customer-facing, checked with the guard. The moved queries' own

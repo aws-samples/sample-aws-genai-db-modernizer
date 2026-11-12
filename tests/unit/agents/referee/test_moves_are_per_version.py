@@ -40,6 +40,7 @@ def _move(seq: int, qid: str, engine: str) -> dict:
     }
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_the_reality_check_version_does_not_inherit_v1_moves(tmp_path) -> None:
     store = LocalArtifactStore(base_dir=str(tmp_path))
     original = [
@@ -72,7 +73,7 @@ def test_the_reality_check_version_does_not_inherit_v1_moves(tmp_path) -> None:
         "before_distribution": {"opensearch": 1, "aurora_mysql": 1},
         "after_distribution": {"aurora_mysql": 2},
         "collector_output": {},
-        "analysis_outputs": {},
+        "analysis_outputs": {"aurora_mysql": {}, "opensearch": {}},
         "assignment": {
             "query_assignments": original,
             "moves": [_move(1, "q1", "opensearch"), _move(2, "q2", "aurora_mysql")],

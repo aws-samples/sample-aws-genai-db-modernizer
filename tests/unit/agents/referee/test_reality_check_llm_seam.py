@@ -18,6 +18,8 @@ import inspect
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.agents.referee.reality_check_handler import (
     apply_reality_check_llm_output,
     prepare_reality_check_llm_input,
@@ -591,6 +593,7 @@ class TestRunRealityCheckHandlerBackwardCompatible:
             run_reality_check_handler("job-1", "mydb", store)
         mock_summary.assert_called_once()
 
+    @pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
     def test_consolidation_writes_new_assignment_version(self):
         """When consolidations occur, a new assignment version must be written."""
         store = _mock_store()
@@ -640,7 +643,7 @@ class TestRunRealityCheckHandlerBackwardCompatible:
                 "executive_summary": None,
                 "assignment": _ASSIGNMENT,
                 "collector_output": _COLLECTOR,
-                "analysis_outputs": {},
+                "analysis_outputs": {"dynamodb": {}, "documentdb": {}},
                 "revised_assignments": [
                     {
                         "query_id": "DDB-AP-1",

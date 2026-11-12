@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from benchmarks.runner.run import run_benchmark
+from tests.unit.benchmarks.conftest import FALLBACK_ANALYSIS
 
 
 def _make_case(stage_dir: Path, collector, triage, analysis):
@@ -13,6 +14,7 @@ def _make_case(stage_dir: Path, collector, triage, analysis):
     (case / "collection.json").write_text(json.dumps(collector))
     (case / "triage.json").write_text(json.dumps(triage))
     (case / "analysis" / "dynamodb.json").write_text(json.dumps(analysis))
+    (case / "analysis" / "aurora.json").write_text(json.dumps(FALLBACK_ANALYSIS))
     (case / "expected.json").write_text(
         json.dumps(
             {

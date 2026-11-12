@@ -42,6 +42,7 @@ def _stamp(record: dict, stored: str | None) -> dict:
     return out
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 @pytest.mark.parametrize("stored", STORED_VERSIONS, ids=["pre-1.15", "1.14"])
 def test_the_reality_check_version_carries_the_current_version(tmp_path, stored) -> None:
     store = LocalArtifactStore(base_dir=str(tmp_path))
@@ -75,7 +76,7 @@ def test_the_reality_check_version_carries_the_current_version(tmp_path, stored)
         "before_distribution": {"opensearch": 1, "aurora_mysql": 1},
         "after_distribution": {"aurora_mysql": 2},
         "collector_output": {},
-        "analysis_outputs": {},
+        "analysis_outputs": {"aurora_mysql": {}, "opensearch": {}},
         "assignment": _stamp({"query_assignments": original}, stored),
     }
 

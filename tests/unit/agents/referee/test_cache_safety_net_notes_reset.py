@@ -157,6 +157,7 @@ def test_customer_edit_resets_safety_net_notes_but_keeps_cache_notes_cumulative(
     assert v3_after["cache_safety_net_notes"][0] != old_note
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_reality_check_resets_safety_net_notes(tmp_path):
     """``write_reality_check_result`` builds ``revised_assignment`` with
     ``**result["assignment"]`` (reality_check_handler.py) -- without an
@@ -208,7 +209,7 @@ def test_reality_check_resets_safety_net_notes(tmp_path):
         "before_distribution": {"opensearch": 1, "aurora_mysql": 1},
         "after_distribution": {"aurora_mysql": 2},
         "collector_output": {},
-        "analysis_outputs": {},
+        "analysis_outputs": {"aurora_mysql": {}, "opensearch": {}},
         "assignment": {
             "query_assignments": original,
             "cache_safety_net_notes": [old_note],

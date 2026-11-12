@@ -5,6 +5,7 @@ import pytest
 
 from benchmarks.runner.loader import Case
 from benchmarks.runner.stage_assignment import run_assignment_case
+from tests.unit.benchmarks.conftest import FALLBACK_ANALYSIS
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def demo_case(sample_collector_output, sample_triage_output, sample_analysis_out
         reviewed=True,
         collection=sample_collector_output,
         triage=sample_triage_output,
-        analysis={"dynamodb": sample_analysis_output},
+        analysis={"dynamodb": sample_analysis_output, "aurora": FALLBACK_ANALYSIS},
         expected={
             "q1": {
                 "acceptable": [
