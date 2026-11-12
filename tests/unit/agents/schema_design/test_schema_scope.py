@@ -180,6 +180,7 @@ def test_a_placeholder_table_on_a_query_with_no_resolved_table_is_no_violation(e
     assert validate_schema_scope(engine, _placeholder_pattern(engine, "q-none"), assignment) == []
 
 
+@pytest.mark.passes_on_main  # what the #2147 placeholder skip must still flag
 @pytest.mark.parametrize("engine", sorted(_ENGINES))
 def test_a_placeholder_table_anywhere_else_is_still_a_violation(engine):
     build, other = _ENGINES[engine]
