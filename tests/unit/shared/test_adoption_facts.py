@@ -39,6 +39,7 @@ def _load(path: Path) -> dict[str, Any]:
     return report
 
 
+@pytest.mark.passes_on_main  # #2156's read-time fill: no assignment, so the empty plan
 @pytest.mark.parametrize("path", SAVED_REPORTS, ids=lambda p: p.parts[-5])
 def test_a_report_written_before_the_slice_plan_loads_and_is_filled_at_read_time(
     path: Path,
@@ -68,6 +69,7 @@ def test_a_stored_block_is_read_as_stored() -> None:
     assert facts["adoption"] == adoption_facts(report, stored)
 
 
+@pytest.mark.passes_on_main  # #2156's read-time fill: no assignment, so the empty plan
 def test_without_the_assignment_both_blocks_are_empty_and_valid() -> None:
     report = _load(SAVED_REPORTS[1])
     plan = slice_plan_facts(report)
