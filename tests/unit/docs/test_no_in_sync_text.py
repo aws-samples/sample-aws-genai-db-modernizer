@@ -10,8 +10,10 @@ current by CDC" from its owner (``KEPT_IN_SYNC_LABEL``), in every deliverable an
 Scanned: every string literal in ``src/`` and ``scripts/`` Python (docstrings and comments
 are not output), the skills and the commands and agents a model reads, the rule catalog,
 and the UI's locale and source files. The only "in sync" left is a quoted mention in the
-prompts' rule ("never write \\"in sync\\""), RDS's own apply status ``in-sync`` and the
-pre-#2167 replica risk wording the facts layer recognises, pinned.
+prompts' rule ("never write \\"in sync\\""), allowed in the skills and agents only (never in a
+Python string or the UI), and four exact (file, string) pins: RDS's own apply status
+``in-sync`` and the two preflight messages that quote it, and the pre-#2167 replica risk
+wording the facts layer recognises.
 """
 
 from __future__ import annotations
@@ -26,8 +28,10 @@ REPO = Path(__file__).resolve().parents[3]
 
 # "in sync", "in-sync", "kept in sync", "keeps ... in sync", any case.
 IN_SYNC = re.compile(r"\bin[\s-]+sync\b", re.I)
-# A quoted mention of the banned words, in the rule that bans them.
+# A quoted mention of the banned words, in the rule that bans them: allowed only in the
+# prompts that carry that rule (``RULE_FILES``), never in a Python string or the UI.
 MENTION = re.compile(r'"in sync"')
+RULE_FILES = ("src/skills/", ".claude/agents/")
 # Pinned (file, the exact string): RDS's parameter group apply status, a value the step 1
 # preflight reads and names, and the wording a report written before #2167 stored, which
 # the facts layer recognises so that report is stated in today's words.
@@ -105,11 +109,12 @@ def _text_files() -> list[str]:
 
 
 def _in_sync_strings(name: str, strings: list[tuple[int, str]]) -> list[str]:
+    mention_ok = name.startswith(RULE_FILES)
     return [
         f"{name}:{line}: {m.group(0)!r} in {text[:90]!r}"
         for line, text in strings
         if (name, text) not in PINNED
-        for m in IN_SYNC.finditer(MENTION.sub("", text))
+        for m in IN_SYNC.finditer(MENTION.sub("", text) if mention_ok else text)
     ]
 
 
@@ -150,6 +155,9 @@ def test_each_pinned_string_is_still_there() -> None:
         "X = 'IN SYNC'",
         "X = 'kept-in-sync tables'",
         'X = f"keep the {names} copy in sync via CDC"',
+        # The review of #2169: a quoted "in sync" is no exemption in Python.
+        "X = 'the tables CDC keeps \"in sync\"'",
+        'X = \'Never write "in sync": say "kept current by CDC".\'',
     ],
 )
 def test_the_guard_catches_each_form(tmp_path: Path, source: str) -> None:
@@ -165,7 +173,6 @@ def test_the_guard_catches_each_form(tmp_path: Path, source: str) -> None:
         '"""A docstring that says kept in sync."""',
         "# a comment that says kept in sync\nX = 1",
         'X = "a copy kept current by CDC from DynamoDB"',
-        'X = \'Never write "in sync": say "kept current by CDC".\'',
         'X = f"{n} syncs in {m} waves"',
     ],
 )
@@ -193,3 +200,19 @@ def test_a_risk_stored_before_2167_is_stated_in_todays_words() -> None:
     assert shares_replica_risk({**row, "risk": stored})
     assert not shares_replica_risk({**row, "risk": stored.replace("2 reads", "3 reads")})
     assert not shares_replica_risk({**row, "risk": "Older wording of the risk."})
+
+
+def test_a_quoted_in_sync_in_a_producer_fails(tmp_path: Path) -> None:
+    """The review of #2169: ``executive_brief.py`` with its exposure phrase quoting "in sync"
+    fails the guard; the quoted mention is allowed only in the prompts' rule."""
+    name = "src/shared/executive_brief.py"
+    source = (REPO / name).read_text()
+    phrase = '"the tables kept current by change data capture (CDC)"'
+    assert phrase in source
+    planted = tmp_path / "executive_brief.py"
+    planted.write_text(source.replace(phrase, "'the tables CDC keeps \"in sync\"'"))
+    assert _in_sync_strings(name, _strings(planted)) != []
+    assert _in_sync_strings(name, _strings(REPO / name)) == []
+    rule = 'Never write "in sync": a copy that CDC keeps current from its owner.'
+    assert _in_sync_strings("src/skills/executive-summary.md", [(1, rule)]) == []
+    assert _in_sync_strings("src/ui/src/locales/en.json", [(1, rule)]) != []

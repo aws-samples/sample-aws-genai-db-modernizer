@@ -218,7 +218,7 @@ def _old_report() -> dict[str, Any]:
             ],
             "mitigation_strategies": [
                 "Analysis line.",
-                "Before the Wave 3 gate, close RISK-002 (tables kept current by CDC).",
+                "Before the Wave 3 gate, close RISK-002 (tables kept in sync).",
                 "After wave 3 (DynamoDB): compare the latency.",
             ],
         },
@@ -241,7 +241,8 @@ def test_an_old_report_gets_the_risk_its_facts_imply() -> None:
     ]
     assert added[1]["affected_tables"] == ["db.b"]
     assert new["risk_assessment"]["overall_risk_level"] == "HIGH"
-    # #1510: the stored gate line leaves the strategies; each wave's gate lists its risks.
+    # #1510: the stored gate line, with its pre-#2167 label "tables kept in sync", leaves the
+    # strategies; each wave's gate lists its risks in today's words.
     assert new["risk_assessment"]["mitigation_strategies"] == [
         "Analysis line.",
         "After wave 3 (DynamoDB): compare the latency.",
