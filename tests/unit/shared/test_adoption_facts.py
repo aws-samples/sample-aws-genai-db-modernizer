@@ -38,15 +38,31 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("path", SAVED_REPORTS, ids=lambda p: p.parts[-5])
-def test_a_report_written_before_the_slice_plan_loads_without_it(path: Path) -> None:
+def test_a_report_written_before_the_slice_plan_loads_and_is_filled_at_read_time(
+    path: Path,
+) -> None:
+    # ADR-032 Decision 4: one reader, one answer. A stored block written before 1.96 has
+    # neither block; it loads, and the reader fills both from the same functions
+    # synthesis calls, so an old job and a fresh run state the same plan.
     report = _load(path)
     assert "slice_plan" not in report["facts"] and "adoption" not in report["facts"]
     contract = SynthesisOutputContract.model_validate(report)
     assert contract.facts is not None
     assert contract.facts.slice_plan is None and contract.facts.adoption is None
-    # The deliverables read the stored block: it gains neither, so they render as before.
     facts = report_facts(report)
-    assert "slice_plan" not in facts and "adoption" not in facts
+    plan = slice_plan_facts(report)
+    assert facts["slice_plan"] == plan
+    assert facts["adoption"] == adoption_facts(report, plan)
+    ReportFacts.model_validate(facts)
+
+
+def test_a_stored_block_is_read_as_stored() -> None:
+    report = _load(SAVED_REPORTS[1])
+    stored = {"step_basis": "engine_waves", "plan_steps": [], "marker": True}
+    report["facts"] = {**report["facts"], "slice_plan": stored}
+    facts = report_facts(report)
+    assert facts["slice_plan"] is stored
+    assert facts["adoption"] == adoption_facts(report, stored)
 
 
 def test_the_stub_returns_empty_validated_structures() -> None:
