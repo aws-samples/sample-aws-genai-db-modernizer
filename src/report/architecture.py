@@ -53,16 +53,28 @@ KEPT_IN_SYNC_SOURCES_NOTE = (
     "These counts are about reads; Sources of truth and replicas below lists where "
     "each written table's writes land and which engines hold copies of it."
 )
-KEPT_IN_SYNC_COUNTED_NOTE = (
-    "A table kept current by CDC that both engines of one wave read is counted once, in "
-    "the first engine\u2019s row; the other row says it is in that engine\u2019s count, so "
-    "the rows add up to the wave plan\u2019s figure."
-)
+
+
+def counted_once_note(engines: list[dict[str, Any]]) -> str:
+    """ "A table kept current by CDC that DynamoDB and DocumentDB both read is counted
+    once, in the DynamoDB row." (#2162), from each row's ``kept_in_sync_counted_under``;
+    empty when no row states one."""
+    pairs = [
+        (str(o), str(e["engine"]))
+        for e in engines
+        for o, k in (e.get("kept_in_sync_counted_under") or {}).items()
+        if k
+    ]
+    return " ".join(
+        f"A table {KEPT_IN_SYNC_LABEL} that {display_engine(o)} and {display_engine(e)} both "
+        f"read is counted once, in the {display_engine(o)} row."
+        for o, e in pairs
+    )
 
 
 def counted_under_text(n: int, engine: str) -> str:
-    """ "4 kept current by CDC in DynamoDB's count" (#2162)."""
-    return f"{n} {KEPT_IN_SYNC_LABEL} in {display_engine(engine)}\u2019s count"
+    """ "5 kept current by CDC, also read by DynamoDB (counted in its row)" (#2162)."""
+    return f"{n} {KEPT_IN_SYNC_LABEL}, also read by {display_engine(engine)} (counted in its row)"
 
 
 MAP_SPLIT_NOTE = (

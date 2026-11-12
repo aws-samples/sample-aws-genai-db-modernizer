@@ -346,14 +346,19 @@ _NOT_MAPPED_RE = re.compile(
 # "137 source tables served: 69 migrate, 27 move to DocumentDB, 41 kept current by CDC"
 # (#1169), or "18 source tables" when the engine owns every table it serves. A report
 # rendered before #2167 says "kept in sync" (``_KEPT``).
-_SCOPE_SPLIT_RE = re.compile(r"([\d,]+) source tables?(?: served: ([^()$]+?))?(?: \(|$)")
+# #2162: "5 kept current by CDC, also read by DynamoDB (counted in its row)", a
+# kept-current table another engine of the wave also reads, counted in that engine's
+# row (``under:<engine>:<other>``); its own comma and parentheses are part of the part.
+_COUNTED_IN = "(counted in its row)"
+_SCOPE_SPLIT_RE = re.compile(
+    rf"([\d,]+) source tables?(?: served: ((?:[^()$]|{re.escape(_COUNTED_IN)})+?))?(?: \((?!counted in its row\))|$)"
+)
 _KEPT = "kept current by CDC|kept in sync"
-# #2162: "4 kept current by CDC in DynamoDB's count", a kept-current table an earlier
-# engine of the wave also reads, counted in that engine's row (``under:<engine>:<other>``).
 _SCOPE_PART_RE = re.compile(
     rf"^([\d,]+) (migrate|{_KEPT}|move to ({_NAMES_RE})|"
-    rf"kept current by CDC in ({_NAMES_RE})[\u2019']s count)$"
+    rf"kept current by CDC, also read by ({_NAMES_RE}) {re.escape(_COUNTED_IN)})$"
 )
+_SCOPE_PARTS_SPLIT_RE = re.compile(r", (?=[\d,]+ )")
 
 
 def _split_kind(label: str) -> str:
@@ -404,7 +409,7 @@ def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
         f.add(f"synced:{eng}", 0, where)
         return
     parts: dict[str, int] = {}
-    for part in m.group(2).split(", "):
+    for part in _SCOPE_PARTS_SPLIT_RE.split(m.group(2)):
         p = _SCOPE_PART_RE.match(part.strip())
         if not p:
             f.add(f"tables:{eng}:unparsed", part, where)

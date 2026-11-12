@@ -14,13 +14,22 @@ served tables and the rows add up to the wave's figures.
 from __future__ import annotations
 
 import copy
+import json
+import logging
+from pathlib import Path
 from typing import Any
 
-from src.contracts.synthesis_output import ReportFacts
+import pytest
+
+from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.engineering_report import render_engineering_report_md
 from src.report.facts import report_facts
 from src.shared.report_facts import compute_report_facts, engine_served_split
 from tests.executive_pdf import executive_text
+
+# A report saved before #2162 (contract 1.97 shape, built from _report() below): its
+# merged wave's engines both read db.t4, so its stored DocumentDB row counts it too.
+OLD_OVERLAP_REPORT = Path(__file__).parent / "fixtures" / "report_pre_2162_overlap.json"
 
 
 def _wave1(tables: list[str]) -> dict[str, Any]:
@@ -130,14 +139,20 @@ def test_a_table_both_wave_engines_read_is_kept_current_once() -> None:
     ReportFacts.model_validate(facts)
 
 
-def test_every_scope_row_still_adds_up_to_its_served_tables() -> None:
-    for row in _targets(_with_facts(_report())["facts"]).values():
+def test_every_scope_row_adds_up_and_the_rows_add_up_to_the_wave() -> None:
+    """Each row's parts are its served tables, and the rows' kept-current counts are the
+    wave's: on main the rows say 2 + 1 = 3 against the wave's 2."""
+    facts = _with_facts(_report())["facts"]
+    rows = _targets(facts)
+    for row in rows.values():
         assert row["engine_source_tables"] == (
             row["tables_migrate"]
             + sum(row["moves_to_tables"].values())
             + row["kept_in_sync_tables"]
-            + sum(row["kept_in_sync_counted_under"].values())
+            + sum((row.get("kept_in_sync_counted_under") or {}).values())
         )
+    wave = next(w for w in facts["waves"] if w["wave"] == 2)
+    assert sum(r["kept_in_sync_tables"] for r in rows.values()) == wave["kept_in_sync_tables"]
 
 
 def test_the_moves_between_wave_engines_are_the_waves_in_wave_entries() -> None:
@@ -147,6 +162,7 @@ def test_the_moves_between_wave_engines_are_the_waves_in_wave_entries() -> None:
     assert moved == len(wave["shared_in_wave"]) == 1
 
 
+@pytest.mark.passes_on_main(reason="with no shared read nothing is re-attributed, as on main")
 def test_no_overlap_keeps_each_engines_own_count() -> None:
     """When no outside-owned table is read by both engines, nothing is re-attributed."""
     report = _report()
@@ -155,9 +171,10 @@ def test_no_overlap_keeps_each_engines_own_count() -> None:
     split = engine_served_split(report["migration_waves"])
     assert split["dynamodb"]["kept_in_sync"] == 1
     assert split["documentdb"]["kept_in_sync"] == 1
-    assert split["documentdb"]["counted_under"] == {}
+    assert not split["documentdb"].get("counted_under")
 
 
+@pytest.mark.passes_on_main(reason="a one-engine wave keeps its own count, as on main")
 def test_a_one_engine_wave_has_nothing_counted_elsewhere() -> None:
     report = _report()
     wave = report["migration_waves"][1]
@@ -173,7 +190,30 @@ def test_a_one_engine_wave_has_nothing_counted_elsewhere() -> None:
         ],
     )
     split = engine_served_split(report["migration_waves"])
-    assert split["dynamodb"] == {"moves_to": {}, "kept_in_sync": 2, "counted_under": {}}
+    assert split["dynamodb"]["kept_in_sync"] == 2
+    assert split["dynamodb"]["moves_to"] == {}
+    assert not split["dynamodb"].get("counted_under")
+
+
+def test_a_wave_with_more_than_two_engines_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """No builder makes one (``test_no_migrating_wave_has_more_than_two_engines``); if one
+    ever lands, its split cannot be attributed, and the facts layer says so."""
+    report = _report()
+    report["migration_waves"][1]["engines"].append("opensearch")
+    report["migration_waves"][1]["table_counts_by_engine"]["opensearch"] = 0
+    report["migration_waves"][1]["owned_counts_by_engine"]["opensearch"] = 0
+    with caplog.at_level(logging.WARNING, logger="src.shared.report_facts"):
+        engine_served_split(report["migration_waves"])
+    assert "has 3 migrating engines" in caplog.text
+
+
+def test_counts_that_do_not_reconcile_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A wave whose per-engine counts claim more shared reads than either engine has."""
+    report = _report()
+    report["migration_waves"][1]["table_counts_by_engine"] = {"dynamodb": 9, "documentdb": 3}
+    with caplog.at_level(logging.WARNING, logger="src.shared.report_facts"):
+        engine_served_split(report["migration_waves"])
+    assert "do not reconcile" in caplog.text
 
 
 def test_both_reports_print_the_rows_from_the_facts() -> None:
@@ -182,14 +222,17 @@ def test_both_reports_print_the_rows_from_the_facts() -> None:
     dynamo = "4 source tables served: 2 migrate, 2 kept current by CDC"
     doc = (
         "3 source tables served: 1 migrate, 1 move to DynamoDB, "
-        "1 kept current by CDC in DynamoDB’s count"
+        "1 kept current by CDC, also read by DynamoDB (counted in its row)"
     )
     assert f"| {dynamo} |" in md
     assert f"| {doc} |" in md
-    assert "counted once, in the first engine’s row" in md
+    note = "A table kept current by CDC that DynamoDB and DocumentDB both read is counted once, in the DynamoDB row."
+    assert note in md
     text = executive_text(report)
     assert dynamo in text
-    assert doc in " ".join(text.split())
+    flat = " ".join(text.split())
+    assert doc in flat
+    assert note in flat
 
 
 def test_the_rows_print_what_the_facts_say() -> None:
@@ -199,7 +242,7 @@ def test_the_rows_print_what_the_facts_say() -> None:
         if e["engine"] == "documentdb":
             e["kept_in_sync_counted_under"] = {"dynamodb": 7}
     md = render_engineering_report_md(report)
-    assert "7 kept current by CDC in DynamoDB’s count" in md
+    assert "7 kept current by CDC, also read by DynamoDB (counted in its row)" in md
 
 
 def test_an_old_facts_block_gets_the_split_on_this_definition() -> None:
@@ -216,14 +259,57 @@ def test_an_old_facts_block_gets_the_split_on_this_definition() -> None:
     assert rows["documentdb"]["kept_in_sync_tables"] == 0
     assert rows["documentdb"]["kept_in_sync_counted_under"] == {"dynamodb": 1}
     md = render_engineering_report_md(report)
-    assert "1 kept current by CDC in DynamoDB’s count" in md
+    assert "1 kept current by CDC, also read by DynamoDB (counted in its row)" in md
 
 
 def test_a_report_with_no_wave_split_keeps_its_stored_figures() -> None:
-    """A wave written before the per-engine counts cannot attribute: nothing changes."""
-    report = _report()
+    """A wave written before the per-engine counts cannot attribute: the stored row's
+    figures survive and it gains an empty ``kept_in_sync_counted_under``."""
+    report = _with_facts(_report())
     for key in ("table_counts_by_engine", "owned_counts_by_engine"):
         report["migration_waves"][1].pop(key)
-    rows = _targets(_with_facts(report)["facts"])
-    for row in rows.values():
-        assert row["kept_in_sync_counted_under"] == {}
+    for e in report["facts"]["engines"]:
+        e.pop("kept_in_sync_counted_under")
+        if e["engine"] == "documentdb":
+            e["engine_source_tables"], e["kept_in_sync_tables"] = 120, 99
+            e["moves_to_tables"] = {"dynamodb": 5}
+    doc = _targets(report_facts(report))["documentdb"]
+    assert (doc["engine_source_tables"], doc["kept_in_sync_tables"]) == (120, 99)
+    assert doc["moves_to_tables"] == {"dynamodb": 5}
+    assert doc["kept_in_sync_counted_under"] == {}
+
+
+def test_an_old_report_keeps_its_move_counts_and_subtracts_only_the_shared_reads() -> None:
+    """The reader computes only the new field: a stored kept-current count loses the
+    shared reads, and the stored move counts stay, even when a recount would differ."""
+    report = _with_facts(_report())
+    for e in report["facts"]["engines"]:
+        e.pop("kept_in_sync_counted_under")
+        if e["engine"] == "documentdb":
+            e["kept_in_sync_tables"], e["moves_to_tables"] = 1, {"dynamodb": 3}
+    doc = _targets(report_facts(report))["documentdb"]
+    assert doc["kept_in_sync_tables"] == 0
+    assert doc["kept_in_sync_counted_under"] == {"dynamodb": 1}
+    assert doc["moves_to_tables"] == {"dynamodb": 3}
+
+
+def test_a_saved_report_with_a_shared_read_renders_rows_that_add_up() -> None:
+    """ADR-032 Decision 4 on a saved file: the report validates, its rows add up to its
+    wave, and both reports print the split."""
+    report = json.loads(OLD_OVERLAP_REPORT.read_text(encoding="utf-8"))
+    stored = {e["engine"]: e for e in report["facts"]["engines"]}
+    assert all("kept_in_sync_counted_under" not in e for e in stored.values())
+    assert stored["documentdb"]["kept_in_sync_tables"] == 1  # counted in both rows
+    SynthesisOutputContract.model_validate(report)
+    facts = report_facts(report)
+    rows = _targets(facts)
+    wave = next(w for w in facts["waves"] if w["wave"] == 2)
+    assert sum(r["kept_in_sync_tables"] for r in rows.values()) == wave["kept_in_sync_tables"]
+    assert rows["documentdb"]["moves_to_tables"] == stored["documentdb"]["moves_to_tables"]
+    assert rows["dynamodb"] == {**stored["dynamodb"], "kept_in_sync_counted_under": {}}
+    cell = (
+        "3 source tables served: 1 migrate, 1 move to DynamoDB, "
+        "1 kept current by CDC, also read by DynamoDB (counted in its row)"
+    )
+    assert cell in render_engineering_report_md(report)
+    assert cell in " ".join(executive_text(report).split())

@@ -584,6 +584,16 @@ def test_scope_figures_come_from_the_facts_layer() -> None:
     assert judge_facts.build_facts(_migration_report())["scope_figures"] is None
 
 
+def test_the_rubric_reads_a_scope_rows_split_from_scope_figures() -> None:
+    """#2162: a Scope row whose split matches facts.scope_figures is not a roadmap
+    defect, and the grounded criterion's pointers say where to look."""
+    roadmap = " ".join(_section("roadmap").split())
+    not_a_defect = roadmap[roadmap.index("Not a defect:") :]
+    assert "`facts.scope_figures`" in not_a_defect
+    assert "counted once" in not_a_defect
+    assert "`facts.scope_figures` (each migration target's Scope row)" in " ".join(RUBRIC.split())
+
+
 def test_migration_risk_facts_read_a_count_or_a_list() -> None:
     """Synthesis writes ``hot_partitions_at_risk`` as a count; a list still counts its items."""
     report = _migration_report()
