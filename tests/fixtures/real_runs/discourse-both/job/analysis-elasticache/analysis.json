@@ -4,8 +4,8 @@
     "agent_name": "elasticache-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "elasticache",
-    "analysis_timestamp": "2026-11-09T12:29:36.154657",
-    "analysis_duration_seconds": 7.768791
+    "analysis_timestamp": "2026-11-12T17:17:18.904334",
+    "analysis_duration_seconds": 4.270711
   },
   "table_recommendations": [
     {

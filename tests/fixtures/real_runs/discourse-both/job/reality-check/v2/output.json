@@ -1416,13 +1416,10 @@
       }
     }
   ],
-  "executive_summary": "The initial assignment placed 1654 queries on 4 engines (Aurora PostgreSQL, DynamoDB, DocumentDB and OpenSearch). The final architecture keeps Aurora PostgreSQL (796 queries), DynamoDB (707 queries) and DocumentDB (151 queries). OpenSearch is consolidated away: its 2 queries move to Aurora PostgreSQL.",
-  "executive_summary_source": "deterministic_fallback",
-  "executive_summary_llm": "The analysis covered 311 tables and 1654 query patterns across Aurora PostgreSQL, DynamoDB, DocumentDB and OpenSearch. The two OpenSearch queries are low-frequency tsvector expressions that Aurora PostgreSQL evaluates natively, so OpenSearch is eliminated and DynamoDB and DocumentDB keep the key-value and document workloads they serve directly. Aurora PostgreSQL carries the relational joins, aggregations and text search expressions, while DynamoDB, DocumentDB and Aurora PostgreSQL each take the writes for their own tables and the other engines read a copy of them.",
-  "executive_summary_validation_warnings": [
-    "The summary describes DocumentDB as eliminated, but the final assignment keeps 151 queries on it.",
-    "The summary describes DynamoDB as eliminated, but the final assignment keeps 707 queries on it."
-  ],
+  "executive_summary": "The analysis covered 311 tables and 1654 query patterns across Aurora PostgreSQL, DynamoDB, DocumentDB and OpenSearch. OpenSearch was eliminated because its only 2 queries are low-frequency `to_tsvector` expressions that Aurora PostgreSQL serves natively with its built-in full-text search. Aurora PostgreSQL carries the relational and text-search work, DynamoDB serves key-based lookups and DocumentDB serves document-shaped queries, and each table's copies in other engines are kept current by CDC from its source of truth.",
+  "executive_summary_source": "llm",
+  "executive_summary_llm": "The analysis covered 311 tables and 1654 query patterns across Aurora PostgreSQL, DynamoDB, DocumentDB and OpenSearch. OpenSearch was eliminated because its only 2 queries are low-frequency `to_tsvector` expressions that Aurora PostgreSQL serves natively with its built-in full-text search. Aurora PostgreSQL carries the relational and text-search work, DynamoDB serves key-based lookups and DocumentDB serves document-shaped queries, and each table's copies in other engines are kept current by CDC from its source of truth.",
+  "executive_summary_validation_warnings": [],
   "recommendations": [
     "Consolidated 2 queries from OpenSearch \u2192 Aurora PostgreSQL: OpenSearch provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: OpenSearch was never justified by the workload. None of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it.",
     "Recommended pattern: Polyglot Persistence. Use different databases for different bounded contexts within the application. Each service/module owns its data in the database best suited for its access patterns."

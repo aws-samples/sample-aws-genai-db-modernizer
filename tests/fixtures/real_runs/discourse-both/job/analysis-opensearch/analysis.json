@@ -4,8 +4,8 @@
     "agent_name": "opensearch-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "opensearch",
-    "analysis_timestamp": "2026-11-09T12:29:35.580731",
-    "analysis_duration_seconds": 7.582815
+    "analysis_timestamp": "2026-11-12T17:17:24.823753",
+    "analysis_duration_seconds": 6.047593
   },
   "table_recommendations": [
     {

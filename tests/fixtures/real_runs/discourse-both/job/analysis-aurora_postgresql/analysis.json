@@ -4,8 +4,8 @@
     "agent_name": "aurora-pg-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "aurora_postgresql",
-    "analysis_timestamp": "2026-11-09T12:29:50.982271",
-    "analysis_duration_seconds": 25.36636
+    "analysis_timestamp": "2026-11-12T17:17:39.398322",
+    "analysis_duration_seconds": 20.590631
   },
   "table_recommendations": [
     {
