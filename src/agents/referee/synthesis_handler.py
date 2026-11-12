@@ -1572,8 +1572,8 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # #1146: the in-scope queries grouped by query pattern, for facts.query_pattern_counts.
         "query_pattern_groups": _query_pattern_groups(data),
     }
-    # #2165: sibling design entries that share a sentence become one entry (and a cache
-    # risk's details list it once), so every deliverable reads the grouped form.
+    # #2165: the sentences sibling design entries share, recorded once next to the
+    # entries (left as written), so every deliverable states each one once.
     output_data = grouped_report(output_data)
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

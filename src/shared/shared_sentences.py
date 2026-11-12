@@ -1,30 +1,33 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-"""Sibling design entries that share a sentence, grouped once in ``report.json`` (#2165).
+"""A sentence sibling design entries share, stated once (#2165).
 
 A designer can give two entries of one list the same long sentence: two ElastiCache
-unsupported patterns that each end "A stale answer makes the application insert a
-duplicate row or update a missing one.", or an Aurora app-layer note that restates the
-sentence its column-default notes carry. The engineering report printed one bullet per
-entry, so the sentence was printed twice. Synthesis groups them here, so ``report.json``
-holds the grouped form and every deliverable reads it (ADR-032):
+unsupported patterns that each end with the same sentence about stale answers, or two
+Aurora column-default notes (a DATE and a DATETIME zero date) that each end with the
+same sentence about migrating zero dates. The engineering report printed one bullet per
+entry, so the sentence was printed twice.
 
-- ``unsupported_patterns`` (and ``served_by_waiver``) and ``migration_notes`` entries of
-  one design that share a sentence of at least ``ONCE_MIN_WORDS`` words (directly or
-  through another entry), and are of the same kind (pattern type, object type), become
-  one entry: every query id (or object name) of the group, the shared sentence stated
-  once and each entry's own sentences kept. The entry lists the entries it groups, as
-  they were, in the optional ``grouped_from``. A ``cache.unsupported`` risk's details
-  list the grouped entry once, as the report lists it.
-- ``app_layer_notes``: a column-default note stands for one column, and the report
-  lists the columns whose note reads the same on one line, so column-default notes that
-  share a sentence get one text (each keeps its column); another note that restates a
-  sentence a column-default note states drops it (the column-default line says it, with
-  its columns), and other notes that share a sentence become one entry as above.
+Synthesis records each such sentence once (``grouped_report``), next to the entries,
+which stay as the design wrote them: a design summary's optional
+``shared_sentence_groups`` holds one record per group, ``{"list", "sentences",
+"indexes"}``: the list the entries are in, the sentences they all state, and their
+positions in it. Only entries of one kind are grouped: unsupported patterns of one
+pattern type, migration notes of one object type, app-layer notes of one feature. A
+sentence counts when it has at least ``ONCE_MIN_WORDS`` words and reads the same once
+case, ``**`` and the closing punctuation are folded; a different number, id or table
+name is a different sentence. The renderers print each group as a lead line stating
+its sentences once, then each entry with its own text (``shared_layout``), so no
+entry's text covers another one, and every list keeps its entries and their count.
 
-Entries that share no long sentence are left as they are (the same objects). The pass
-is idempotent, and the deliverables and the results payload read a report through it
+A column-default note stands for one column, and the report already lists the columns
+whose note reads the same on one line, so for app-layer notes a sentence is shared when
+two different note texts state it. Another app-layer note that restates, word for word,
+a sentence a column-default note states drops it (the column-default line says it,
+with its columns), unless nothing of its own would be left.
+
+The deliverables and the results payload read a report through this too
 (``design_text.design_prose_report``), so a report synthesized before it reads the same.
 """
 
@@ -34,15 +37,29 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from src.shared.design_text import ONCE_MIN_WORDS, unsupported_pattern_detail
-from src.shared.engine_names import canonical_engine_id
+from src.shared.design_text import ONCE_MIN_WORDS
 
+GROUPS_KEY = "shared_sentence_groups"
 # Where a sentence ends, as the report guard cuts sentences (``tests/report_concision``).
 _SENTENCE_END = re.compile(r"(?<=[.!?])[:;]?\s+")
-GROUPED_FROM = "grouped_from"
 _COLUMN_DEFAULT = "column_default"
-_UNSUPPORTED_TEXT = ("reason", "description", "recommendation", "workaround")
-_UNSUPPORTED_IDS = ("query_ids", "source_query_ids")
+UNSUPPORTED_TEXT = ("reason", "description", "recommendation", "workaround")
+MIGRATION_NOTE_TEXT = ("application_logic_required",)
+APP_LAYER_TEXT = ("recommendation",)
+
+
+def _label(field: str) -> Callable[[dict[str, Any]], str]:
+    return lambda e: str(e.get(field) or "").strip().strip("*").casefold()
+
+
+# Each list: its text fields, what makes two entries the same kind, and whether a
+# sentence is shared by entries (False) or by different texts (True).
+_LISTS: dict[str, tuple[tuple[str, ...], Callable[[dict[str, Any]], str], bool]] = {
+    "unsupported_patterns": (UNSUPPORTED_TEXT, _label("pattern_type"), False),
+    "served_by_waiver": (UNSUPPORTED_TEXT, _label("pattern_type"), False),
+    "migration_notes": (MIGRATION_NOTE_TEXT, _label("object_type"), False),
+    "app_layer_notes": (APP_LAYER_TEXT, _label("feature"), True),
+}
 
 
 def _sentences(text: Any) -> list[str]:
@@ -51,281 +68,158 @@ def _sentences(text: Any) -> list[str]:
     return [s.strip() for s in _SENTENCE_END.split(text.strip()) if s.strip()]
 
 
-def _key(sentence: str) -> str:
+def sentence_key(sentence: str) -> str:
+    """A sentence as it is compared: one line, ``**``, edge punctuation and case folded."""
     return " ".join(sentence.replace("**", "").split()).strip(" -*:,.;").casefold()
 
 
-def _long(key: str) -> bool:
-    return len(key.split()) >= ONCE_MIN_WORDS
+def is_long(sentence: str) -> bool:
+    return len(sentence_key(sentence).split()) >= ONCE_MIN_WORDS
 
 
-def _long_keys(entry: dict[str, Any], fields: Sequence[str]) -> set[str]:
-    return {k for f in fields for s in _sentences(entry.get(f)) if _long(k := _key(s))}
+def without_sentences(text: Any, sentences: Sequence[str]) -> Any:
+    """``text`` without the given sentences (compared as ``sentence_key`` does)."""
+    if not isinstance(text, str) or not sentences:
+        return text
+    drop = {sentence_key(s) for s in sentences}
+    return " ".join(s for s in _sentences(text) if sentence_key(s) not in drop)
 
 
-def merged_text(texts: Sequence[str]) -> str:
-    """``texts`` as one text: each sentence once. A sentence two or more texts state is
-    shared: one the first text opens with stays at the front, every other shared one
-    follows the texts' own sentences, so no entry's own sentence reads as if the shared
-    one were only about the entry before it."""
-    split = [_sentences(t) for t in texts if isinstance(t, str) and t.strip()]
-    counts: dict[str, int] = {}
-    for sentences in split:
-        for k in {_key(s) for s in sentences}:
-            counts[k] = counts.get(k, 0) + 1
-    shared = {k for k, n in counts.items() if n > 1}
-    out: list[str] = []
-    said: set[str] = set()
-
-    def say(sentence: str) -> None:
-        k = _key(sentence)
-        if k not in said:
-            said.add(k)
-            out.append(sentence)
-
-    for s in split[0] if split else []:
-        if _key(s) not in shared:
-            break
-        say(s)
-    for sentences in split:
-        for s in sentences:
-            if _key(s) not in shared:
-                say(s)
-    for sentences in split:
-        for s in sentences:
-            say(s)
-    return " ".join(s if s.endswith((".", "!", "?")) else f"{s}." for s in out)
+def _text_of(entry: dict[str, Any], fields: Sequence[str]) -> str:
+    return "\n".join(str(entry.get(f) or "") for f in fields)
 
 
-def _groups(
-    entries: Sequence[Any], fields: Sequence[str], kind: Callable[[dict[str, Any]], str]
-) -> list[list[int]]:
-    """The positions of the entries that share a long sentence, directly or through
-    another entry of the same kind, one list per group of two or more, in order."""
-    parent = list(range(len(entries)))
+def sentence_groups(
+    entries: Any,
+    fields: Sequence[str],
+    kind: Callable[[dict[str, Any]], str],
+    by_text: bool = False,
+) -> list[dict[str, Any]]:
+    """The groups of ``entries`` that share a long sentence: ``{"sentences", "indexes"}``.
 
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    first: dict[tuple[str, str], int] = {}
+    Sentences are taken in the order the entries first state them. A sentence the same
+    entries share is added to their group; an entry is in one group only, so a sentence
+    that some of a group's entries share with another entry is left in their own text.
+    With ``by_text`` a sentence is shared when two different texts state it, and every
+    entry whose text states it is in the group."""
+    if not isinstance(entries, list):
+        return []
+    seen: dict[tuple[str, str], tuple[str, list[int]]] = {}
     for i, e in enumerate(entries):
         if not isinstance(e, dict):
             continue
-        for k in sorted(_long_keys(e, fields)):
-            j = first.setdefault((kind(e), k), i)
-            parent[find(i)] = find(j)
-    by_root: dict[int, list[int]] = {}
-    for i, e in enumerate(entries):
-        if isinstance(e, dict):
-            by_root.setdefault(find(i), []).append(i)
-    return [g for g in by_root.values() if len(g) > 1]
-
-
-def _unique(values: Sequence[Any]) -> list[Any]:
-    out: list[Any] = []
-    for v in values:
-        if v not in out:
-            out.append(v)
-    return out
-
-
-def _originals(members: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The entries as the design wrote them; a member grouped before brings its own."""
-    out: list[dict[str, Any]] = []
-    for m in members:
-        if isinstance(m.get(GROUPED_FROM), list) and m[GROUPED_FROM]:
-            out += [o for o in m[GROUPED_FROM] if isinstance(o, dict)]
-        else:
-            out.append(m)
-    return out
-
-
-def _merged_entry(
-    members: Sequence[dict[str, Any]],
-    text_fields: Sequence[str],
-    list_fields: Sequence[str] = (),
-    name_fields: Sequence[str] = (),
-) -> dict[str, Any]:
-    entry = dict(members[0])
-    for f in list_fields:
-        if any(isinstance(m.get(f), list) for m in members):
-            entry[f] = _unique(
-                [v for m in members if isinstance(m.get(f), list) for v in m[f] if v]
-            )
-    for f in name_fields:
-        names = _unique([str(m[f]).strip() for m in members if str(m.get(f) or "").strip()])
-        if names:
-            entry[f] = ", ".join(names)
-    for f in text_fields:
-        texts = [str(m[f]) for m in members if isinstance(m.get(f), str) and m[f].strip()]
-        if texts:
-            entry[f] = merged_text(texts)
-    entry[GROUPED_FROM] = _originals(members)
-    return entry
-
-
-def group_entries(
-    entries: Any,
-    text_fields: Sequence[str],
-    *,
-    list_fields: Sequence[str] = (),
-    name_fields: Sequence[str] = (),
-    kind: Callable[[dict[str, Any]], str] = lambda e: "",
-) -> Any:
-    """``entries`` with each group that shares a long sentence as one entry, at the
-    first member's place. ``entries`` comes back as it is (the same object) when no
-    two entries share one, or when it is not a list."""
-    if not isinstance(entries, list):
-        return entries
-    groups = _groups(entries, text_fields, kind)
-    if not groups:
-        return entries
-    lead = {g[0]: g for g in groups}
-    folded = {i for g in groups for i in g[1:]}
-    out: list[Any] = []
-    for i, e in enumerate(entries):
-        if i in lead:
-            members = [entries[j] for j in lead[i]]
-            out.append(_merged_entry(members, text_fields, list_fields, name_fields))
-        elif i not in folded:
-            out.append(e)
-    return out
-
-
-def _pattern_kind(entry: dict[str, Any]) -> str:
-    return str(entry.get("pattern_type") or "").strip().strip("*").casefold()
-
-
-def _object_kind(entry: dict[str, Any]) -> str:
-    return str(entry.get("object_type") or "").strip().casefold()
-
-
-def group_unsupported_patterns(entries: Any) -> Any:
-    return group_entries(
-        entries, _UNSUPPORTED_TEXT, list_fields=_UNSUPPORTED_IDS, kind=_pattern_kind
-    )
-
-
-def group_migration_notes(entries: Any) -> Any:
-    return group_entries(
-        entries,
-        ("application_logic_required",),
-        name_fields=("object_name", "source_table"),
-        kind=_object_kind,
-    )
-
-
-def group_app_layer_notes(notes: Any) -> Any:
-    """An Aurora design's app-layer notes with each shared sentence stated once (see the
-    module docstring): column-default notes keep one entry per column."""
-    if not isinstance(notes, list):
-        return notes
-    field = ("recommendation",)
-    out: list[Any] = list(notes)
-    changed = False
-    for g in _groups(out, field, _default_kind):
-        if out[g[0]].get("feature") != _COLUMN_DEFAULT:
+        for f in fields:
+            for s in _sentences(e.get(f)):
+                if is_long(s):
+                    first, members = seen.setdefault((kind(e), sentence_key(s)), (s, []))
+                    if i not in members:
+                        members.append(i)
+    groups: list[dict[str, Any]] = []
+    placed: dict[int, dict[str, Any]] = {}
+    for sentence, members in seen.values():
+        texts = {_text_of(entries[i], fields) for i in members}
+        if len(texts if by_text else members) < 2:
             continue
-        texts = _unique([str(out[i].get("recommendation") or "") for i in g])
-        if len(texts) > 1:
-            one = merged_text(texts)
-            for i in g:
-                out[i] = {**out[i], "recommendation": one}
-            changed = True
-    stated = {k for n in out if _is_default(n) for k in _long_keys(n, field)}
-    for i, n in enumerate(out):
-        if not isinstance(n, dict) or _is_default(n):
+        group = placed.get(members[0])
+        if group is not None and group["indexes"] == members:
+            group["sentences"].append(sentence)
+        elif not any(i in placed for i in members):
+            group = {"sentences": [sentence], "indexes": list(members)}
+            groups.append(group)
+            placed.update({i: group for i in members})
+    return groups
+
+
+def shared_layout(
+    entries: Sequence[Any], groups: Any, list_name: str
+) -> list[tuple[list[str], list[Any]]]:
+    """How a list prints with its shared sentences: blocks of ``(sentences, entries)``.
+    A group's block stands where its first entry did, its sentences stated once, then
+    each of its entries with its own text (the shared sentences taken out); every other
+    entry is a block of its own with no sentences. Entries are never merged."""
+    fields = _LISTS.get(list_name, ((), _label(""), False))[0]
+    records = [
+        g
+        for g in groups or []
+        if isinstance(g, dict)
+        and g.get("list") == list_name
+        and isinstance(g.get("indexes"), list)
+        and all(isinstance(i, int) and 0 <= i < len(entries) for i in g["indexes"])
+    ]
+    by_first = {g["indexes"][0]: g for g in records if g["indexes"]}
+    later = {i for g in records for i in g["indexes"][1:]}
+    blocks: list[tuple[list[str], list[Any]]] = []
+    for i, entry in enumerate(entries):
+        if i in by_first:
+            group = by_first[i]
+            sentences = [str(s) for s in group.get("sentences") or []]
+            members = []
+            for j in group["indexes"]:
+                member = entries[j]
+                if isinstance(member, dict):
+                    member = {
+                        **member,
+                        **{
+                            f: without_sentences(member[f], sentences)
+                            for f in fields
+                            if isinstance(member.get(f), str)
+                        },
+                    }
+                members.append(member)
+            blocks.append((sentences, members))
+        elif i not in later:
+            blocks.append(([], [entry]))
+    return blocks
+
+
+def _restated_dropped(notes: list[Any]) -> list[Any]:
+    """App-layer notes with each sentence a column-default note states dropped from the
+    other notes, word for word, unless nothing of a note's own would be left."""
+    stated = {
+        sentence_key(s)
+        for n in notes
+        if isinstance(n, dict) and n.get("feature") == _COLUMN_DEFAULT
+        for s in _sentences(n.get("recommendation"))
+        if is_long(s)
+    }
+    out = notes
+    for i, n in enumerate(notes):
+        if not isinstance(n, dict) or n.get("feature") == _COLUMN_DEFAULT:
             continue
         sentences = _sentences(n.get("recommendation"))
-        kept = [s for s in sentences if _key(s) not in stated]
-        if len(kept) < len(sentences):
-            # Nothing left of its own: the column-default line states it, with its columns.
-            out[i] = {**n, "recommendation": " ".join(kept)} if kept else None
-            changed = True
-    kept_notes = [n for n in out if n is not None]
-    grouped = group_entries(
-        kept_notes,
-        field,
-        name_fields=("source_object",),
-        kind=lambda e: f"default {id(e)}" if _is_default(e) else "",
-    )
-    return grouped if changed or grouped is not kept_notes else notes
-
-
-def _is_default(note: Any) -> bool:
-    return isinstance(note, dict) and note.get("feature") == _COLUMN_DEFAULT
-
-
-def _default_kind(note: dict[str, Any]) -> str:
-    return _COLUMN_DEFAULT if _is_default(note) else ""
+        kept = [s for s in sentences if sentence_key(s) not in stated]
+        if kept and len(kept) < len(sentences):
+            out = list(out) if out is notes else out
+            out[i] = {**n, "recommendation": " ".join(kept)}
+    return out
 
 
 def _grouped_design(summary: dict[str, Any]) -> dict[str, Any]:
+    if GROUPS_KEY in summary:
+        return summary
     out = summary
-    for key, group in (
-        ("unsupported_patterns", group_unsupported_patterns),
-        ("served_by_waiver", group_unsupported_patterns),
-        ("migration_notes", group_migration_notes),
-        ("app_layer_notes", group_app_layer_notes),
-    ):
-        value = summary.get(key)
-        grouped = group(value)
-        if grouped is not value:
-            out = {**out, key: grouped}
+    notes = summary.get("app_layer_notes")
+    if isinstance(notes, list):
+        dropped = _restated_dropped(notes)
+        if dropped is not notes:
+            out = {**out, "app_layer_notes": dropped}
+    records: list[dict[str, Any]] = []
+    for name, (fields, kind, by_text) in _LISTS.items():
+        for group in sentence_groups(out.get(name), fields, kind, by_text):
+            records.append({"list": name, **group})
+    if records:
+        out = {**out, GROUPS_KEY: records}
     return out
-
-
-def _detail_renames(before: Any, after: Any) -> dict[str, str]:
-    """Each original unsupported pattern's risk detail -> its grouped entry's detail."""
-    renames: dict[str, str] = {}
-    if before is after or not isinstance(after, list):
-        return renames
-    for entry in after:
-        if isinstance(entry, dict) and isinstance(entry.get(GROUPED_FROM), list):
-            detail = unsupported_pattern_detail(entry)
-            for original in entry[GROUPED_FROM]:
-                if isinstance(original, dict):
-                    renames[unsupported_pattern_detail(original)] = detail
-    return renames
-
-
-def _risk_engine(risk: dict[str, Any]) -> str:
-    """The engine a risk's ``[engine]`` description prefix names (risks carry no
-    engine field), or ""."""
-    m = re.match(r"\s*\[([^\]]+)\]", str(risk.get("description") or ""))
-    return canonical_engine_id(m.group(1).strip()) if m else ""
 
 
 def grouped_report(report: dict[str, Any]) -> dict[str, Any]:
-    """``report`` with each design's sibling entries that share a sentence grouped, and
-    each ``cache.unsupported`` risk's details listing a grouped entry once. A report
-    with nothing to group comes back unchanged (the same object)."""
+    """``report`` with each design summary's shared sentences recorded once
+    (``shared_sentence_groups``); the entries themselves are left as they are. A report
+    with nothing to record comes back unchanged (the same object)."""
     designs = report.get("schema_designs")
     if not isinstance(designs, dict):
         return report
-    new_designs: dict[str, Any] = {}
-    renames: dict[str, dict[str, str]] = {}
-    for engine, summary in designs.items():
-        if not isinstance(summary, dict):
-            new_designs[engine] = summary
-            continue
-        new_designs[engine] = grouped = _grouped_design(summary)
-        renames[canonical_engine_id(str(engine))] = _detail_renames(
-            summary.get("unsupported_patterns"), grouped.get("unsupported_patterns")
-        )
-    if all(new_designs[e] is designs[e] for e in designs):
+    new = {e: _grouped_design(s) if isinstance(s, dict) else s for e, s in designs.items()}
+    if all(new[e] is designs[e] for e in designs):
         return report
-    out = {**report, "schema_designs": new_designs}
-    assessment = report.get("risk_assessment")
-    if isinstance(assessment, dict) and isinstance(assessment.get("risks"), list):
-        risks = []
-        for r in assessment["risks"]:
-            rename = renames.get(_risk_engine(r)) if isinstance(r, dict) else None
-            if rename and r.get("rule") == "cache.unsupported" and r.get("details"):
-                r = {**r, "details": _unique([rename.get(d, d) for d in r["details"]])}
-            risks.append(r)
-        out["risk_assessment"] = {**assessment, "risks": risks}
-    return out
+    return {**report, "schema_designs": new}
