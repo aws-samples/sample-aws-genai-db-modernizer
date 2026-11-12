@@ -262,6 +262,7 @@ def test_the_migration_map_refers_to_the_definitions_target_engines_gave(md: str
     assert md.count("“served” is the source tables") == 1
 
 
+@pytest.mark.passes_on_main(reason="#2162 only clears its new field here too")
 def test_without_the_definition_above_the_map_defines_its_split(report: dict[str, Any]) -> None:
     """When Target engines defines no kept-in-sync split (no migration target serves a
     table it does not move), the Migration map states its own definition."""

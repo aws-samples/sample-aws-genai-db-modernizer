@@ -155,6 +155,7 @@ def test_every_scope_row_adds_up_and_the_rows_add_up_to_the_wave() -> None:
     assert sum(r["kept_in_sync_tables"] for r in rows.values()) == wave["kept_in_sync_tables"]
 
 
+@pytest.mark.passes_on_main(reason="the in-wave moves are unchanged by #2162; guards them")
 def test_the_moves_between_wave_engines_are_the_waves_in_wave_entries() -> None:
     facts = _with_facts(_report())["facts"]
     wave = next(w for w in facts["waves"] if w["wave"] == 2)
