@@ -5,10 +5,11 @@
 
 Across the bundled samples (wordpress, discourse, trailgear, deterministic) and the
 designed wordpress job (a schema design for every kept engine, the cache layer
-included): no in-scope query is served by two groups, the cache layer's groups list
-only cached reads, and the queries no group of their own engine serves are exactly
-``facts.query_group_counts.ungrouped_queries``. On the deterministic samples only
-the engines whose schema design has not run are left ungrouped.
+included), and on every model run e2e-llm checks (#2153): no in-scope query is served
+by two groups, the cache layer's groups list only cached reads, the queries no group
+of their own engine serves are exactly ``facts.query_group_counts.ungrouped_queries``,
+and a designed engine leaves none ungrouped. On the deterministic samples only the
+engines whose schema design has not run are left ungrouped.
 """
 
 from __future__ import annotations
@@ -84,25 +85,42 @@ def _check_served_once(report: dict[str, Any]) -> None:
     assert not twice, f"{len(twice)} in-scope queries are served by two groups: {twice[:5]}"
 
 
-@pytest.mark.deterministic
+def _check_designed_engines_group_every_query(report: dict[str, Any]) -> None:
+    """A designed engine names every query it is assigned (#2153, ADR-027 #1602): only an
+    engine whose design has not run may leave queries ungrouped."""
+    rows = report["facts"]["query_group_counts"]["ungrouped_queries"]
+    designed = [r for r in rows if r.get("schema_design_available")]
+    assert not designed, f"designed engines leave queries ungrouped: {designed}"
+
+
 def test_query_groups_partition_the_in_scope_queries(run: PipelineResult) -> None:
-    """Deterministic only: the replayed model run's report.json was synthesized before
-    the cache layer's groups were split (#226), so it still shares them."""
-    if run.external:
-        pytest.skip("deterministic samples only")
+    """Every run, deterministic or a model's, the replay included (#2153): the cache
+    layer's groups stay apart, the ungrouped queries are exactly the fact, and no query
+    is served by two groups."""
     report = _report(run)
     _check_cache_groups_apart(report)
     _check_ungrouped_is_the_fact(report)
+    _check_served_once(report)
+
+
+# replay_stale: the saved discourse fixture (#2057, batch11121203) was designed before
+# #2153 dropped the skill's "skip query_type OTHER" rule, so its DynamoDB design leaves
+# the parenthesized UNION 4582415969089977699 (#2159) ungrouped. Drop the marker when the
+# fixture is refreshed from a run that has #2153.
+@pytest.mark.replay_stale
+def test_a_designed_engine_leaves_no_query_ungrouped(run: PipelineResult) -> None:
+    """``replay_stale``: every fresh run, deterministic or a model's (#2153): a designed
+    engine names every query it is assigned. The saved discourse replay predates #2153."""
+    _check_designed_engines_group_every_query(_report(run))
 
 
 @pytest.mark.deterministic
-def test_no_query_is_served_twice_and_only_undesigned_engines_are_ungrouped(
-    run: PipelineResult,
-) -> None:
+def test_only_undesigned_engines_are_ungrouped(run: PipelineResult) -> None:
+    """Deterministic only: no schema design runs there, so the engines left ungrouped
+    are exactly the undesigned owners."""
     if run.external:
         pytest.skip("deterministic samples only")
     report = _report(run)
-    _check_served_once(report)
     stated = _check_ungrouped_is_the_fact(report)
     undesigned = {
         r["target"]

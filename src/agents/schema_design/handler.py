@@ -37,6 +37,7 @@ from src.agents.referee.query_pattern import (
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
+from src.agents.schema_design.design_coverage import check_design_coverage
 from src.agents.schema_design.design_trace import write_design_trace
 from src.agents.schema_design.effective_architecture import (
     EFFECTIVE_ARCHITECTURE_KEY,
@@ -837,13 +838,22 @@ def apply_schema_scope(
 
     Violations set ``validation_passed=false`` and are appended to
     ``validation_failures``; stale scope messages from an earlier check are
-    dropped first (see :func:`apply_scope_violations`).
+    dropped first (see :func:`apply_scope_violations`). The coverage check
+    (``design_coverage``, #2153) runs here too: a statement the design input lists
+    that no access pattern names is a violation, so every caller (finalize,
+    ``--merge``, the Bedrock designers) fails the design on it.
     """
     report = check_schema_scope(
         store, database_name, job_id, target_type, schema_output, assignment_version
     )
     if not isinstance(schema_output, dict):
         return schema_output, report
+    # #2153: every statement the design input lists is named by an access pattern.
+    coverage = check_design_coverage(
+        store, database_name, job_id, target_type, schema_output, assignment_version
+    )
+    if coverage:
+        report = ScopeReport([*report.violations, *coverage], report.warnings)
     return apply_scope_violations(schema_output, report.violations), report
 
 

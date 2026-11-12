@@ -301,6 +301,19 @@ def test_member_ids_survive_the_merge(tmp_path: Path) -> None:
     assert len(added) == len(_entries(inputs[1]))
 
 
+@pytest.mark.passes_on_main  # the merge never dropped a named statement (#2153); guards it
+def test_a_one_statement_pattern_survives_the_merge(tmp_path: Path) -> None:
+    """Replayed on the six saved discourse runs' drafts, the merge kept every statement
+    the drafts named (#2153): a one-statement pattern a draft names stays named."""
+    single = _q("single", "DELETE FROM products WHERE brand = ?", 0.1, query_type="DELETE")
+    queries = [*(q for p in range(24) for q in _members(p, 3)), single]
+    store, _, inputs = _split(tmp_path, queries)
+    for n, data in inputs.items():
+        store.write_json(f"{BASE}/schema_draft_group_{n}.json", _draft_for(data, members_too=True))
+    merged = merge_schema_groups("j1", "ecommerce", "dynamodb", store, schema_version=1)
+    assert covered_query_ids("dynamodb", merged) == {q["query_id"] for q in queries}
+
+
 @pytest.mark.passes_on_main  # main's input lists every statement; per-pattern input must keep it
 def test_the_pe_review_names_every_member(tmp_path: Path) -> None:
     queries = [q for p in range(3) for q in _members(p, 4)]

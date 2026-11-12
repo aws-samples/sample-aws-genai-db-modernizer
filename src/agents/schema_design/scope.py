@@ -64,6 +64,14 @@ SCOPE_PREFIX = "Out of scope for "
 
 SCOPE_WARNING_PREFIX = "Scope warning for "
 
+COVERAGE_PREFIX = "Not designed by "
+"""Every coverage message starts with this (#2153): an in-scope statement the engine's
+design input lists that no access pattern names. Stripped and recomputed like the scope
+messages, so a fixed design does not keep a stale one."""
+
+#: The messages :func:`apply_scope_violations` owns and recomputes on every check.
+CHECK_PREFIXES = (SCOPE_PREFIX, COVERAGE_PREFIX)
+
 # (list field, label field, table fields, query-id fields, nested lists)
 # A nested list entry is (field, label field, table fields, query-id fields).
 _Spec = tuple[
@@ -380,8 +388,8 @@ def validate_schema_scope(engine: str, schema_output: dict, assignment: dict) ->
 def apply_scope_violations(schema_output: dict, violations: list[str]) -> dict:
     """Return a copy of ``schema_output`` with its scope verdict replaced by ``violations``.
 
-    Scope messages from an earlier check (they start with :data:`SCOPE_PREFIX`)
-    are removed first, so a design fixed by hand and re-finalized does not keep
+    Scope and coverage messages from an earlier check (they start with
+    :data:`SCOPE_PREFIX` or :data:`COVERAGE_PREFIX`) are removed first, so a design fixed by hand and re-finalized does not keep
     stale failures. With new violations: ``validation_passed=false`` and the
     messages appended to ``validation_failures``. Without: if stale scope
     messages were the only failures, ``validation_passed`` is restored to true;
@@ -390,7 +398,7 @@ def apply_scope_violations(schema_output: dict, violations: list[str]) -> dict:
     result = dict(schema_output)
     existing = result.get("validation_failures")
     failures = [f for f in existing if isinstance(f, str)] if isinstance(existing, list) else []
-    kept = [f for f in failures if not f.startswith(SCOPE_PREFIX)]
+    kept = [f for f in failures if not f.startswith(CHECK_PREFIXES)]
     stripped = len(kept) != len(failures)
 
     if violations:

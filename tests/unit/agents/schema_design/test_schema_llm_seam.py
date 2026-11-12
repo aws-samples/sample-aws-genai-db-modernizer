@@ -376,13 +376,14 @@ class TestFinalizeSchemaDesign:
     # --- #1221: trade-off topics in an external-mode response -----------------------
 
     def _with_trade_off(self, **fields) -> dict:
-        response = copy.deepcopy(_VALID_DYNAMODB_OUTPUT)
+        response: dict = copy.deepcopy(_VALID_DYNAMODB_OUTPUT)
         response["trade_offs"][0].update(fields)
         return response
 
     def _written_trade_offs(self, store) -> list[dict]:
         [key] = [k for k in store._written if k.endswith("schema_output.json")]
-        return store._written[key]["trade_offs"]
+        trade_offs: list[dict] = store._written[key]["trade_offs"]
+        return trade_offs
 
     def test_a_trade_off_without_a_topic_is_saved_as_other(self):
         """A design saved since the field always carries its topic, so nothing reads

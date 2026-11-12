@@ -407,7 +407,11 @@ def test_bedrock_out_of_scope_design_fails_validation(engine, monkeypatch, capsy
 
     assert code == 0
     assert status["status"] == "validation_failed"
-    assert status["errors"] and all(e.startswith("Out of scope for ") for e in status["errors"])
+    scope = [e for e in status["errors"] if e.startswith("Out of scope for ")]
+    assert scope
+    # #2153: the design also leaves its one in-scope query (q-users) unnamed.
+    others = [e for e in status["errors"] if e not in scope]
+    assert all(e.startswith("Not designed by ") and "'q-users'" in e for e in others)
     written = store.read_json(f"{DB}/{JOB}/schema-{engine}/v1/schema_output.json")
     assert written["validation_passed"] is False
     assert all(e in written["validation_failures"] for e in status["errors"])
