@@ -710,6 +710,7 @@ Version History:
 """
 
 import re
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -4384,7 +4385,11 @@ class AdoptionPathFacts(BaseModel):
     )
     cost_is_upper_bound: bool = Field(
         True,
-        description="Aurora stays sized for the whole workload, so its cost is an upper bound",
+        description=(
+            "Whether its cost is an upper bound. False while each engine's estimate is "
+            "sized for the queries it serves in the full target (#1130, #2170), so a path that "
+            "leaves more queries on Aurora is not bounded by it"
+        ),
     )
     critical_high_risks: int = Field(..., ge=0)
     replicated_tables: list[str] = Field(
@@ -4590,10 +4595,13 @@ def check_plan_against_facts(
     engine_costs: dict[str, float | None],
     risks_by_engine: dict[str, int],
     no_migration_engines: list[str],
+    migration_targets: Collection[str] = (),
 ) -> None:
     """The plan's per-engine figures are the report's (``facts.engines``' costs and
     ``critical_high_risks_by_engine``), and the relational-only path ends on the engines
-    that need no data migration (``facts.no_migration``)."""
+    that need no data migration (``facts.no_migration``), plus the relational step's
+    engine when it is itself a migration target (``migration_targets``: a cross-engine
+    source, whose move to Aurora is a migration, #1130)."""
     for engine, cost in plan.engine_monthly_cost_usd.items():
         if engine_costs.get(engine) != cost:
             raise ValueError(f"{engine}'s cost is {engine_costs.get(engine)} in facts.engines")
@@ -4603,7 +4611,15 @@ def check_plan_against_facts(
     path = next(
         (p for p in (adoption.paths if adoption else []) if p.path_id == "relational_only"), None
     )
-    if path is not None and set(path.engines) != set(no_migration_engines):
+    first = plan.plan_steps[0] if plan.plan_steps else None
+    converted = (
+        {first.engine}
+        if first is not None
+        and first.kind == "relational_step"
+        and first.engine in set(migration_targets)
+        else set()
+    )
+    if path is not None and set(path.engines) != set(no_migration_engines) | converted:
         raise ValueError("relational_only ends on facts.no_migration's engines")
 
 
@@ -4998,6 +5014,7 @@ class ReportFacts(BaseModel):
                 {e.engine: e.monthly_cost_usd for e in self.engines},
                 self.critical_high_risks_by_engine,
                 self.no_migration.engines,
+                {e.engine for e in self.engines if e.role == "Migration target"},
             )
         return self
 

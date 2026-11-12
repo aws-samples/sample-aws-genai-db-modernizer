@@ -275,6 +275,15 @@ def _gate_failure(
     return _ownership_failure(query, engine, ctx.source_engine)
 
 
+def customer_gate_failure(
+    query_id: str, query: Mapping | None, engine: str, ctx: ScoringContext | None
+) -> tuple[str, str] | None:
+    """The customer gate's verdict on putting the query on ``engine`` (``_gate_failure``):
+    ``(gate_kind, reason)`` when ``engine`` cannot run or own it, else ``None``. The
+    adoption paths (#1130) ask it whether a query can stay on the relational engine."""
+    return _gate_failure(query_id, query, engine, ctx)
+
+
 def _ownership_failure(
     query: Mapping | None, engine: str, source_engine: str | None
 ) -> tuple[str, str] | None:

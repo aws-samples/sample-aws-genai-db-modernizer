@@ -3,8 +3,8 @@
 
 """``facts.slice_plan`` and ``facts.adoption`` (#1128): one entry point in the facts
 layer (ADR-032). The slice plan is computed from the assignment synthesis passes (#1129,
-#1698); a report filled at read time has no assignment, so it states the empty plan. The
-adoption paths stay empty until #1130."""
+#1698); a report filled at read time has no assignment, so it states the empty plan and
+no adoption path (#1130: the paths themselves are tested in ``test_adoption_paths.py``)."""
 
 from __future__ import annotations
 

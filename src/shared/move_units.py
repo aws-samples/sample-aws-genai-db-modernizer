@@ -75,6 +75,11 @@ class SliceInputs:
     routine_units: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     routine_followers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     foreign_keys: tuple[tuple[str, str], ...] = ()
+    # #1130: by relational engine, the in-scope queries off it that it cannot take back
+    # (the customer gate's hard exclusion, capability and ownership checks,
+    # ``src.agents.referee.slice_inputs.relational_gate_failures``). An adoption path
+    # that leaves one of them on that engine is not offered.
+    relational_gate_failures: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
