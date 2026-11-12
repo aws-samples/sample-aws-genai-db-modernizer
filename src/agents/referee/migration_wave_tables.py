@@ -10,6 +10,7 @@ from typing import Any
 from src.contracts.synthesis_output import join_gate_parts
 from src.shared.engine_names import display_engine
 from src.shared.gate_facts import GATE_TABLES_SHOWN
+from src.shared.migration_risk_rules import join_words
 from src.shared.migration_wave_engines import KV_ENGINES, NON_OWNER_ENGINES, RELATIONAL_ENGINES
 
 
@@ -468,17 +469,20 @@ def _table_group_coverage_parts(
             )
         if permanent:
             all_tables = set()
-            parts = []
             others = []
             for other in sorted(permanent, key=lambda e: (engine_wave_number.get(e) or 999, e)):
-                tables = permanent[other]
-                all_tables |= tables
+                all_tables |= permanent[other]
                 others.append(other)
-                parts.append(
-                    f"{display_engine(other)} queries, which remain on {display_engine(other)}"
-                )
             n = len(all_tables)
-            other_names = ", ".join(display_engine(o) for o in others)
+            # #2171: name the readers once ("by Aurora PostgreSQL and DocumentDB queries,
+            # which remain on those engines"), not "X queries, which remain on X" per engine.
+            names = [display_engine(o) for o in others]
+            readers = (
+                f"{names[0]} queries, which remain on {names[0]}"
+                if len(names) == 1
+                else f"{join_words(names)} queries, which remain on those engines"
+            )
+            copies = f"{names[0]} copy" if len(names) == 1 else f"{join_words(names)} copies"
             clauses.append(
                 [
                     {
@@ -486,10 +490,9 @@ def _table_group_coverage_parts(
                         "items": sorted(all_tables),
                     },
                     {
-                        "text": f" {_stay_verb(n)} dual-read by "
-                        + ", ".join(parts)
-                        + f"; {display_engine(engine)} owns them, so keep the {other_names} "
-                        f"copy current from {display_engine(engine)} via CDC.",
+                        "text": f" {_stay_verb(n)} dual-read by {readers}; "
+                        f"{display_engine(engine)} owns them, so keep the {copies} "
+                        f"current from {display_engine(engine)} via CDC.",
                         "items": [],
                     },
                 ]

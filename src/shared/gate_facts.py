@@ -28,6 +28,11 @@ CACHE_READS_SHOWN = 5
 # How many table names a migration-wave gate sentence lists; a longer list is only counted.
 GATE_TABLES_SHOWN = 5
 
+# #2171: the most table names a rendered gate line prints for one list. A longer list of
+# Migration map rows is left to its count (the gate's own text states it) and a pointer
+# to the map, which lists each table with its owner and readers.
+GATE_LIST_MAX = 8
+
 
 def cache_candidate_reads(
     query_assignments: Iterable[Mapping[str, Any]],

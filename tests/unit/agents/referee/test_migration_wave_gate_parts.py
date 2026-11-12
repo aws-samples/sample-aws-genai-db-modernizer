@@ -253,6 +253,30 @@ def test_dual_read_count_says_it_is_a_subset_of_the_tables_the_wave_moves():
     ]
 
 
+def test_dual_read_by_two_engines_names_the_readers_once():
+    """#2171: the discourse judge quoted "stay dual-read by Aurora PostgreSQL queries,
+    which remain on Aurora PostgreSQL, DocumentDB queries, which remain on DocumentDB"
+    as a repeat. The readers are named once, and so are the copies kept current."""
+    queries = [
+        {"query_id": "q1", "assigned_engine": "aurora_postgresql", "source_tables": ["t_a"]},
+        {"query_id": "q2", "assigned_engine": "documentdb", "source_tables": ["t_b"]},
+    ]
+    note = _table_group_coverage_note(
+        {"t_a", "t_b", "t_c"},
+        [],
+        queries,
+        "dynamodb",
+        {"aurora_postgresql": 1, "documentdb": 3, "dynamodb": 3},
+        3,
+    )
+    assert note.startswith(
+        " 2 of the 3 tables moving to DynamoDB (t_a, t_b) stay dual-read by Aurora PostgreSQL "
+        "and DocumentDB queries, which remain on those engines; DynamoDB owns them, so keep "
+        "the Aurora PostgreSQL and DocumentDB copies current from DynamoDB via CDC."
+    )
+    assert note.count("which remain on") == 1
+
+
 def test_every_moving_table_dual_read_says_all_and_names_no_remainder():
     queries = [
         {"query_id": "q1", "assigned_engine": "aurora_mysql", "source_tables": ["t_a", "t_b"]}

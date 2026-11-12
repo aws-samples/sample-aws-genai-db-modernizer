@@ -83,7 +83,7 @@ from .engine_choices import (
     REROUTE_OVERRIDE_TEXT,
     reroute_summary,
 )
-from .engineering_report import RISK_RULE_NOTE, _engine_role_notes_md
+from .engineering_report import RISK_RULE_NOTE, _defines_kept_in_sync, _engine_role_notes_md
 from .facts import (
     RATE_WINDOW_DETAIL_KEYS,
     assumption_block_lines,
@@ -123,7 +123,7 @@ from .risks import (
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
 from .routines import lists_routines, routine_summary_lines, routine_wave
-from .table_owners import OWNER_RULE_SHORT, ownership_facts, ownership_summary_text
+from .table_owners import owner_rule, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
 from .unservable import (
     UNSERVABLE_SCOPE_SOME,
@@ -189,8 +189,9 @@ L_OPEN = "Open risks"
 RISK_DETAILS_POINTER = "The engineering report lists each one in full."
 # #1510: a card's Mitigation line when the mitigation is all table names or SQL, which
 # this report never prints: Next steps names the risk by id, so the card says where it is.
+# #2171: a plain sentence after "Mitigation:", not a fragment that reads as machine output.
 RISK_MITIGATION_POINTER = (
-    "the engineering report gives it under this risk; it names the tables or SQL it changes."
+    "see this risk in the engineering report, which lists the tables and SQL to change."
 )
 L_RESOLVED = "Resolved by the assignment"
 L_NO_DECISIONS = "No pending engine choices."
@@ -1003,7 +1004,11 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         flow += [
             _gap(8),
             _labelled(L_TABLE_OWNERS, ownership_summary_text(ownership), st["small"]),
-            _para(OWNER_RULE_SHORT, st["small"]),
+            # #2171: the Target engines note above already said the CDC sentence.
+            _para(
+                owner_rule(columns=False, cdc_defined_above=_defines_kept_in_sync(engines)),
+                st["small"],
+            ),
         ]
     return flow
 
@@ -1019,7 +1024,11 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         if cost_baseline_known(tco)
         else []
     )
-    cost_lines.insert(0, cost_scope_text(facts))
+    # #2171: the recommendation's engine table states the label and the caveat with the
+    # first cost figures (``cost_note_text``); this page does not say them again.
+    arch = _architecture_engines(report)
+    if not arch:
+        cost_lines.insert(0, cost_scope_text(facts))
     cost_lines += [f"Retired by this plan: {statement}" for statement, _, _ in retired]
     # #1329: the projection leaves out the queries with no engine in the scope.
     cost_lines += [cost_exclusion_text(facts)] if cost_exclusion_text(facts) else []
@@ -1069,7 +1078,6 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     reasons = [f"{name}: {reason}." for _, reason, name in retired if reason]
     if reasons:
         flow += [_para(without_table_names(" ".join(reasons), names), st["small"]), _gap(10)]
-    arch = _architecture_engines(report)
     if arch:
         flow.append(_para(L_COST_BREAKDOWN.upper(), st["kicker"]))
         flow.append(_gap(4))
@@ -1116,8 +1124,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     scenario = rate_window_scenario_label(facts)
     if scenario:
         flow += [_gap(6), _para(f"{scenario}.", st["small"])]
-    # #1474: the one caveat where the costs are stated.
-    flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
+    # #1474: the one caveat where the costs are stated; #2171: the recommendation's
+    # engine table already printed it when there is one.
+    if not arch:
+        flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     # #1939: the routines' headline counts, as the facts state them, in the short form
     # (#2075): no routine or table name. The to-do is printed once: in its wave's
     # readiness line, or here when no wave brings in the routines' target.

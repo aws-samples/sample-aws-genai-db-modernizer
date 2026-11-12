@@ -41,20 +41,66 @@ def text(data: bytes | Path) -> str:
 def body_text(data: bytes | Path, db: str) -> str:
     """The document's text without the page furniture, so a card or table that
     continues on the next page reads as one."""
-    furniture = [
+    return normalize(" ".join(body_text_of(page, db) for page in page_texts(data)))
+
+
+def section_texts(data: bytes | Path, db: str) -> dict[str, str]:
+    """Each section's text, keyed by its heading, the page furniture removed (#2171).
+
+    Every section starts on a new page whose text leads with its title; a page that
+    continues it carries "<title> (continued)". The cover belongs to no section."""
+    out: dict[str, str] = {}
+    current: str | None = None
+    for page in page_texts(data):
+        title = next(
+            (
+                h
+                for h in executive_report.SECTION_HEADINGS
+                if page.startswith(h) or f"{h}{executive_report.CONTINUED}" in page
+            ),
+            None,
+        )
+        current = title or current
+        if current is not None:
+            out[current] = normalize(f"{out.get(current, '')} {body_text_of(page, db)}")
+    return out
+
+
+def body_text_of(page: str, db: str) -> str:
+    """One page's text without the page furniture (``body_text`` for one page)."""
+    for f in (
         normalize(f"{executive_report.PRODUCT_NAME} · {db}"),
         normalize(executive_report.FOOTER),
         *(f"{h}{executive_report.CONTINUED}" for h in executive_report.SECTION_HEADINGS),
-    ]
-    out = []
-    for page in page_texts(data):
-        for f in furniture:
-            page = page.replace(f, " ")
-        page = re.sub(r"Page \d+ of \d+", " ", page)
-        # #1166: the code commit of the render, on every page's footer.
-        pattern = re.escape(build_commit_line("COMMIT")).replace("COMMIT", r"\S+?")
-        out.append(re.sub(pattern, " ", page))
-    return normalize(" ".join(out))
+    ):
+        page = page.replace(f, " ")
+    page = re.sub(r"Page \d+ of \d+", " ", page)
+    # #1166: the code commit of the render, on every page's footer.
+    pattern = re.escape(build_commit_line("COMMIT")).replace("COMMIT", r"\S+?")
+    return normalize(re.sub(pattern, " ", page))
+
+
+# #2171: a sentence this long is said once across the executive report's sections.
+SECTION_REPEAT_MIN_WORDS = 8
+
+
+def repeated_across_sections(
+    sections: dict[str, str], min_words: int = SECTION_REPEAT_MIN_WORDS
+) -> list[tuple[str, list[str]]]:
+    """Each sentence of at least ``min_words`` words one section prints that another
+    section prints too, word for word (numbers count), with the sections that print it.
+    A sentence counts wherever another section's text holds it, so a tile label run into
+    the sentence ("... cost Full-modernization estimate: ...") still counts."""
+    found: dict[str, set[str]] = {}
+    for heading, body in sections.items():
+        for raw in re.split(r"(?<=[.!?])\s+", body):
+            sentence = raw.strip()
+            if len(sentence.split()) < min_words:
+                continue
+            others = {h for h, b in sections.items() if h != heading and sentence in b}
+            if others:
+                found.setdefault(sentence, set()).update({heading, *others})
+    return [(s, sorted(h)) for s, h in found.items()]
 
 
 def outline(data: bytes | Path) -> list[str]:
