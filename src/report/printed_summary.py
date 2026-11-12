@@ -27,6 +27,7 @@ from typing import Any
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.gate_facts import gate_block_facts
+from src.shared.placeholder_tables import NO_SOURCE_TABLE_LABEL
 from src.shared.risk_severity import severity_of, severity_rank
 from src.shared.target_databases import engine_scope_statement, no_engine_in_scope_statement
 
@@ -227,8 +228,15 @@ def render_gate_block(
         lines.append("Engine choices to settle before schema design:")
         for p in pending:
             count = p.get("queries")
+            # A statement that reads no table is "No source table", named by its choice
+            # id (``query:<id>``), the name a pick uses (#2147).
+            name = (
+                f"{NO_SOURCE_TABLE_LABEL} (`{escaping.md_code(p.get('choice'))}`)"
+                if p.get("table") == NO_SOURCE_TABLE_LABEL
+                else f"`{escaping.md_code(p.get('table'))}`"
+            )
             lines.append(
-                f"- `{escaping.md_code(p.get('table'))}` ({count} {plural_noun(count, 'query', 'queries')}"
+                f"- {name} ({count} {plural_noun(count, 'query', 'queries')}"
                 f"): {prose(p.get('why_tied'))}"
             )
             for e in p.get("engines") or []:

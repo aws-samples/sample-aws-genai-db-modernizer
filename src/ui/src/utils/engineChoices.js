@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
+import { isPlaceholderTable } from './tableNames';
+
 // #1003: the assignment review's per-table engine choices. The API sends the open
 // ties grouped per table (`pending_choices`, built once on the server by
 // src/agents/referee/pending_choices.py); the page only collects the customer's
@@ -24,9 +26,18 @@ export function switchDecisionOverrides(decision, engine) {
   return (decision.query_ids || []).map((query_id) => ({ query_id, assigned_engine: engine }));
 }
 
-// The table's short name (`discourse.theme_fields` -> `theme_fields`).
-export function choiceTableName(choice) {
-  const table = String((choice && choice.table) || '');
+// The table's short name (`discourse.theme_fields` -> `theme_fields`). A choice for a
+// statement that reads no table (#2147: an empty `table`, or a placeholder such as
+// `unknown` an older job saved) is "No source table" and its query, in the page's
+// language when `t` is given.
+export function choiceTableName(choice, t) {
+  const table = String((choice && choice.table) || '').trim();
+  if (!table || isPlaceholderTable(table)) {
+    const ids = (choice && choice.query_ids) || [];
+    const query = ids.length === 1 ? ids[0] : '';
+    if (t) return t('assignment-gate.choices.no-source-table', { context: query ? 'query' : undefined, query });
+    return query ? `No source table (${query})` : 'No source table';
+  }
   return table.includes('.') ? table.slice(table.lastIndexOf('.') + 1) : table;
 }
 

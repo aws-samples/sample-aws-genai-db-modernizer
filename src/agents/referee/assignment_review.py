@@ -35,6 +35,7 @@ from typing import Any
 from src.agents.referee.assignment_overrides import QueryOverrideInput
 from src.agents.referee.triage import ANALYSIS_AGENTS
 from src.contracts.assignment_models import Assignment, PendingEngineChoice
+from src.shared.placeholder_tables import NO_SOURCE_TABLE_LABEL, is_placeholder_table
 
 # --- Editable-surface catalog (single source of truth) ----------------------
 # The renderer, the parser's validation, and the customer guidance all read
@@ -398,7 +399,13 @@ def render_pending_choices(choices: list[PendingEngineChoice]) -> str:
     ]
     for c in choices:
         now = ", ".join(c.current_engines or [c.current_engine])
-        lines.append(f"### {c.choice_id} ({len(c.query_ids)} queries, now on {now})")
+        # A statement that reads no table is named by its choice id, under no table (#2147).
+        name = (
+            f"{c.choice_id} ({NO_SOURCE_TABLE_LABEL})"
+            if is_placeholder_table(c.table)
+            else c.choice_id
+        )
+        lines.append(f"### {name} ({len(c.query_ids)} queries, now on {now})")
         lines.append("")
         lines.append(_sanitize_cell(c.why_tied))
         for e in c.options:

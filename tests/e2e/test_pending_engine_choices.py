@@ -23,6 +23,10 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.deliverable_figures import pdf_page_texts
+from tests.e2e.engine_choice_checks import (
+    assert_decide_for_me_leaves_nothing_open,
+    assert_every_open_tie_is_one_choice,
+)
 from tests.e2e.pipeline import REPO, PipelineResult, _env
 
 JOB = "choices"
@@ -105,7 +109,7 @@ def test_every_open_tie_is_in_exactly_one_choice_per_table(plain: dict) -> None:
             assert e["score"] <= e["unrounded_score"] < e["score"] + 2, (c["choice_id"], e)
     facts = plain["facts"]
     assert facts["pending_choice_count"] == len(choices) < facts["tied_query_count"]
-    assert facts["pending_choice_query_count"] == facts["tied_query_count"] == len(tied)
+    assert_every_open_tie_is_one_choice(plain)
     # The issue's finding: level at whole points, apart before rounding, and that
     # difference is what decides those choices.
     apart = [c for c in choices if len({e["unrounded_score"] for e in c["options"]}) > 1]
@@ -174,7 +178,7 @@ def test_decide_for_me_settles_every_other_choice_by_the_documented_rule(
     after = decided["after_auto"]
     # Decided by the rule: the version is not a customer edit (#1003).
     assert (after["status"], after["source"]) == ("auto_decided", "auto_decided")
-    assert not [qa for qa in after["query_assignments"] if qa["tied_engines"]]
+    assert_decide_for_me_leaves_nothing_open(after, decided["report"])
     recorded = {d["choice_id"]: d for d in after["auto_decided_choices"]}
     assert set(recorded) == set(expected)
     for cid, d in recorded.items():

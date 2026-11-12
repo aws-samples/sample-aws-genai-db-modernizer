@@ -65,6 +65,7 @@ from src.shared.collection_database_name import resolve_database_name  # noqa: E
 from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.gate_facts import cache_candidate_reads  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
+from src.shared.placeholder_tables import choice_table_label  # noqa: E402
 from src.shared.run_limits import RunLimitConfigError, RunLimitExceeded, RunLimits  # noqa: E402
 from src.tools.database.offline_collection_check import (  # noqa: E402
     OfflineCollectionError,
@@ -1008,7 +1009,7 @@ def _compact_pending_choices(store, job_id: str, db: str) -> list[dict]:
     return [
         {
             "choice": c.choice_id,
-            "table": c.table.rsplit(".", 1)[-1],
+            "table": choice_table_label(c.table),
             "queries": len(c.query_ids),
             "writes": len(c.write_query_ids),
             "engines": [
@@ -1063,7 +1064,7 @@ def phase_engine_choices(
         "decided": [
             {
                 "choice": p.choice_id,
-                "table": p.table.rsplit(".", 1)[-1],
+                "table": choice_table_label(p.table),
                 "engine": p.engine,
                 "alternatives": p.alternatives,
                 "queries": len(p.query_ids),

@@ -47,6 +47,17 @@ test('formats the table name and both scores through the strings', () => {
   expect(formatChoiceScore({ score: null }, t)).toBe('assignment-gate.choices.no-score:{}');
 });
 
+// #2147: a statement that reads no table is its own choice, shown as "No source table".
+test('a choice for a statement that reads no table is shown as No source table', () => {
+  const t = (key, opts) => `${key}${opts && opts.context ? `_${opts.context}` : ''}|${(opts && opts.query) || ''}`;
+  const noTable = { choice_id: 'query:0xAB', table: '', query_ids: ['0xAB'] };
+  expect(choiceTableName(noTable)).toBe('No source table (0xAB)');
+  expect(choiceTableName(noTable, t)).toBe('assignment-gate.choices.no-source-table_query|0xAB');
+  // A job saved before #2147 named the collector's placeholder as the table.
+  expect(choiceTableName({ table: 'unknown', query_ids: ['q1', 'q2'] })).toBe('No source table');
+  expect(choiceTableName({ table: 'app.Unknown' })).toBe('Unknown');
+});
+
 test('reads the stored choice counts, 0 for an older report', () => {
   expect(engineChoiceCountsOf({ facts: { pending_choice_count: 9, pending_choice_query_count: 32 } })).toEqual({
     pendingTables: 9, pendingQueries: 32, decidedTables: 0, decidedQueries: 0,

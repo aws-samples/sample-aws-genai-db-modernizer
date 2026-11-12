@@ -58,3 +58,25 @@ def saved_write_groups(assignment: Any) -> dict[str, list[str]]:
     else:
         raw = getattr(assignment, "write_groups", None)
     return real_write_groups(raw)
+
+
+# A pending engine choice for a statement that reads no table (#2147): named for the
+# query (``query:<query_id>``), its ``table`` empty, and shown under this label wherever
+# a choice's table is shown (the reports, the approval gate, the UI).
+NO_SOURCE_TABLE_LABEL = "No source table"
+NO_TABLE_CHOICE_PREFIX = "query:"
+
+
+def no_table_choice_id(query_id: str) -> str:
+    """The id of the engine choice for one statement that reads no table."""
+    return f"{NO_TABLE_CHOICE_PREFIX}{query_id}"
+
+
+def choice_table_label(table: object) -> str:
+    """A choice's table as the deliverables show it: its bare name
+    (``app.theme_fields`` -> ``theme_fields``), or :data:`NO_SOURCE_TABLE_LABEL` for a
+    choice that reads no table (an empty ``table``, or a placeholder an assignment
+    saved before #2147 named)."""
+    if is_placeholder_table(table):
+        return NO_SOURCE_TABLE_LABEL
+    return str(table).strip().rsplit(".", 1)[-1]

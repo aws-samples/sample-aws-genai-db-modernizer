@@ -79,7 +79,7 @@ const PendingEngineChoices = memo(({
                     <SpaceBetween size="xs">
                       <Box variant="h3">
                         {t('assignment-gate.choices.table-heading', {
-                          table: choiceTableName(c),
+                          table: choiceTableName(c, t),
                           count: (c.query_ids || []).length,
                         })}
                       </Box>
@@ -98,7 +98,7 @@ const PendingEngineChoices = memo(({
                         })}
                       </Box>
                       <Select
-                        ariaLabel={t('assignment-gate.choices.select-label', { table: choiceTableName(c) })}
+                        ariaLabel={t('assignment-gate.choices.select-label', { table: choiceTableName(c, t) })}
                         selectedOption={value ? { label: label(value), value } : null}
                         onChange={({ detail }) =>
                           setSelections((prev) => ({ ...prev, [c.choice_id]: detail.selectedOption.value }))
@@ -145,14 +145,14 @@ const PendingEngineChoices = memo(({
                     <SpaceBetween size="xs">
                       <Box variant="h3">
                         {t('assignment-gate.choices.table-heading', {
-                          table: choiceTableName(d),
+                          table: choiceTableName(d, t),
                           count: (d.query_ids || []).length,
                         })}{' '}
                         <Badge color="blue">{t('assignment-gate.choices.decided-badge')}</Badge>
                       </Box>
                       <Box color="text-body-secondary">{d.reason}</Box>
                       <Select
-                        ariaLabel={t('assignment-gate.choices.select-label', { table: choiceTableName(d) })}
+                        ariaLabel={t('assignment-gate.choices.select-label', { table: choiceTableName(d, t) })}
                         selectedOption={{ label: label(value), value }}
                         onChange={({ detail }) =>
                           setSwitches((prev) => ({

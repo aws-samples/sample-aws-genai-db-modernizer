@@ -145,6 +145,12 @@ def load_synthesis_data(
             required=False,
         )
         if data.assignment:
+            # A version saved before #2147 may hold an --auto decision for the
+            # collector's ``unknown`` placeholder: read it as the per-statement choices
+            # the code writes now, its statements' reasons worded to match.
+            from src.agents.referee.pending_choices import map_placeholder_choices
+
+            data.assignment = map_placeholder_choices(data.assignment)
             # A version saved before #1373 has stale confidences and no ``pinned``:
             # set from its lineage's Moves, so the mean fits leave its pins out.
             from src.agents.referee.move_ledger import follow_moves

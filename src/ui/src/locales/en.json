@@ -743,6 +743,8 @@
   "assignment-gate.choices.title_other": "{{count}} pending engine choices",
   "assignment-gate.choices.description": "These tables' queries tie between engines, so no routing rule picks one. Pick one engine per table: it applies to every query listed under it. Or let the tool decide for you: the higher score before rounding, then the engine the plan already uses more.",
   "assignment-gate.choices.decide-for-me": "Decide for me",
+  "assignment-gate.choices.no-source-table": "No source table",
+  "assignment-gate.choices.no-source-table_query": "No source table ({{query}})",
   "assignment-gate.choices.save_one": "Save {{count}} choice",
   "assignment-gate.choices.save_other": "Save {{count}} choices",
   "assignment-gate.choices.table-heading_one": "{{table}} ({{count}} query)",
