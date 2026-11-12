@@ -645,11 +645,13 @@ def _app_layer_notes_md(design: dict[str, Any], query_ids: Collection[str] = ())
 
         def note_line(n: dict[str, Any]) -> str:
             feature = str(n.get("feature") or "note").replace("_", " ")
-            return (
+            head = (
                 f"{escaping.md_text(feature.capitalize())} on "
-                f"`{escaping.md_code(n.get('source_object') or '?')}`: "
-                f"{escaping.md_text_with_ids(n.get('recommendation') or '', query_ids)}"
+                f"`{escaping.md_code(n.get('source_object') or '?')}`"
             )
+            # A grouped note whose whole text is the group's lead keeps only its object.
+            text = escaping.md_text_with_ids(str(n.get("recommendation") or "").strip(), query_ids)
+            return f"{head}: {text}" if text else head
 
         out += _blocks_md(
             _note_blocks(design, defaults=False),

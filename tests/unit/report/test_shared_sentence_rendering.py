@@ -200,3 +200,31 @@ def test_a_query_id_in_a_waived_lists_shared_sentence_is_a_code_span() -> None:
     [lead] = [ln for ln in md.splitlines() if ln.startswith("- For each of these:")]
     assert f"`{qid[:8]}`" in lead
     assert bare_ids(md, known_query_ids(report)) == []
+
+
+GUARD = (
+    "Recreate the trigger and its function in the app schema on the target and test the "
+    "INSERT and UPDATE guard on the settings table."
+)
+
+
+@pytest.mark.parametrize("own", ["Triggers are carried over as they are.", ""])
+def test_two_triggers_with_the_same_note_state_it_once(own: str) -> None:
+    # Discourse e2e-llm run (#2181): the design gave two triggers the same note, and the
+    # engineering report printed it under each trigger.
+    design = {
+        "status": "completed",
+        "app_layer_notes": [
+            {"feature": "trigger", "source_object": t, "recommendation": f"{own} {GUARD}".strip()}
+            for t in ("trg_reply_guard", "trg_topic_guard")
+        ],
+    }
+    report = design_prose_report({"schema_designs": {"aurora_postgresql": design}})
+    md = "\n".join(_app_layer_notes_md(report["schema_designs"]["aurora_postgresql"]))
+    assert md.count("INSERT and UPDATE guard") == 1, md
+    assert repeated_statements(md) == [] and repeated_paragraphs(md) == []
+    assert "**Application-layer notes (2):**" in md
+    for trigger in ("trg_reply_guard", "trg_topic_guard"):
+        [line] = [ln for ln in md.splitlines() if f"`{trigger}`" in ln]
+        assert line.startswith("  - Trigger on ")
+        assert line.endswith(f": {own}" if own else f"`{trigger}`"), line

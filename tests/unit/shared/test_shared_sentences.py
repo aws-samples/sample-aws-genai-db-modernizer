@@ -211,3 +211,25 @@ def test_synthesis_writes_the_group_next_to_the_entries() -> None:
         {"list": "unsupported_patterns", "sentences": [LONG], "indexes": [0, 1]}
     ]
     SynthesisOutputContract.model_validate(report)
+
+
+def test_two_triggers_with_the_same_note_form_a_group() -> None:
+    # Discourse e2e-llm run (#2181): two triggers got the same note word for word. Only
+    # column-default notes with one text share a line, so these two printed it twice.
+    notes = [
+        {"feature": "trigger", "source_object": t, "recommendation": f"Carried over. {LONG}"}
+        for t in ("trg_a", "trg_b")
+    ]
+    design = grouped_report({"schema_designs": {"aurora_postgresql": {"app_layer_notes": notes}}})
+    groups = design["schema_designs"]["aurora_postgresql"][GROUPS_KEY]
+    assert groups == [{"list": "app_layer_notes", "sentences": [LONG], "indexes": [0, 1]}]
+
+
+@pytest.mark.passes_on_main  # guards that #2181 keeps the column-default rule
+def test_column_default_notes_with_one_text_still_form_no_group() -> None:
+    # The column-default line already names every column whose note reads the same.
+    notes = [
+        {"feature": "column_default", "source_object": c, "recommendation": LONG} for c in "ab"
+    ]
+    report = {"schema_designs": {"aurora_mysql": {"app_layer_notes": notes}}}
+    assert grouped_report(report) is report
