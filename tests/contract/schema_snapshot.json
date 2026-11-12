@@ -28771,7 +28771,23 @@
                             "type": "string"
                           }
                         },
+                        "no_table_count": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
                         "query_count": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "table_count": {
                           "required": false,
                           "schema": {
                             "kind": "scalar",
@@ -28802,7 +28818,23 @@
                     "type": "integer"
                   }
                 },
+                "auto_decided_no_table_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
                 "auto_decided_query_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "auto_decided_table_count": {
                   "required": false,
                   "schema": {
                     "kind": "scalar",
@@ -31039,6 +31071,14 @@
                     "type": "integer"
                   }
                 },
+                "pending_choice_no_table_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
                 "pending_choice_pairs": {
                   "required": false,
                   "schema": {
@@ -31063,7 +31103,23 @@
                             "kind": "array"
                           }
                         },
+                        "no_table_count": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
                         "query_count": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "table_count": {
                           "required": false,
                           "schema": {
                             "kind": "scalar",
@@ -31087,6 +31143,14 @@
                   }
                 },
                 "pending_choice_query_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "pending_choice_table_count": {
                   "required": false,
                   "schema": {
                     "kind": "scalar",
@@ -40989,8 +41053,8 @@
         }
       }
     },
-    "schema_hash": "2b30be9f2e0af106e79ea906b95e329b1911d45a9543107e40a15d4d8b5ceaff",
-    "version": "1.97"
+    "schema_hash": "319aa60f2e144c5f616d6249021141139c164a3274c4817485bd9a4306e8cfcc",
+    "version": "1.98"
   },
   "transformation_contract.StepContract": {
     "fields": {

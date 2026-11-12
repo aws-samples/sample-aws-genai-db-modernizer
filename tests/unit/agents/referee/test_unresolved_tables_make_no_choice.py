@@ -358,3 +358,92 @@ class TestEveryDeliverableShowsNoSourceTable:
             }
         )
         assert facts["pending_choice_pairs"][0]["tables"] == ["No source table"]
+
+
+def _dnn_shape_decided() -> list[dict[str, Any]]:
+    """--auto's decisions on the DNN sample: one table's choice, and two statements that
+    read no table, each its own choice (#2147)."""
+
+    def decision(choice_id: str, table: str, qid: str) -> dict[str, Any]:
+        return {
+            "choice_id": choice_id,
+            "table": table,
+            "query_ids": [qid],
+            "engine": "aurora_postgresql",
+            "alternatives": ["dynamodb"],
+            "rule": "settled_workload",
+            "reason": "Level before rounding.",
+            "decided_in_version": 3,
+        }
+
+    return [
+        decision("app.order_note", "app.order_note", "q1"),
+        decision("query:q2", "", "q2"),
+        decision("query:q3", "", "q3"),
+    ]
+
+
+class TestChoiceHeadingsCountTablesAndStatementsApart:
+    """The facts split a choice count into tables and statements that read no table,
+    once (ADR-032); every heading reads that split, and reads as before without one."""
+
+    def test_the_facts_split_the_dnn_shape(self):
+        from src.shared.report_facts import engine_choice_facts
+
+        facts = engine_choice_facts({"auto_decided_choices": _dnn_shape_decided()})
+        assert (
+            facts["auto_decided_choice_count"],
+            facts["auto_decided_table_count"],
+            facts["auto_decided_no_table_count"],
+        ) == (3, 1, 2)
+        (group,) = facts["auto_decided_by_engine"]
+        assert (group["choice_count"], group["table_count"], group["no_table_count"]) == (3, 1, 2)
+
+    def test_the_engineering_report_heading(self):
+        from src.report.engine_choices import auto_decided_md
+
+        md = "\n".join(auto_decided_md({"auto_decided_choices": _dnn_shape_decided()}))
+        assert (
+            "## Decided automatically, review if needed (1 table and 2 statements with no "
+            "source table, 3 queries)"
+        ) in md
+
+    def test_a_heading_with_no_such_statement_reads_as_before(self):
+        from src.report.engine_choices import auto_decided_md
+        from src.report.formatting import choice_scope_text
+
+        tables_only = [d for d in _dnn_shape_decided() if d["table"]]
+        md = "\n".join(auto_decided_md({"auto_decided_choices": tables_only}))
+        assert "## Decided automatically, review if needed (1 table, 1 query)" in md
+        assert choice_scope_text(3, 0, 5) == "3 tables, 5 queries"
+        assert choice_scope_text(0, 1, 1) == "1 statement with no source table, 1 query"
+        assert choice_scope_text(2, 1, 3) == (
+            "2 tables and 1 statement with no source table, 3 queries"
+        )
+
+    def test_the_executive_report_card_and_its_groups(self):
+        from src.report.executive_report import _choice_count_text
+        from src.shared.report_facts import engine_choice_facts
+
+        facts = engine_choice_facts({"auto_decided_choices": _dnn_shape_decided()})
+        (group,) = facts["auto_decided_by_engine"]
+        assert _choice_count_text(group) == (
+            "1 table and 2 statements with no source table, 3 queries"
+        )
+        # A report saved before the split: every choice was a table's.
+        assert _choice_count_text({"choice_count": 3, "query_count": 3}) == "3 tables, 3 queries"
+
+    def test_the_review_chat_heading(self):
+        from src.agents.referee.assignment_review import render_pending_choices
+
+        qas = [_qa("q1", ["app.t"]), _qa("q2", ["unknown"]), _qa("s1", ["app.t"], tied=None)]
+        choices = build_pending_choices(qas, _collector([], ["app.t"]), None)
+        text = render_pending_choices(choices)
+        assert (
+            "## Pending engine choices (1 table and 1 statement with no source table, 2 queries)"
+            in text
+        )
+        tables_only = [c for c in choices if c.table]
+        assert "## Pending engine choices (1 table(s), 1 queries)" in render_pending_choices(
+            tables_only
+        )

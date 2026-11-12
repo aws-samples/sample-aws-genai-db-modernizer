@@ -556,3 +556,15 @@ def commit_footer(prov: dict[str, str] | None) -> list[str]:
     names none."""
     commit = (prov or {}).get("commit")
     return [build_commit_line(commit), ""] if commit else []
+
+
+def choice_scope_text(tables: int, no_table: int, queries: int) -> str:
+    """What a set of engine choices covers, from the facts' split (#2147): "3 tables, 5
+    queries" (exactly as before when every choice is a table's), or "2 tables and 1
+    statement with no source table, 3 queries". Formats the stored counts only."""
+    q = f"{queries} {plural_noun(queries, 'query', 'queries')}"
+    if not no_table:
+        return f"{tables} {plural_noun(tables, 'table')}, {q}"
+    statements = f"{no_table} {plural_noun(no_table, 'statement')} with no source table"
+    head = f"{tables} {plural_noun(tables, 'table')} and {statements}" if tables else statements
+    return f"{head}, {q}"

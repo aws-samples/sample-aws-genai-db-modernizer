@@ -389,9 +389,23 @@ def render_pending_choices(choices: list[PendingEngineChoice]) -> str:
     the engine "decide for me" would pick. Empty when nothing is pending."""
     if not choices:
         return ""
-    total = sum(len(c.query_ids) for c in choices)
+    # The figures come from the facts layer, computed once (#2147, ADR-032).
+    from src.report.formatting import choice_scope_text
+    from src.shared.report_facts import engine_choice_facts
+
+    facts = engine_choice_facts(
+        {"pending_engine_choices": [c.model_dump(mode="json") for c in choices]}
+    )
+    total = facts["pending_choice_query_count"]
+    scope = (
+        choice_scope_text(
+            facts["pending_choice_table_count"], facts["pending_choice_no_table_count"], total
+        )
+        if facts["pending_choice_no_table_count"]
+        else f"{facts['pending_choice_count']} table(s), {total} queries"
+    )
     lines = [
-        f"## Pending engine choices ({len(choices)} table(s), {total} queries)",
+        f"## Pending engine choices ({scope})",
         "",
         "Each table below ties between engines, so no routing rule picks one. Choose one "
         "engine per table (it applies to every query listed), or ask to decide for you.",
