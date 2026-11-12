@@ -1845,10 +1845,13 @@ def build_risk_assessment(
 
         # Placement units the design split had to cut across parts (#2141): each is too
         # large for one part by itself, so its statements were designed in two or more
-        # parts and reconciled by the merge. Stated, never hidden.
+        # parts. Stated, never hidden; a cut write group is MEDIUM (its writes outside
+        # the owner's part may have no design).
         if artifacts.unit_cuts and schema:
             risk_id += 1
-            risks.append(_unit_cut_risk(risk_id, engine, artifacts.unit_cuts, risk_tables))
+            risks.append(
+                _unit_cut_risk(risk_id, engine, artifacts.unit_cuts, risk_tables, query_text)
+            )
 
         # Migration notes from schema design
         # The description names the object; the logic to build is the mitigation (#252).
@@ -2522,38 +2525,67 @@ def _tables_for(
 
 
 _UNIT_CUT_REASONS = {
-    "over_part_size": "is larger than one design part holds",
-    "over_input_budget": "is larger than one design part's input",
-    "kept_prior_parts": "was kept in the design parts of the version it came from",
+    "over_part_size": "too many to design at once",
+    "over_input_budget": "too large to design at once",
+    "kept_prior_parts": "kept in the batches of the earlier version",
 }
 
 
 def _unit_cut_risk(
-    risk_id: int, engine: str, cuts: list[dict], risk_tables: Mapping[str, Iterable[str]]
+    risk_id: int,
+    engine: str,
+    cuts: list[dict],
+    risk_tables: Mapping[str, Iterable[str]],
+    query_text: Mapping[str, str],
 ) -> dict:
-    """One LOW risk for the placement units the design split cut across parts (#2141):
-    the groups of statements routing places together that were designed in two or more
-    parts, with why, so no deliverable hides them."""
+    """One risk for the placement units the design split cut across parts (#2141), in
+    customer wording, listing the statements as the schema design gap risk does.
+
+    A cut write group is MEDIUM: a part that does not own the written table is told not
+    to design its writes (``group_input.CONTEXT_TABLE_RULE``), so a write outside the
+    owner's part may have no access pattern at all and needs review. Any other cut is
+    LOW: its statements were designed in separate batches and may not agree."""
     ids = sorted({str(q) for c in cuts for q in c.get("query_ids") or []})
     tables = sorted({t for q in ids for t in risk_tables.get(q, ())})
     reasons = sorted({str(c.get("reason") or "") for c in cuts} & set(_UNIT_CUT_REASONS))
     why = " or ".join(_UNIT_CUT_REASONS[r] for r in reasons) or _UNIT_CUT_REASONS["over_part_size"]
-    n = len(cuts)
+    texts = []
+    for q in ids[:3]:
+        t = " ".join(query_text.get(q, "").split()) or q[:12]
+        texts.append(t if len(t) <= 80 else t[:77] + "...")
+    n = len(ids)
+    listed = "; ".join(texts) + (f"; and {n - 3} more" if n > 3 else "")
+    writes = any("write_group" in str(c.get("kind") or "").split("+") for c in cuts)
+    stmts = f"{n} {'statement' if n == 1 else 'statements'}"
+    if writes:
+        return {
+            "risk_id": f"RISK-{risk_id:03d}",
+            "risk_type": "MIGRATION_COMPLEXITY",
+            "severity": "MEDIUM",
+            "description": (
+                f"[{engine}] Writes designed apart from their table: {stmts} that write "
+                f"the same tables, or run with those writes, were {why}, so some writes "
+                f"were designed apart from their table's design and may have no access "
+                f"pattern: {listed}"
+            ),
+            "affected_tables": tables,
+            "mitigation": (
+                "Review these writes and add an access pattern for each one the "
+                "design does not serve."
+            ),
+            "query_ids": ids,
+        }
     return {
         "risk_id": f"RISK-{risk_id:03d}",
         "risk_type": "MIGRATION_COMPLEXITY",
         "severity": "LOW",
         "description": (
-            f"[{engine}] Designed across parts: {n} "
-            f"{'group' if n == 1 else 'groups'} of statements that routing places together "
-            f"{'was' if n == 1 else 'were'} designed in two or more design parts, because "
-            f"{'it' if n == 1 else 'each'} {why}; the merge reconciled the parts."
+            f"[{engine}] Related statements designed separately: {stmts} that join the "
+            f"same data or run in one procedure were {why}, and were designed in separate "
+            f"batches whose access patterns may not agree: {listed}"
         ),
         "affected_tables": tables,
-        "mitigation": (
-            "Review these statements' access patterns together: they were designed in "
-            "separate parts."
-        ),
+        "mitigation": "Review the access patterns of these statements together.",
         "query_ids": ids,
     }
 

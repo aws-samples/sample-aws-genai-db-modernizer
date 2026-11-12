@@ -9,7 +9,8 @@ one (``write_groups.assignment_placement_groups``: co-dependency groups, write g
 and routine units, merged) has its statements in one part, unless the manifest's
 ``unit_cuts`` records the cut, with exactly the parts that hold them; and a table's
 writes (``write_groups.written_tables``) sit only in the part that owns it
-(``primary_tables``), unless the write is in a recorded cut (#2153: a non-owner part
+(``primary_tables``), unless the write is in a recorded cut whose parts include the
+owner's (#2153: a non-owner part
 designs no write of a context table, so a write elsewhere is designed by nobody).
 
 The parts' statements are read from the part inputs (``pattern_input.input_query_ids``:
@@ -84,15 +85,15 @@ def check_split_units(store: ArtifactStore, db: str, job_id: str) -> SplitCheck:
         if isinstance(q, Mapping) and q.get("query_id")
     }
     resolver = TableNameResolver.from_collector(collector) if collector else None
-    engine = source_engine_of(collector)
+    dialect = source_engine_of(collector)  # the source's SQL dialect, never the target's
     scope = SourceScope.from_collector(collector or {})
     assignments: dict[int, str] = {}
     for key in store.list_prefix(f"{db}/{job_id}/assignment/"):
         m = _ASSIGNMENT.search(key)
         if m:
             assignments[int(m.group(1))] = key
-    for (engine, version), key in manifest_keys(store, db, job_id).items():
-        where = f"schema-{engine}/v{version}"
+    for (target, version), key in manifest_keys(store, db, job_id).items():
+        where = f"schema-{target}/v{version}"
         result.manifests.append(where)
         if version not in assignments:
             result.problems.append(f"{where}: no assignment v{version} to check it against")
@@ -110,12 +111,24 @@ def check_split_units(store: ArtifactStore, db: str, job_id: str) -> SplitCheck:
             if isinstance(c, Mapping)
         }
         result.recorded_cuts += len(recorded)
-        in_cuts = {
-            str(q)
-            for c in manifest.get("unit_cuts") or []
-            if isinstance(c, Mapping)
-            for q in c.get("query_ids") or []
-        }
+
+        def canon(table: str) -> str:
+            return (resolver.resolve(table) if resolver else None) or table
+
+        def writes_of(qid: str) -> set[str]:
+            query = statements.get(qid)
+            return {canon(t) for t in written_tables(query, dialect, scope)} if query else set()
+
+        # A recorded cut excuses only its own statements' writes, and only when the
+        # written table's owner is one of the cut's parts: the cut put the write away
+        # from its owner. A write whose owner is outside the cut is not explained by it.
+        excused: dict[str, set[int]] = {}
+        for c in manifest.get("unit_cuts") or []:
+            if not isinstance(c, Mapping):
+                continue
+            cut_parts = {int(p) for p in c.get("parts") or []}
+            for q in c.get("query_ids") or []:
+                excused.setdefault(str(q), set()).update(cut_parts)
         owner_of = {
             str(t): int(g["group_index"])
             for g in manifest.get("groups") or []
@@ -123,19 +136,16 @@ def check_split_units(store: ArtifactStore, db: str, job_id: str) -> SplitCheck:
         }
         for idx, ids in sorted(parts.items()):
             for qid in sorted(ids):
-                query = statements.get(qid)
-                if query is None:
-                    continue
-                for table in written_tables(query, engine, scope):
-                    canon = (resolver.resolve(table) if resolver else None) or table
-                    if canon not in owner_of:
+                for table in sorted(writes_of(qid)):
+                    if table not in owner_of:
                         continue
                     result.writes_checked += 1
-                    if owner_of[canon] != idx and qid not in in_cuts:
+                    off = owner_of[table] != idx
+                    if off and owner_of[table] not in excused.get(qid, set()):
                         result.writes_off_owner += 1
                         result.problems.append(
-                            f"{where}: {qid} writes {canon} in part {idx}, "
-                            f"owned by part {owner_of[canon]}"
+                            f"{where}: {qid} writes {table} in part {idx}, "
+                            f"owned by part {owner_of[table]}"
                         )
         part_of: dict[str, set[int]] = {}
         for idx, ids in parts.items():

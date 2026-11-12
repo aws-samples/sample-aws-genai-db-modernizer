@@ -520,7 +520,17 @@ _CONFIDENCE_WORDING_RE = CONFIDENCE_FIGURE_RE  # one definition: src.shared.pros
 # The technical, log-only reason text of every exclusion rule (never meant for a
 # customer -- see the module docstring above and engine_exclusions.py's own). Built
 # from the rules themselves so a new rule is covered automatically.
-LOG_ONLY_PHRASES: tuple[str, ...] = tuple(rule.description for rule in EXCLUSION_RULES)
+# The design split's own terms (#2141): a cut placement unit's risk says what happened
+# in customer words, never in the pipeline's.
+PIPELINE_TERMS: tuple[str, ...] = (
+    "routing places together",
+    "design part",
+    "the merge reconciled",
+)
+LOG_ONLY_PHRASES: tuple[str, ...] = (
+    *(rule.description for rule in EXCLUSION_RULES),
+    *PIPELINE_TERMS,
+)
 
 # Every internal reason/state code this pipeline's code can write -- #587
 # round 4. Imported from where each is actually defined (never retyped as a
