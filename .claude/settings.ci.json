@@ -29,6 +29,7 @@
       "Bash(uv run python scripts/start_local_ui.py)",
       "Bash(uv run python scripts/start_local_ui.py *)",
       "Agent",
+      "TaskStop",
       "Skill(reality-check)",
       "Skill(synthesize)",
       "Skill(design-schema-*)",

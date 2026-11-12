@@ -167,6 +167,34 @@ def test_a_subagent_out_past_the_hang_limit_asks_for_the_failed_line(run_hook, p
     assert "--wait-for-report" not in res.stderr
 
 
+def test_with_no_launch_record_the_hook_keeps_its_own_clock(run_hook, project) -> None:
+    """Review of #2178: with no launch record (a resume, a fork) the hung rule had no clock,
+    and each block's tool call resets the CLI's block cap, so a hung part held the run in
+    wait turns until its budget ran out. The hook records when it first saw the part."""
+    seen = project / "artifacts" / DB / JOB / "_logs" / "stop_hook_subagents.json"
+    res = run_hook(SCRIPT, _event(project, background_tasks=[PART_1]), env=_env(project))
+    assert _waiting(res), res.stderr
+    first = json.loads(seen.read_text())
+    assert list(first) == ["a1"]
+    # Seen again 31 minutes after its first sighting, still with no launch record: hung.
+    seen.write_text(json.dumps({"a1": first["a1"] - 31 * 60}))
+    res = run_hook(SCRIPT, _event(project, background_tasks=[PART_1]), env=_env(project))
+    assert res.blocked and "was dispatched 31 minutes ago" in res.stderr, res.stderr
+    assert "Stop it with the TaskStop tool (task id a1)" in res.stderr
+    # A subagent that is no longer running is dropped; a new one starts its own clock.
+    other = {"id": "a2", "type": "local_agent", "description": "ElastiCache schema design"}
+    res = run_hook(SCRIPT, _event(project, background_tasks=[other]), env=_env(project))
+    assert _waiting(res) and list(json.loads(seen.read_text())) == ["a2"]
+
+
+def test_an_unwritable_clock_file_still_waits(run_hook, project) -> None:
+    logs = project / "artifacts" / DB / JOB / "_logs"
+    logs.mkdir()
+    (logs / "stop_hook_subagents.json").mkdir()  # a directory: cannot be read or replaced
+    res = run_hook(SCRIPT, _event(project, background_tasks=[PART_1]), env=_env(project))
+    assert _waiting(res), res.stderr
+
+
 def test_a_launch_inside_the_limit_or_of_another_agent_is_not_hung(run_hook, project) -> None:
     records = [
         _rec("user", AUTO_PROMPT),

@@ -368,7 +368,7 @@ deterministic job.
 
 **The `/explore` step** (#307): right after the judge, so every model call ends before the browser steps (#1977). <!-- claim: tests/unit/ci/test_explore_check.py::test_the_explore_step_runs_right_after_the_judge --> The script asks `/explore` one fixed question about the job, `How many queries does DynamoDB serve, and from which source tables?`, in its own `claude -p "/explore --job-id <job> ..."` session. The question is not the catalog's wording and needs a parameter: it is answered by the entry `engine_destinations` with `engine=dynamodb`, whose one row for the engine holds the count (`queries`) and the source tables; the per-design-object `target_counts` in that row are not the question's figure, and an answer that cites only them fails. The session runs with the same CLI, settings, permissions and sandbox as the `/modernize` run, under the job budget (`run_before_deadline`), with a wall-clock timeout of its own (`E2E_LLM_EXPLORE_TIMEOUT`, default 600 seconds) and its own caps in place of the run's: `--max-turns` `E2E_LLM_EXPLORE_MAX_TURNS` (default 15) and `--max-budget-usd` `E2E_LLM_EXPLORE_MAX_BUDGET_USD` (default 2), each only when the CLI lists the flag. The script first runs the same entry itself (`scripts/graph_query.py run engine_destinations --param engine=dynamodb`, no model) into `explore-expected.json`. `ci/llm/run.py check-explore` then passes when the session ended without an error, no `graph_query.py` call was denied (a denial means the allowlist is broken), the session ran `graph_query.py run engine_destinations` on the job with `engine=dynamodb` (in any argument order the CLI's own parser accepts), and its final answer ties the engine's count (the row's `queries`) to it: one line (a table row), sentence or clause names that destination or its source table (whole names only, the schema optional), names no other row, and holds the count as a number on its own. The entry's ref is never read as a figure, and an engine in an `all`-rows check counts by its id or its AWS service name (`display_engine`). The verdict, with the answer, goes to `explore.json`, and `results.json` records it as `checks.explore` (required once the step ran) and an `explore` section; `total_cost_usd` is the run's `cost_usd` plus the session's. A dry run skips the step unless `E2E_LLM_EXPLORE_TRANSCRIPT` names a saved `/explore` session, and so does a run whose engine scope (`E2E_LLM_TARGET_DATABASES`) leaves out DynamoDB; `checks.explore` is then `null` and not required.
 
-**Merge rule after a failed transcript check** (#1408; a process rule, no automated check enforces it): a pull request head that failed an `e2e-llm` transcript check (`transcript_error` in `results.json`) is not covered by a later batch run that passes on the same head, nor by any run on another head that includes it: that pass can be the model taking a different path that time. It stays unmerged until a fix is pushed and an `e2e-llm` run on the fixed head passes the same check. A head that failed the same check twice and then passed once merged in #1358 and had to be reopened as #1401.
+**Merge rule after a failed transcript check** (#1408; a process rule, not enforced): a pull request head that failed an `e2e-llm` transcript check (`transcript_error` in `results.json`) is not covered by a later batch run that passes on the same head, nor by any run on another head that includes it: that pass can be the model taking another path. It stays unmerged until a fix is pushed and an `e2e-llm` run on the fixed head passes the same check. A head that failed the same check twice and then passed once merged in #1358 and had to be reopened as #1401.
 
 **Outputs**, all under `$E2E_OUTPUT/llm-<mode>-<fixture>/` (default
 `test-results/llm-<mode>-<fixture>/`):
@@ -428,8 +428,8 @@ deterministic job.
   ran_entry, missing_figures, cost_usd, num_turns, error}` (`null` when the step did
   not run; its cost is not in the run's `cost_usd`), `total_cost_usd` (the run's
   `cost_usd` plus the explore session's), `token_usage` and `token_usage_error`,
-  `list_price_cost_usd`, `budget` and `warnings` (see above), `pass`). Plan 3b uploads this to the results store, so it's
-  kept flat and JSON-shaped on purpose.
+  `list_price_cost_usd`, `budget` and `warnings` (see above), `pass`, and `fail_reasons`
+  when it is false, one line per reason, #2175). Plan 3b uploads it to the results store, so it is flat JSON.
 
 **Env vars**: `CLAUDE_BIN` (default `claude`), `CLAUDE_CODE_VERSION` (npm
 version to install when `$CLAUDE_BIN` is missing, default pinned to
@@ -542,7 +542,7 @@ Not a CI gate: the release workflow (`.github/workflows/release.yml`) runs it wh
 
 ## `../scripts/hooks/` (Claude Code hooks, #731)
 
-Ten small scripts that refuse a guardrail bypass at the tool call instead of after the fact. Each reads the hook event JSON on stdin and exits 0 (allow) or 2 (block, one-line reason on stderr shown to the model); an unreadable event allows. They run as `uv run --no-project python -I "$CLAUDE_PROJECT_DIR/scripts/hooks/<name>.py"`, outside the project environment, and use the standard library only, except that `block_contract_version_edit.py` imports `scripts/resolve_contract_versions.py` (itself stdlib-only) when an edit changes a version line. What each one catches, what is out of its reach and why: its docstring. Unit tests: `tests/unit/hooks/`.
+Ten small scripts that refuse a guardrail bypass at the tool call. Each reads the hook event JSON on stdin and exits 0 (allow) or 2 (block, one-line reason on stderr shown to the model); an unreadable event allows. They run as `uv run --no-project python -I "$CLAUDE_PROJECT_DIR/scripts/hooks/<name>.py"`, outside the project environment, and use the standard library only, except that `block_contract_version_edit.py` imports `scripts/resolve_contract_versions.py` (itself stdlib-only) when an edit changes a version line. What each catches, and what it can't: its docstring. Unit tests: `tests/unit/hooks/`.
 
 | Script | Event / matcher | Where | Rule |
 |---|---|---|---|
@@ -555,7 +555,7 @@ Ten small scripts that refuse a guardrail bypass at the tool call instead of aft
 | `enforce_tool_use_rule.py` | PreToolUse `Bash` | `settings.ci.json` only | Refuses a Bash call that is not exactly one simple command covered by a `Bash(...)` allow rule in `settings.ci.json` (the shared tool-use rule). |
 | `require_gate_shown.py` | PreToolUse `Bash\|Agent\|Task` | both | Holds schema design in a `/modernize` run until the approval gate ran on its own and its block is in the orchestrator's own chat text (#1401, #1626). |
 | `remind_quote_printed_summary.py` | PostToolUse `Bash` | both | After `print_summary.py --gate` or `--final`, tells the model to paste the printed block verbatim (#1605). Never blocks. |
-| `require_modernize_result.py` | Stop | `settings.ci.json` only | Keeps a `/modernize --auto` turn from ending with no `MODERNIZE_RESULT` line (#1574) or while a subagent runs (#2175). |
+| `require_modernize_result.py` | Stop | `settings.ci.json` only | `/modernize --auto`/`-y` only (`/wave-edit`: text only): refuses a stop with no `MODERNIZE_RESULT` line and nothing (#1574) or a subagent (#2175) running. |
 
 "both" means `settings.json` and `settings.ci.json`. Headless runs load both files (`--setting-sources project` plus `--settings`), and a command listed in both runs once. `hook_common.split_compound_command` is a tested copy of `ci/llm/run.py`'s splitter, which a hook cannot import. The headless run also denies `Bash(git push *)`, so `block_fork_pr_push.py` matters in interactive sessions.
 
@@ -571,9 +571,8 @@ obvious entries lives here instead:
 
 - `Bash(uv run python scripts/start_local_ui.py)` and `...py *)` (both forms):
   the only command `/modernize --mode ui|both` runs to start the local API +
-  UI (its module docstring says why the shell pipeline it replaced could not
-  be allowlisted). Both forms are listed so a run never relies on whether the
-  script is called with zero arguments (it always is, today). The `*` form
+  UI (its module docstring says why). Both forms are listed so a run never
+  relies on whether the script is called with no arguments. The `*` form
   also covers `--page summary|results --job-id <id>`, which starts nothing
   and prints the job page's `ui_url` the command quotes (#1233).
 - `Bash(uv run python scripts/print_summary.py *)`: prints the approval-gate
@@ -604,11 +603,12 @@ obvious entries lives here instead:
 - `Bash(uv run python scripts/run_transformation_contract.py *)`, `...run_data_movement_plan.py *)`,
   `...render_dms_step.py *)`, `...run_dms_step.py *)` (#1886): `/move`; the sandbox refuses
   AWS writes (`tests/unit/scripts/test_run_dms_step.py`).
+- `TaskStop` (#2175): stops a subagent the Stop hook names as hung (30 minutes, no
+  report) before the `failed` line, so the session ends at once.
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
-  in the pipeline needs them. Explicit denies (not just absent from `allow`)
-  are defense in depth against a prompt-injected or hallucinated command: a
-  deny always wins over an allow, so a future broad `Bash(* )`-style allow
-  can't reopen them by accident.
+  needs them. Explicit denies are defense in depth against an injected or
+  hallucinated command: a deny always wins, so a future broad allow can't
+  reopen them.
 - No `Read`/`Glob`/`Grep` allow rule at all: per the permissions docs,
   `dontAsk` still runs "file reads in your working directories" without a
   rule, and a bare `Read` allow would extend that to the whole filesystem.

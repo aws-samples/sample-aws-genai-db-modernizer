@@ -522,7 +522,7 @@ def run_wait_for_report(
         line["landed"] = sorted(new)[:10]
     line["next"] = (
         "read the reports that came in; while a subagent you dispatched has not reported, "
-        "run this again; after the last report, run the Done signal's status commands"
+        "run this again; after the last report, run the current step's own check"
     )
     _output(line)
 
@@ -1061,7 +1061,8 @@ def main() -> None:
             "Headless /modernize --auto only (#2175): instead of ending the turn while a "
             "subagent is still running, wait until a design or review lands (a group draft, a "
             "finalized output or a recorded review appears), for at most SECONDS (capped at "
-            f"{_MAX_WAIT_SECONDS}), then print one line. Read-only; needs no --engine"
+            f"{_MAX_WAIT_SECONDS}), then print one line. A synthesis or merge-fix subagent adds "
+            "no mark, so a wait for one runs its whole bound. Read-only; takes no --engine"
         ),
     )
     parser.add_argument(
@@ -1123,8 +1124,8 @@ def main() -> None:
             _error("--wait-for-report takes a number of seconds, more than 0")
         if any(
             (args.status, args.wait, args.finalize, args.split, args.merge, args.check_costs_all)
-        ) or (args.check_costs is not None):
-            _error("--wait-for-report goes on its own (with --job-id and --db)")
+        ) or (args.check_costs is not None or args.engine is not None):
+            _error("--wait-for-report goes on its own (with --job-id and --db, no --engine)")
         job_dir = Path(args.artifact_root) / args.db / args.job_id
         if not job_dir.is_dir():
             _error(f"no artifacts for {args.db}/{args.job_id} under {args.artifact_root}")
