@@ -22,8 +22,10 @@ its sentences once, then each entry with its own text (``shared_layout``), so no
 entry's text covers another one, and every list keeps its entries and their count.
 
 A column-default note stands for one column, and the report already lists the columns
-whose note reads the same on one line, so for app-layer notes a sentence is shared when
-two different note texts state it. Another app-layer note that restates, word for word,
+whose note reads the same on one line, so for column-default notes a sentence is shared
+when two different note texts state it. Every other app-layer note prints on its own
+line, so two of one feature that state a sentence share it even when their texts are
+the same (#2181: two triggers with one note). Another app-layer note that restates, word for word,
 a sentence a column-default note states drops it (the column-default line says it,
 with its columns), unless nothing of its own would be left.
 
@@ -34,7 +36,7 @@ The deliverables and the results payload read a report through this too
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 from src.shared.design_text import ONCE_MIN_WORDS
@@ -52,13 +54,14 @@ def _label(field: str) -> Callable[[dict[str, Any]], str]:
     return lambda e: str(e.get(field) or "").strip().strip("*").casefold()
 
 
-# Each list: its text fields, what makes two entries the same kind, and whether a
-# sentence is shared by entries (False) or by different texts (True).
-_LISTS: dict[str, tuple[tuple[str, ...], Callable[[dict[str, Any]], str], bool]] = {
-    "unsupported_patterns": (UNSUPPORTED_TEXT, _label("pattern_type"), False),
-    "served_by_waiver": (UNSUPPORTED_TEXT, _label("pattern_type"), False),
-    "migration_notes": (MIGRATION_NOTE_TEXT, _label("object_type"), False),
-    "app_layer_notes": (APP_LAYER_TEXT, _label("feature"), True),
+# Each list: its text fields, what makes two entries the same kind, and the kinds whose
+# sentence is shared by different texts, not by entries (the renderer already prints
+# their entries with one text on one line).
+_LISTS: dict[str, tuple[tuple[str, ...], Callable[[dict[str, Any]], str], frozenset[str]]] = {
+    "unsupported_patterns": (UNSUPPORTED_TEXT, _label("pattern_type"), frozenset()),
+    "served_by_waiver": (UNSUPPORTED_TEXT, _label("pattern_type"), frozenset()),
+    "migration_notes": (MIGRATION_NOTE_TEXT, _label("object_type"), frozenset()),
+    "app_layer_notes": (APP_LAYER_TEXT, _label("feature"), frozenset({_COLUMN_DEFAULT})),
 }
 
 
@@ -93,7 +96,7 @@ def sentence_groups(
     entries: Any,
     fields: Sequence[str],
     kind: Callable[[dict[str, Any]], str],
-    by_text: bool = False,
+    by_text: bool | Collection[str] = False,
 ) -> list[dict[str, Any]]:
     """The groups of ``entries`` that share a long sentence: ``{"sentences", "indexes"}``.
 
@@ -101,7 +104,8 @@ def sentence_groups(
     entries share is added to their group; an entry is in one group only, so a sentence
     that some of a group's entries share with another entry is left in their own text.
     With ``by_text`` a sentence is shared when two different texts state it, and every
-    entry whose text states it is in the group."""
+    entry whose text states it is in the group; ``by_text`` may name the kinds this
+    holds for, the others' sentences being shared by entries."""
     if not isinstance(entries, list):
         return []
     seen: dict[tuple[str, str], tuple[str, list[int]]] = {}
@@ -116,9 +120,10 @@ def sentence_groups(
                         members.append(i)
     groups: list[dict[str, Any]] = []
     placed: dict[int, dict[str, Any]] = {}
-    for sentence, members in seen.values():
+    for (label, _), (sentence, members) in seen.items():
         texts = {_text_of(entries[i], fields) for i in members}
-        if len(texts if by_text else members) < 2:
+        text_rule = by_text if isinstance(by_text, bool) else label in by_text
+        if len(texts if text_rule else members) < 2:
             continue
         group = placed.get(members[0])
         if group is not None and group["indexes"] == members:
@@ -137,7 +142,7 @@ def shared_layout(
     A group's block stands where its first entry did, its sentences stated once, then
     each of its entries with its own text (the shared sentences taken out); every other
     entry is a block of its own with no sentences. Entries are never merged."""
-    fields = _LISTS.get(list_name, ((), _label(""), False))[0]
+    fields = _LISTS.get(list_name, ((), _label(""), frozenset()))[0]
     records = [
         g
         for g in groups or []
