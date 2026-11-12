@@ -41,7 +41,6 @@ from src.shared.workload_fit_labels import (
 
 from . import escaping
 from .architecture import (
-    KEPT_IN_SYNC_COUNTED_NOTE,
     KEPT_IN_SYNC_NOTE,
     KEPT_IN_SYNC_SOURCES_NOTE,
     MAP_SPLIT_NOTE,
@@ -49,6 +48,7 @@ from .architecture import (
     SHARED_TABLES_NOTE,
     _architecture_engines,
     _mapping_split,
+    counted_once_note,
 )
 from .cache_layer import _cache_layer_md, cache_layer_text
 from .close_calls import close_calls_md
@@ -1018,8 +1018,9 @@ def _engine_role_notes_md(
         notes.append(escaping.md_text(SHARED_TABLES_NOTE))
     if _defines_kept_in_sync(engines):
         notes.append(escaping.md_text(KEPT_IN_SYNC_NOTE))
-        if any(any((e.get("kept_in_sync_counted_under") or {}).values()) for e in engines):
-            notes.append(escaping.md_text(KEPT_IN_SYNC_COUNTED_NOTE))
+        once = counted_once_note(engines)
+        if once:
+            notes.append(escaping.md_text(once))
         if sources_pointer:
             notes.append(escaping.md_text(KEPT_IN_SYNC_SOURCES_NOTE))
     return notes

@@ -83,14 +83,40 @@ def _shown(figs: Figures, eng: str) -> dict[str, int]:
     }
 
 
+def _shared_reads(facts: dict[str, Any]) -> dict[str, int]:
+    """Per two-engine migrating wave's second engine, the kept-current tables both its
+    engines read, worked out from the wave's own figures (not the engine rows): each
+    engine's served tables less its own and those the other engine owns, summed, less
+    the wave's distinct kept-current tables."""
+    out: dict[str, int] = {}
+    for w in facts["waves"]:
+        served, moving = w.get("served_by_engine"), w.get("moving_by_engine") or {}
+        if not w["migrating"] or served is None or len(w["engines"]) != 2:
+            continue
+        owned_by = {e: sum(1 for o in w["shared_in_wave"] if o["owner"] == e) for e in served}
+        first, second = w["engines"]
+        reads = {
+            e: served[e] - moving.get(e, 0) - owned_by[first if e == second else second]
+            for e in (first, second)
+        }
+        overlap = sum(reads.values()) - w["kept_in_sync_tables"]
+        if overlap > 0:
+            out[second] = overlap
+    return out
+
+
 def test_both_reports_print_the_facts_scope_figures(run: PipelineResult) -> None:
-    rows = _targets(_facts(run))
+    facts = _facts(run)
+    rows = _targets(facts)
+    shared = _shared_reads(facts)
     pdf = pdf_figures(" ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))))
     md = engineering_figures(run.deliverable("engineering-report.md").read_text())
     for figs in (pdf, md):
         assert not [k for k in figs.values if k.endswith(":unparsed")], figs.deliverable
         for row in rows:
-            assert _shown(figs, row["engine"]) == _expected(row), (
-                figs.deliverable,
-                row["engine"],
-            )
+            shown = _shown(figs, row["engine"])
+            assert shown == _expected(row), (figs.deliverable, row["engine"])
+            # A table both engines of the wave read is printed once: the second engine's
+            # row says it is in the first's (discourse: 5 tables).
+            under = sum(v for k, v in shown.items() if k.startswith("under:"))
+            assert under == shared.get(row["engine"], 0), (figs.deliverable, row["engine"])
