@@ -233,7 +233,10 @@ Not a defect: a wave that lists no tables because it is an overlay (a cache
 wave says what it fronts); a table moved whole in an early wave and moved on
 by a later wave when the roadmap says so ("later waves move 15 of the 50");
 shares of calls that overlap between waves; wave figures that reconcile through
-`facts.wave_figures` (tables served, moving and kept current by CDC); and a gate's
+`facts.wave_figures` (tables served, moving and kept current by CDC); a Scope row's
+split that matches `facts.scope_figures` (a table both engines of a wave read is kept
+current once, in the first engine's row, and the other row says it is in that
+engine's count); and a gate's
 sync sentences, which the multi-engine rule above settles.
 
 - **1** — Six or more defects (a table sequenced into or via an engine the
@@ -313,8 +316,9 @@ tables), and a pair a rule above reconciles.
 Where to look when scoring each criterion (the inputs are above).
 
 - **grounded:** check claims in `executive_pdf` and `engineering_report` against
-  `facts.totals`, `facts.engines` and `facts.wave_figures` (each wave's
-  served, moving and kept-current table counts), with table placement per the
+  `facts.totals`, `facts.engines`, `facts.wave_figures` (each wave's
+  served, moving and kept-current table counts) and `facts.scope_figures` (each
+  migration target's Scope row), with table placement per the
   multi-engine rule. For cost: `facts.tco` (`projected_monthly_cost`,
   `cost_breakdown`) and `facts.engines[].monthly_cost_usd`, against
   `executive_pdf > The numbers` (the cost tile and the cost by engine) and

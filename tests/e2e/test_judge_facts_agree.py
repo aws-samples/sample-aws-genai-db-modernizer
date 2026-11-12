@@ -49,6 +49,13 @@ def test_judge_facts_equal_the_reports_own_figures(run: PipelineResult) -> None:
         {k: w.get(k) for k in judge_facts._WAVE_FIGURE_KEYS} for w in layer["waves"]
     ]
 
+    # #2162: each migration target's Scope row figures, verbatim.
+    assert built["scope_figures"] == [
+        {k: e.get(k) for k in judge_facts._SCOPE_FIGURE_KEYS}
+        for e in layer["engines"]
+        if e.get("engine_source_tables") is not None
+    ]
+
     risk = built["migration_risk_facts"]
     assert risk["close_call_query_count"] == layer["close_calls"]["close_call_query_count"]
     assert risk["unservable_queries"] == layer["unservable"]["unservable_query_count"]

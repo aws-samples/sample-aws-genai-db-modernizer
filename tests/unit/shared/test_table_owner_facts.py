@@ -38,6 +38,7 @@ from src.shared.report_facts import (
     table_owner_fields,
     table_owner_line,
 )
+from tests.unit.report.cache_role import as_read_back
 
 REPO = Path(__file__).resolve().parents[3]
 SAMPLE_RUN = REPO / "tests/unit/report/fixtures/wordpress_sample_run_0_3_report.json"
@@ -330,8 +331,10 @@ def test_an_old_report_still_validates_and_keeps_its_stored_figures() -> None:
     before = copy.deepcopy(report["facts"])
     facts = report_facts(report)
     SynthesisOutputContract.model_validate({**report, "facts": facts})
+    # #2162: each migration target's row gains kept_in_sync_counted_under, the rest as stored.
+    expected = as_read_back(before)
     for key in ("tables_migrate", "engines", "table_sources", "source_table_count"):
-        assert facts[key] == before[key], key
+        assert facts[key] == expected[key], key
 
 
 @pytest.mark.parametrize("missing", ["table_sources", "query_pattern_groups"])

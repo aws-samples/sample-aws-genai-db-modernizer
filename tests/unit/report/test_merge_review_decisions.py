@@ -50,7 +50,7 @@ from src.shared.report_facts import (
 from tests.executive_pdf import executive_text
 from tests.unit.agents.referee.test_synthesis_design_conflict_risk import _data
 from tests.unit.agents.schema_design.test_dynamodb_merge_conflicts import _posts_drafts
-from tests.unit.report.cache_role import with_cache_role_sentence
+from tests.unit.report.cache_role import as_read_back
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "src/ui/src/components/__tests__/fixtures/dynamodbMergeReviews.json"
@@ -404,9 +404,7 @@ def test_an_old_job_loads_and_renders_unchanged() -> None:
     assert facts["cutover_responsibility"] == CUTOVER_MESSAGE
     # The reader fills these for an older report (ADR-032 Decision 4; #1221, #2107, #1128).
     READ_TIME_FILLED = ("trade_off_topics", SAID, "slice_plan", "adoption")
-    assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == (
-        with_cache_role_sentence(stored)
-    )
+    assert {k: v for k, v in facts.items() if k not in READ_TIME_FILLED} == (as_read_back(stored))
     assert facts["trade_off_topics"] == trade_off_topic_facts(
         old, stored["reality_check_trade_offs"]
     )

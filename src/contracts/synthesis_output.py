@@ -1440,7 +1440,17 @@ class EngineFacts(BaseModel):
         description=(
             "Migration target only: owner -> its served tables another engine of the same "
             "wave owns; they move in that wave, to that owner (#1169). engine_source_tables "
-            "= tables_migrate + these + kept_in_sync_tables"
+            "= tables_migrate + these + kept_in_sync_tables + kept_in_sync_counted_under"
+        ),
+    )
+    kept_in_sync_counted_under: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Migration target only: earlier engine of the same wave -> its served tables "
+            "kept current by CDC from an owner outside the wave that that engine also reads, "
+            "so they are counted once, in that engine's kept_in_sync_tables, and the "
+            "engines' kept_in_sync_tables add up to the wave's (#2162). None for a report "
+            "written before, which the facts reader fills in"
         ),
     )
     monthly_cost_usd: float | None = Field(None, ge=0)

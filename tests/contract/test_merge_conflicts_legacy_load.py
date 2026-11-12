@@ -31,7 +31,7 @@ from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import trade_off_topic_facts
 from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
-from tests.unit.report.cache_role import with_cache_role_sentence
+from tests.unit.report.cache_role import as_read_back
 
 OLD_REPORT = (
     Path(__file__).resolve().parents[1]
@@ -102,4 +102,4 @@ def test_a_report_written_before_1_72_validates_and_reads_back_unchanged() -> No
     assert facts["slice_plan"] == (plan := slice_plan_facts(old))
     assert facts["adoption"] == adoption_facts(old, plan)
     filled = ("trade_off_topics", SAID, "slice_plan", "adoption")
-    assert {k: v for k, v in facts.items() if k not in filled} == (with_cache_role_sentence(stored))
+    assert {k: v for k, v in facts.items() if k not in filled} == (as_read_back(stored))
