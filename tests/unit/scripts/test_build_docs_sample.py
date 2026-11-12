@@ -315,6 +315,8 @@ _NEWER_THAN_THE_RECORDING = (
 )
 # Fields added inside a recorded fact, filled in the same way (#399).
 _NEWER_FIELDS_THAN_THE_RECORDING = {"cache_layer": ("role_sentence",)}
+# Fields added to each engine row, filled in the same way (#2162).
+_NEWER_ENGINE_FIELDS_THAN_THE_RECORDING = ("kept_in_sync_counted_under",)
 
 
 def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
@@ -322,6 +324,15 @@ def _recorded(facts: dict[str, Any]) -> dict[str, Any]:
     for key, fields in _NEWER_FIELDS_THAN_THE_RECORDING.items():
         if isinstance(out.get(key), dict):
             out[key] = {k: v for k, v in out[key].items() if k not in fields}
+    if isinstance(out.get("engines"), list):
+        out["engines"] = [
+            (
+                {k: v for k, v in e.items() if k not in _NEWER_ENGINE_FIELDS_THAN_THE_RECORDING}
+                if isinstance(e, dict)
+                else e
+            )
+            for e in out["engines"]
+        ]
     return out
 
 

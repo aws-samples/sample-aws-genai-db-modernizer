@@ -555,6 +555,35 @@ def test_wave_figures_come_from_the_facts_layer() -> None:
     assert judge_facts.build_facts(_migration_report())["wave_figures"] is None
 
 
+def test_scope_figures_come_from_the_facts_layer() -> None:
+    """#2162: the judge saw "28 move to DocumentDB" with no fact to check it against."""
+    row = {
+        "engine": "documentdb",
+        "role": "Migration target",
+        "engine_source_tables": 132,
+        "tables_migrate": 113,
+        "moves_to_tables": {"dynamodb": 14},
+        "kept_in_sync_tables": 1,
+        "kept_in_sync_counted_under": {"dynamodb": 4},
+        "monthly_cost_usd": 192.12,
+    }
+    retained = {"engine": "aurora_postgresql", "role": "Retained", "engine_source_tables": None}
+    figures = judge_facts.build_facts(_migration_report(facts={"engines": [retained, row]}))[
+        "scope_figures"
+    ]
+    assert figures == [
+        {
+            "engine": "documentdb",
+            "engine_source_tables": 132,
+            "tables_migrate": 113,
+            "moves_to_tables": {"dynamodb": 14},
+            "kept_in_sync_tables": 1,
+            "kept_in_sync_counted_under": {"dynamodb": 4},
+        }
+    ]
+    assert judge_facts.build_facts(_migration_report())["scope_figures"] is None
+
+
 def test_migration_risk_facts_read_a_count_or_a_list() -> None:
     """Synthesis writes ``hot_partitions_at_risk`` as a count; a list still counts its items."""
     report = _migration_report()

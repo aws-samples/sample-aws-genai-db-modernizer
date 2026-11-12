@@ -348,7 +348,12 @@ _NOT_MAPPED_RE = re.compile(
 # rendered before #2167 says "kept in sync" (``_KEPT``).
 _SCOPE_SPLIT_RE = re.compile(r"([\d,]+) source tables?(?: served: ([^()$]+?))?(?: \(|$)")
 _KEPT = "kept current by CDC|kept in sync"
-_SCOPE_PART_RE = re.compile(rf"^([\d,]+) (migrate|{_KEPT}|move to ({_NAMES_RE}))$")
+# #2162: "4 kept current by CDC in DynamoDB's count", a kept-current table an earlier
+# engine of the wave also reads, counted in that engine's row (``under:<engine>:<other>``).
+_SCOPE_PART_RE = re.compile(
+    rf"^([\d,]+) (migrate|{_KEPT}|move to ({_NAMES_RE})|"
+    rf"kept current by CDC in ({_NAMES_RE})[\u2019']s count)$"
+)
 
 
 def _split_kind(label: str) -> str:
@@ -386,8 +391,9 @@ def migration_map(f: Figures, heading: str, body: str) -> None:
 
 def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
     """A migration target's Scope cell (#1169): served, and of those how many migrate,
-    move to another engine of the same wave (``moveto:<engine>:<owner>``) and are
-    kept in sync from an owner outside the wave."""
+    move to another engine of the same wave (``moveto:<engine>:<owner>``), are kept
+    current by CDC from an owner outside the wave, and are kept current but counted in
+    an earlier wave engine's row (``under:<engine>:<other>``, #2162)."""
     m = _SCOPE_SPLIT_RE.match(cell.strip())
     if not m:
         return
@@ -403,11 +409,12 @@ def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
         if not p:
             f.add(f"tables:{eng}:unparsed", part, where)
             continue
-        key = (
-            f"moveto:{eng}:{engine_id(p.group(3))}"
-            if p.group(3)
-            else {"migrate": f"migrate:{eng}", "kept": f"synced:{eng}"}[_split_kind(p.group(2))]
-        )
+        if p.group(3):
+            key = f"moveto:{eng}:{engine_id(p.group(3))}"
+        elif p.group(4):
+            key = f"under:{eng}:{engine_id(p.group(4))}"
+        else:
+            key = {"migrate": f"migrate:{eng}", "kept": f"synced:{eng}"}[_split_kind(p.group(2))]
         parts[key] = parts.get(key, 0) + _int(p.group(1))
     parts.setdefault(f"synced:{eng}", 0)
     for key, n in parts.items():
@@ -541,11 +548,10 @@ def _scope_wave_violations(
     """#1169: one definition of "kept in sync", the wave plan's (#581).
 
     Each migration target's Scope cell adds up (served = migrate + moved to another
-    engine of its wave + kept in sync). Per migrating wave, the tables its engines say
-    move to one another are the wave's in-wave shared tables, and their kept-in-sync
-    counts are the wave's own: equal for a one-engine wave; for a merged wave each
-    engine's count is at most the wave's, and the wave's at most their sum (two
-    engines can read the same outside-owned table, which the wave counts once)."""
+    engine of its wave + kept current + counted in another engine's row). Per migrating
+    wave, the tables its engines say move to one another are the wave's in-wave shared
+    tables, and their kept-current counts add up to the wave's own (#2162: a table both
+    engines of a merged wave read is counted once, in the first engine's row)."""
     out: list[tuple[str, str]] = []
     for key in [k for k in figs if re.match(r"tables:[\w]+$", k)]:
         eng = key.split(":", 1)[1]
@@ -555,12 +561,14 @@ def _scope_wave_violations(
             _first(figs, f"synced:{eng}"),
         )
         moved = sum(_first(figs, k) or 0 for k in figs if k.startswith(f"moveto:{eng}:"))
-        if None not in (served, migrate, synced) and migrate + moved + synced != served:
+        under = sum(_first(figs, k) or 0 for k in figs if k.startswith(f"under:{eng}:"))
+        if None not in (served, migrate, synced) and migrate + moved + synced + under != served:
             out.append(
                 (
                     f"scope:{eng}:reconcile",
                     f"{label}: {eng}'s Scope says {migrate} migrate, {moved} move to another "
-                    f"engine and {synced} kept in sync, which is not the {served} it serves",
+                    f"engine, {synced} kept current and {under} in another engine's count, "
+                    f"which is not the {served} it serves",
                 )
             )
     for w in report.get("migration_waves") or []:
@@ -572,9 +580,10 @@ def _scope_wave_violations(
             continue
         wave_synced = len(wave_synced_tables(w))
         n = w.get("wave")
-        if len(engines) == 1:
-            ok = synced[0] == wave_synced
+        if len(engines) <= 2:
+            ok = sum(synced) == wave_synced
         else:
+            # More than two engines: the split does not attribute shared reads.
             ok = max(synced) <= wave_synced <= sum(synced)
         if not ok:
             out.append(
@@ -1046,7 +1055,7 @@ def pdf_figures(text: str) -> Figures:
         t = re.search(r"Total \$([\d,]+\.\d\d)", table)
         f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
     # #1169: each migration target's Scope cell in the engine table.
-    for row in re.finditer(rf"({_NAMES_RE}) Migration target ([^$]{{0,120}}?)(?= \$|$)", text):
+    for row in re.finditer(rf"({_NAMES_RE}) Migration target ([^$]{{0,200}}?)(?= \$|$)", text):
         scope = re.search(r"[\d,]+ source tables?.*$", row.group(2))
         if scope:
             scope_split(f, engine_id(row.group(1)), scope.group(0), "Engine table Scope")

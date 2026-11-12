@@ -574,8 +574,16 @@ def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     owner and are kept in sync from it (``wave_facts``' ``kept_in_sync``).
     ``moves_to``: owner -> tables another engine of the same wave owns; they move in
     that wave, to that owner (``wave_facts``' ``shared_in_wave``). An engine's own
-    tables are its wave's ``moving_by_engine``, so served = own + moves_to +
-    kept_in_sync. Only migrating waves with a per-engine split count.
+    tables are its wave's ``moving_by_engine``.
+
+    #2162: ``counted_under``: wave engine -> the outside-owned tables this engine reads
+    that the earlier engine of its wave (in the wave's engine order) also reads. The
+    wave counts such a table once, so it is counted once here too, in that engine's
+    ``kept_in_sync``; this engine's row names it instead. Then served = own + moves_to
+    + kept_in_sync + counted_under for every engine, and the engines' ``kept_in_sync``
+    add up to the wave's ``kept_in_sync_tables``. Both engines of a two-engine wave
+    serving the outside-owned tables, the overlap is their two counts less the wave's.
+    Only migrating waves with a per-engine split count.
     """
     out: dict[str, dict[str, Any]] = {}
     for w in waves:
@@ -585,6 +593,7 @@ def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         if not wf["migrating"] or served_by is None:
             continue
         engines = wf["engines"]
+        own_kept: dict[str, int] = {}
         for e in engines:
             moves_to: dict[str, int] = {}
             # In a two-engine wave an entry owned by the other engine is one this
@@ -594,30 +603,54 @@ def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]
                     owner = str(o["owner"])
                     if owner != e:
                         moves_to[owner] = moves_to.get(owner, 0) + 1
-            row = out.setdefault(e, {"moves_to": {}, "kept_in_sync": 0})
+            row = out.setdefault(e, {"moves_to": {}, "kept_in_sync": 0, "counted_under": {}})
             for owner, k in moves_to.items():
                 row["moves_to"][owner] = row["moves_to"].get(owner, 0) + k
-            row["kept_in_sync"] += max(
+            own_kept[e] = max(
                 int(served_by.get(e) or 0) - int(moving_by.get(e) or 0) - sum(moves_to.values()),
                 0,
             )
+        if len(engines) == 2:
+            first, second = engines
+            # The wave counts a table both engines read once (#2162).
+            overlap = min(
+                max(own_kept[first] + own_kept[second] - int(wf["kept_in_sync_tables"] or 0), 0),
+                own_kept[first],
+                own_kept[second],
+            )
+            if overlap:
+                own_kept[second] -= overlap
+                under = out[second]["counted_under"]
+                under[first] = under.get(first, 0) + overlap
+        for e in engines:
+            out[e]["kept_in_sync"] += own_kept[e]
     return out
 
 
 def engine_table_split_facts(
     engine: str, source_tables: int | None, migrates: int, split: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """``kept_in_sync_tables`` and ``moves_to_tables`` for one migration target (#1169);
-    None for an engine that states no served count."""
+    """``kept_in_sync_tables``, ``moves_to_tables`` and ``kept_in_sync_counted_under``
+    for one migration target (#1169, #2162); None for an engine that states no served
+    count."""
     if not isinstance(source_tables, int) or isinstance(source_tables, bool):
-        return {"kept_in_sync_tables": None, "moves_to_tables": None}
+        return {
+            "kept_in_sync_tables": None,
+            "moves_to_tables": None,
+            "kept_in_sync_counted_under": None,
+        }
     row = split.get(engine)
     if row is None:
         # No migrating wave splits it (a report written before waves did).
-        return {"kept_in_sync_tables": max(source_tables - migrates, 0), "moves_to_tables": {}}
+        return {
+            "kept_in_sync_tables": max(source_tables - migrates, 0),
+            "moves_to_tables": {},
+            "kept_in_sync_counted_under": {},
+        }
     return {
         "kept_in_sync_tables": int(row["kept_in_sync"]),
         "moves_to_tables": dict(sorted(row["moves_to"].items())),
+        "kept_in_sync_counted_under": dict(sorted(row.get("counted_under", {}).items())),
     }
 
 

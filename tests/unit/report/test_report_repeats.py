@@ -267,6 +267,7 @@ def test_without_the_definition_above_the_map_defines_its_split(report: dict[str
     table it does not move), the Migration map states its own definition."""
     for e in report["facts"]["engines"]:
         e["kept_in_sync_tables"], e["moves_to_tables"] = 0, {}
+        e["kept_in_sync_counted_under"] = {}
     md = render_engineering_report_md(report)
     assert md_text(KEPT_IN_SYNC_NOTE) not in section(md, "Target engines")
     mapping = section(md, "Migration map")

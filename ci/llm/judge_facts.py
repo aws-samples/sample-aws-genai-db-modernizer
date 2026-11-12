@@ -37,6 +37,10 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
   (``facts.waves[]``: served, moving and kept-in-sync tables, per engine), so
   a deliverable's "18 served, 15 move" is checked against the report's own
   numbers (#952).
+* ``scope_figures`` -- each migration target's Scope row as the report states it
+  (``facts.engines[]``: served, migrate, move to another engine of the wave, kept
+  current by CDC, and kept current but in an earlier wave engine's count), so the
+  rows' split is checked against the report's own numbers (#2162).
 * ``routing_margins`` -- the close calls (queries whose engine won by under
   the margin), per engine pair, without query ids (#952).
 * ``migration_risk_facts`` -- what the shape of this migration implies a risk
@@ -352,6 +356,29 @@ def _wave_figures(report: dict[str, Any]) -> list[dict[str, Any]] | None:
     if not isinstance(layer, list):
         return None
     return [{k: w.get(k) for k in _WAVE_FIGURE_KEYS} for w in layer if isinstance(w, dict)]
+
+
+_SCOPE_FIGURE_KEYS = (
+    "engine",
+    "engine_source_tables",
+    "tables_migrate",
+    "moves_to_tables",
+    "kept_in_sync_tables",
+    "kept_in_sync_counted_under",
+)
+
+
+def _scope_figures(report: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Each migration target's Scope row figures from the facts layer, verbatim (#2162);
+    ``None`` when the report has no ``facts.engines``."""
+    layer = (report.get("facts") or {}).get("engines")
+    if not isinstance(layer, list):
+        return None
+    return [
+        {k: e.get(k) for k in _SCOPE_FIGURE_KEYS}
+        for e in layer
+        if isinstance(e, dict) and e.get("engine_source_tables") is not None
+    ]
 
 
 def _routing_margins(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -873,6 +900,7 @@ def build_facts(
         ],
         "migration_waves": waves if waves else MIGRATION_WAVES_ABSENT,
         "wave_figures": _wave_figures(report),
+        "scope_figures": _scope_figures(report),
         "routing_margins": _routing_margins(report),
         "migration_risk_facts": _migration_risk_facts(
             report,

@@ -41,6 +41,7 @@ from src.shared.workload_fit_labels import (
 
 from . import escaping
 from .architecture import (
+    KEPT_IN_SYNC_COUNTED_NOTE,
     KEPT_IN_SYNC_NOTE,
     KEPT_IN_SYNC_SOURCES_NOTE,
     MAP_SPLIT_NOTE,
@@ -1017,6 +1018,8 @@ def _engine_role_notes_md(
         notes.append(escaping.md_text(SHARED_TABLES_NOTE))
     if _defines_kept_in_sync(engines):
         notes.append(escaping.md_text(KEPT_IN_SYNC_NOTE))
+        if any(any((e.get("kept_in_sync_counted_under") or {}).values()) for e in engines):
+            notes.append(escaping.md_text(KEPT_IN_SYNC_COUNTED_NOTE))
         if sources_pointer:
             notes.append(escaping.md_text(KEPT_IN_SYNC_SOURCES_NOTE))
     return notes
@@ -1025,7 +1028,10 @@ def _engine_role_notes_md(
 def _defines_kept_in_sync(engines: list[dict[str, Any]]) -> bool:
     """Whether "Target engines" defines served, migrate and kept in sync
     (``KEPT_IN_SYNC_NOTE``): some migration target serves tables it does not move."""
-    return any(e.get("kept_in_sync") or e.get("moves_to") for e in engines)
+    return any(
+        e.get("kept_in_sync") or e.get("moves_to") or e.get("kept_in_sync_counted_under")
+        for e in engines
+    )
 
 
 # #1410: the Migration map refers to the definitions "Target engines" gave above.

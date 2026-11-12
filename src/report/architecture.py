@@ -53,6 +53,18 @@ KEPT_IN_SYNC_SOURCES_NOTE = (
     "These counts are about reads; Sources of truth and replicas below lists where "
     "each written table's writes land and which engines hold copies of it."
 )
+KEPT_IN_SYNC_COUNTED_NOTE = (
+    "A table kept current by CDC that both engines of one wave read is counted once, in "
+    "the first engine\u2019s row; the other row says it is in that engine\u2019s count, so "
+    "the rows add up to the wave plan\u2019s figure."
+)
+
+
+def counted_under_text(n: int, engine: str) -> str:
+    """ "4 kept current by CDC in DynamoDB's count" (#2162)."""
+    return f"{n} {KEPT_IN_SYNC_LABEL} in {display_engine(engine)}\u2019s count"
+
+
 MAP_SPLIT_NOTE = (
     "Migrate counts the mapped tables a migration wave moves, which the Target engines "
     "Total also counts; kept current by CDC counts the ones a migration wave reads while an "
@@ -76,12 +88,17 @@ def _scope_text(e: dict[str, Any], report: dict[str, Any]) -> str:
         # #1169: when it does not own all of them, the cell says how many migrate
         # (the figure the Total counts), how many move to another engine of the same
         # wave, and how many stay with an owner outside the wave, kept current by CDC.
+        # #2162: a kept-current table an earlier engine of the wave also reads is in that
+        # engine's count; this one says so, so the rows add up to the wave's figure.
         kept = e.get("kept_in_sync_tables") or 0
         moves_to = e.get("moves_to_tables") or {}
+        under = e.get("kept_in_sync_counted_under") or {}
         parts = [f"{e.get('tables_migrate', 0)} {MIGRATE_LABEL}"]
         parts += [f"{k} move to {display_engine(o)}" for o, k in moves_to.items() if k]
         parts += [f"{kept} {KEPT_IN_SYNC_LABEL}"] if kept else []
-        split = f" served: {', '.join(parts)}" if kept or any(moves_to.values()) else ""
+        parts += [counted_under_text(k, o) for o, k in under.items() if k]
+        splits = bool(kept) or any(moves_to.values()) or any(under.values())
+        split = f" served: {', '.join(parts)}" if splits else ""
         return f"{n} source {plural_noun(n, 'table')}{split}" + (
             f" ({shared} {SHARED_TABLES_LABEL})" if shared else ""
         )
@@ -145,6 +162,7 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
             "migrates": e.get("tables_migrate", 0),
             "kept_in_sync": e.get("kept_in_sync_tables"),
             "moves_to": e.get("moves_to_tables"),
+            "kept_in_sync_counted_under": e.get("kept_in_sync_counted_under"),
             "cost": e.get("monthly_cost_usd"),
             "cost_sizing": e.get("cost_sizing"),
             "rationale": _wave_plan_rationale(e, report),

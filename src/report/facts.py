@@ -53,6 +53,33 @@ from src.shared.routine_facts import needs_routine_words, with_routine_words
 from .waves import resolve_migration_waves
 
 
+def _needs_table_split(e: Any) -> bool:
+    """A stored engine row written before 1.42 (#1169) or, for a migration target with a
+    served count, before #2162 (no ``kept_in_sync_counted_under``; a block re-dumped
+    through the contract reads it back as None)."""
+    if not isinstance(e, dict):
+        return False
+    if "kept_in_sync_tables" not in e:
+        return True
+    source = e.get("engine_source_tables")
+    served = isinstance(source, int) and not isinstance(source, bool)
+    return served and e.get("kept_in_sync_counted_under") is None
+
+
+def _with_table_split(e: dict[str, Any], split: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """``e`` with its split recounted; a row that states no served count gains no
+    ``kept_in_sync_counted_under`` key it never had, so it reads back as stored."""
+    fields = engine_table_split_facts(
+        str(e.get("engine")),
+        e.get("engine_source_tables"),
+        int(e.get("tables_migrate") or 0),
+        split,
+    )
+    if fields["kept_in_sync_counted_under"] is None and "kept_in_sync_counted_under" not in e:
+        del fields["kept_in_sync_counted_under"]
+    return {**e, **fields}
+
+
 def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     """``report["facts"]`` when synthesis wrote it, else the same block computed now.
 
@@ -61,7 +88,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     one written before 1.38 no per-kind ``unservable`` counts (#888), one written
     before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
     the contract has them empty while queries have a full trace), one written before
-    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), one
+    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169) (and one
+    written before #2162 counted a table both engines of a wave read in both rows), one
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
     no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
     (and a map split by recommended engine), one written before #1329 no
@@ -151,23 +179,13 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing["table_owner_lines"] = table_ownership_facts(
                 report, resolve_migration_waves(report)
             )
-        if any(isinstance(e, dict) and "kept_in_sync_tables" not in e for e in facts["engines"]):
-            # And each migration target's split of its served tables (#1169).
+        if any(_needs_table_split(e) for e in facts["engines"]):
+            # And each migration target's split of its served tables (#1169), on the
+            # #2162 definition: a kept-current table both engines of a wave read counts
+            # once, so a block stored before it is recounted from the same function.
             split = engine_served_split(resolve_migration_waves(report))
             missing["engines"] = [
-                (
-                    {
-                        **e,
-                        **engine_table_split_facts(
-                            str(e.get("engine")),
-                            e.get("engine_source_tables"),
-                            int(e.get("tables_migrate") or 0),
-                            split,
-                        ),
-                    }
-                    if isinstance(e, dict) and "kept_in_sync_tables" not in e
-                    else e
-                )
+                _with_table_split(e, split) if _needs_table_split(e) else e
                 for e in facts["engines"]
             ]
         sources = facts.get("table_sources")
