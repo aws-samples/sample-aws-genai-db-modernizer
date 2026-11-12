@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src.shared.engine_names import display_engine, display_source_database
@@ -219,7 +220,7 @@ def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
     )
 
 
-# #2171: what a gate line says once, at its end, for its long lists of Migration map rows.
+# #2171: what a gate line says once, after its last long list of Migration map rows.
 # Each list keeps its count, which the gate's own text gives ("65 of the 75 tables moving
 # to DynamoDB"), so the pointer adds only where the names are.
 GATE_LIST_POINTER = "The Migration map above lists each of these tables with its owner and readers."
@@ -239,11 +240,11 @@ def _gate_text(
     #1574), the wave's own table list, or the tables the wave's engines write that
     "Sources of truth and replicas" lists. A list of more than ``GATE_LIST_MAX`` tables
     that are all Migration map rows (``mapped``: each with its owner and readers) is left
-    to the count the gate's own text gives, and the gate ends with one pointer to the map
-    (#1642: the discourse wave 2 gate printed 70 names the map already lists; #2171: no
-    name of such a list, so a gate line never prints more than ``GATE_LIST_MAX`` of them,
-    and the pointer is said once however many lists it covers). Any other list, and a
-    gate with no parts, is printed as stored.
+    to the count the gate's own text gives, and one pointer to the map ends the sentence
+    that holds the last such list (#1642: the discourse wave 2 gate printed 70 names the
+    map already lists; #2171: no name of such a list, so a gate line never prints more
+    than ``GATE_LIST_MAX`` of them, and the pointer is said once however many lists it
+    covers). Any other list, and a gate with no parts, is printed as stored.
     """
     parts = w.get("gate_parts")
     if not isinstance(parts, list) or not parts:
@@ -252,7 +253,7 @@ def _gate_text(
     tables = w.get("tables") or []
     written = [t for e in w.get("engines") or [] for t in replicated.get(str(e), [])]
     out: list[str] = []
-    pointed = False
+    pointed_at = -1  # where the text after the last collapsed list starts
     for part in parts:
         text = part.get("text") if isinstance(part, dict) else None
         items = (part.get("items") if isinstance(part, dict) else None) or []
@@ -268,11 +269,17 @@ def _gate_text(
         elif _same_tables(items, written):
             out.append(' (listed under "Sources of truth and replicas" below)')
         elif len(items) > GATE_LIST_MAX and {str(i) for i in items} <= mapped:
-            pointed = True
+            pointed_at = len("".join(out))
         else:
             out.append(f" ({', '.join(str(i) for i in items)})")
     gate = "".join(out)
-    return f"{gate.rstrip()} {GATE_LIST_POINTER}" if pointed else gate
+    if pointed_at < 0:
+        return gate
+    # #2171 review: the pointer ends the sentence that holds the last collapsed list, so
+    # "these tables" follows the lists it covers, not a later sentence about risks.
+    end = re.search(r"\.(?=\s|$)", gate[pointed_at:])
+    cut = pointed_at + end.end() if end else len(gate)
+    return f"{gate[:cut]} {GATE_LIST_POINTER}{gate[cut:]}"
 
 
 def _roadmap_md(report: dict[str, Any]) -> list[str]:

@@ -268,24 +268,30 @@ def test_a_long_gate_list_the_migration_map_names_is_counted_and_pointed_to(repo
 
 
 def test_the_map_pointer_is_said_once_per_gate(report) -> None:
-    """#2171: the discourse wave 3 gate has six long lists; one pointer covers them."""
+    """#2171: the discourse wave 3 gate has six long lists; one pointer covers them. It
+    ends the sentence of the last one (review: at the gate's end it followed "Close the
+    7 Wave 3 risks before this gate", a sentence about risks, not tables)."""
     wave, _ = _wave3(report)
     a = [f"wordpress.wp_a{i:02d}" for i in range(GATE_LIST_MAX + 1)]
     b = [f"wordpress.wp_b{i:02d}" for i in range(GATE_LIST_MAX + 2)]
     wave["gate_parts"] = [
         {"text": f"Check. {len(a)} tables", "items": a},
         {"text": f" stay. {len(b)} tables", "items": b},
-        {"text": " move.", "items": []},
+        {"text": " move. Close RISK-001 before this gate.", "items": []},
     ]
     wave["gate"] = (
         f"Check. {len(a)} tables ({', '.join(a)}) stay. {len(b)} tables ({', '.join(b)}) move."
+        " Close RISK-001 before this gate."
     )
     report["facts"]["table_owner_lines"] = {
         "table_lines": [{"table": t, "owner": "dynamodb", "also_read_by": []} for t in a + b]
     }
     gate = _gate(_wave(render_engineering_report_md(report), 3))
     assert gate.count(md_text(GATE_LIST_POINTER)) == 1
-    assert gate.endswith(f"{md_text(f'{len(b)} tables move.')} {md_text(GATE_LIST_POINTER)}")
+    assert gate.endswith(
+        f"{md_text(f'{len(b)} tables move.')} {md_text(GATE_LIST_POINTER)} "
+        f"{md_text('Close RISK-001 before this gate.')}"
+    )
     assert "wp\\_a" not in gate and "wp\\_b" not in gate
 
 

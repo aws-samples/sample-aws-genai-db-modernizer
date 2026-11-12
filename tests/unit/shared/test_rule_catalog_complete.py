@@ -552,9 +552,9 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/shared/job_status.py": (frozenset({"_MAX_MESSAGE_LEN"}), _BUDGET),
     "src/shared/gate_facts.py": (
-        frozenset({"CACHE_READS_SHOWN", "GATE_LIST_MAX", "GATE_TABLES_SHOWN"}),
+        frozenset({"CACHE_READS_SHOWN", "GATE_LIST_MAX"}),
         _WORDING + ": how many cache candidates the approval gate names (#462), and how many "
-        "table names a gate sentence lists (#551) or a rendered gate line prints (#2171); "
+        "table names a gate prints for one list (#551, one rule since #2171); "
         "display caps with no routing effect",
     ),
     "src/agents/referee/assignment_validator.py": (
