@@ -173,7 +173,7 @@
       "plan_steps": [
         {
           "step_number": 1,
-          "kind": "relational_cutover",
+          "kind": "relational_step",
           "engine": "aurora_postgresql",
           "new_engine": true,
           "movement": "homogeneous",
@@ -182,7 +182,7 @@
           "step_stages": [
             {
               "label": "1",
-              "kind": "cutover",
+              "kind": "whole_database",
               "unit_keys": [
                 "aurora_postgresql:whole-database"
               ],
@@ -463,6 +463,51 @@
         }
       ],
       "step_count": 3,
+      "wave_phases": [
+        {
+          "phase_wave": 1,
+          "step_numbers": [
+            1
+          ],
+          "engines": [
+            "aurora_postgresql"
+          ],
+          "stage_labels": [
+            "1"
+          ],
+          "stage_kinds": [
+            "whole_database"
+          ],
+          "stage_count": 1,
+          "query_count": 200
+        },
+        {
+          "phase_wave": 2,
+          "step_numbers": [
+            2,
+            3
+          ],
+          "engines": [
+            "dynamodb",
+            "documentdb"
+          ],
+          "stage_labels": [
+            "2a",
+            "2c",
+            "2d",
+            "3a",
+            "3b"
+          ],
+          "stage_kinds": [
+            "replica_reads",
+            "self_contained",
+            "with_reverse_replica",
+            "risk_held"
+          ],
+          "stage_count": 5,
+          "query_count": 50
+        }
+      ],
       "move_units": [
         {
           "key": "aurora_postgresql:whole-database",
@@ -642,6 +687,9 @@
           "reverse_replicas": [
             {
               "engine": "aurora_postgresql",
+              "tables": [
+                "public.post_timings"
+              ],
               "query_ids": [
                 "q012"
               ],
@@ -693,6 +741,9 @@
           "reverse_replicas": [
             {
               "engine": "aurora_postgresql",
+              "tables": [
+                "public.notifications"
+              ],
               "query_ids": [
                 "q010",
                 "q011"
@@ -1055,7 +1106,17 @@
           ],
           "table": "public.user_options"
         }
-      ]
+      ],
+      "engine_monthly_cost_usd": {
+        "aurora_postgresql": 286.16,
+        "dynamodb": 15.2,
+        "documentdb": 271.8
+      },
+      "engine_critical_high_risks": {
+        "aurora_postgresql": 0,
+        "dynamodb": 1,
+        "documentdb": 0
+      }
     },
     "adoption": {
       "default_path_id": "full_target",
@@ -1081,6 +1142,15 @@
           "cost_delta_vs_current_usd": null,
           "cost_is_upper_bound": true,
           "critical_high_risks": 1,
+          "replicated_tables": [
+            "public.badges",
+            "public.notifications",
+            "public.post_timings",
+            "public.topics",
+            "public.user_badges",
+            "public.user_stats",
+            "public.users"
+          ],
           "replicated_table_count": 7,
           "temporary_stream_count": 2,
           "first_gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility."
@@ -1108,6 +1178,16 @@
           "cost_delta_vs_current_usd": null,
           "cost_is_upper_bound": true,
           "critical_high_risks": 1,
+          "replicated_tables": [
+            "public.badges",
+            "public.categories",
+            "public.notifications",
+            "public.post_timings",
+            "public.topics",
+            "public.user_badges",
+            "public.user_stats",
+            "public.users"
+          ],
           "replicated_table_count": 8,
           "temporary_stream_count": 2,
           "first_gate": "Full load complete and replication in progress from PostgreSQL to Aurora PostgreSQL for 60 tables. The cutover is your responsibility."
@@ -1130,8 +1210,9 @@
         }
       ],
       "one_step": {
-        "cutovers": 1,
-        "staged_cutovers": 6,
+        "step_count": 1,
+        "staged_step_count": 3,
+        "staged_stage_count": 6,
         "gate_count": 6,
         "temporary_stream_count": 0,
         "staged_temporary_stream_count": 2,

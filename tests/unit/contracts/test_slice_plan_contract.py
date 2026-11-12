@@ -6,7 +6,8 @@
 The fixtures under ``tests/fixtures/adoption_paths/`` are the shape the renderers
 (#1131, #1132, #1133) and the e2e-llm judge (#1136) build against while the
 computation is written. These tests keep them valid and internally consistent, and
-pin each invariant the contract's validators enforce, the negative case included.
+break each invariant the contract's validators enforce: every ``raise`` in them is
+reached by one case below.
 """
 
 from __future__ import annotations
@@ -15,20 +16,24 @@ import copy
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
 
 from src.contracts.synthesis_output import (
     MOVING_UNIT_KINDS,
-    STAGE_RANKS,
     AdoptionFacts,
     MigrationWave,
+    RelationalTableClasses,
     ReportFacts,
     SlicePlanFacts,
+    SliceStep,
     check_adoption_against_plan,
+    phase_facts,
 )
+from src.contracts.transformation_contract import TableClass
+from src.tools.validation.customer_text_guard import scan_json
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURES = REPO / "tests" / "fixtures" / "adoption_paths"
@@ -36,6 +41,8 @@ SAMPLE_REPORT = (
     REPO / "docs" / "examples" / "wordpress" / "sample-run" / "synthesis" / "v2" / "report.json"
 )
 CASES = ("wordpress", "discourse")
+
+Mutate = Callable[[dict[str, Any]], Any]
 
 
 def _fragment(name: str) -> dict[str, Any]:
@@ -50,15 +57,6 @@ def _plan(fragment: dict[str, Any]) -> dict[str, Any]:
 
 def _units(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {u["key"]: u for u in plan["move_units"]}
-
-
-def _positions(plan: dict[str, Any]) -> dict[str, tuple[int, int]]:
-    return {
-        key: (step["step_number"], STAGE_RANKS[stage["kind"]])
-        for step in plan["plan_steps"]
-        for stage in step["step_stages"]
-        for key in stage["unit_keys"]
-    }
 
 
 # --- The fixtures validate and their figures agree --------------------------------------
@@ -79,37 +77,37 @@ def test_the_fixture_validates(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", CASES)
-def test_stage_query_counts_sum_to_the_step_and_the_wave(name: str) -> None:
+def test_the_fixture_passes_the_customer_text_guard(name: str) -> None:
+    # Unit and slice keys lead with an engine id; the guard reads them as ids, not prose.
+    assert scan_json(_fragment(name)) == []
+
+
+@pytest.mark.parametrize("name", CASES)
+def test_the_phases_roll_the_steps_up_into_the_waves(name: str) -> None:
     fragment = _fragment(name)
     plan, waves = _plan(fragment), {w["wave"]: w for w in fragment["migration_waves"]}
-    units = _units(plan)
-    by_wave: dict[int, int] = {}
-    for step in plan["plan_steps"]:
-        assert step["query_count"] == sum(s["query_count"] for s in step["step_stages"])
-        for stage in step["step_stages"]:
-            assert stage["query_count"] == sum(units[k]["query_count"] for k in stage["unit_keys"])
-        if step["kind"] != "relational_cutover":
-            by_wave[step["phase_wave"]] = by_wave.get(step["phase_wave"], 0) + step["query_count"]
-    cutover = plan["plan_steps"][0]
-    assert cutover["query_count"] == waves[1]["cutover_query_count"]
-    assert cutover["query_count"] == fragment["facts"]["in_scope_query_count"]
-    # Every later step rolls up into its engine phase: the wave's queries, exactly.
-    assert by_wave == {n: w["query_count"] for n, w in waves.items() if n != 1}
+    phases = {p["phase_wave"]: p for p in plan["wave_phases"]}
+    assert set(phases) == set(waves)
+    for n, wave in waves.items():
+        expected = wave["cutover_query_count"] if n == 1 else wave["query_count"]
+        assert phases[n]["query_count"] == expected
+    assert plan["plan_steps"][0]["query_count"] == fragment["facts"]["in_scope_query_count"]
 
 
-@pytest.mark.parametrize("name", CASES)
-def test_every_move_unit_is_in_exactly_one_stage(name: str) -> None:
-    plan = _plan(_fragment(name))
-    listed = [k for step in plan["plan_steps"] for s in step["step_stages"] for k in s["unit_keys"]]
-    assert sorted(listed) == sorted(_units(plan))
-
-
-@pytest.mark.parametrize("name", CASES)
-def test_a_dependency_never_points_to_a_later_stage(name: str) -> None:
-    plan = _plan(_fragment(name))
-    position = _positions(plan)
-    for dep in plan["dependencies"]:
-        assert position[dep["depends_on"]] <= position[dep["unit_key"]], dep
+def test_two_steps_in_one_wave_roll_up_into_one_phase() -> None:
+    # Discourse: DynamoDB (step 2) and DocumentDB (step 3) share wave 2's engine phase,
+    # and its stages are both steps' (#1131's per-wave stages, #1133's stage count).
+    phase = _plan(_fragment("discourse"))["wave_phases"][1]
+    assert phase["phase_wave"] == 2 and phase["step_numbers"] == [2, 3]
+    assert phase["engines"] == ["dynamodb", "documentdb"]
+    assert phase["stage_labels"] == ["2a", "2c", "2d", "3a", "3b"]
+    assert phase["stage_count"] == 5
+    assert phase["stage_kinds"] == [
+        "replica_reads",
+        "self_contained",
+        "with_reverse_replica",
+        "risk_held",
+    ]
 
 
 @pytest.mark.parametrize("name", CASES)
@@ -121,6 +119,8 @@ def test_no_move_unit_splits_a_kept_whole_group(name: str) -> None:
         assert len(holders) <= 1, group["group_id"]
         if holders:
             assert set(group["query_ids"]) <= set(holders[0]["query_ids"])
+            if group["table"]:
+                assert group["table"] in holders[0]["owned_tables"]
     # The fixture exercises both: groups a unit moves, and groups that stay on Aurora.
     held = {g for u in moving for g in u["kept_whole_ids"]}
     assert held and {g["group_id"] for g in plan["kept_whole"]} - held
@@ -135,75 +135,88 @@ def test_the_table_classes_sort_every_collected_table_once(name: str) -> None:
     assert classes["leaves_count"] == fragment["facts"]["tables_migrate"]
 
 
+def test_the_table_classes_are_the_transformation_contract_s() -> None:
+    lists = {
+        name
+        for name, field in RelationalTableClasses.model_fields.items()
+        if not name.endswith("_count")
+    }
+    assert lists == set(get_args(TableClass))
+
+
 @pytest.mark.parametrize("name", CASES)
 def test_the_full_target_path_agrees_with_the_headline_facts(name: str) -> None:
     facts = _fragment(name)["facts"]
     paths = {p["path_id"]: p for p in facts["adoption"]["paths"]}
     full = paths["full_target"]
     assert full["monthly_cost_usd"] == facts["projected_monthly_cost_usd"]
-    assert full["monthly_cost_usd"] == round(
-        sum(e["monthly_cost_usd"] for e in facts["engines"]), 2
-    )
     assert full["queries_moved"] == facts["moving_query_count"]
     assert full["tables_migrate"] == facts["tables_migrate"]
     assert sum(full["queries_by_engine"].values()) == facts["in_scope_query_count"]
-    assert full["critical_high_risks"] == sum(facts["critical_high_risks_by_engine"].values())
     if "relational_only" in paths:
         assert paths["relational_only"]["engines"] == facts["no_migration"]["engines"]
-        assert paths["relational_only"]["queries_moved"] == 0
-    # Each path's cost is its engines' cost; the delta is against Aurora's (+ cache's) alone.
-    cost = {e["engine"]: e["monthly_cost_usd"] for e in facts["engines"]}
-    relational = round(sum(cost[e] for e in facts["no_migration"]["engines"]), 2)
-    for path in paths.values():
-        assert path["monthly_cost_usd"] == round(sum(cost[e] for e in path["engines"]), 2)
-        assert path["cost_delta_vs_relational_usd"] == round(
-            path["monthly_cost_usd"] - relational, 2
-        )
 
 
-@pytest.mark.parametrize("name", CASES)
-def test_the_one_step_checks_state_the_plan_s_own_figures(name: str) -> None:
-    facts = _fragment(name)["facts"]
-    plan, adoption = facts["slice_plan"], facts["adoption"]
-    units = _units(plan)
-    stage_c = [
-        s
-        for step in plan["plan_steps"]
-        for s in step["step_stages"]
-        if s["kind"] == "with_reverse_replica"
-    ]
-    targets = {s["engine"] for s in plan["plan_steps"] if s["kind"] in ("slice", "engine_wave")}
-    observed = {c["rule"]: c["observed"] for c in adoption["one_step"]["one_step_checks"]}
-    assert observed == {
-        "no_open_critical_high_risk": sum(facts["critical_high_risks_by_engine"].values()),
-        "at_most_one_purpose_built_target": len(targets),
-        "no_reverse_replica_stage": len(stage_c),
-    }
-    streams = sum(len(units[k]["reverse_replicas"]) for s in stage_c for k in s["unit_keys"])
-    assert adoption["one_step"]["staged_temporary_stream_count"] == streams
-
-
-@pytest.mark.parametrize("name", CASES)
-def test_a_held_stage_lists_exactly_its_units_risks(name: str) -> None:
-    plan = _plan(_fragment(name))
-    units = _units(plan)
-    for step in plan["plan_steps"]:
-        for stage in step["step_stages"]:
-            risks = sorted({r for k in stage["unit_keys"] for r in units[k]["holding_risk_ids"]})
-            assert sorted(stage["holding_risk_ids"]) == risks
-
-
-def test_the_report_facts_validator_checks_the_paths_against_the_plan() -> None:
+def _report_facts(name: str) -> dict[str, Any]:
+    """The sample report's stored facts with the fixture's blocks and the per-engine
+    figures they rest on: a whole ``ReportFacts`` block to validate."""
     sample = json.loads(SAMPLE_REPORT.read_text())["facts"]
-    fixture = _fragment("discourse")["facts"]
-    facts = {**sample, "slice_plan": fixture["slice_plan"], "adoption": fixture["adoption"]}
-    ReportFacts.model_validate(facts)
-    adoption = copy.deepcopy(fixture["adoption"])
-    adoption["paths"][0]["stage_count"] = adoption["paths"][0]["gate_count"] = 5
-    with pytest.raises(ValidationError, match="stage_count must count its steps' stages"):
-        ReportFacts.model_validate({**facts, "adoption": adoption})
-    # Either block alone is not cross-checked: a report can carry one before the other.
-    ReportFacts.model_validate({**sample, "adoption": adoption})
+    fixture = copy.deepcopy(_fragment(name)["facts"])
+    template = sample["engines"][0]
+    engines = [{**template, **e} for e in fixture["engines"]]
+    return {
+        **sample,
+        "engines": engines,
+        "critical_high_risks_by_engine": fixture["critical_high_risks_by_engine"],
+        "no_migration": fixture["no_migration"],
+        "slice_plan": fixture["slice_plan"],
+        "adoption": fixture["adoption"],
+    }
+
+
+@pytest.mark.parametrize("name", CASES)
+def test_the_report_facts_validate_with_the_fixture_s_blocks(name: str) -> None:
+    ReportFacts.model_validate(_report_facts(name))
+
+
+FACTS_BREAKS: dict[str, tuple[str, Mutate, str]] = {
+    "engine cost": (
+        "wordpress",
+        lambda f: f["engines"][1].update(monthly_cost_usd=1.0),
+        "dynamodb's cost is 1.0",
+    ),
+    "engine risks": (
+        "discourse",
+        lambda f: f.update(critical_high_risks_by_engine={}),
+        "risks differ from the facts'",
+    ),
+    "relational only engines": (
+        "wordpress",
+        lambda f: f["no_migration"].update(engines=["aurora_mysql"]),
+        "relational_only ends on facts.no_migration's engines",
+    ),
+    "path against plan": (
+        "discourse",
+        lambda f: f["adoption"]["paths"][0].update(stage_count=5, gate_count=5),
+        "stage_count is 5, the steps give 4",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FACTS_BREAKS))
+def test_report_facts_that_disagree_with_the_plan_are_refused(case: str) -> None:
+    name, mutate, message = FACTS_BREAKS[case]
+    facts = _report_facts(name)
+    mutate(facts)
+    with pytest.raises(ValidationError, match=message):
+        ReportFacts.model_validate(facts)
+
+
+def test_either_block_alone_is_not_cross_checked() -> None:
+    # A report can carry one block before the other is computed.
+    facts = _report_facts("discourse")
+    facts["adoption"]["paths"][0]["stage_count"] = facts["adoption"]["paths"][0]["gate_count"] = 5
+    ReportFacts.model_validate({**facts, "slice_plan": None})
 
 
 # --- Every invariant fails when broken ---------------------------------------------------
@@ -213,9 +226,20 @@ def _unit(plan: dict[str, Any], key_part: str) -> dict[str, Any]:
     return next(u for u in plan["move_units"] if key_part in u["key"])
 
 
+def _step(plan: dict[str, Any], n: int) -> dict[str, Any]:
+    step: dict[str, Any] = plan["plan_steps"][n - 1]
+    return step
+
+
+def _stage(plan: dict[str, Any], label: str) -> dict[str, Any]:
+    return next(
+        s for step in plan["plan_steps"] for s in step["step_stages"] if s["label"] == label
+    )
+
+
 def _recount(plan: dict[str, Any]) -> None:
-    """Every stage and step count summed again from the units, so a break reaches the
-    invariant it targets rather than a count check first."""
+    """Every stage, step and phase figure summed again from the units, so a break reaches
+    the invariant it targets rather than a count check first."""
     units = _units(plan)
     for step in plan["plan_steps"]:
         for stage in step["step_stages"]:
@@ -223,158 +247,659 @@ def _recount(plan: dict[str, Any]) -> None:
             stage["unit_count"] = len(stage["unit_keys"])
             stage["query_count"] = sum(u["query_count"] for u in members)
             stage["owned_table_count"] = sum(u["owned_table_count"] for u in members)
+            if stage["kind"] == "risk_held":
+                stage["holding_risk_ids"] = sorted(
+                    {r for u in members for r in u["holding_risk_ids"]}
+                )
         for key in ("unit_count", "query_count", "owned_table_count"):
             step[key] = sum(s[key] for s in step["step_stages"])
+        step["stage_count"] = len(step["step_stages"])
+    plan["step_count"] = len(plan["plan_steps"])
+    try:
+        steps = [SliceStep.model_validate(s) for s in plan["plan_steps"]]
+    except ValidationError:
+        return
+    plan["wave_phases"] = [p.model_dump(mode="json") for p in phase_facts(steps)]
 
 
-def _split_a_write_group(plan: dict[str, Any]) -> None:
-    # Move one of wp_posts' writes into the comments unit: the group is split.
-    posts, comments = _unit(plan, "wp_postmeta"), _unit(plan, "wp_commentmeta")
-    posts["query_ids"].remove("q094")
-    posts["write_query_ids"].remove("q094")
-    posts["query_count"] -= 1
-    comments["query_ids"].append("q094")
-    comments["query_count"] += 1
+def _move_query(plan: dict[str, Any], qid: str, src: str, dst: str) -> None:
+    a, b = _unit(plan, src), _unit(plan, dst)
+    a["query_ids"].remove(qid)
+    if qid in a["write_query_ids"]:
+        a["write_query_ids"].remove(qid)
+    a["query_count"] -= 1
+    b["query_ids"].append(qid)
+    b["query_count"] += 1
 
 
-def _drop_a_kept_whole_claim(plan: dict[str, Any]) -> None:
-    _unit(plan, "wp_postmeta")["kept_whole_ids"].remove("write:wordpress.wp_posts")
-
-
-def _query_in_two_units(plan: dict[str, Any]) -> None:
-    sessions = _unit(plan, "wp_woocommerce_sessions")
-    sessions["query_ids"].append("q077")
-    sessions["query_count"] += 1
-
-
-def _unit_in_two_stages(plan: dict[str, Any]) -> None:
-    stage = plan["plan_steps"][2]["step_stages"][1]
-    stage["unit_keys"].append(plan["plan_steps"][2]["step_stages"][0]["unit_keys"][0])
-
-
-def _unit_in_no_stage(plan: dict[str, Any]) -> None:
-    stage = plan["plan_steps"][2]["step_stages"][0]
-    stage["unit_keys"].pop()
-
-
-def _dependency_on_a_later_stage(plan: dict[str, Any]) -> None:
+def _add_dependency(plan: dict[str, Any], unit: str, on: str) -> None:
     plan["dependencies"].append(
-        {
-            "unit_key": "dynamodb:wordpress.wp_users",
-            "depends_on": "dynamodb:wordpress.wp_postmeta",
-            "kinds": ["shared_table"],
-            "edge_weight": 0.1,
-            "tables": ["wordpress.wp_users"],
-        }
+        {"unit_key": unit, "depends_on": on, "kinds": ["shared_table"], "edge_weight": 0.1}
     )
 
 
-def _stage_count_off(plan: dict[str, Any]) -> None:
-    plan["plan_steps"][2]["step_stages"][2]["query_count"] += 1
-    plan["plan_steps"][2]["query_count"] += 1
+def _transfer_table(plan: dict[str, Any], table: str, src: str, dst: str) -> None:
+    a, b = _unit(plan, src), _unit(plan, dst)
+    a["owned_tables"].remove(table)
+    a["owned_table_count"] -= 1
+    b["owned_tables"].append(table)
+    b["owned_table_count"] += 1
 
 
-def _step_count_off(plan: dict[str, Any]) -> None:
-    plan["plan_steps"][2]["query_count"] += 1
+POSTS, COMMENTS = "wp_postmeta", "wp_commentmeta"
+SESSIONS, ACTIONS = "wp_woocommerce_sessions", "wp_actionscheduler_actions"
+TAXONOMY, USERS = "wordpress.wp_term_taxonomy", "dynamodb:wordpress.wp_users"
+CACHE, WHOLE = "elasticache:", "whole-database"
+POSTS_KEY = "dynamodb:wordpress.wp_postmeta"
 
 
-def _stages_out_of_order(plan: dict[str, Any]) -> None:
-    stages = plan["plan_steps"][2]["step_stages"]
-    stages[0], stages[1] = stages[1], stages[0]
+def _set(path: str, value: Any) -> Mutate:
+    """Set a dotted path: steps by number (``s3``), stages by label (``@3b``), units by key
+    part (``u:wp_postmeta``), list indexes as digits, anything else a dict key."""
+
+    def mutate(plan: dict[str, Any]) -> None:
+        node: Any = plan
+        parts = path.split(".")
+        for part in parts[:-1]:
+            node = _resolve(plan, node, part)
+        last = parts[-1]
+        if isinstance(node, list):
+            node[int(last)] = value
+        else:
+            node[last] = value
+
+    return mutate
 
 
-def _wrong_label(plan: dict[str, Any]) -> None:
-    plan["plan_steps"][2]["step_stages"][1]["label"] = "3a"
+def _resolve(plan: dict[str, Any], node: Any, part: str) -> Any:
+    if part.startswith("s") and part[1:].isdigit():
+        return _step(plan, int(part[1:]))
+    if part.startswith("@"):
+        return _stage(plan, part[1:])
+    if part.startswith("u:"):
+        return _unit(plan, part[2:])
+    if isinstance(node, list):
+        return node[int(part)]
+    return node[part]
 
 
-def _risk_outside_stage_d(plan: dict[str, Any]) -> None:
-    _unit(plan, "wp_commentmeta")["holding_risk_ids"] = ["RISK-001"]
+def _do(*mutations: Mutate) -> Mutate:
+    def mutate(plan: dict[str, Any]) -> None:
+        for m in mutations:
+            m(plan)
+
+    return mutate
 
 
-def _pilot_not_first(plan: dict[str, Any]) -> None:
-    _unit(plan, "wordpress.wp_term_taxonomy")["pilot"] = False
-    _unit(plan, "dynamodb:wordpress.wp_users")["pilot"] = True
+def _owned_and_replicated(plan: dict[str, Any]) -> None:
+    _unit(plan, POSTS)["replicated_in"].append(
+        {"table": "wordpress.wp_posts", "source_of_truth": "aurora_mysql"}
+    )
 
 
-def _self_contained_with_a_replica(plan: dict[str, Any]) -> None:
-    _unit(plan, "wp_woocommerce_sessions")["replicated_in"] = [
-        {"table": "wordpress.wp_users", "source_of_truth": "aurora_mysql"}
-    ]
+def _engine_waves_basis(plan: dict[str, Any]) -> None:
+    plan["step_basis"], plan["slice_basis"] = "engine_waves", None
+    for n in (2, 3):
+        step = _step(plan, n)
+        step["kind"], step["slice_key"], step["metrics"] = "engine_wave", None, None
 
 
-def _unit_on_another_engine(plan: dict[str, Any]) -> None:
-    _unit(plan, "wp_woocommerce_sessions")["engine"] = "documentdb"
-
-
-def _leaving_table_in_the_wrong_stage(plan: dict[str, Any]) -> None:
-    classes = plan["plan_steps"][0]["table_classes"]
-    next(t for t in classes["leaves"] if t["table"] == "wordpress.wp_posts")["stage_label"] = "3b"
-
-
-def _table_in_two_classes(plan: dict[str, Any]) -> None:
-    classes = plan["plan_steps"][0]["table_classes"]
-    classes["stays"].append("wordpress.wp_users")
-    classes["stays_count"] += 1
-
-
-def _steps_not_consecutive(plan: dict[str, Any]) -> None:
-    plan["plan_steps"][2]["step_number"] = 4
-    for stage in plan["plan_steps"][2]["step_stages"]:
-        stage["label"] = "4" + stage["label"][1:]
-
-
-BREAKS: dict[str, tuple[Callable[[dict[str, Any]], None], str]] = {
-    "split write group": (_split_a_write_group, "split across units"),
-    "unclaimed group": (_drop_a_kept_whole_claim, "is held by"),
-    "query in two units": (_query_in_two_units, "is in units"),
-    "unit in two stages": (_unit_in_two_stages, "more than one stage"),
-    "unit in no stage": (_unit_in_no_stage, "units in no stage"),
-    "dependency on a later stage": (_dependency_on_a_later_stage, "moves in a later stage"),
-    "stage count": (_stage_count_off, "query_count must sum its units"),
-    "step count": (_step_count_off, "query_count must sum the stages"),
-    "stage order": (_stages_out_of_order, "stages run a, b, c, d"),
-    "stage label": (_wrong_label, "labelled by its step and kind"),
-    "risk outside stage d": (_risk_outside_stage_d, "a risk holds its unit in stage d"),
-    "pilot not first": (_pilot_not_first, "the pilot is the first unit"),
-    "self-contained with a replica": (_self_contained_with_a_replica, "not self-contained"),
-    "unit on another engine": (_unit_on_another_engine, "not dynamodb"),
-    "leaving stage": (_leaving_table_in_the_wrong_stage, "leaves must be every table"),
-    "table in two classes": (_table_in_two_classes, "exactly one class"),
-    "step numbers": (_steps_not_consecutive, "numbered 1, 2"),
+# (fixture, mutation, recount, message). Every raise in the slice plan models.
+PLAN_BREAKS: dict[str, tuple[str, Mutate, bool, str]] = {
+    # ReverseReplica
+    "reverse read count": (
+        "wordpress",
+        _set("u:wp_postmeta.reverse_replicas.0.read_count", 9),
+        True,
+        "read_count is 9",
+    ),
+    "reverse tables twice": (
+        "wordpress",
+        _set("u:wp_postmeta.reverse_replicas.0.tables", ["wordpress.wp_posts"] * 2),
+        True,
+        "reverse replica tables lists a value twice",
+    ),
+    # MoveUnit
+    "query twice in a unit": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["query_ids"].append("q085"),
+        False,
+        "query_ids lists a value twice",
+    ),
+    "owned twice in a unit": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["owned_tables"].append("wordpress.wp_posts"),
+        False,
+        "owned_tables lists a value twice",
+    ),
+    "whole-database unit with ids": (
+        "wordpress",
+        _set("u:whole-database.query_ids", ["q001"]),
+        False,
+        "the whole-database unit lists no query ids",
+    ),
+    "unit query count": (
+        "wordpress",
+        _set("u:wp_postmeta.query_count", 2),
+        False,
+        "query_count is 2",
+    ),
+    "writes outside the unit": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["write_query_ids"].append("q001"),
+        False,
+        "write_query_ids must be a subset",
+    ),
+    "unit owned count": (
+        "wordpress",
+        _set("u:wp_postmeta.owned_table_count", 9),
+        False,
+        "owned_table_count is 9",
+    ),
+    "unit reverse reads": (
+        "wordpress",
+        _set("u:wp_postmeta.reverse_read_count", 9),
+        False,
+        "reverse_read_count must sum",
+    ),
+    "reverse copy of a table it does not own": (
+        "wordpress",
+        _set("u:wp_postmeta.reverse_replicas.0.tables", ["wordpress.wp_users"]),
+        False,
+        "copies only tables the unit owns",
+    ),
+    "replicated in twice": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["replicated_in"].append(_unit(p, POSTS)["replicated_in"][0]),
+        False,
+        "replicated_in lists a value twice",
+    ),
+    "owned and replicated in": (
+        "wordpress",
+        _owned_and_replicated,
+        False,
+        "owned or replicated in, never both",
+    ),
+    "replica reads unit owns": (
+        "wordpress",
+        _do(
+            _set("u:wp_term_taxonomy.owned_tables", ["wordpress.wp_x"]),
+            _set("u:wp_term_taxonomy.owned_table_count", 1),
+        ),
+        False,
+        "a replica_reads unit owns no table",
+    ),
+    "cache held by a risk": (
+        "wordpress",
+        _set("u:elasticache:.holding_risk_ids", ["RISK-1"]),
+        False,
+        "only a moving unit is held by a risk",
+    ),
+    # KeptWholeGroup
+    "write group with no table": (
+        "wordpress",
+        _set("kept_whole.2.table", None),
+        False,
+        "a write group, and only it, names its table",
+    ),
+    # UnitDependency
+    "self dependency": (
+        "wordpress",
+        lambda p: _add_dependency(p, USERS, USERS),
+        False,
+        "does not depend on itself",
+    ),
+    "dependency kinds twice": (
+        "wordpress",
+        _set("dependencies.0.kinds", ["cache_fronts", "cache_fronts"]),
+        False,
+        "kinds lists a value twice",
+    ),
+    # SliceStage
+    "stage units twice": (
+        "wordpress",
+        lambda p: _stage(p, "3a")["unit_keys"].append(_stage(p, "3a")["unit_keys"][0]),
+        False,
+        "unit_keys lists a value twice",
+    ),
+    "stage unit count": ("wordpress", _set("@3a.unit_count", 5), False, "unit_count is 5"),
+    "gate parts": (
+        "wordpress",
+        _set("@3b.stage_gate_parts", [{"text": "other", "items": []}]),
+        False,
+        "stage_gate_parts must join back",
+    ),
+    "risks outside stage d": (
+        "wordpress",
+        _set("@3b.holding_risk_ids", ["RISK-1"]),
+        False,
+        "only a risk_held stage lists holding risks",
+    ),
+    # RelationalTableClasses
+    "stays count": ("wordpress", _set("s1.table_classes.stays_count", 0), False, "stays_count"),
+    "leaves count": ("wordpress", _set("s1.table_classes.leaves_count", 0), False, "leaves_count"),
+    "replicated out count": (
+        "wordpress",
+        _set("s1.table_classes.replicated_out_count", 0),
+        False,
+        "replicated_out_count",
+    ),
+    "unread count": ("wordpress", _set("s1.table_classes.unread_count", 0), False, "unread_count"),
+    "table in two classes": (
+        "wordpress",
+        lambda p: (
+            _step(p, 1)["table_classes"]["stays"].append("wordpress.wp_users"),
+            _step(p, 1)["table_classes"].update(stays_count=5),
+        ),
+        False,
+        "exactly one class",
+    ),
+    # SliceStep
+    "step stage count": ("wordpress", _set("s3.stage_count", 2), False, "stage_count is 2"),
+    "step unit count": ("wordpress", _set("s3.unit_count", 2), False, "unit_count must sum"),
+    "step query count": ("wordpress", _set("s3.query_count", 2), False, "query_count must sum the"),
+    "step owned count": (
+        "wordpress",
+        _set("s3.owned_table_count", 2),
+        False,
+        "owned_table_count must sum the stages",
+    ),
+    "stage order": (
+        "wordpress",
+        lambda p: _step(p, 3)["step_stages"].reverse(),
+        False,
+        "stages run a, b, c, d",
+    ),
+    "stage label": ("wordpress", _set("@3b.label", "3a"), False, "labelled by its step and kind"),
+    "relational step not first": (
+        "wordpress",
+        _set("s2.kind", "relational_step"),
+        False,
+        "the relational step is step 1",
+    ),
+    "whole database stage elsewhere": (
+        "wordpress",
+        _do(_set("@2a.kind", "whole_database"), _set("@2a.label", "2")),
+        False,
+        "only the relational step has a whole_database stage",
+    ),
+    "cache step shape": ("wordpress", _set("s2.kind", "slice"), False, "the cache step, and only"),
+    "slice without key": ("wordpress", _set("s3.slice_key", None), False, "has a slice_key"),
+    "metrics off a slice": (
+        "wordpress",
+        _set(
+            "s2.metrics", _fragment("wordpress")["facts"]["slice_plan"]["plan_steps"][2]["metrics"]
+        ),
+        False,
+        "only a slice step carries slice metrics",
+    ),
+    "table classes off the relational step": (
+        "wordpress",
+        _set("s2.table_classes", {}),
+        False,
+        "only the relational step carries table classes",
+    ),
+    # SlicePlanFacts
+    "plan step count": ("wordpress", _set("step_count", 9), False, "step_count is 9"),
+    "step numbers": (
+        "wordpress",
+        lambda p: (
+            _step(p, 3).update(step_number=4),
+            [s.update(label="4" + s["label"][1:]) for s in _step(p, 3)["step_stages"]],
+        ),
+        False,
+        "numbered 1, 2",
+    ),
+    "slice basis": ("wordpress", _set("slice_basis", None), False, "slice_basis is set exactly"),
+    "engine wave in a slices plan": (
+        "wordpress",
+        _do(_set("s3.kind", "engine_wave"), _set("s3.slice_key", None), _set("s3.metrics", None)),
+        False,
+        "a slices plan has no engine_wave step",
+    ),
+    "engine wave numbered apart from its wave": (
+        "discourse",
+        _engine_waves_basis,
+        False,
+        "an engine_waves step is numbered as its wave",
+    ),
+    "slice keys twice": (
+        "discourse",
+        _set("s3.slice_key", "dynamodb:activity"),
+        False,
+        "slice keys lists a value twice",
+    ),
+    "engine reintroduced": (
+        "discourse",
+        _do(
+            _set("s3.engine", "dynamodb"),
+            lambda p: [
+                u.update(engine="dynamodb") for u in p["move_units"] if u["engine"] == "documentdb"
+            ],
+        ),
+        True,
+        "step 3 reintroduces dynamodb",
+    ),
+    "phases": (
+        "wordpress",
+        _set("wave_phases.2.query_count", 1),
+        False,
+        "wave_phases must roll the steps",
+    ),
+    "unit keys twice": (
+        "wordpress",
+        lambda p: p["move_units"].append(copy.deepcopy(_unit(p, POSTS))),
+        False,
+        "move unit keys are unique",
+    ),
+    "unit in no stage": (
+        "wordpress",
+        lambda p: _stage(p, "3a")["unit_keys"].pop(),
+        True,
+        "units in no stage",
+    ),
+    "dependency on an unknown unit": (
+        "wordpress",
+        lambda p: _add_dependency(p, USERS, "dynamodb:nothing"),
+        False,
+        "dependency names unknown unit",
+    ),
+    "dependency on a later stage": (
+        "wordpress",
+        lambda p: _add_dependency(p, USERS, "dynamodb:wordpress.wp_postmeta"),
+        False,
+        "does not run before it",
+    ),
+    "dependency on one run after it in the same stage": (
+        "wordpress",
+        lambda p: _add_dependency(
+            p, "dynamodb:wordpress.wp_commentmeta", "dynamodb:wordpress.wp_postmeta"
+        ),
+        False,
+        "does not run before it",
+    ),
+    "dependency cycle in a stage": (
+        "wordpress",
+        _do(
+            lambda p: _add_dependency(p, "dynamodb:wordpress.wp_wc_customer_lookup", POSTS_KEY),
+            lambda p: _add_dependency(p, POSTS_KEY, "dynamodb:wordpress.wp_wc_customer_lookup"),
+        ),
+        False,
+        "does not run before it",
+    ),
+    "engine costs": (
+        "wordpress",
+        lambda p: p["engine_monthly_cost_usd"].pop("dynamodb"),
+        False,
+        "engine_monthly_cost_usd names exactly",
+    ),
+    "engine risks": (
+        "wordpress",
+        lambda p: p["engine_critical_high_risks"].update(opensearch=0),
+        False,
+        "engine_critical_high_risks names exactly",
+    ),
+    # _place_units
+    "stage names an unknown unit": (
+        "wordpress",
+        lambda p: _stage(p, "3a")["unit_keys"].append("dynamodb:nothing"),
+        True,
+        "names unknown unit",
+    ),
+    "unit in two stages": (
+        "wordpress",
+        lambda p: _stage(p, "3b")["unit_keys"].append(_stage(p, "3a")["unit_keys"][0]),
+        True,
+        "more than one stage",
+    ),
+    "unit on another engine": (
+        "wordpress",
+        _set("u:wp_woocommerce_sessions.engine", "documentdb"),
+        False,
+        "not dynamodb",
+    ),
+    "unit kind in its stage": (
+        "wordpress",
+        _do(
+            _set("u:wp_woocommerce_sessions.kind", "read_model"),
+            _set("u:wp_woocommerce_sessions.owned_tables", []),
+            _set("u:wp_woocommerce_sessions.owned_table_count", 0),
+            lambda p: _unit(p, ACTIONS)["owned_tables"].append("wordpress.wp_woocommerce_sessions"),
+            _set("u:wp_actionscheduler_actions.owned_table_count", 3),
+        ),
+        True,
+        "a self_contained stage holds no read_model unit",
+    ),
+    "pilot not first": (
+        "wordpress",
+        _do(_set("u:wp_term_taxonomy.pilot", False), _set("u:wp_users.pilot", True)),
+        False,
+        "the pilot is the first unit",
+    ),
+    "stage query count": (
+        "wordpress",
+        _do(
+            _set("@3c.query_count", 32),
+            _set("s3.query_count", 41),
+            _set("wave_phases.2.query_count", 41),
+        ),
+        False,
+        "stage 3c: query_count must sum",
+    ),
+    "stage owned count": (
+        "wordpress",
+        _do(_set("@3c.owned_table_count", 13), _set("s3.owned_table_count", 16)),
+        False,
+        "stage 3c: owned_table_count must sum",
+    ),
+    "stage risks are not its units'": (
+        "discourse",
+        _set("@2d.holding_risk_ids", ["RISK-008"]),
+        False,
+        "holding_risk_ids are its units' risks",
+    ),
+    "two pilots": (
+        "wordpress",
+        _set(f"u:{SESSIONS}.pilot", True),
+        False,
+        "the pilot is the first unit",
+    ),
+    "two pilots in one stage": (
+        "wordpress",
+        lambda p: _stage(p, "3a")["unit_keys"].reverse() or _set("u:wp_users.pilot", True)(p),
+        False,
+        "the pilot is the first unit",
+    ),
+    "slice step with no pilot": (
+        "wordpress",
+        _set("u:wp_term_taxonomy.pilot", False),
+        False,
+        "slice step 3 names no pilot",
+    ),
+    # _check_stage_shape
+    "risk outside stage d": (
+        "wordpress",
+        _set(f"u:{COMMENTS}.holding_risk_ids", ["RISK-001"]),
+        False,
+        "a risk holds its unit in stage d",
+    ),
+    "replica stage unit owns": (
+        "wordpress",
+        _do(
+            _set("u:wp_term_taxonomy.kind", "owner"),
+            _set("u:wp_term_taxonomy.owned_tables", ["wordpress.wp_x"]),
+            _set("u:wp_term_taxonomy.owned_table_count", 1),
+            _set("s1.table_classes", None),
+        ),
+        True,
+        "a replica_reads stage holds no owner unit",
+    ),
+    "self-contained with a replica": (
+        "wordpress",
+        _set(
+            f"u:{SESSIONS}.replicated_in",
+            [{"table": "wordpress.wp_users", "source_of_truth": "aurora_mysql"}],
+        ),
+        False,
+        "not self-contained",
+    ),
+    "owner stage unit owns nothing": (
+        "wordpress",
+        _do(
+            _set(f"u:{SESSIONS}.owned_tables", []),
+            _set(f"u:{SESSIONS}.owned_table_count", 0),
+            _set("s1.table_classes", None),
+            lambda p: p["kept_whole"].clear()
+            or [u.update(kept_whole_ids=[]) for u in p["move_units"]],
+        ),
+        True,
+        "owns no table",
+    ),
+    "reverse stage without a replica": (
+        "wordpress",
+        _do(
+            _set(f"u:{COMMENTS}.replicated_in", []),
+            _set(f"u:{COMMENTS}.reverse_replicas", []),
+            _set(f"u:{COMMENTS}.reverse_read_count", 0),
+        ),
+        False,
+        "needs no replica, so it is self-contained",
+    ),
+    # _check_queries_and_groups, _query_holders
+    "cached read twice": (
+        "wordpress",
+        lambda p: p["move_units"].append(
+            {**copy.deepcopy(_unit(p, CACHE)), "key": "elasticache:wordpress.wp_users"}
+        )
+        or _stage(p, "2a")["unit_keys"].append("elasticache:wordpress.wp_users"),
+        True,
+        "a cached read is in two cache units",
+    ),
+    "group ids twice": (
+        "wordpress",
+        lambda p: p["kept_whole"].append(copy.deepcopy(p["kept_whole"][0])),
+        False,
+        "kept_whole group ids lists a value twice",
+    ),
+    "unknown group": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["kept_whole_ids"].append("co_dependency:99"),
+        False,
+        "names unknown groups",
+    ),
+    "split write group": (
+        "wordpress",
+        lambda p: _move_query(p, "q094", POSTS, COMMENTS),
+        True,
+        "split across units",
+    ),
+    "unclaimed group": (
+        "wordpress",
+        lambda p: _unit(p, POSTS)["kept_whole_ids"].remove("co_dependency:2"),
+        False,
+        "is held by",
+    ),
+    "query in two units": (
+        "wordpress",
+        lambda p: (
+            _unit(p, SESSIONS)["query_ids"].append("q077"),
+            _unit(p, SESSIONS).update(query_count=3),
+        ),
+        True,
+        "is in units",
+    ),
+    # _check_one_writer (ADR-031 Amendment 9)
+    "two units own one table": (
+        "wordpress",
+        lambda p: (
+            _unit(p, SESSIONS)["owned_tables"].append("wordpress.wp_comments"),
+            _unit(p, SESSIONS).update(owned_table_count=2),
+        ),
+        True,
+        "table wordpress.wp_comments is owned by units",
+    ),
+    "owns a table without its write group": (
+        "wordpress",
+        _do(
+            lambda p: _transfer_table(p, "wordpress.wp_posts", POSTS, COMMENTS),
+            lambda p: [
+                t.update(stage_label="3c")
+                for t in _step(p, 1)["table_classes"]["leaves"]
+                if t["table"] == "wordpress.wp_posts"
+            ],
+            lambda p: _unit(p, POSTS)["reverse_replicas"][0].update(
+                tables=["wordpress.wp_postmeta"]
+            ),
+        ),
+        True,
+        "moves wordpress.wp_posts's writes but does not own it",
+    ),
+    "writes move while the table stays": (
+        "wordpress",
+        _do(
+            lambda p: _unit(p, POSTS)["owned_tables"].remove("wordpress.wp_posts"),
+            _set(f"u:{POSTS}.owned_table_count", 2),
+            _set(f"u:{POSTS}.reverse_replicas.0.tables", ["wordpress.wp_postmeta"]),
+            _set("s1.table_classes", None),
+        ),
+        True,
+        "moves wordpress.wp_posts's writes but does not own it",
+    ),
+    "owns a table whose write group stays": (
+        "wordpress",
+        _do(
+            lambda p: _unit(p, POSTS)["owned_tables"].append("wordpress.wp_options"),
+            _set(f"u:{POSTS}.owned_table_count", 4),
+            _set("s1.table_classes", None),
+        ),
+        True,
+        "owns wordpress.wp_options without its write group",
+    ),
+    # _check_table_classes
+    "classes miss a table": (
+        "wordpress",
+        lambda p: (
+            _step(p, 1)["table_classes"]["unread"].pop(),
+            _step(p, 1)["table_classes"].update(unread_count=27),
+        ),
+        False,
+        "sort exactly the tables the relational step carries",
+    ),
+    "leaving stage": (
+        "wordpress",
+        lambda p: next(
+            t for t in _step(p, 1)["table_classes"]["leaves"] if t["table"] == "wordpress.wp_posts"
+        ).update(stage_label="3b"),
+        False,
+        "leaves must be every table",
+    ),
+    "replicated out": (
+        "wordpress",
+        lambda p: (
+            _step(p, 1)["table_classes"]["replicated_out"].remove("wordpress.wp_users"),
+            _step(p, 1)["table_classes"]["stays"].append("wordpress.wp_users"),
+            _step(p, 1)["table_classes"].update(replicated_out_count=2, stays_count=5),
+        ),
+        False,
+        "replicated_out must be the relational tables",
+    ),
 }
 
 
-@pytest.mark.parametrize("case", sorted(BREAKS))
+@pytest.mark.parametrize("case", sorted(PLAN_BREAKS))
 def test_a_broken_plan_is_refused(case: str) -> None:
-    breaker, message = BREAKS[case]
-    plan = copy.deepcopy(_plan(_fragment("wordpress")))
-    breaker(plan)
-    if case not in ("stage count", "step count"):
+    name, mutate, recount, message = PLAN_BREAKS[case]
+    plan = copy.deepcopy(_plan(_fragment(name)))
+    mutate(plan)
+    if recount:
         _recount(plan)
     with pytest.raises(ValidationError, match=message):
         SlicePlanFacts.model_validate(plan)
 
 
-def test_a_moving_unit_holds_a_whole_group_even_when_it_alone_names_it() -> None:
-    # A group of two queries where one unit moves one of them and no other unit moves the
-    # other: the unit moves part of the group, which is a split too (the rest stays).
-    plan = copy.deepcopy(_plan(_fragment("wordpress")))
-    plan["kept_whole"].append(
-        {
-            "group_id": "co_dependency:3",
-            "kind": "co_dependency",
-            "query_ids": ["q075", "q050"],
-            "table": None,
-        }
-    )
-    _unit(plan, "wp_woocommerce_sessions")["kept_whole_ids"].append("co_dependency:3")
-    with pytest.raises(ValidationError, match="moves part of group co_dependency:3"):
-        SlicePlanFacts.model_validate(plan)
-
-
-def test_the_cache_and_the_cutover_do_not_split_a_group() -> None:
-    # The cache fronts reads that still run on their owner, and the cutover carries
-    # everything: a group with a cached member and members that stay is whole.
+def test_the_cache_and_the_relational_step_do_not_split_a_group() -> None:
+    # The cache fronts reads that still run on their owner, and the relational step
+    # carries everything: a group with a cached member and members that stay is whole.
     plan = copy.deepcopy(_plan(_fragment("wordpress")))
     plan["kept_whole"].append(
         {"group_id": "co_dependency:3", "kind": "co_dependency", "query_ids": ["q001", "q050"]}
@@ -382,46 +907,314 @@ def test_the_cache_and_the_cutover_do_not_split_a_group() -> None:
     SlicePlanFacts.model_validate(plan)
 
 
-ADOPTION_BREAKS: dict[str, tuple[Callable[[dict[str, Any]], None], str]] = {
-    "path count": (lambda a: a.update(path_count=3), "path_count"),
+def test_a_moving_unit_holds_a_whole_group_even_when_it_alone_names_it() -> None:
+    plan = copy.deepcopy(_plan(_fragment("wordpress")))
+    plan["kept_whole"].append(
+        {"group_id": "co_dependency:3", "kind": "co_dependency", "query_ids": ["q075", "q050"]}
+    )
+    _unit(plan, SESSIONS)["kept_whole_ids"].append("co_dependency:3")
+    with pytest.raises(ValidationError, match="moves part of group co_dependency:3"):
+        SlicePlanFacts.model_validate(plan)
+
+
+def test_a_single_unit_slice_names_no_pilot() -> None:
+    plan = copy.deepcopy(_plan(_fragment("discourse")))
+    step = _step(plan, 3)
+    step["step_stages"] = [_stage(plan, "3b")]
+    themes = _stage(plan, "3b")
+    dropped = themes["unit_keys"].pop()
+    plan["move_units"] = [
+        u for u in plan["move_units"] if u["key"] not in (dropped, "documentdb:public.categories")
+    ]
+    plan["dependencies"] = [
+        d
+        for d in plan["dependencies"]
+        if d["unit_key"] not in (dropped, "documentdb:public.categories")
+    ]
+    plan["kept_whole"] = [
+        g for g in plan["kept_whole"] if g["group_id"] != "write:public.user_options"
+    ]
+    classes = _step(plan, 1)["table_classes"]
+    classes["leaves"] = [t for t in classes["leaves"] if t["table"] != "public.user_options"]
+    classes["leaves_count"] = len(classes["leaves"])
+    classes["replicated_out"].remove("public.categories")
+    classes["stays"] += ["public.categories", "public.user_options"]
+    classes["replicated_out_count"], classes["stays_count"] = 5, len(classes["stays"])
+    _recount(plan)
+    assert _step(plan, 3)["unit_count"] == 1
+    SlicePlanFacts.model_validate(plan)
+
+
+# --- Adoption paths ---------------------------------------------------------------------
+
+
+ADOPTION_BREAKS: dict[str, tuple[str, Mutate, str]] = {
+    "path count": ("wordpress", lambda a: a.update(path_count=3), "path_count is 3"),
+    "path ids twice": (
+        "wordpress",
+        lambda a: a["paths"].append(copy.deepcopy(a["paths"][1])) or a.update(path_count=3),
+        "path ids lists a value twice",
+    ),
+    "full target not last": (
+        "wordpress",
+        lambda a: a["paths"].reverse(),
+        "full_target goes last",
+    ),
+    "relational only not first": (
+        "wordpress",
+        lambda a: a["paths"][1].update(path_id="through_step_3")
+        or a.update(default_path_id="through_step_3")
+        or a["paths"].reverse(),
+        "relational_only goes first",
+    ),
+    "stops out of order": (
+        "discourse",
+        lambda a: a["paths"][0].update(stops_after_step=3, step_count=3, path_id="through_step_3"),
+        "listed by the step they stop after",
+    ),
+    "default with no paths": (
+        "wordpress",
+        lambda a: a.update(paths=[], path_count=0),
+        "a default path is named exactly when paths exist",
+    ),
     "default not offered": (
-        lambda a: a.update(default_path_id="through_step_9"),
+        "discourse",
+        lambda a: a.update(default_path_id="relational_only"),
         "default path is an offered",
     ),
-    "full target not last": (lambda a: a["paths"].reverse(), "listed by the step"),
-    "one-step suits with a failed check": (
-        lambda a: a["one_step"].update(suits_one_step=True),
-        "every check passed",
+    "offered and not offered": (
+        "discourse",
+        lambda a: a["not_offered"][0].update(path_id="full_target"),
+        "offered or not offered, not both",
+    ),
+    "closure not offered": (
+        "discourse",
+        lambda a: a["not_offered"][0].update(offered_instead="through_step_9"),
+        "closure through_step_9 is not offered",
+    ),
+    "unknown path id": (
+        "wordpress",
+        lambda a: a["paths"][0].update(path_id="cache_first"),
+        "path id 'cache_first' is not",
+    ),
+    "unknown not offered id": (
+        "discourse",
+        lambda a: a["not_offered"][0].update(path_id="quickest_win"),
+        "path id 'quickest_win' is not",
+    ),
+    "through step names another step": (
+        "discourse",
+        lambda a: a["paths"][0].update(path_id="through_step_9"),
+        "through_step_9 stops after step 9",
+    ),
+    "path steps": ("wordpress", lambda a: a["paths"][0].update(step_count=1), "takes steps 1 to"),
+    "queries by an engine off the path": (
+        "wordpress",
+        lambda a: a["paths"][0]["queries_by_engine"].update(dynamodb=1),
+        "names only the path's engines",
+    ),
+    "replicated count": (
+        "wordpress",
+        lambda a: a["paths"][1].update(replicated_table_count=1),
+        "replicated_table_count is 1",
+    ),
+    "replicated unsorted": (
+        "wordpress",
+        lambda a: a["paths"][1]["replicated_tables"].reverse(),
+        "sorted, each once",
+    ),
+    "failing count": (
+        "discourse",
+        lambda a: a["not_offered"][0].update(failing_query_count=3),
+        "failing_query_count is 3",
     ),
     "one-step check passed wrongly": (
+        "wordpress",
         lambda a: a["one_step"]["one_step_checks"][2].update(passed=True),
         "observed is at most limit",
     ),
-    "path steps": (lambda a: a["paths"][0].update(step_count=1), "takes steps 1 to"),
+    "one-step rule twice": (
+        "wordpress",
+        lambda a: a["one_step"]["one_step_checks"].append(a["one_step"]["one_step_checks"][0]),
+        "rules lists a value twice",
+    ),
+    "one-step rule missing": (
+        "wordpress",
+        lambda a: a["one_step"]["one_step_checks"].pop(),
+        "states every rule once",
+    ),
+    "one-step suits with a failed check": (
+        "wordpress",
+        lambda a: a["one_step"].update(suits_one_step=True),
+        "every check passed",
+    ),
 }
 
 
 @pytest.mark.parametrize("case", sorted(ADOPTION_BREAKS))
 def test_broken_adoption_facts_are_refused(case: str) -> None:
-    breaker, message = ADOPTION_BREAKS[case]
-    adoption = copy.deepcopy(_fragment("wordpress")["facts"]["adoption"])
-    breaker(adoption)
+    name, mutate, message = ADOPTION_BREAKS[case]
+    adoption = copy.deepcopy(_fragment(name)["facts"]["adoption"])
+    mutate(adoption)
     with pytest.raises(ValidationError, match=message):
         AdoptionFacts.model_validate(adoption)
 
 
-def test_paths_must_follow_the_plan_s_steps() -> None:
-    fragment = _fragment("wordpress")
-    plan = SlicePlanFacts.model_validate(_plan(fragment))
-    adoption = copy.deepcopy(fragment["facts"]["adoption"])
-    adoption["paths"][1]["engines"] = ["aurora_mysql", "dynamodb"]
-    adoption["paths"][1]["queries_by_engine"] = {"aurora_mysql": 67, "dynamodb": 40}
-    with pytest.raises(ValueError, match="engines must be its steps' engines"):
-        check_adoption_against_plan(AdoptionFacts.model_validate(adoption), plan)
-    adoption = copy.deepcopy(fragment["facts"]["adoption"])
-    adoption["one_step"]["staged_cutovers"] = 4
-    with pytest.raises(ValueError, match="every stage of the plan"):
-        check_adoption_against_plan(AdoptionFacts.model_validate(adoption), plan)
+def _path(a: dict[str, Any], pid: str) -> dict[str, Any]:
+    path: dict[str, Any] = next(p for p in a["paths"] if p["path_id"] == pid)
+    return path
+
+
+# (fixture, mutate the adoption facts, mutate the plan, message): checked against the plan.
+PlanMutate = Callable[[SlicePlanFacts], SlicePlanFacts]
+CROSS_BREAKS: dict[str, tuple[str, Mutate | None, PlanMutate | None, str]] = {
+    "stops beyond the plan": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(stops_after_step=4, step_count=4),
+        None,
+        "stops after a step the plan does not have",
+    ),
+    "relational only stops late": (
+        "wordpress",
+        lambda a: a["paths"].pop()
+        and a.update(path_count=1, default_path_id="relational_only")
+        and None
+        or _path(a, "relational_only").update(stops_after_step=3, step_count=3),
+        None,
+        "relational_only stops after the steps that move no query",
+    ),
+    "full target stops early": (
+        "discourse",
+        lambda a: a["paths"].pop(0)
+        and None
+        or a.update(path_count=1, not_offered=[])
+        or _path(a, "full_target").update(stops_after_step=2, step_count=2),
+        None,
+        "full_target takes every step",
+    ),
+    "through step outside the menu": (
+        "wordpress",
+        lambda a: _path(a, "relational_only").update(path_id="through_step_2")
+        or a.update(default_path_id="through_step_2"),
+        None,
+        "through_step_2 must stop between relational_only and full_target",
+    ),
+    "queries moved": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(queries_moved=39),
+        None,
+        "queries_moved is 39, the steps give 40",
+    ),
+    "queries by engine": (
+        "wordpress",
+        lambda a: _path(a, "full_target")["queries_by_engine"].update(aurora_mysql=66),
+        None,
+        "queries_by_engine is",
+    ),
+    "tables migrate": (
+        "discourse",
+        lambda a: _path(a, "through_step_2").update(tables_migrate=8),
+        None,
+        "tables_migrate is 8, the steps give 5",
+    ),
+    "cost": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(monthly_cost_usd=500.0),
+        None,
+        "monthly_cost_usd is 500.0",
+    ),
+    "cost delta": (
+        "discourse",
+        lambda a: _path(a, "full_target").update(cost_delta_vs_relational_usd=1.0),
+        None,
+        "cost_delta_vs_relational_usd is 1.0",
+    ),
+    "risks": (
+        "discourse",
+        lambda a: _path(a, "through_step_2").update(critical_high_risks=0),
+        None,
+        "critical_high_risks is 0, the steps give 1",
+    ),
+    "replicated tables": (
+        "discourse",
+        lambda a: _path(a, "through_step_2").update(
+            replicated_tables=["public.users"], replicated_table_count=1
+        ),
+        None,
+        "replicated_tables is",
+    ),
+    "temporary streams": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(temporary_stream_count=1),
+        None,
+        "temporary_stream_count is 1, the steps give 3",
+    ),
+    "engines": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(
+            engines=["aurora_mysql", "dynamodb"],
+            monthly_cost_usd=327.99,
+        ),
+        None,
+        "engines is",
+    ),
+    "gate count": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(gate_count=4),
+        None,
+        "every stage has one gate",
+    ),
+    "first gate": (
+        "wordpress",
+        lambda a: _path(a, "full_target").update(first_gate="another gate"),
+        None,
+        "first_gate is its first stage's gate",
+    ),
+    "a path engine with no cost": (
+        "wordpress",
+        None,
+        # The plan's own validator refuses the gap; a model built past it still fails here.
+        lambda p: p.model_copy(update={"engine_monthly_cost_usd": {}}),
+        "the plan states no cost or risks for",
+    ),
+    "one-step counts": (
+        "wordpress",
+        lambda a: a["one_step"].update(staged_stage_count=4),
+        None,
+        "states the plan's step, stage and gate counts",
+    ),
+    "one-step steps": (
+        "wordpress",
+        lambda a: a["one_step"].update(staged_step_count=2),
+        None,
+        "states the plan's step, stage and gate counts",
+    ),
+    "one-step streams": (
+        "wordpress",
+        lambda a: a["one_step"].update(staged_temporary_stream_count=1),
+        None,
+        "the plan's stage c streams",
+    ),
+    "one-step observed": (
+        "discourse",
+        lambda a: a["one_step"]["one_step_checks"][1].update(observed=3),
+        None,
+        "the one-step checks state the plan's own figures",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CROSS_BREAKS))
+def test_paths_that_disagree_with_the_plan_are_refused(case: str) -> None:
+    name, on_adoption, on_plan, message = CROSS_BREAKS[case]
+    facts = copy.deepcopy(_fragment(name)["facts"])
+    if on_adoption:
+        on_adoption(facts["adoption"])
+    plan = SlicePlanFacts.model_validate(facts["slice_plan"])
+    if on_plan:
+        plan = on_plan(plan)
+    with pytest.raises(ValueError, match=message):
+        check_adoption_against_plan(AdoptionFacts.model_validate(facts["adoption"]), plan)
 
 
 def test_the_empty_structures_validate() -> None:

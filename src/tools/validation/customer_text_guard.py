@@ -243,6 +243,12 @@ ID_FIELD_PATHS = frozenset(
         ("move_units", "engine"),  # MoveUnit.engine
         ("reverse_replicas", "engine"),  # ReverseReplica.engine
         ("not_offered", "serving_engines"),  # NotOfferedPath.serving_engines
+        # Move unit and slice keys lead with an engine id ("dynamodb:wp_posts"): ids.
+        ("move_units", "key"),  # MoveUnit.key
+        ("step_stages", "unit_keys"),  # SliceStage.unit_keys
+        ("dependencies", "unit_key"),  # UnitDependency.unit_key
+        ("dependencies", "depends_on"),  # UnitDependency.depends_on
+        ("plan_steps", "slice_key"),  # SliceStep.slice_key
         ("ungrouped_queries", "engine"),  # ReportFacts.query_group_counts (#226)
         ("carried_writes", "engine"),  # SynthesisOutputContract.carried_writes[] (#1364)
         ("engine_pairs", "alternative"),  # ReportFacts.close_calls.engine_pairs[] (#730)
