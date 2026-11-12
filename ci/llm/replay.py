@@ -218,8 +218,9 @@ def private_data(text: str) -> list[str]:
 
 def job_private_data(text: str) -> list[str]:
     """``private_data`` and every credential detect-secrets finds (``ci/llm/private_scan.py``,
-    the scan the upload runs): for the saved job's files and the synthesis files."""
-    return private_data(text) + secret_findings(text)
+    the scan the upload runs, with its key names narrowed as on upload, #2179): for the
+    saved job's files and the synthesis files."""
+    return private_data(text) + secret_findings(text, narrow_key_names=True)
 
 
 def trim_transcript(text: str) -> str:

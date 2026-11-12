@@ -1793,7 +1793,7 @@ def test_collect_job_deletes_an_upload_it_cannot_fully_redact(tmp_path: Path, mo
     monkeypatch.setattr(
         secret_scan,
         "_line_hits",
-        lambda body, emails: [("JSON Web Token", None)] if "unplaceable" in body else [],
+        lambda body, emails, *_: [("JSON Web Token", None)] if "unplaceable" in body else [],
     )
     result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
     assert result["withheld"] == ["transcript.jsonl"] and not (out / "transcript.jsonl").exists()

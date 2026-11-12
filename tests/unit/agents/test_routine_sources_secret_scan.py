@@ -74,6 +74,24 @@ def test_a_body_that_looks_like_it_holds_a_credential_is_flagged_by_kind(tmp_pat
     ]  # fmt: skip
 
 
+# A routine body is SQL, not design prose: a token or API key value in a comment is
+# flagged whatever it looks like, as on main (#2179 narrows only the CI scans).
+_COMMENTED = (
+    "CREATE PROCEDURE `auth`() BEGIN\n"
+    "  -- token: GetItem\n"
+    "  /* api_key: " + "Qwhzk" * 8 + " */\n"
+    "  SELECT 1;\nEND"
+)
+
+
+@pytest.mark.passes_on_main  # main's strict rule; the PR's first cut narrowed it here too
+def test_a_token_or_api_key_in_a_routine_comment_is_flagged_strictly(tmp_path):
+    _write(tmp_path, _source("auth", _COMMENTED))
+    flagged = _index(tmp_path)["secret_scan"]["flagged"]
+    assert [flag["specific_name"] for flag in flagged] == ["auth"], flagged
+    assert {"token value", "api key value"} <= set(flagged[0]["credential_kinds"])
+
+
 def test_a_hard_coded_address_is_listed_apart_from_credentials(tmp_path):
     _write(tmp_path, _source("ping", _ADDRESS))
     ((flag),) = _index(tmp_path)["secret_scan"]["flagged"]

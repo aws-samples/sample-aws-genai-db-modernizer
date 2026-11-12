@@ -16,6 +16,15 @@ nothing beyond the standard library, so it runs in every deployed image:
 - detect-secrets' shape plugins on top, when the package is installed (a dev checkout
   and CI: ``RULE_SET`` ``"regex+detect-secrets"``); the deployed images run without it.
 
+Every scan is strict by default: any value under a credential key name but an allowed
+one is a finding (the collector's routine bodies, #1933). The CI scans of model-written
+text (``ci/llm/private_scan.py``: the e2e-llm upload, the replay fixtures) pass
+``narrow_key_names=True`` (#2179): an unquoted value after a ``token`` or ``api_key``
+name with ``key:`` or in a Markdown table then counts only when it looks like a secret
+(``_looks_like_secret``), so design prose ("Validate a token: GetItem ...") is no
+finding. Every other key name (password, secret, ``secret_key``, ``private_key``,
+``access_key`` ...), quoted values, ``key=value`` assignments and JSON keys stay strict.
+
 A finding names its kind and line, never the value. A designer's example values are
 allowed exactly as ``src/shared/example_values.py`` defines them (#2053).
 """
@@ -289,12 +298,96 @@ def _pair_kind(m: re.Match[str]) -> str:
 # A rate or a unit, not a credential: ``credits_per_token``, ``cost_per_api_key``.
 _PER_UNIT_RE = re.compile(r"(?:^|[_-])per[_-]?(?:token|api[_-]?key)$", re.I)
 
+# With ``narrow_key_names`` (the CI scans of model-written text, #2179), an unquoted
+# value after a ``token`` or ``api_key`` name with ``key:`` (YAML or prose) or in a
+# Markdown table counts only when it looks like a secret: design prose such as
+# "Validate a token: GetItem ... by token_hash" is no credential. Every other key name
+# (a password, ``secret_key``, ``private_key``, ``access_key`` ...), quoted values,
+# ``key=value`` assignments and JSON keys are not narrowed: they fail closed as before.
+#
+# A known token format: an AWS access key id, a Google API key, a GitHub, GitLab,
+# Slack, npm, OpenAI-style or Stripe token, a JSON Web Token. A value in one of these
+# formats is a secret even when it is letters only.
+_TOKEN_FORMAT_RE = re.compile(
+    r"(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abposr]-[\w-]{10,}|npm_[A-Za-z0-9]{20,}"
+    r"|sk-[\w-]{20,}|[sr]k_(?:live|test)_[A-Za-z0-9]{20,}|eyJ[\w-]+\.eyJ[\w-]+\.[\w-]*"
+)
+# Whitespace and the punctuation that joins words and identifiers in prose
+# (``token_hash``, ``email-tokens``, ``GetItem(...)``, ``read/write``): a value is split
+# into pieces at these.
+_PIECE_SEPARATOR_RE = re.compile(r"[\s_.\-/()\[\]{},;]+")
+# The longest piece that can still be a word or an identifier.
+_MAX_WORD_LENGTH = 24
+# A word-shaped piece: an acronym (``TTL``, ``JSONB``), or a lower-case or CamelCase
+# word of at most five humps, with an optional leading acronym and a two-letter
+# trailing one (``GetItem``, ``TransactWriteItems``, ``HTTPHeader``, ``DynamoDB``),
+# where no hump (``_HUMP_RE``) is unpronounceable (``_UNPRONOUNCEABLE_RE``: five
+# consonants in a row, or four or more letters with no vowel; ``TxnId`` still passes).
+# A random run of letters is practically never one: about 99.7% of random 20-letter
+# mixed-case values and practically every random 16-letter single-case one are not.
+_WORD_RE = re.compile(
+    r"[A-Z]{2,6}|(?:[A-Z]{2,4}(?=[A-Z][a-z]))?[A-Z]?[a-z]{1,15}(?:[A-Z][a-z]{1,15}){0,4}"
+    r"(?:[A-Z]{2})?"
+)
+_HUMP_RE = re.compile(r"[A-Z]?[a-z]+")
+_UNPRONOUNCEABLE_RE = re.compile(r"[b-df-hj-np-tv-xz]{5}|^[^aeiouy]{4,}$", re.I)
+# The key words the narrowing applies to: ``token`` (the ``tok`` group) and the literal
+# ``api key`` names. Every other ``_KEY_WORDS`` name stays strict.
+_NARROWED_KEY_WORD_RE = re.compile(r"api[_-]?key", re.I)
 
-def _pair_matches(line: str) -> list[tuple[str, tuple[int, int], str]]:
+
+def _word_shaped(piece: str) -> bool:
+    return (
+        len(piece) <= _MAX_WORD_LENGTH
+        and _WORD_RE.fullmatch(piece) is not None
+        and not any(_UNPRONOUNCEABLE_RE.search(hump) for hump in _HUMP_RE.findall(piece))
+    )
+
+
+def _looks_like_secret(value: str) -> bool:
+    """A known token format, or a value with any piece (split at whitespace and word
+    punctuation) that is not word-shaped (``_word_shaped``): a digit, a symbol or a
+    random run of letters. Prose made only of words and identifiers (``GetItem``,
+    ``token_hash``, ``GetItem(token_hash)``) is not one."""
+    if _TOKEN_FORMAT_RE.match(value):
+        return True
+    return any(not _word_shaped(piece) for piece in _PIECE_SEPARATOR_RE.split(value) if piece)
+
+
+def _narrowable(m: re.Match[str]) -> bool:
+    """A ``token`` key or a literal ``api key`` key (``api_key``, ``x-api-key``,
+    ``apiKey``), never a password or another key name (#2179)."""
+    if m.group("tok"):
+        return True
+    return bool(m.group("ak")) and _NARROWED_KEY_WORD_RE.fullmatch(m.group("ak")) is not None
+
+
+def _narrowed(rx: re.Pattern[str], m: re.Match[str], value: str) -> bool:
+    """An unquoted value under a token or API key name, after ``key:`` or in a
+    ``| key | value |`` row, that does not look like a secret: no finding (#2179)."""
+    narrowed_form = rx is _PAIR_RES[2] or (rx is _PAIR_RES[1] and m.groupdict().get("sep") == ":")
+    return narrowed_form and _narrowed_value(_narrowable(m), value)
+
+
+def _narrowed_value(narrowable: bool, value: str) -> bool:
+    """A value under a narrowable key that is unquoted and does not look like a secret
+    (#2179)."""
+    return narrowable and not _quoted(value) and not _looks_like_secret(value)
+
+
+def _quoted(value: str) -> bool:
+    return len(value) >= 2 and value[0] in "\"'`" and value[-1] == value[0]
+
+
+def _pair_matches(
+    line: str, narrow_key_names: bool = False
+) -> list[tuple[str, tuple[int, int], str]]:
     """Each credential key's value on ``line``: its kind, span and key name. Every
     pair is checked; an allowed value (a placeholder, a marker, a bare JSON literal or
-    short count, a bind parameter, a column note) is left out, and never exempts the
-    rest of the line."""
+    short count, a bind parameter, a column note, and with ``narrow_key_names`` prose
+    under a token or API key name) is left out, and never exempts the rest of the
+    line."""
     found: dict[tuple[int, int], tuple[str, str]] = {}
     if _KEY_WORD_RE.search(line) is None:
         return []
@@ -314,43 +407,51 @@ def _pair_matches(line: str) -> list[tuple[str, tuple[int, int], str]]:
                 value = value.rstrip("),;")
                 if rx is _PAIR_RES[1] and _bind_parameter(m, value):
                     continue
+                # Prose after "key:" or in a table row, not a secret (#2179).
+                if narrow_key_names and _narrowed(rx, m, value):
+                    continue
             if not value or _allowed_value(value):
                 continue
             found.setdefault(m.span(group), (_pair_kind(m), m.group("key")))
     return [(kind, span, key) for span, (kind, key) in found.items()]
 
 
-def _pair_hits(line: str) -> list[tuple[str, tuple[int, int]]]:
+def _pair_hits(line: str, narrow_key_names: bool = False) -> list[tuple[str, tuple[int, int]]]:
     """``_pair_matches`` without the key names."""
-    return [(kind, span) for kind, span, _ in _pair_matches(line)]
+    return [(kind, span) for kind, span, _ in _pair_matches(line, narrow_key_names)]
 
 
-def _table_hits(lines: list[str]) -> dict[int, list[tuple[str, tuple[int, int], str]]]:
+def _table_hits(
+    lines: list[str], narrow_key_names: bool = False
+) -> dict[int, list[tuple[str, tuple[int, int], str]]]:
     """The cells under a Markdown table column whose header names a credential
     (``| user | password |`` then ``| app | <value> |``), by line index."""
     found: dict[int, list[tuple[str, tuple[int, int], str]]] = {}
-    columns: dict[int, tuple[str, str]] = {}
+    columns: dict[int, tuple[str, str, bool]] = {}
     for index, line in enumerate(lines):
         if not line.lstrip().startswith("|"):
             columns = {}
             continue
         bars = [i for i, c in enumerate(line) if c == "|"]
         cells = [(bars[i] + 1, bars[i + 1]) for i in range(len(bars) - 1)]
-        header: dict[int, tuple[str, str]] = {}
+        header: dict[int, tuple[str, str, bool]] = {}
         for col, (a, b) in enumerate(cells):
             m = _KEY_CELL_RE.fullmatch(line[a:b])
             if m and not _PER_UNIT_RE.search(m.group("key")):
-                header[col] = (_pair_kind(m), m.group("key"))
+                header[col] = (_pair_kind(m), m.group("key"), narrow_key_names and _narrowable(m))
         if header:
             columns = header
             continue
         if _SEPARATOR_ROW_RE.fullmatch(line):
             continue
-        for col, (kind, key) in columns.items():
+        for col, (kind, key, narrowable) in columns.items():
             if col < len(cells):
                 a, b = cells[col]
                 cell = line[a:b]
                 value = cell.strip()
+                # A cell of prose under a token or API key column is no secret (#2179).
+                if _narrowed_value(narrowable, value):
+                    continue
                 if value and not _allowed_value(value):
                     start = a + cell.index(value)
                     found.setdefault(index, []).append((kind, (start, start + len(value)), key))
@@ -425,7 +526,7 @@ def _allowed(kind: str, line: str, span: tuple[int, int]) -> bool:
 Hit = tuple[str, "tuple[int, int] | None"]
 
 
-def _line_hits(line: str, emails: bool) -> list[Hit]:
+def _line_hits(line: str, emails: bool, narrow_key_names: bool = False) -> list[Hit]:
     """Each finding on ``line``: its kind and the span of its value (``None`` when the
     value cannot be placed on the line). Allowed values are left out."""
     found: list[Hit] = []
@@ -440,7 +541,7 @@ def _line_hits(line: str, emails: bool) -> list[Hit]:
             group: int | str = next((g for g in ("v", "m") if g in rx.groupindex and m.group(g)), 0)
             if not _allowed(kind, line, m.span(group)):
                 found.append((kind, m.span(group)))
-    found += _pair_hits(line)
+    found += _pair_hits(line, narrow_key_names)
     found += [
         ("bare secret key", m.span())
         for m in _BARE_KEY_RE.finditer(line)
@@ -465,31 +566,38 @@ def _line_hits(line: str, emails: bool) -> list[Hit]:
     return found
 
 
-def _scan_lines(text: str, key_names: bool, emails: bool = False):
+def _scan_lines(text: str, key_names: bool, emails: bool = False, narrow_key_names: bool = False):
     lines = text.splitlines(keepends=True)
-    tables = _table_hits([line.rstrip("\r\n") for line in lines])
+    tables = _table_hits([line.rstrip("\r\n") for line in lines], narrow_key_names)
     with scan_session():
         for number, line in enumerate(lines, start=1):
             body = line.rstrip("\r\n")
             table = tables.get(number - 1, [])
-            hits = _line_hits(body, emails) + [(kind, span) for kind, span, _ in table]
+            hits = _line_hits(body, emails, narrow_key_names) + [
+                (kind, span) for kind, span, _ in table
+            ]
             if not key_names:
                 hits = [hit for hit in hits if hit[0] not in KEY_NAME_KINDS]
             yield number, line, body, hits, table
 
 
-def secret_findings(text: str, key_names: bool = True) -> list[str]:
+def secret_findings(text: str, key_names: bool = True, narrow_key_names: bool = False) -> list[str]:
     """``"<kind> at line N"`` for every credential in ``text``; no value is repeated.
-    ``key_names=False`` leaves out the findings that go by a key's name (``KEY_NAME_KINDS``)."""
+    ``key_names=False`` leaves out the findings that go by a key's name (``KEY_NAME_KINDS``);
+    ``narrow_key_names=True`` leaves out prose under a token or API key name (#2179, the
+    CI scans of model-written text only; the default is strict)."""
     found: list[str] = []
-    for number, _line, _body, hits, _table in _scan_lines(text, key_names):
+    for number, _line, _body, hits, _table in _scan_lines(
+        text, key_names, narrow_key_names=narrow_key_names
+    ):
         found += [f"{kind} at line {number}" for kind in sorted({kind for kind, _ in hits})]
     return found
 
 
 def secret_kinds(text: str, key_names: bool = True) -> set[str]:
     """The kinds :func:`secret_findings` finds in ``text``, without their lines: what a
-    caller that scans many texts keeps of each (the collector, #2098)."""
+    caller that scans many texts keeps of each (the collector, #2098). Always strict:
+    a routine body is SQL, not design prose (#2179)."""
     kinds: set[str] = set()
     for _number, _line, _body, hits, _table in _scan_lines(text, key_names):
         kinds.update(kind for kind, _ in hits)

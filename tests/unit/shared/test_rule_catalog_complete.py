@@ -418,6 +418,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "is suggested over), which only label the deliverables; routing reads only the "
         "rate they give",
     ),
+    "src/shared/secret_scan.py": (
+        frozenset({"_MAX_WORD_LENGTH"}),
+        "a credential scan threshold, not a routing rule: the longest piece of an unquoted "
+        "value after a token or API key name that can still be a word of prose (#2179)",
+    ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),
         "a prose length, not a routing rule: the words a design sentence needs to be "
