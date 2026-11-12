@@ -189,6 +189,11 @@ ASSESSMENT_SOURCES = (
     "src/agents/referee/synthesis_report.py",
     "src/contracts/transformation_contract.py",
     "src/shared/migration_risk_rules.py",
+    # #1128: the slice plan's stage gates and the adoption paths, and the fixtures the
+    # renderers are built against.
+    "src/shared/adoption_facts.py",
+    "tests/fixtures/adoption_paths/wordpress.json",
+    "tests/fixtures/adoption_paths/discourse.json",
 )
 
 

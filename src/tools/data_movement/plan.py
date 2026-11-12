@@ -1342,10 +1342,25 @@ def _plan_wave(
     )
 
 
-def _steps(waves: list[Mapping[str, Any]]) -> list[tuple[int, Mapping[str, Any]]]:
-    """The job's migration steps, in order: one per migration wave until the slice plan
-    (#1698) exists, which replaces this function."""
-    return [(int(w["wave"]), w) for w in waves]
+def _steps(
+    waves: list[Mapping[str, Any]], slice_plan: Mapping[str, Any] | None = None
+) -> list[tuple[int, Mapping[str, Any]]]:
+    """The job's migration steps, in order: one per migration wave until data movement
+    plans per slice step (#1698, ADR-033 Decision 1), which replaces this function.
+
+    Step k names one step everywhere (``step-<k>/plan.json``, the transformation
+    contract, ``facts.slice_plan``): a slice plan whose steps are numbered other than one
+    per wave (step k in wave k) is refused rather than planned by wave, until then."""
+    steps = [(int(w["wave"]), w) for w in waves]
+    planned = [s for s in (slice_plan or {}).get("plan_steps") or [] if isinstance(s, Mapping)]
+    if planned and [(s.get("step_number"), s.get("phase_wave")) for s in planned] != [
+        (k, k) for k, _ in steps
+    ]:
+        raise ValueError(
+            "facts.slice_plan numbers its steps apart from the migration waves; data "
+            "movement plans per slice step come with #1698 (ADR-033 Decision 1)"
+        )
+    return steps
 
 
 def build_step_plans(
@@ -1369,6 +1384,7 @@ def build_step_plans(
     )
     if not waves:
         return [], None
+    steps = _steps(waves, (inputs.report.get("facts") or {}).get("slice_plan"))
     job = _JobView.build(inputs, prices)
     aurora = _aurora_wave(waves)
     hub = _hub_plan(job, waves)
@@ -1376,7 +1392,7 @@ def build_step_plans(
         _plan_wave(
             job, w, w is aurora, len(waves), step=k, hub_plan=hub, contract=(contracts or {}).get(k)
         )
-        for k, w in _steps(waves)
+        for k, w in steps
     ]
     return plans, hub
 
