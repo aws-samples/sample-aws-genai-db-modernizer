@@ -79,7 +79,7 @@ from src.shared.engine_names import (
 )
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.migration_risk_rules import risk_sentence
-from src.shared.migration_wave_engines import cache_front_description
+from src.shared.migration_wave_engines import cache_front_reference
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.progress import say
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
@@ -3254,9 +3254,11 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
 
     Access patterns are counted in scope, as in the summary (#255). The cache layer
     is described by the reads it fronts, not by an owner share (#296) -- via
-    ``cache_front_description``, the one place every deliverable's
-    cache-fronting sentence is built (#375 review), so this "Why" cell and the
-    roadmap's own wave 2 card cannot name different engines.
+    ``cache_front_reference`` over ``cache_front_description``, the one place every
+    deliverable's cache-fronting sentence is built (#375 review), so this "Why" cell and
+    the roadmap's own wave 2 card cannot name different engines. When the front is
+    staged (wave 2's engine, then wave 3's), the cell refers to the wave plan, which
+    states the stages once (#2171).
 
     An Aurora engine never leads with the routed workload signal (#393): see
     ``_aurora_capability_lead``. It leads with the hard capability pins (joins,
@@ -3272,7 +3274,8 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         # architecture before falling back to that mapping, so it names the #381
         # choice here too instead of silently falling back to no engine at all.
         retained_engine = _relational_aurora_engine(data)
-        owners = cache_front_description(retained_engine, r.get("cache_overlay_owners"))
+        # #2171: the wave 2 rationale states the staged front; this cell refers to it.
+        owners = cache_front_reference(retained_engine, r.get("cache_overlay_owners"))
         n = r.get("cache_overlay_queries", 0)
         lead = r.get("routed_lead")
         shape = f", mostly {PATTERN_LABELS.get(lead, lead.replace('_', ' '))}s" if lead else ""

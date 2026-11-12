@@ -73,6 +73,26 @@ def primary_owner_engine(counts: Mapping[str, int], retained_engine: str | None)
     return min(owners, key=lambda e: (-owners[e], e != retained_engine, e))
 
 
+# #2171: the short reference the "Why" cell gives when the wave 2 rationale states the
+# staged front ("Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these
+# reads"), so each deliverable says the staging once, in its wave plan.
+CACHE_FRONT_REFERENCE = "the engines that own these reads, in the order the wave plan gives"
+
+
+def cache_front_reference(
+    retained_engine: str | None, final_owners: Mapping[str, int] | Iterable[str] | None
+) -> str:
+    """What the cache fronts, for a sentence outside the wave plan (#2171).
+
+    ``cache_front_description`` when it names one stage; ``CACHE_FRONT_REFERENCE``
+    when it names two (wave 2's front, then the engines wave 3 moves the reads to),
+    which the wave 2 rationale states in full."""
+    staged = cache_front_description(retained_engine, final_owners)
+    if retained_engine and " in wave 2, then " in staged:
+        return CACHE_FRONT_REFERENCE
+    return staged
+
+
 def cache_front_description(
     retained_engine: str | None, final_owners: Mapping[str, int] | Iterable[str] | None
 ) -> str:

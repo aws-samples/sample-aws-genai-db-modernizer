@@ -29,6 +29,7 @@ from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
 from src.shared.gate_facts import GATE_LIST_MAX
+from src.shared.migration_wave_engines import CACHE_FRONT_REFERENCE
 from src.shared.report_facts import build_commit_line
 from src.tools.validation.customer_text_guard import scan_text
 from tests.branding import hits as found
@@ -46,6 +47,7 @@ from tests.executive_pdf import (
     sql_hits,
     table_name_hits,
 )
+from tests.report_concision import section
 
 FILENAME = executive_report.FILENAME
 FORBIDDEN = ("undefined", "NaN", "[object Object]", "{{", "None%")
@@ -257,7 +259,8 @@ def test_discourse_says_each_sentence_in_one_section_and_no_gate_lists_tables(
     """#2171: the discourse judge scored concision 2 on the whole executive PDF. No
     sentence one section prints is printed again in another, and no wave gate prints
     more than ``GATE_LIST_MAX`` table names (it prints none: this report never names a
-    table, and a long list is a count)."""
+    table, and a long list is a count). The cache's staged front is said once in each
+    report, by its wave plan, and the PDF's "Why" cell refers to it."""
     sections = section_texts(_pdf(discourse_run), discourse_run.db)
     assert set(sections) >= {executive_report.H_RECOMMENDATION, executive_report.H_WAVES}
     assert repeated_across_sections(sections) == []
@@ -266,6 +269,15 @@ def test_discourse_says_each_sentence_in_one_section_and_no_gate_lists_tables(
     assert len(gates) == len(resolve_migration_waves(_report(discourse_run)))
     for gate in gates:
         assert len(table_name_hits(gate, names)) <= GATE_LIST_MAX, gate[:120]
+    # The cache's staged front ("... in wave 2, then ... once wave 3 moves these reads")
+    # is stated once, by the wave plan; the "Why" cell refers to it.
+    staged = "once wave 3 moves these reads"
+    assert sections[executive_report.H_WAVES].count(staged) == 1
+    assert sum(body.count(staged) for body in sections.values()) == 1
+    assert normalize(CACHE_FRONT_REFERENCE) in sections[executive_report.H_WHY]
+    md = discourse_run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    assert md.count(staged) == 1
+    assert staged in section(md, "Migration roadmap")
 
 
 def test_no_sql_and_no_traceability_appendix(run: PipelineResult) -> None:
