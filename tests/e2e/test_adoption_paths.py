@@ -24,7 +24,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.agents.referee.write_groups import assignment_sources_of_truth
-from src.contracts.synthesis_output import AdoptionFacts, ReportFacts
+from src.contracts.synthesis_output import AdoptionFacts, ReportFacts, summary_path_ids
 from src.shared.cache_engines import CACHE_ENGINES
 from src.tools.validation.customer_text_guard import scan_json
 from tests.e2e.pipeline import PipelineResult
@@ -205,6 +205,8 @@ def test_paths_that_do_not_add_up_to_the_plan_are_refused(run: PipelineResult) -
     broken["adoption"]["paths"] = broken["adoption"]["paths"][:-1]
     broken["adoption"]["paths"][-1]["path_id"] = "full_target"
     broken["adoption"]["path_count"] -= 1
+    ids = [p["path_id"] for p in broken["adoption"]["paths"]]
+    broken["adoption"]["summary_path_ids"] = summary_path_ids(ids)
     _refused(broken, "full_target takes every step")
     # The one-step form with a stage c the plan does not have.
     broken = copy.deepcopy(facts)
