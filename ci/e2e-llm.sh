@@ -275,6 +275,14 @@ if [ "$DRY_RUN" = "1" ]; then
 else
   export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-global.anthropic.claude-sonnet-5-5}"
   export DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1
+  # #2175: in `claude -p`, Claude Code stops every background task still running this long
+  # after the session's last turn and ends the session (default 600000 = 10 minutes). It is
+  # CLI internals, not in the public docs: verified in 2.1.288 (a part killed 600 s after the
+  # last turn, batch11121152) and in the 2.1.304 binary (the variable, its 600000 default and
+  # its "stopping them" message). 30 minutes is the Stop hook's hung limit
+  # (scripts/hooks/require_modernize_result.py), so the CLI never cuts a run off first and,
+  # after a `failed` line, holds the session no longer than that.
+  export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-1800000}"
   PHASE="require-env"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     require_env CLAUDE_CODE_USE_BEDROCK AWS_REGION

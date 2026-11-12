@@ -166,7 +166,7 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
 
 - `.claude/settings.ci.json` allows only the pipeline's `uv run python scripts/...`
   commands, `Edit`/`Write` under `artifacts/**` and `.modernizer-state.json`,
-  `Agent`, and the dispatched skills; it denies web access, `git push`/`commit`,
+  `Agent`, `TaskStop` (a hung subagent, #2175), and the dispatched skills; it denies web access, `git push`/`commit`,
   `rm`, `curl` and secret paths. A new script a command runs needs an allow
   rule there (rationale for each entry: ci/README.md).
 - Subagents nest one level deep: only the orchestrator dispatches, and every

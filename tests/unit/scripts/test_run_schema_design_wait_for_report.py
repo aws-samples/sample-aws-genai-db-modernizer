@@ -144,6 +144,7 @@ def test_the_wait_is_capped_under_the_bash_tool_timeout(monkeypatch, capsys, tmp
         ("--wait-for-report", "-5"),
         ("--wait-for-report", "10", "--status", "--engine", "dynamodb"),
         ("--wait-for-report", "10", "--merge", "--engine", "dynamodb"),
+        ("--wait-for-report", "10", "--engine", "dynamodb"),
     ],
 )
 def test_a_bad_wait_is_refused_without_waiting(monkeypatch, capsys, tmp_path, extra):

@@ -1436,17 +1436,18 @@ def test_a_headless_run_waits_instead_of_ending_the_turn_while_a_subagent_runs()
     waiting = _modernize_text().split("## Waiting Rule", 1)[1].split("## Subagent Dispatch", 1)[0]
     waiting = " ".join(waiting.split())
     assert (
-        "**Headless (`--auto`), never end a turn while a subagent you dispatched is still "
+        "**Under `--auto`, never end a turn while a subagent you dispatched is still "
         "running** (#2175)" in waiting
     )
-    assert "10 minutes after its last turn" in waiting
+    assert "a set time after its last turn (10 minutes by default)" in waiting
     assert f"under `--auto` run this instead, on its own and with no text: {_WAIT_FOR_REPORT}" in (
         waiting
     )
     assert "It is a wait, not a status check" in waiting
     assert "Run it again while a subagent you dispatched has not reported" in waiting
     assert (
-        "A subagent that has not reported 30 minutes after its dispatch is hung: end with "
+        "A subagent that has not reported 30 minutes after its dispatch is hung: stop it with "
+        "the TaskStop tool (the Stop hook names its task id), then end with "
         "`MODERNIZE_RESULT: failed phase=<phase> reason=subagent <its description> did not "
         "report within 30 minutes`" in waiting
     )

@@ -33,8 +33,13 @@ type ``subagent`` or ``local_agent``) is still running is blocked too, and the r
 the bounded wait, ``run_schema_design.py --wait-for-report 110``, which keeps the turn going
 and returns as soon as a design or review lands. A subagent dispatched more than
 ``HUNG_AFTER_SECONDS`` ago (its launch time is the session log's ``timestamp`` on the Agent
-result that names its ``agentId``) is hung: the reason then asks for the ``failed`` result
-line. Interactive runs are not blocked: there the session waits for the next report.
+result that names its ``agentId``; with no such record, for example after a resume, the time
+this hook first saw it running, kept in the job's ``_logs/stop_hook_subagents.json``) is
+hung: the reason then asks to stop it with ``TaskStop`` and end with the ``failed`` result
+line. Every block asks for a tool call, which resets Claude Code's count of blocks in a
+row, so without a clock a hung subagent would hold the run in wait turns until its budget
+or wall-clock timeout. Interactive runs are not blocked: there the session waits for the
+next report.
 
 The hook blocks only when all of these hold:
 
@@ -56,7 +61,8 @@ draft and neither the group reviews nor the merge have started, the ``--status``
 then steps 6c and 6d; when every part's review is recorded and the merge has not run, the
 ``run_pe_review.py`` command and then step 6d.
 
-Read-only, stdlib only, no repo imports. Any error, a missing state file or an unreadable
+Stdlib only, no repo imports. It writes one file, the first-seen times above, and reads
+nothing else of its own. Any error, a missing state file or an unreadable
 transcript allows (fail open); the e2e-llm transcript check stays the backstop.
 """
 
@@ -310,10 +316,39 @@ def _hung_reason(phase: str, task: dict[str, Any], minutes: int) -> str:
     return (
         f"Blocked: the subagent '{label}' was dispatched {minutes} minutes ago and has not "
         f"reported; a headless run treats a subagent that has not reported within "
-        f"{HUNG_AFTER_SECONDS // 60} minutes as hung. End the run now with "
+        f"{HUNG_AFTER_SECONDS // 60} minutes as hung. Stop it with the TaskStop tool "
+        f"(task id {task.get('id')}), then end the run with "
         f"`MODERNIZE_RESULT: failed phase={phase} reason=subagent {label} did not report "
         f"within {HUNG_AFTER_SECONDS // 60} minutes`."
     )
+
+
+FIRST_SEEN = "_logs/stop_hook_subagents.json"
+
+
+def first_seen(job_dir: Path, agents: list[dict[str, Any]], now: float) -> dict[str, float]:
+    """When this hook first saw each running subagent, by task id: the hung rule's clock
+    for a subagent with no launch record (#2175). Records the ones seen for the first time
+    now, in ``job_dir``'s ``_logs/``; drops the ones no longer running. Best effort: a
+    file it cannot read or write gives each subagent ``now``."""
+    path = job_dir / FIRST_SEEN
+    saved = _read_json(path)
+    seen = {
+        str(k): float(v)
+        for k, v in (saved.items() if isinstance(saved, dict) else ())
+        if isinstance(v, (int, float))
+    }
+    ids = [str(a.get("id")) for a in agents if a.get("id")]
+    current = {i: seen.get(i, now) for i in ids}
+    if current != seen and job_dir.is_dir():
+        try:
+            path.parent.mkdir(exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(current), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return current
 
 
 def _phase(project: Path) -> str:
@@ -344,18 +379,20 @@ def decide(event: dict[str, Any], project: Path, now: float | None = None) -> st
     job = _job(project)
     if job is None:
         return None
-    if agents:
-        # Headless, a turn that ends while subagents run can end the run (#2175).
-        now = time.time() if now is None else now
-        for agent in agents:
-            launched = launches.get(str(agent.get("id")))
-            if launched is not None and now - launched >= HUNG_AFTER_SECONDS:
-                return _hung_reason(_phase(project), agent, int((now - launched) // 60))
-        return _waiting_reason(job[0], job[1], agents)
     root = Path(os.environ.get("ARTIFACT_DIR") or project / "artifacts")
     if not root.is_absolute():
         root = project / root
     job_dir = root / job[1] / job[0]
+    if agents:
+        # Headless, a turn that ends while subagents run can end the run (#2175).
+        now = time.time() if now is None else now
+        seen = first_seen(job_dir, agents, now)
+        for agent in agents:
+            agent_id = str(agent.get("id"))
+            launched = launches.get(agent_id, seen.get(agent_id))
+            if launched is not None and now - launched >= HUNG_AFTER_SECONDS:
+                return _hung_reason(_phase(project), agent, int((now - launched) // 60))
+        return _waiting_reason(job[0], job[1], agents)
     parts = dynamodb_parts_done(job_dir)
     reviewed = None if parts else dynamodb_reviews_done(job_dir)
     if not isinstance(tasks, list) and parts is None and reviewed is None:

@@ -3460,12 +3460,12 @@ def test_an_interrupted_session_names_the_stopped_subagent(tmp_path: Path) -> No
     assert "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" in message
 
 
+@pytest.mark.passes_on_main  # main's own plain message, through check_transcript
 @pytest.mark.parametrize(("killed", "interrupted"), [(False, True), (True, False), (False, False)])
 def test_a_session_that_was_not_interrupted_keeps_the_plain_message(
     tmp_path: Path, killed: bool, interrupted: bool
 ) -> None:
     records = _interrupted_session(killed=killed, interrupted=interrupted)
-    assert run.stopped_background_tasks(records) == []
     with pytest.raises(run.TranscriptError) as exc_info:
         run.check_transcript(_transcript(tmp_path, records), "both")
     assert str(exc_info.value) == (
