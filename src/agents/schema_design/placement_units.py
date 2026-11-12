@@ -168,6 +168,22 @@ class SplitUnits:
                 return key
         return None
 
+    def copy(self) -> SplitUnits:
+        """An independent copy: a trial split on it leaves this one as it was."""
+        other = SplitUnits([], [])
+        other.units = list(self.units)
+        other._unit_of = dict(self._unit_of)
+        other._parent = list(self._parent)
+        other._piece = dict(self._piece)
+        other._next = self._next
+        other.reasons = dict(self.reasons)
+        return other
+
+    def adopt(self, other: SplitUnits) -> None:
+        """Take ``other``'s state (a copy of this one a chosen trial split ran on)."""
+        self._parent, self._piece = list(other._parent), dict(other._piece)
+        self._next, self.reasons = other._next, dict(other.reasons)
+
     def record(self, sides: Sequence[Sequence[Mapping[str, Any]]], reason: str) -> None:
         """Record ``reason`` for every unit whose statements ``sides`` (lists of items)
         put on two or more sides; a unit already recorded keeps its first reason."""

@@ -11,9 +11,10 @@ job's own artifacts: every assignment version, every ``schema-<engine>/v<N>/`` d
 in parts, the statements each part's input lists, and routing's own units.
 
 Not marked ``deterministic``, so it runs on the e2e-llm job too, over the split the
-headless run made. The deterministic pipeline designs nothing, so there the split of
-every engine that can be designed in parts is run on a copy of the job (``--split``
-needs no model).
+headless run made, and only that: a headless job with no design in parts has nothing
+to check (and is checked to have no group draft), never a re-split. The deterministic
+pipeline designs nothing, so there the split of every engine that can be designed in
+parts is run on a copy of the job (``--split`` needs no model).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from src.agents.schema_design.handler import run_schema_split
-from src.agents.schema_design.split_invariant import check_split_units, manifest_keys
+from src.agents.schema_design.split_invariant import check_split_units
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.pipeline import PipelineResult
 
@@ -42,13 +43,14 @@ def _versions(job_dir: Path) -> list[int]:
 def _designs_in_parts(
     run: PipelineResult, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[LocalArtifactStore, Path]:
-    """The job's store, when the run designed in parts itself (a headless run); else a
-    copy of the job with every engine of every assignment version split."""
+    """A headless (LLM) job: its own store, never a re-split. A deterministic job (which
+    designs nothing): a copy of the job with every engine of every assignment version
+    split, since ``--split`` needs no model."""
     key = f"{run.db}/{run.job_id}"
     if key in _SPLITS:
         return _SPLITS[key]
     store = LocalArtifactStore(str(run.artifact_root))
-    if manifest_keys(store, run.db, run.job_id):
+    if run.external:
         _SPLITS[key] = (store, run.job_dir())
         return _SPLITS[key]
     root = tmp_path_factory.mktemp(f"split-{run.db}") / "artifacts"
@@ -65,8 +67,13 @@ def _designs_in_parts(
 def test_every_placement_unit_is_in_one_part_or_its_cut_is_recorded(
     run: PipelineResult, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    store, _ = _designs_in_parts(run, tmp_path_factory)
+    store, job_dir = _designs_in_parts(run, tmp_path_factory)
     check = check_split_units(store, run.db, run.job_id)
+    if run.external and not check.manifests:
+        # A headless job that designed nothing in parts has nothing to check: say so,
+        # and prove it (no group draft anywhere), rather than checking a re-split.
+        assert not list(job_dir.glob("schema-*/v*/schema_draft_group_*.json"))
+        return
     assert check.manifests, "no design in parts to check"
     # #2153: a table's writes sit only in the part that owns it, unless a cut is recorded.
     assert check.writes_off_owner == 0

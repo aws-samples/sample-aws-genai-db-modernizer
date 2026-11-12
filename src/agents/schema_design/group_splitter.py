@@ -828,7 +828,7 @@ def _table_chunks(
     on the same table-ordered queries, that cut is kept: no extra designer call. Either
     way :func:`assign_table_owners` gives each table one owner and the other chunks
     it as context. A placement unit's items (``hard`` keys, #2141) count as one pattern,
-    and the fallback is not kept when it cuts one."""
+    and the fallback (:func:`_pattern_chunks`) never cuts one."""
     table_of_pattern: dict[int, str] = {}
     by_table: dict[str, list[dict]] = defaultdict(list)
     for n, q in enumerate(queries):
@@ -844,10 +844,9 @@ def _table_chunks(
         else:
             runs.extend(_runs(table_queries, pattern_of))
     chunks = _fill_chunks(runs, size)
+    # _pattern_chunks never returns a cut that splits a unit (``hard``), so neither is this.
     fallback = _pattern_chunks([q for run in runs for q in run], pattern_of, size, hard)
-    if len(chunks) <= len(fallback) or (hard and _cuts_a_block(fallback, pattern_of, hard)):
-        return chunks
-    return fallback
+    return chunks if len(chunks) <= len(fallback) else fallback
 
 
 def _fill_chunks(runs: list[list[dict]], size: int) -> list[list[dict]]:
@@ -936,17 +935,24 @@ def fit_groups_to_budget(
         def measure_part(qs: list[dict], base: dict = group, name: str = longest_name) -> int:
             return measure({**base, "group_name": name, "queries": qs})
 
-        if units:
-            units.absorb(group["queries"])
+        # A statement is in at most one merged unit, so nothing to absorb here (unlike
+        # a query pattern unit, fit_units_to_budget).
         queries = _blocks_together(group["queries"], units)
-        parts = _halve_to_fit(queries, measure_part, max_chars, pattern_of or {}, units, tables_of)
+        # Each pass runs on its own copy of the units' state, and the chosen pass's
+        # state is kept, so a discarded pass records no cut (#2141 review).
+        trial = units.copy() if units else None
+        parts = _halve_to_fit(queries, measure_part, max_chars, pattern_of or {}, trial, tables_of)
+        chosen = trial
         if pattern_of and len(parts) > 1:
             # Cutting at pattern boundaries must not take more parts than the plain
             # halving would: no extra designer call (#1146 review). Either keeps units
             # whole, and records every unit it has to cut.
-            plain = _halve_to_fit(queries, measure_part, max_chars, None, units, tables_of)
+            other = units.copy() if units else None
+            plain = _halve_to_fit(queries, measure_part, max_chars, None, other, tables_of)
             if len(plain) < len(parts):
-                parts = plain
+                parts, chosen = plain, other
+        if units and chosen is not None:
+            units.adopt(chosen)
         if len(parts) == 1:
             fitted.append(group)
             continue

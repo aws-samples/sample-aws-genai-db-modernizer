@@ -32,6 +32,7 @@ from src.agents.schema_design.placement_units import (
     PlacementUnit,
     SplitUnits,
     assignment_placement_units,
+    is_block_key,
     placement_units,
 )
 from src.agents.schema_design.split_invariant import check_split_units
@@ -84,7 +85,7 @@ def _collector(tables: list[dict], queries: list[dict]) -> dict:
     return {
         "database_schema": {"tables": tables},
         "queries": {"query_patterns": queries},
-        "metadata": {"database_name": DB, "engine": "postgresql"},
+        "metadata": {"database_name": DB, "source_database": {"engine": "postgresql"}},
     }
 
 
@@ -207,6 +208,53 @@ def test_the_plain_chunk_cut_is_not_kept_when_it_cuts_a_unit() -> None:
     assert part_of["b8"] == part_of["b9"]
     assert max(len(g["queries"]) for g in groups) <= 20
     assert units.reasons == {}
+
+
+def test_pattern_chunks_never_keep_a_plain_cut_that_splits_a_unit() -> None:
+    """``_pattern_chunks`` alone: the plain cut takes fewer chunks, but it splits a unit,
+    so the chunks that keep patterns and units whole are kept."""
+    from src.agents.schema_design.group_splitter import _pattern_chunks
+
+    queries = [_q(f"s{i}", "t1", f"c{i}") for i in range(40)]
+    keys = {f"s{i}": 0 for i in range(11)}
+    keys |= {f"s{i}": 1 for i in range(11, 19)}
+    keys |= {"s19": 1 << 40, "s20": 1 << 40}
+    keys |= {f"s{i}": 2 for i in range(21, 40)}
+    plain = _pattern_chunks(queries, keys, 20)
+    assert [len(c) for c in plain] == [20, 20]  # the plain cut, through the unit
+    kept = _pattern_chunks(queries, keys, 20, is_block_key)
+    assert [len(c) for c in kept] == [19, 2, 19]
+
+
+def test_a_large_unit_is_cut_into_as_few_pieces_as_a_plain_cut_takes() -> None:
+    """30 statements in one unit, cap 20: 5 on ta and 25 on tb. Their weakest link is
+    between the two tables, but cutting there leaves 25, which needs a third piece. The
+    cut stays among those that make two pieces."""
+    a = [_q(f"a{i}", "ta", f"c{i}", kind="UPDATE") for i in range(5)]
+    b = [_q(f"b{i}", "tb", f"c{i}", kind="UPDATE") for i in range(25)]
+    queries = a + b
+    ids = [q["query_id"] for q in queries]
+    units = SplitUnits([_unit(ids)], ids)
+    collector = _collector([_table("ta", ("tb",)), _table("tb")], queries)
+    groups = build_groups(queries, DB, collector, units=units)
+    # Two pieces; cutting at the table boundary (5 + 25) would have taken three.
+    assert sorted(len(g["queries"]) for g in groups) == [15, 15]
+    assert units.reasons == {"unit:a0": "over_part_size"}
+
+
+def test_a_trial_split_on_a_copy_leaves_the_units_as_they_were() -> None:
+    """The two halving passes each run on a copy (``SplitUnits.copy``); only the
+    chosen one's cuts are kept (``adopt``)."""
+    ids = ["a", "b", "c", "d"]
+    units = SplitUnits([_unit(ids)], ids)
+    items = [_q(q, "t1", q) for q in ids]
+    trial = units.copy()
+    trial.cut(items[:2], items[2:], "over_input_budget")
+    assert units.reasons == {}
+    assert units.block_key(items[0]) == units.block_key(items[3])
+    units.adopt(trial)
+    assert units.reasons == {"unit:a": "over_input_budget"}
+    assert units.block_key(items[0]) != units.block_key(items[3])
 
 
 # ---------------------------------------------------------------------------
@@ -524,11 +572,20 @@ def test_a_unit_with_one_statement_on_the_engine_is_left_out() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_run_schema_split_keeps_the_assignments_write_group_whole(tmp_path: Path) -> None:
-    from src.agents.schema_design.handler import run_schema_split
-
-    collector, queries, pair = _three_tables()
-    collector["metadata"] = {"database_name": DB}
+def _write_group_job(tmp_path: Path) -> tuple[LocalArtifactStore, list[str]]:
+    """A saved job whose t3 write group main's split cut: one FK cluster of t1 (15
+    reads), t2 (10) and t3 (5 updates), plus an update of t3 that joins t1, so its
+    primary table is t1. Table chunking put that update with t1 and t3's other writes
+    in the next chunk. The assignment's write group is t3's six writes."""
+    queries = [_q(f"a{i}", "t1", f"c{i}") for i in range(15)]
+    joined = _q("x0", "t1", "j", kind="UPDATE", also="t3")
+    joined["query_text"] = "UPDATE t3 SET v = ? FROM t1 WHERE t1.id = t3.id AND t1.j = ?"
+    queries.append(joined)
+    queries += [_q(f"b{i}", "t2", f"c{i}") for i in range(10)]
+    queries += [_q(f"c{i}", "t3", f"c{i}", kind="UPDATE") for i in range(5)]
+    tables = [_table("t1", ("t2",)), _table("t2", ("t3",)), _table("t3")]
+    collector = _collector(tables, queries)
+    writes = ["x0"] + [f"c{i}" for i in range(5)]
     store = LocalArtifactStore(str(tmp_path))
     store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
     store.write_json(
@@ -538,17 +595,27 @@ def test_run_schema_split_keeps_the_assignments_write_group_whole(tmp_path: Path
                 {"query_id": q["query_id"], "assigned_engine": "documentdb", "in_scope": True}
                 for q in queries
             ],
-            # A join of a0 with c0, and t3's own write group: one unit of six.
-            "co_dependency_groups": [pair],
-            "write_groups": {f"{DB}.t3": [f"c{i}" for i in range(5)]},
+            "co_dependency_groups": [],
+            "write_groups": {f"{DB}.t3": writes},
         },
     )
     store.write_json(f"{DB}/{JOB}/analysis-documentdb/analysis.json", {})
+    return store, writes
+
+
+def test_run_schema_split_keeps_the_assignments_write_group_whole(tmp_path: Path) -> None:
+    """ADR-027's threading path: ``run_schema_split`` passes the assignment's units to the
+    split. Without them (main, or the wiring removed) the write group is cut."""
+    from src.agents.schema_design.handler import run_schema_split
+
+    store, writes = _write_group_job(tmp_path)
     run_schema_split(JOB, DB, "documentdb", store, assignment_version=1)
     check = check_split_units(store, DB, JOB)
     assert check.manifests == ["schema-documentdb/v1"]
     assert check.units_checked == 1
     assert check.problems == []
+    manifest = store.read_json(f"{DB}/{JOB}/schema-documentdb/v1/groups_manifest.json")
+    assert manifest["unit_cuts"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -664,31 +731,79 @@ def test_the_risk_assessment_states_a_recorded_cut() -> None:
 
     data = SynthesisData(job_id=JOB, database_name=DB)
     data.triage = {"selected_agents": [{"agent_type": "dynamodb"}]}
-    cut = {"unit_id": "unit:q1", "query_ids": ["q1", "q2"], "reason": "over_input_budget"}
+    data.collector = _collector(
+        [_table("t1")], [_q("q1", "t1", "a", also="t2"), _q("q2", "t1", "b", also="t2")]
+    )
+    cut = {
+        "unit_id": "unit:q1",
+        "kind": "co_dependency",
+        "query_ids": ["q1", "q2"],
+        "reason": "over_input_budget",
+    }
     data.engines["dynamodb"] = EngineArtifacts(
         engine="dynamodb", analysis={}, schema_design={"tables": []}, unit_cuts=[cut]
     )
     (risk,) = build_risk_assessment(data)["risks"]
-    assert risk["description"].startswith("[dynamodb] Designed across parts: 1 group")
+    assert risk["description"].startswith("[dynamodb] Related statements designed separately")
+    assert "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id WHERE a = ?" in risk["description"]
     assert risk["query_ids"] == ["q1", "q2"]
     data.engines["dynamodb"].unit_cuts = []
     assert build_risk_assessment(data)["risks"] == []
 
 
-def test_a_recorded_cut_is_a_low_risk_naming_its_statements() -> None:
+def _cut_risk(kind: str, ids: list[str]) -> dict:
     from src.agents.referee.synthesis_report import _unit_cut_risk
 
-    cut = {"unit_id": "unit:q1", "query_ids": ["q2", "q1"], "reason": "over_part_size"}
-    risk = _unit_cut_risk(7, "dynamodb", [cut], {"q1": ["db.t"]})
-    assert risk["risk_id"] == "RISK-007"
-    assert risk["severity"] == "LOW"
+    cut = {"unit_id": f"unit:{ids[0]}", "kind": kind, "query_ids": ids, "reason": "over_part_size"}
+    texts = {q: f"UPDATE t SET v = ? WHERE k{q} = ?" for q in ids}
+    return _unit_cut_risk(7, "dynamodb", [cut], {ids[0]: ["db.t"]}, texts)
+
+
+def test_a_cut_join_group_is_a_low_risk_listing_its_statements() -> None:
+    risk = _cut_risk("co_dependency", ["q2", "q1"])
+    assert (risk["risk_id"], risk["severity"]) == ("RISK-007", "LOW")
     assert risk["query_ids"] == ["q1", "q2"]
     assert risk["affected_tables"] == ["db.t"]
     assert risk["description"] == (
-        "[dynamodb] Designed across parts: 1 group of statements that routing places "
-        "together was designed in two or more design parts, because it is larger than "
-        "one design part holds; the merge reconciled the parts."
+        "[dynamodb] Related statements designed separately: 2 statements that join the "
+        "same data or run in one procedure were too many to design at once, and were "
+        "designed in separate batches whose access patterns may not agree: "
+        "UPDATE t SET v = ? WHERE kq1 = ?; UPDATE t SET v = ? WHERE kq2 = ?"
     )
+
+
+def test_a_cut_write_group_is_a_medium_risk_saying_its_writes_need_review() -> None:
+    """The part that does not own a written table is told not to design its writes, so
+    a write outside the owner's part may have no access pattern: not reconciled."""
+    risk = _cut_risk("co_dependency+write_group", [f"q{i}" for i in range(5)])
+    assert risk["severity"] == "MEDIUM"
+    assert risk["description"].startswith(
+        "[dynamodb] Writes designed apart from their table: 5 statements that write the "
+        "same tables, or run with those writes, were too many to design at once, so some "
+        "writes were designed apart from their table's design and may have no access "
+        "pattern: UPDATE t SET v = ? WHERE kq0 = ?;"
+    )
+    assert risk["description"].endswith("; and 2 more")
+    assert risk["mitigation"] == (
+        "Review these writes and add an access pattern for each one the design does not serve."
+    )
+
+
+def test_the_cut_risk_uses_no_pipeline_terms() -> None:
+    """The customer-text guard flags the split's own terms, and the risk uses none."""
+    from src.tools.validation.customer_text_guard import scan_text
+
+    leak = "3 groups of statements that routing places together; the merge reconciled them"
+    assert {f.text for f in scan_text(leak + " in two design parts")} == {
+        "routing places together",
+        "the merge reconciled",
+        "design part",
+    }
+    for kind in ("co_dependency", "write_group", "routine_unit"):
+        risk = _cut_risk(kind, ["q1", "q2"])
+        # The leading [engine] tag is the risk's engine field, stripped before rendering.
+        assert scan_text(risk["description"].removeprefix("[dynamodb] ")) == []
+        assert scan_text(risk["mitigation"]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -873,3 +988,88 @@ def test_the_guard_counts_a_write_off_its_owner(tmp_path: Path) -> None:
     manifest["groups"][1]["primary_tables"] = [f"{DB}.t"]
     store.write_json(key, manifest)
     assert check_split_units(store, DB, JOB).writes_off_owner == 0
+
+
+def _owned_elsewhere(tmp_path: Path, owner: int) -> LocalArtifactStore:
+    """q1 and q2 write t; a recorded cut holds them in parts 0 and 1; t's owner is
+    ``owner``."""
+    cut = {
+        "unit_id": "unit:q1",
+        "kind": "write_group",
+        "query_ids": ["q1", "q2"],
+        "parts": [0, 1],
+        "reason": "over_input_budget",
+    }
+    store = _saved_split(tmp_path, [["q1"], ["q2"], ["q3"]], [cut])
+    store.write_json(
+        f"{DB}/{JOB}/collector/output.json",
+        _collector(
+            [_table("t")],
+            [
+                _q("q1", "t", "a", kind="UPDATE"),
+                _q("q2", "t", "b", kind="UPDATE"),
+                _q("q3", "t", "c"),
+            ],
+        ),
+    )
+    key = f"{DB}/{JOB}/schema-dynamodb/v1/groups_manifest.json"
+    manifest = store.read_json(key)
+    manifest["groups"][owner]["primary_tables"] = [f"{DB}.t"]
+    store.write_json(key, manifest)
+    return store
+
+
+def test_a_recorded_cut_excuses_a_write_only_away_from_an_owner_among_its_parts(
+    tmp_path: Path,
+) -> None:
+    """The cut put q2's write in part 1, away from t's owner in part 0: excused. With t
+    owned by part 2, outside the cut, the cut explains nothing: both writes count."""
+    assert check_split_units(_owned_elsewhere(tmp_path / "a", 0), DB, JOB).writes_off_owner == 0
+    outside = check_split_units(_owned_elsewhere(tmp_path / "b", 2), DB, JOB)
+    assert outside.writes_off_owner == 2
+
+
+def test_the_guard_reads_writes_in_the_source_dialect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SQL is parsed in the source's dialect, never the target engine's (AGENTS.md)."""
+    from src.agents.referee import write_groups
+
+    seen: set[str] = set()
+    real = write_groups.written_tables
+
+    def spy(query, source_engine="", source=None):  # type: ignore[no-untyped-def]
+        seen.add(source_engine)
+        return real(query, source_engine, source)
+
+    monkeypatch.setattr(write_groups, "written_tables", spy)
+    check_split_units(_owned_elsewhere(tmp_path, 0), DB, JOB)
+    assert seen == {"postgresql"}
+
+
+def test_on_a_split_the_redesign_closure_adds_a_part_only_for_a_recorded_cut(
+    tmp_path: Path,
+) -> None:
+    """ADR-032's sentence on #2141's split: with the unit kept whole, each part's closure
+    is itself; with a recorded cut, the cut's parts close over each other, and the
+    closure adds exactly the parts the record names."""
+    from src.agents.schema_design.wave_redesign import _part_ids
+
+    base = f"{DB}/{JOB}/schema-dynamodb/v1/"
+    whole, _ = _wide_split(tmp_path / "a", [_unit(UNIT)])
+    store = LocalArtifactStore(str(tmp_path / "a"))
+    store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", {"co_dependency_groups": [UNIT]})
+    parts = _part_ids(store, base)
+    assert parts and len(parts) > 1
+    for i in parts:
+        assert _with_placement_groups(store, DB, JOB, 1, parts, {i}) == [i]
+    every = [f"{t}p{i}" for t in WIDE for i in range(3)]
+    cut_manifest, _ = _wide_split(tmp_path / "b", [_unit(every)])
+    store = LocalArtifactStore(str(tmp_path / "b"))
+    store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", {"co_dependency_groups": [every]})
+    parts = _part_ids(store, base)
+    assert parts
+    (cut,) = cut_manifest["unit_cuts"]
+    for i in parts:
+        expected = cut["parts"] if i in cut["parts"] else [i]
+        assert _with_placement_groups(store, DB, JOB, 1, parts, {i}) == expected
