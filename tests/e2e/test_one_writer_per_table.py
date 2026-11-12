@@ -22,8 +22,8 @@ from src.agents.referee.write_groups import collector_write_groups, table_source
 from src.report.escaping import md_text
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import (
-    replica_risk_text,
     shared_replica_risk_text,
+    shares_replica_risk,
     table_source_facts,
 )
 from tests.e2e.deliverable_figures import pdf_page_texts
@@ -113,9 +113,6 @@ def test_report_json_states_each_tables_source_of_truth_and_replicas(run: Pipeli
         assert f"kept current from {display_engine(row['source_of_truth'])} via CDC" in row["risk"]
 
 
-# replay_stale: the replay's saved report.json stores the replica risk as worded before
-# #2167 ("kept in sync"); a fresh run stores today's "kept current".
-@pytest.mark.replay_stale
 def test_every_deliverable_states_the_replicas(run: PipelineResult) -> None:
     """The engineering report lists the replicated tables with their CDC direction
     and risk, from the facts; the UI results page is checked in test_ui.py. The
@@ -131,10 +128,9 @@ def test_every_deliverable_states_the_replicas(run: PipelineResult) -> None:
         cdc = f"{display_engine(row['source_of_truth'])} → {replicas}"
         assert f"| `{row['table']}` | {display_engine(row['source_of_truth'])} | {cdc} |" in md
         # #1170: each row's risk is the standard sentence, so the report states it
-        # once for every row, naming the sources of truth.
-        assert row["risk"] == replica_risk_text(
-            row["source_of_truth"], row["replica_engines"], row["replica_read_count"]
-        )
+        # once for every row, naming the sources of truth. A replay's saved report stores
+        # it as worded before #2167, which ``shares_replica_risk`` recognises too.
+        assert shares_replica_risk(row), row["risk"]
     sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
     assert md.count(md_text(shared_replica_risk_text(sources))) == 1
     pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
