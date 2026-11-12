@@ -28,6 +28,7 @@ import pytest
 from src.contracts.data_movement_plan import DataMovementPlan, HubPlan
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_table
 from src.shared.contract_versioning import load_contract
+from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES
 from tests.e2e.pipeline import REPO, PipelineResult, _env, unzip_sample
 
@@ -96,16 +97,38 @@ def _check_plans(
     ]
     assert [(p.step, p.wave) for p in plans] == expected
     shared = {w for w in by_wave if [st["phase_wave"] for st in steps].count(w) > 1}
+    units = {
+        u["key"]: u
+        for u in ((report.get("facts") or {}).get("slice_plan") or {}).get("move_units") or []
+    }
     for plan, step in zip(plans, steps, strict=True) if steps else ():
         if plan.wave in shared:
-            # A wave of several steps: each step's plan holds its own engine only.
+            # A wave of several steps: each step's plan holds its own engine only, under
+            # its own title.
             assert {t.engine for t in plan.targets} == {step["engine"]}, plan.step
+            assert plan.title != by_wave[plan.wave]["title"], plan.step
+            assert display_engine(step["engine"]) in plan.title, plan.step
+        else:
+            assert plan.title == by_wave[plan.wave]["title"], plan.step
+        if step["kind"] not in ("slice", "engine_wave"):
+            continue
+        # plan.json and facts.slice_plan name the same owners (ADR-031 Amendment 9): the
+        # step owns exactly its units' tables, and every copy comes from its writer.
+        members = [units[k] for st in step["step_stages"] for k in st["unit_keys"]]
+        owned = {t for u in members for t in u["owned_tables"]}
+        copied = {r["table"]: r["source_of_truth"] for u in members for r in u["replicated_in"]}
+        targets = [t for t in plan.targets if t.engine == step["engine"]]
+        assert {t for tg in targets if tg.role == "owner" for t in tg.tables} == owned, plan.step
+        for tg in targets:
+            if tg.role == "replica":
+                for table in tg.tables:
+                    if table in copied:
+                        assert tg.source_of_truth == copied[table], (plan.step, table)
     # Wordpress and the other samples have later waves, so the job has a hub plan.
     assert hub is not None and len(waves) > 1
     assert hub.topics and hub.cdc.tool == "debezium"
     assert all(t.key_columns and t.cleanup_policy == "compact" for t in hub.topics)
     assert all(t.topic.startswith(f"{hub.cdc.topic_prefix}.") for t in hub.topics)
-    assert [p.title for p in plans] == [by_wave[p.wave]["title"] for p in plans]
     assert {p.wave_count for p in plans} == {len(waves)}
     assert {p.assignment_version for p in plans} == {report["assignment_summary"]["version"]}
 
