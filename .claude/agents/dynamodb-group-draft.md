@@ -90,7 +90,7 @@ Read all files. Do not output anything yet.
 - Parent/child direction, referenced table, `on_delete` cascade behavior
 - Cardinality: divide child `row_count` by parent `row_count` (the `design_metrics.tables[].row_count` figures) to get average children per parent
 
-**Access Patterns** — from `queries.query_patterns` where `query_type` in (SELECT, INSERT, UPDATE, DELETE). Skip `query_type = OTHER`.
+**Access Patterns** — from every entry of `queries.query_patterns`. Routing gave each of them to DynamoDB, so each is designed whatever its `query_type`: a statement typed `OTHER` (a parenthesized `(SELECT ...) UNION (SELECT ...)`, a `WITH ...` read) is designed by what it reads or writes, for example a union of reads as one read per branch.
 
 `queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `query_ids`, so coverage holds.
 
@@ -128,7 +128,7 @@ The run is unattended: nobody answers questions. Where a business rule the queri
 Work through these steps in order before writing any JSON.
 
 **Step 1 — Group access patterns by entity**
-List every `query_id` (excluding `OTHER`) and the entities it touches. Identify which entities always appear together across multiple patterns.
+List every `query_id` (whatever its `query_type`) and the entities it touches. Identify which entities always appear together across multiple patterns.
 
 **Step 2 — Decide table boundaries**
 For each entity group, choose one aggregation pattern and justify it:
@@ -246,7 +246,7 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 
 `source_database` — copy from the collector projection's `source_database_name`.
 
-`access_patterns` — one entry per query pattern in the collector projection (excluding `query_type=OTHER`): the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query appears in exactly one entry's `query_ids`. This is the primary output. Build these first:
+`access_patterns` — one entry per query pattern in the collector projection, whatever its `query_type`: the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query appears in exactly one entry's `query_ids`: a design that leaves one out fails its coverage check (`Not designed by dynamodb: …`). This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `DDB-`, e.g. `"DDB-AP-1"`, `"DDB-AP-2"`. Assign in order of `design_rps` descending.
 - `query_ids`: copy the source `query_id` values from the collector: every member of the query pattern group (all N members of an entry with a `query_pattern_id`), or the one query
