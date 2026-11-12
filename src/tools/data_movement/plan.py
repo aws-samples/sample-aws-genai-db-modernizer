@@ -89,6 +89,7 @@ from src.shared.catalog.dms_sizing import dms_sizing
 from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
+from src.shared.table_writer import table_writer
 from src.tools.data_movement.dms_sizing import (
     lob_plan,
     lob_size_note,
@@ -916,6 +917,10 @@ class _JobView:
     reads: dict[str, dict[str, list[str]]]
     deployment_type: str | None
     prices: PriceTable | None
+    # table -> the engine its writes sit on (the report's table_sources), and the
+    # relational step's engine: what table_writer reads for a slice-plan step
+    writers: dict[str, str] = field(default_factory=dict)
+    relational: str | None = None
 
     @classmethod
     def build(cls, inputs: JobInputs, prices: PriceTable | None) -> _JobView:
@@ -943,6 +948,12 @@ class _JobView:
             reads=_engine_reads(query_assignments, schema, sources),
             deployment_type=str(deployment) if deployment else None,
             prices=prices,
+            writers={
+                t: str(row["source_of_truth"])
+                for t, row in sources.items()
+                if row.get("source_of_truth")
+            },
+            relational=_relational_of(inputs.report),
         )
 
 
@@ -1141,6 +1152,11 @@ def _targets(
                     # A read model never owns: it syncs from the table's writer.
                     sot = (job.sources.get(t) or {}).get("source_of_truth")
                     holder = str(sot or source_engine)
+                elif wave.get("slice_step"):
+                    # A slice-plan step (#1698): the table's writer, the rule the step's
+                    # move units read, so plan.json and facts.slice_plan name the same
+                    # owners (ADR-031 Amendment 9, ADR-033 Amendment 1).
+                    holder = table_writer(t, job.writers, job.relational or source_engine)
                 else:
                     holder = _owner_of(t, wave, job.sources, readers, source_engine)
                 by_owner.setdefault(holder, set()).add(t)
@@ -1411,7 +1427,9 @@ def _steps(
     slice plan the steps are the migration waves (``None``: the whole wave). With one, each
     step is planned from its phase wave: as that wave when it is the wave's one step on
     the wave's one engine, else as the wave narrowed to the step's engine, the tables its
-    move units own or read, and its queries (#1698)."""
+    move units own or read, and its queries, under its own title (#1698). A step that
+    moves queries takes each table's owner from its writer (``table_writer``), as its move
+    units do."""
     planned = [s for s in (slice_plan or {}).get("plan_steps") or [] if isinstance(s, Mapping)]
     if not planned:
         return [(int(w["wave"]), w, None) for w in waves]
@@ -1428,8 +1446,9 @@ def _steps(
         wave = by_wave.get(int(phase)) if phase is not None else None
         if wave is None:
             raise ValueError(f"facts.slice_plan step {k} names no migration wave")
+        moving = step.get("kind") in ("slice", "engine_wave")
         if per_wave[phase] == 1 and _wave_engines(wave) == [engine]:
-            out.append((k, wave, None))
+            out.append((k, {**wave, "slice_step": True} if moving else wave, None))
             continue
         members = [
             units[key]
@@ -1450,10 +1469,23 @@ def _steps(
             **wave,
             "engines": [engine],
             "tables": [t for t in listed if t in tables] if listed else sorted(tables),
+            "title": _step_title(engine, step.get("slice_key")),
+            "slice_step": moving,
         }
         queries = frozenset(str(q) for u in members for q in u.get("query_ids") or [])
         out.append((k, view, queries))
     return out
+
+
+def _step_title(engine: str, slice_key: Any) -> str:
+    """A narrowed step's own title: its engine and slice, not its wave's (#1698)."""
+    name = display_engine(engine)
+    parts = str(slice_key or "").split(":", 2)
+    if len(parts) == 3 and parts[1] == "community":
+        return f"Move the slice around {parts[2]} to {name}"
+    if len(parts) == 2 and parts[1] == "standalone":
+        return f"Move the standalone units to {name}"
+    return f"Move to {name}"
 
 
 def build_step_plans(
@@ -1553,6 +1585,15 @@ def _hub_plan(job: _JobView, waves: list[Mapping[str, Any]]) -> HubPlan | None:
         unsupported=[unique[k] for k in sorted(unique)],
         notes=notes,
     )
+
+
+def _relational_of(report: Mapping[str, Any]) -> str | None:
+    """The relational step's engine: wave 1's one Aurora engine, as the slice plan reads it."""
+    waves = [w for w in report.get("migration_waves") or [] if isinstance(w, Mapping)]
+    if not waves:
+        return None
+    engines = _wave_engines(sorted(waves, key=lambda w: int(w["wave"]))[0])
+    return engines[0] if len(engines) == 1 and engines[0] in RELATIONAL_ENGINES else None
 
 
 def _aurora_wave(waves: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:

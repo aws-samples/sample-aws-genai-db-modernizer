@@ -15,6 +15,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+import src.tools.data_movement.plan as plan_module
+from src.contracts.data_movement_plan import DataMovementPlan
 from src.contracts.synthesis_output import SlicePlanFacts
 from src.tools.data_movement.plan import JobInputs, _steps, build_step_plans
 
@@ -63,22 +67,94 @@ def test_the_steps_are_the_slice_plan_s_when_a_wave_holds_several() -> None:
             for k in keys
             for t in [*units[k].owned_tables, *(r.table for r in units[k].replicated_in)]
         }
-        assert set(view["tables"]) <= read
+        assert set(view["tables"]) == read
 
 
-def test_build_step_plans_numbers_its_plans_by_the_slice_plan() -> None:
-    fragment = _fragment("discourse")
-    inputs = JobInputs(
+def _inputs(name: str) -> JobInputs:
+    """The fragment as a job: a collection that holds every table the plan names, and the
+    sources of truth its move units own, so every step plans real targets."""
+    fragment = _fragment(name)
+    plan = fragment["facts"]["slice_plan"]
+    tables = sorted(
+        {str(t) for w in fragment["migration_waves"] for t in w.get("tables") or []}
+        | {t for u in plan["move_units"] for t in u["owned_tables"]}
+        | {r["table"] for u in plan["move_units"] for r in u["replicated_in"]}
+    )
+    owned = {
+        t: u["engine"]
+        for u in plan["move_units"]
+        if u["kind"] in ("owner", "replica_reads", "read_model")
+        for t in u["owned_tables"]
+    }
+    return JobInputs(
         job_id="job",
-        database_name="discourse",
-        report={"migration_waves": fragment["migration_waves"], "facts": fragment["facts"]},
+        database_name=name,
+        report={
+            "migration_waves": fragment["migration_waves"],
+            "facts": fragment["facts"],
+            "table_sources": [
+                {"table": t, "source_of_truth": e, "write_engines": [e], "replicas": []}
+                for t, e in sorted(owned.items())
+            ],
+        },
         assignment={},
-        collector={},
+        collector={
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": t,
+                        "schema_name": t.split(".")[0],
+                        "table_name": t.split(".")[-1],
+                        "primary_key": ["id"],
+                        "columns": [],
+                    }
+                    for t in tables
+                ]
+            }
+        },
         assignment_version=1,
     )
+
+
+def _numbering_problems(plans: list[DataMovementPlan], plan: SlicePlanFacts) -> list[str]:
+    """How ``plans`` differ from the slice plan: step numbers, phase waves, and each later
+    step's engine and owner tables (its move units' ``owned_tables``)."""
+    problems = []
+    if [(p.step, p.wave) for p in plans] != [
+        (s.step_number, s.phase_wave) for s in plan.plan_steps
+    ]:
+        problems.append("numbering")
+    units = {u.key: u for u in plan.move_units}
+    for p, s in zip(plans[1:], plan.plan_steps[1:], strict=False):
+        if not p.targets:
+            problems.append(f"step {s.step_number} plans no target")
+        if {t.engine for t in p.targets} != {s.engine}:
+            problems.append(f"step {s.step_number} engines")
+        if s.kind == "cache":
+            continue
+        owned = {t for st in s.step_stages for k in st.unit_keys for t in units[k].owned_tables}
+        planned = {t for tg in p.targets if tg.role == "owner" for t in tg.tables}
+        if planned != owned:
+            problems.append(f"step {s.step_number} owners")
+    return problems
+
+
+@pytest.mark.parametrize("name", ["wordpress", "discourse"])
+def test_build_step_plans_numbers_its_plans_by_the_slice_plan(name: str) -> None:
+    inputs = _inputs(name)
     plans, _ = build_step_plans(inputs, prices=None)
-    steps = fragment["facts"]["slice_plan"]["plan_steps"]
-    assert [(p.step, p.wave) for p in plans] == [(s["step_number"], s["phase_wave"]) for s in steps]
-    assert [[t.engine for t in p.targets] for p in plans[1:]] == [
-        [s["engine"]] * len(p.targets) for p, s in zip(plans[1:], steps[1:], strict=True)
-    ]
+    plan = SlicePlanFacts(**_fragment(name)["facts"]["slice_plan"])
+    assert _numbering_problems(plans, plan) == []
+
+
+def test_plans_numbered_by_wave_fail_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The per-wave numbering this replaces: discourse's two wave-2 steps become one plan.
+    inputs = _inputs("discourse")
+    monkeypatch.setattr(
+        plan_module,
+        "_steps",
+        lambda waves, slice_plan=None: [(int(w["wave"]), w, None) for w in waves],
+    )
+    plans, _ = build_step_plans(inputs, prices=None)
+    plan = SlicePlanFacts(**_fragment("discourse")["facts"]["slice_plan"])
+    assert "numbering" in _numbering_problems(plans, plan)

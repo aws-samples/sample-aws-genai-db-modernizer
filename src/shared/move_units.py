@@ -33,8 +33,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.shared.cache_engines import CACHE_ENGINES
-from src.shared.engine_names import SOURCE_DATABASE
 from src.shared.migration_wave_engines import SEARCH_ENGINES
+from src.shared.table_writer import table_writer
 
 __all__ = [
     "KeptWhole",
@@ -246,7 +246,7 @@ def _engine_units(
                 write_query_ids=sorted(q.query_id for q in group if q.query_id in writes),
                 owned_tables=owned,
                 read_tables=tables,
-                replicated_in=[(t, owner.get(t) or relational or SOURCE_DATABASE) for t in read],
+                replicated_in=[(t, table_writer(t, owner, relational)) for t in read],
                 reverse_replicas=[],
                 kept_whole_ids=[],
                 calls_per_second=sum(q.calls_per_second for q in group),
