@@ -1719,6 +1719,10 @@ def test_collect_job_redacts_a_secret_and_keeps_the_archive(tmp_path: Path) -> N
         "manifest": "job.findings.json",
         "pass_before_scan": True,
     }
+    # #2175: batch11120937 read pass false with every check true; the reason is named.
+    assert marked["fail_reasons"] == [
+        "private scan: 4 finding(s); 0 file(s) withheld for human review " "(see job.findings.json)"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -3403,3 +3407,120 @@ def test_the_mirror_runs_documentdb_shape_is_no_finding_and_keeps_the_archive(
     result = run.collect_job(tmp_path / "artifacts", out, db="wordpress", job="job1")
     assert "findings" not in result and result["archive"]
     assert (out / "transcript.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# #2175: a session Claude Code interrupted after stopping its background subagents
+# ---------------------------------------------------------------------------
+
+
+def _interrupted_session(*, killed: bool = True, interrupted: bool = True) -> list[dict]:
+    """The tail of batch11121152's wordpress transcript: five empty wake turns, then the
+    CLI stops the part still running 600 s after the last turn and interrupts it."""
+    records: list[dict] = [
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "a3116",
+            "description": "DynamoDB design, part 1 of 3 (queries 1-22 of 39)",
+            "task_type": "local_agent",
+        },
+        _result_line("DynamoDB part 1 is still running, so I'm ending the turn."),
+        {
+            "type": "system",
+            "subtype": "task_updated",
+            "task_id": "a3116",
+            "patch": {"status": "killed" if killed else "completed", "end_time": 1},
+        },
+    ]
+    if interrupted:
+        records.append(
+            {
+                "type": "user",
+                "parent_tool_use_id": "toolu_part1",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "[Request interrupted by user]"}],
+                },
+            }
+        )
+    return records
+
+
+def test_an_interrupted_session_names_the_stopped_subagent(tmp_path: Path) -> None:
+    path = _transcript(tmp_path, _interrupted_session())
+    with pytest.raises(run.TranscriptError) as exc_info:
+        run.check_transcript(path, "both")
+    message = str(exc_info.value)
+    assert message.startswith("no 'MODERNIZE_RESULT: complete ...' line found")
+    assert (
+        "the session was interrupted after Claude Code stopped 1 background task(s) still "
+        "running after the last turn (DynamoDB design, part 1 of 3 (queries 1-22 of 39))"
+    ) in message
+    assert "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" in message
+
+
+@pytest.mark.parametrize(("killed", "interrupted"), [(False, True), (True, False), (False, False)])
+def test_a_session_that_was_not_interrupted_keeps_the_plain_message(
+    tmp_path: Path, killed: bool, interrupted: bool
+) -> None:
+    records = _interrupted_session(killed=killed, interrupted=interrupted)
+    assert run.stopped_background_tasks(records) == []
+    with pytest.raises(run.TranscriptError) as exc_info:
+        run.check_transcript(_transcript(tmp_path, records), "both")
+    assert str(exc_info.value) == (
+        "no 'MODERNIZE_RESULT: complete ...' line found anywhere in the transcript"
+    )
+
+
+def _green_inputs(tmp_path: Path) -> dict:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary)
+    junit = tmp_path / "junit.xml"
+    _write_junit(
+        junit,
+        [
+            ("tests.e2e.test_pipeline", "test_x", False),
+            ("tests.e2e.test_report_engineering", "test_x", False),
+            ("tests.e2e.test_report_pdf", "test_x", False),
+        ],
+    )
+    judge = tmp_path / "judge.json"
+    _write_passing_judge(judge)
+    return {
+        "mode": "chat",
+        "fixture": "wordpress",
+        "transcript_summary_path": summary,
+        "pytest_junit_paths": [junit],
+        "judge_path": judge,
+    }
+
+
+@pytest.mark.passes_on_main  # a passing row never had fail_reasons
+def test_a_passing_row_names_no_fail_reason(tmp_path: Path) -> None:
+    row = run.build_results_row(**_green_inputs(tmp_path))
+    assert row["pass"] is True and "fail_reasons" not in row
+
+
+def test_a_failing_row_names_every_reason_it_failed(tmp_path: Path) -> None:
+    """#2175: a results.json with pass false and nothing saying why is a silent failure."""
+    inputs = _green_inputs(tmp_path)
+    inputs["judge_path"].unlink()
+    inputs["pytest_junit_paths"] = [tmp_path / "gone.xml"]
+    row = run.build_results_row(**inputs)
+    assert row["pass"] is False
+    assert row["fail_reasons"] == [
+        "missing junit file for contracts/engineering/pdf: gone.xml",
+        "missing or unreadable input: judge.json",
+        "check contracts is null",
+        "check engineering is null",
+        "check pdf is null",
+        "check judge is null",
+    ]
+
+
+def test_a_failed_transcript_check_carries_its_error(tmp_path: Path) -> None:
+    inputs = _green_inputs(tmp_path)
+    inputs["transcript_summary_path"].write_text(json.dumps({"error": "no result line"}))
+    row = run.build_results_row(**inputs)
+    assert row["fail_reasons"] == ["check transcript is false", "transcript: no result line"]

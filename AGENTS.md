@@ -170,7 +170,11 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
 - Subagents nest one level deep: only the orchestrator dispatches, and every
   dispatch says "Do not dispatch subagents yourself."
 - Waiting Rule (in `modernize.md`): never end a turn waiting unless a
-  dispatched subagent is still running.
+  dispatched subagent is still running. Headless, never end one while a
+  dispatched subagent runs either: Claude Code stops a `claude -p` session's
+  background tasks 10 minutes after its last turn, so the orchestrator runs
+  `scripts/run_schema_design.py --wait-for-report 110` instead (#2175).
+  <!-- claim: tests/unit/scripts/test_modernize_command.py::test_a_headless_run_waits_instead_of_ending_the_turn_while_a_subagent_runs, tests/unit/hooks/test_require_modernize_result.py::test_a_headless_turn_never_ends_while_a_part_is_still_running -->
 - Script stdout stays compact for headless sessions: JSON status lines only.
   `run_assessment.py` writes its progress to
   `artifacts/<db>/<job>/_logs/run_assessment.log` and prints a final

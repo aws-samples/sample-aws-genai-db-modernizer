@@ -555,7 +555,7 @@ Ten small scripts that refuse a guardrail bypass at the tool call instead of aft
 | `enforce_tool_use_rule.py` | PreToolUse `Bash` | `settings.ci.json` only | Refuses a Bash call that is not exactly one simple command covered by a `Bash(...)` allow rule in `settings.ci.json` (the shared tool-use rule). |
 | `require_gate_shown.py` | PreToolUse `Bash\|Agent\|Task` | both | Holds schema design in a `/modernize` run until the approval gate ran on its own and its block is in the orchestrator's own chat text (#1401, #1626). |
 | `remind_quote_printed_summary.py` | PostToolUse `Bash` | both | After `print_summary.py --gate` or `--final`, tells the model to paste the printed block verbatim (#1605). Never blocks. |
-| `require_modernize_result.py` | Stop | `settings.ci.json` only | Keeps a `/modernize --auto` run from ending its turn with nothing running and no `MODERNIZE_RESULT` line (#1574). |
+| `require_modernize_result.py` | Stop | `settings.ci.json` only | Keeps a `/modernize --auto` turn from ending with no `MODERNIZE_RESULT` line (#1574) or while a subagent runs (#2175). |
 
 "both" means `settings.json` and `settings.ci.json`. Headless runs load both files (`--setting-sources project` plus `--settings`), and a command listed in both runs once. `hook_common.split_compound_command` is a tested copy of `ci/llm/run.py`'s splitter, which a hook cannot import. The headless run also denies `Bash(git push *)`, so `block_fork_pr_push.py` matters in interactive sessions.
 

@@ -169,6 +169,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/run_schema_design.py", "_group_design_metrics", "group_input"): (
         "a group input's design_metrics, not a contract"
     ),
+    ("scripts/run_schema_design.py", "_report_marks", "trace"): (
+        "a design trace, read only for whether it holds a pe_review (#2175); never parsed "
+        "into a contract"
+    ),
     ("scripts/run_schema_design.py", "run_check_costs", "payload"): (
         "a model's group draft (not registered: the merge writes the contract version)"
     ),
