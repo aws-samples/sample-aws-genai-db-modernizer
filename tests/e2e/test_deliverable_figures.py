@@ -49,6 +49,7 @@ from typing import Any
 
 import pytest
 
+from src.agents.referee.slice_inputs import slice_inputs
 from src.agents.referee.table_assignments import retained_engine_for
 from src.report.formatting import price_list_text
 from src.shared.assumptions import assumption_items
@@ -272,8 +273,21 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
             int((report.get("assignment_summary") or {}).get("version") or 0),
             report.get("migration_waves"),
         ),
+        # #1129, #1698: the slice plan's inputs, from the job's assignment and collection,
+        # as synthesis builds them.
+        slice_inputs=slice_inputs(
+            _assignment_of_the_job(run, report), collector, report.get("routine_followers") or []
+        ),
     )
     assert stored == recomputed, [k for k in stored if stored[k] != recomputed.get(k)]
+
+
+def _assignment_of_the_job(run: PipelineResult, report: dict[str, Any]) -> dict[str, Any]:
+    """The assignment version the report was synthesized from."""
+    version = report["assignment_summary"]["version"]
+    path = run.job_dir() / "assignment" / f"v{version}" / "assignment.json"
+    out: dict[str, Any] = json.loads(path.read_text())
+    return out
 
 
 def _schema_designs_of_the_job(run: PipelineResult) -> dict[str, Any]:
