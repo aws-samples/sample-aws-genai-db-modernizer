@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine, display_source_database
-from src.shared.gate_facts import GATE_TABLES_SHOWN
+from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.report_facts import wave_facts
 from src.shared.wave_readiness import READINESS_RULE_NOTE
 
@@ -219,6 +219,12 @@ def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
     )
 
 
+# #2171: what a gate line says once, at its end, for its long lists of Migration map rows.
+# Each list keeps its count, which the gate's own text gives ("65 of the 75 tables moving
+# to DynamoDB"), so the pointer adds only where the names are.
+GATE_LIST_POINTER = "The Migration map above lists each of these tables with its owner and readers."
+
+
 def _gate_text(
     w: dict[str, Any],
     wf: dict[str, Any],
@@ -231,11 +237,13 @@ def _gate_text(
     the section already gives in full is referred to instead of repeated: the
     wave's kept-in-sync tables (which that line then names in full, however many,
     #1574), the wave's own table list, or the tables the wave's engines write that
-    "Sources of truth and replicas" lists. A list of more than ``GATE_TABLES_SHOWN``
-    tables that are all Migration map rows (``mapped``: each with its owner and readers)
-    names the first few and counts the rest (#1642: the discourse wave 2 gate printed 70
-    names the map already lists). Any other list, and a gate with no parts, is printed
-    as stored.
+    "Sources of truth and replicas" lists. A list of more than ``GATE_LIST_MAX`` tables
+    that are all Migration map rows (``mapped``: each with its owner and readers) is left
+    to the count the gate's own text gives, and the gate ends with one pointer to the map
+    (#1642: the discourse wave 2 gate printed 70 names the map already lists; #2171: no
+    name of such a list, so a gate line never prints more than ``GATE_LIST_MAX`` of them,
+    and the pointer is said once however many lists it covers). Any other list, and a
+    gate with no parts, is printed as stored.
     """
     parts = w.get("gate_parts")
     if not isinstance(parts, list) or not parts:
@@ -244,6 +252,7 @@ def _gate_text(
     tables = w.get("tables") or []
     written = [t for e in w.get("engines") or [] for t in replicated.get(str(e), [])]
     out: list[str] = []
+    pointed = False
     for part in parts:
         text = part.get("text") if isinstance(part, dict) else None
         items = (part.get("items") if isinstance(part, dict) else None) or []
@@ -258,15 +267,12 @@ def _gate_text(
             out.append(" (the tables listed above)")
         elif _same_tables(items, written):
             out.append(' (listed under "Sources of truth and replicas" below)')
-        elif len(items) > GATE_TABLES_SHOWN and {str(i) for i in items} <= mapped:
-            shown = ", ".join(str(i) for i in items[:GATE_TABLES_SHOWN])
-            out.append(
-                f" ({shown} and {len(items) - GATE_TABLES_SHOWN} more; the Migration map "
-                "above lists each with its owner and readers)"
-            )
+        elif len(items) > GATE_LIST_MAX and {str(i) for i in items} <= mapped:
+            pointed = True
         else:
             out.append(f" ({', '.join(str(i) for i in items)})")
-    return "".join(out)
+    gate = "".join(out)
+    return f"{gate.rstrip()} {GATE_LIST_POINTER}" if pointed else gate
 
 
 def _roadmap_md(report: dict[str, Any]) -> list[str]:

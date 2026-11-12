@@ -24,6 +24,7 @@ from src.report.printed_summary import render_final_summary
 from src.shared.cache_role import cache_role_sentence
 from src.shared.report_facts import cache_layer_facts
 from tests.executive_pdf import text as pdf_text
+from tests.report_concision import section
 from tests.unit.report.test_cache_layer_deliverables import _report, _shrink_report
 
 STORED = "Stored cache role sentence, read from the facts."
@@ -111,4 +112,6 @@ def test_no_cache_layer_no_sentence() -> None:
 def test_the_engineering_report_no_longer_says_the_cache_owns_none_of_the_workload() -> None:
     md = render_engineering_report_md(_report())
     assert "It owns none of the workload" not in md
-    assert "each cached read stays with its owner engine" in md
+    # #2171: the role sentence states the owner as the system of record, once.
+    assert "so it stays the system of record" in section(md, "Cache layer")
+    assert "each cached read stays with its owner engine" not in md

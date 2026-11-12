@@ -22,16 +22,34 @@ from .facts import report_facts
 from .formatting import plural_noun
 
 # The owner rule, as every deliverable states it (the executive report has no columns).
-OWNER_RULE_SHORT = (
+OWNER_RULE_OWNER = (
     "Each table has one owner, as in the wave plan: the engine that takes its writes; a "
     "table no query writes is owned by the engine that serves most of its queries. A cache "
-    "never owns a table. Every other engine that reads a table reads a copy kept current "
-    "from its owner via CDC."
+    "never owns a table."
 )
-OWNER_RULE = (
-    f"{OWNER_RULE_SHORT} Also read by names those engines; Cached by names the cache in "
-    "front of the table's reads."
+OWNER_RULE_CDC = (
+    "Every other engine that reads a table reads a copy kept current from its owner via CDC."
 )
+OWNER_RULE_SHORT = f"{OWNER_RULE_OWNER} {OWNER_RULE_CDC}"
+OWNER_RULE_COLUMNS = (
+    "Also read by names those engines; Cached by names the cache in front of the table's reads."
+)
+OWNER_RULE = f"{OWNER_RULE_SHORT} {OWNER_RULE_COLUMNS}"
+
+
+def owner_rule(*, columns: bool, cdc_defined_above: bool) -> str:
+    """The owner rule a deliverable prints above its table owners (#212).
+
+    ``columns``: with the Migration map's column legend. ``cdc_defined_above``: the
+    Target engines note above it already said a table another engine owns is kept
+    current by CDC from it (``KEPT_IN_SYNC_NOTE``), so the rule leaves that sentence
+    out rather than say it again in the next section (#2171)."""
+    parts = [OWNER_RULE_OWNER]
+    if not cdc_defined_above:
+        parts.append(OWNER_RULE_CDC)
+    if columns:
+        parts.append(OWNER_RULE_COLUMNS)
+    return " ".join(parts)
 
 
 def ownership_facts(report: dict[str, Any]) -> dict[str, Any] | None:

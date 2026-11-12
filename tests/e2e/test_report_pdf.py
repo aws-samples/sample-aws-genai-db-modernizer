@@ -16,6 +16,7 @@ import json
 import re
 from typing import Any
 
+import pytest
 from pypdf import PdfReader
 from pypdf.generic import ArrayObject, IndirectObject
 
@@ -27,6 +28,7 @@ from src.report.formatting import _cost_baseline_text, _fmt_usd, cost_baseline_k
 from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
+from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.report_facts import build_commit_line
 from src.tools.validation.customer_text_guard import scan_text
 from tests.branding import hits as found
@@ -39,6 +41,8 @@ from tests.executive_pdf import (
     outside_the_page,
     page_texts,
     printed,
+    repeated_across_sections,
+    section_texts,
     sql_hits,
     table_name_hits,
 )
@@ -240,6 +244,28 @@ def test_no_collected_table_name_appears(run: PipelineResult) -> None:
     meta = " ".join(str(v) for v in (_reader(run).metadata or {}).values())
     assert table_name_hits(_text(run) + " " + meta, names) == []
     assert table_name_hits(_text(run), table_names(_report(run))) == []
+
+
+# The text of each wave's gate in the PDF: from its label to the wave's next field.
+_PDF_GATE = re.compile(r"Gate before the next wave: (.*?)(?= Open critical or high risks:|$)")
+
+
+@pytest.mark.deterministic
+def test_discourse_says_each_sentence_in_one_section_and_no_gate_lists_tables(
+    discourse_run: PipelineResult,
+) -> None:
+    """#2171: the discourse judge scored concision 2 on the whole executive PDF. No
+    sentence one section prints is printed again in another, and no wave gate prints
+    more than ``GATE_LIST_MAX`` table names (it prints none: this report never names a
+    table, and a long list is a count)."""
+    sections = section_texts(_pdf(discourse_run), discourse_run.db)
+    assert set(sections) >= {executive_report.H_RECOMMENDATION, executive_report.H_WAVES}
+    assert repeated_across_sections(sections) == []
+    names = collected_table_names(_collected(discourse_run)) | table_names(_report(discourse_run))
+    gates = _PDF_GATE.findall(sections[executive_report.H_WAVES])
+    assert len(gates) == len(resolve_migration_waves(_report(discourse_run)))
+    for gate in gates:
+        assert len(table_name_hits(gate, names)) <= GATE_LIST_MAX, gate[:120]
 
 
 def test_no_sql_and_no_traceability_appendix(run: PipelineResult) -> None:

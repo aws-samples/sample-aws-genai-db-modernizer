@@ -122,12 +122,21 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             else ("the current source database")
         )
         role = " ".join(escaping.md_text(x) for x in cache_role_notes(report))
+        # #2171: the role sentence says cache-aside in front of the owner, which stays the
+        # system of record; the lead says it only when there is no role sentence.
+        how = (
+            ". "
+            if role
+            else " cache-aside: each cached read stays with its owner engine, which serves "
+            "every miss and every write. "
+        )
         out += [
             f"{escaping.md_text(name)} fronts {n} designed cached {plural_noun(n, 'read')} "
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
-            f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside: each "
-            "cached read stays with its owner engine, which serves every miss and every "
-            "write. " + (f"{role} " if role else "") + cache_wave_note(front),
+            f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s)"
+            + how
+            + (f"{role} " if role else "")
+            + cache_wave_note(front),
             "",
             f"- Owner engines: {owned or '-'}",
             f"- Read shapes: {shapes or '-'}",

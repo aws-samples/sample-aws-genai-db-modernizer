@@ -81,6 +81,16 @@ def test_a_card_says_where_a_mitigation_of_only_table_names_or_sql_is() -> None:
         assert card_mitigation(repeated, NAMES, {}) == RISK_MITIGATION_POINTER
 
 
+def test_the_pointer_reads_as_a_plain_sentence() -> None:
+    """#2171: the judge read "the engineering report gives it under this risk; it names
+    the tables or SQL it changes" as a machine fragment. After "Mitigation:" the pointer
+    says what to do and where, in one sentence."""
+    assert f"Mitigation: {RISK_MITIGATION_POINTER}" == (
+        "Mitigation: see this risk in the engineering report, which lists the tables and "
+        "SQL to change."
+    )
+
+
 def test_two_risks_with_one_mitigation_state_it_once_in_every_deliverable() -> None:
     report = _report(
         [

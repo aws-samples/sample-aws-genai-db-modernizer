@@ -25,13 +25,11 @@ import pytest
 
 from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
+from src.report.roadmap import GATE_LIST_POINTER
 from src.shared.engine_names import display_engine
+from src.shared.gate_facts import GATE_LIST_MAX
 from src.shared.move_reasons import consolidation_reason
-from src.shared.report_facts import (
-    replica_risk_text,
-    shared_replica_risk_text,
-    shares_replica_risk,
-)
+from src.shared.report_facts import replica_risk_text, shared_replica_risk_text, shares_replica_risk
 from tests.report_concision import (
     bare_ids,
     known_query_ids,
@@ -257,31 +255,62 @@ def _gate_with_list(report, n: int, mapped: bool) -> str:
     return _gate(_wave(render_engineering_report_md(report), 3))
 
 
-def test_a_long_gate_list_the_migration_map_names_is_capped(report) -> None:
-    """The discourse judge counted the wave 2 gate's 70 names as a repeat: every one of
-    them is a Migration map row (owner and readers). The gate names the first few and
-    counts the rest, and points at the map, so no table is lost."""
-    gate = _gate_with_list(report, 8, mapped=True)
-    shown = ", ".join(md_text(f"wordpress.wp_g{i:02d}") for i in range(5))
-    assert (
-        f"8 tables \\({shown} and 3 more; the Migration map above lists each with its owner and readers\\) stay."
-        in gate
+def test_a_long_gate_list_the_migration_map_names_is_counted_and_pointed_to(report) -> None:
+    """The discourse judge counted the wave 2 gate's 70 names as a repeat (#1642), and
+    then the first names of a 65-table list as noise (#2171): every one of them is a
+    Migration map row (owner and readers). The gate keeps its own count, prints none of
+    the names and points at the map, so no table is lost."""
+    n = GATE_LIST_MAX + 1
+    gate = _gate_with_list(report, n, mapped=True)
+    assert gate == f"- Gate before the next wave: {md_text(f'Check. {n} tables stay.')} " + (
+        md_text(GATE_LIST_POINTER)
     )
-    assert md_text("wordpress.wp_g07") not in gate
+
+
+def test_the_map_pointer_is_said_once_per_gate(report) -> None:
+    """#2171: the discourse wave 3 gate has six long lists; one pointer covers them."""
+    wave, _ = _wave3(report)
+    a = [f"wordpress.wp_a{i:02d}" for i in range(GATE_LIST_MAX + 1)]
+    b = [f"wordpress.wp_b{i:02d}" for i in range(GATE_LIST_MAX + 2)]
+    wave["gate_parts"] = [
+        {"text": f"Check. {len(a)} tables", "items": a},
+        {"text": f" stay. {len(b)} tables", "items": b},
+        {"text": " move.", "items": []},
+    ]
+    wave["gate"] = (
+        f"Check. {len(a)} tables ({', '.join(a)}) stay. {len(b)} tables ({', '.join(b)}) move."
+    )
+    report["facts"]["table_owner_lines"] = {
+        "table_lines": [{"table": t, "owner": "dynamodb", "also_read_by": []} for t in a + b]
+    }
+    gate = _gate(_wave(render_engineering_report_md(report), 3))
+    assert gate.count(md_text(GATE_LIST_POINTER)) == 1
+    assert gate.endswith(f"{md_text(f'{len(b)} tables move.')} {md_text(GATE_LIST_POINTER)}")
+    assert "wp\\_a" not in gate and "wp\\_b" not in gate
+
+
+def test_a_mapped_gate_list_up_to_the_limit_is_printed_whole(report) -> None:
+    """#2171: a short list reads better than a pointer. Up to ``GATE_LIST_MAX`` names
+    the gate prints every one; on main a list of 6 to 8 was cut to 5 and counted."""
+    gate = _gate_with_list(report, GATE_LIST_MAX, mapped=True)
+    for i in range(GATE_LIST_MAX):
+        assert md_text(f"wordpress.wp_g{i:02d}") in gate
+    assert md_text(GATE_LIST_POINTER) not in gate
 
 
 @pytest.mark.passes_on_main  # the negative cases: a short list, or one no map lists
 def test_a_short_or_unmapped_gate_list_is_printed_whole(report) -> None:
     assert md_text("wordpress.wp_g04") in _gate_with_list(copy.deepcopy(report), 5, mapped=True)
-    assert md_text("wordpress.wp_g07") in _gate_with_list(copy.deepcopy(report), 8, mapped=False)
+    assert md_text("wordpress.wp_g10") in _gate_with_list(copy.deepcopy(report), 11, mapped=False)
 
 
 def test_the_replicated_tables_are_referred_to_only_when_listed_in_full(report) -> None:
     report["facts"]["table_sources"]["more_replicated_count"] = 1
     gate = _gate(_wave(render_engineering_report_md(report), 3))
     assert "Sources of truth and replicas" not in gate
-    # #1642: the 13 are Migration map rows, so the gate names 5 and points at the map.
-    assert "and 8 more; the Migration map above lists each with its owner and readers" in gate
+    # #1642, #2171: the 13 are Migration map rows, so the gate points at the map.
+    assert md_text(GATE_LIST_POINTER) in gate
+    assert md_text("wordpress.wp_woocommerce_order_items") not in gate
     report["facts"].pop("table_owner_lines", None)
     report["table_mappings"] = []
     gate = _gate(_wave(render_engineering_report_md(report), 3))

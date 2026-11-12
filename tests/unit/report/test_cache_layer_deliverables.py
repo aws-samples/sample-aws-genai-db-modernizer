@@ -114,8 +114,9 @@ class TestEngineeringReport:
         # #459 round 3: display_engine, not the raw engine id.
         assert "## Cache layer (ElastiCache)" in md
         assert (
-            "ElastiCache fronts 20 designed cached reads (83.4% of calls, 185.1 calls/s) cache-aside"
-            in md
+            # #2171: the role sentence after it says cache-aside, so the lead does not.
+            "ElastiCache fronts 20 designed cached reads (83.4% of calls, 185.1 calls/s). "
+            "ElastiCache is recommended as a cache-aside layer" in md
         )
         # #572: display_engine here too, same as the heading and fronts line above.
         assert "- Owner engines: DynamoDB 20" in md
