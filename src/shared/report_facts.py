@@ -34,6 +34,7 @@ an old report gets one answer per figure.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess  # nosec B404 - one fixed git command, no shell (build_commit)
@@ -108,6 +109,8 @@ SEARCH_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="search")
 # Only a relational engine can be the retained, source-compatible core. Legacy ids count
 # too (the generic ``aurora`` older reports carry).
 RELATIONAL_ENGINES = catalog.engine_ids(status=catalog.REPORTABLE, role="relational")
+
+logger = logging.getLogger(__name__)
 
 
 def engine_role(
@@ -593,6 +596,15 @@ def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         if not wf["migrating"] or served_by is None:
             continue
         engines = wf["engines"]
+        if len(engines) > 2:
+            # Only the merged DynamoDB/DocumentDB wave has two engines; with more, the
+            # in-wave moves and the shared kept-current reads cannot be attributed and
+            # the rows would no longer add up to the wave (#2162).
+            logger.warning(
+                "wave %s has %d migrating engines: its Scope split is not attributed",
+                wf["wave"],
+                len(engines),
+            )
         own_kept: dict[str, int] = {}
         for e in engines:
             moves_to: dict[str, int] = {}
@@ -611,13 +623,20 @@ def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]
                 0,
             )
         if len(engines) == 2:
+            # The wave counts a table both engines read once (#2162). The first engine
+            # is DynamoDB by construction (``_merge_kv_and_document_waves``).
             first, second = engines
-            # The wave counts a table both engines read once (#2162).
-            overlap = min(
-                max(own_kept[first] + own_kept[second] - int(wf["kept_in_sync_tables"] or 0), 0),
-                own_kept[first],
-                own_kept[second],
-            )
+            raw = own_kept[first] + own_kept[second] - int(wf["kept_in_sync_tables"] or 0)
+            overlap = min(max(raw, 0), own_kept[first], own_kept[second])
+            if overlap != raw:
+                # Counts that do not reconcile (a wave whose per-engine counts disagree
+                # with its owner list): say so rather than absorb it silently.
+                logger.warning(
+                    "wave %s: kept-current counts %s do not reconcile with the wave's %s",
+                    wf["wave"],
+                    own_kept,
+                    wf["kept_in_sync_tables"],
+                )
             if overlap:
                 own_kept[second] -= overlap
                 under = out[second]["counted_under"]

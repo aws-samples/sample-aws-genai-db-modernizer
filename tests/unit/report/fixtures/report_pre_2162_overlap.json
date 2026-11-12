@@ -1,0 +1,602 @@
+{
+  "agent_type": "referee-synthesis",
+  "assignment_summary": null,
+  "auto_decided_choices": null,
+  "cache_overlay": null,
+  "carried_writes": null,
+  "considered_not_recommended": null,
+  "contract_version": "1.97",
+  "database_name": "db",
+  "engines_in_use": null,
+  "facts": {
+    "access_pattern_totals": null,
+    "adoption": {
+      "default_path_id": null,
+      "not_offered": [],
+      "one_step": null,
+      "path_count": 0,
+      "paths": []
+    },
+    "assumptions": null,
+    "auto_decided_by_engine": [],
+    "auto_decided_choice_count": 0,
+    "auto_decided_query_count": 0,
+    "busiest_partition_key": null,
+    "cache_layer": null,
+    "close_calls": null,
+    "cost_assumptions": [],
+    "cost_basis_notes": [],
+    "cost_caveat": "Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator (https://calculator.aws/).",
+    "cost_scope_label": "Full-modernization estimate: all waves done, every kept engine running.",
+    "critical_high_risk_count": 0,
+    "critical_high_risk_types": [],
+    "critical_high_risks_by_engine": {},
+    "critical_high_root_cause": null,
+    "cutover_responsibility": "The cutover is your responsibility.",
+    "derived_copy_sync": null,
+    "design_review_reroute_count": 0,
+    "dynamodb_merge_conflicts": null,
+    "dynamodb_merge_reviews": null,
+    "engine_cost_total_usd": 600.0,
+    "engine_count": 3,
+    "engine_scope": null,
+    "engines": [
+      {
+        "cached_call_share_percent": null,
+        "cached_queries": null,
+        "cost_sizing": null,
+        "engine": "dynamodb",
+        "engine_source_tables": 4,
+        "kept_in_sync_tables": 2,
+        "monthly_cost_usd": 100.0,
+        "moves_to_tables": {},
+        "rationale": "",
+        "role": "Migration target",
+        "shared_source_tables": null,
+        "signal_overrides": [],
+        "tables_migrate": 2,
+        "target_objects": null,
+        "workload_percent": 40.0
+      },
+      {
+        "cached_call_share_percent": null,
+        "cached_queries": null,
+        "cost_sizing": null,
+        "engine": "aurora_mysql",
+        "engine_source_tables": null,
+        "kept_in_sync_tables": null,
+        "monthly_cost_usd": 300.0,
+        "moves_to_tables": null,
+        "rationale": "",
+        "role": "Retained",
+        "shared_source_tables": null,
+        "signal_overrides": [],
+        "tables_migrate": 0,
+        "target_objects": null,
+        "workload_percent": 33.3
+      },
+      {
+        "cached_call_share_percent": null,
+        "cached_queries": null,
+        "cost_sizing": null,
+        "engine": "documentdb",
+        "engine_source_tables": 3,
+        "kept_in_sync_tables": 1,
+        "monthly_cost_usd": 200.0,
+        "moves_to_tables": {
+          "dynamodb": 1
+        },
+        "rationale": "",
+        "role": "Migration target",
+        "shared_source_tables": null,
+        "signal_overrides": [],
+        "tables_migrate": 1,
+        "target_objects": null,
+        "workload_percent": 26.7
+      }
+    ],
+    "executive_brief": {
+      "decision_wave": null,
+      "exposures": [],
+      "held_waves": [],
+      "overall_risk_level": "LOW",
+      "projected_monthly_cost_whole_usd": 600,
+      "retired_saving_whole_usd": {},
+      "saving_counted": true,
+      "savings_percent": -20.0,
+      "share_of_all_queries_percent": {},
+      "source_cost_known": true,
+      "source_engine": "mysql",
+      "source_monthly_cost_usd": 500.0,
+      "source_monthly_cost_whole_usd": 500,
+      "waves": [
+        {
+          "engines": [
+            "aurora_mysql"
+          ],
+          "kind": "homogeneous",
+          "readiness": "not_designed",
+          "suggested": null,
+          "wave": 1
+        },
+        {
+          "engines": [
+            "dynamodb",
+            "documentdb"
+          ],
+          "kind": "migration",
+          "readiness": "not_designed",
+          "suggested": null,
+          "wave": 2
+        }
+      ]
+    },
+    "growth_scenarios": null,
+    "hot_partitions": null,
+    "in_scope_query_count": 0,
+    "migration_wave_count": 2,
+    "moving_query_count": 0,
+    "no_engine_in_scope_query_count": 0,
+    "no_migration": {
+      "cached_call_share_percent": 0.0,
+      "critical_high_risks": 0,
+      "engines": [
+        "aurora_mysql"
+      ],
+      "workload_percent": 33.3
+    },
+    "open_risk_count": 0,
+    "open_risks_by_severity": {},
+    "open_risks_by_type": {},
+    "pending_choice_count": 0,
+    "pending_choice_pairs": [],
+    "pending_choice_query_count": 0,
+    "post_schema_reroute_count": 0,
+    "price_list": null,
+    "projected_monthly_cost_usd": 600.0,
+    "query_group_counts": null,
+    "query_pattern_counts": null,
+    "query_total_count": 0,
+    "query_trace": null,
+    "rate_windows": null,
+    "reality_check_decisions": [],
+    "reality_check_trade_offs": [],
+    "relational_gaps": null,
+    "removed_engines": [],
+    "resolved_risk_count": 0,
+    "resolved_risks_by_severity": {},
+    "retired_in_use_engines": [],
+    "routines": null,
+    "row_counts": null,
+    "slice_plan": {
+      "dependencies": [],
+      "engine_critical_high_risks": {},
+      "engine_monthly_cost_usd": {},
+      "kept_whole": [],
+      "move_units": [],
+      "plan_steps": [],
+      "slice_basis": null,
+      "step_basis": "engine_waves",
+      "step_count": 0,
+      "wave_phases": []
+    },
+    "source_of_truth_reroute_count": 0,
+    "source_table_count": 6,
+    "source_view_count": 0,
+    "table_basis": {
+      "basis_table_count": 6,
+      "design_coverage": "none",
+      "designed_engines": [],
+      "mapped_tables": 0,
+      "mapped_tables_by_move": {},
+      "mapped_tables_by_role": {},
+      "mapped_tables_not_served": {},
+      "migrating_tables_not_mapped": 0,
+      "migrating_tables_not_mapped_names": [],
+      "pending_engines": [
+        "dynamodb",
+        "documentdb"
+      ]
+    },
+    "table_owner_lines": null,
+    "table_sources": null,
+    "tables_migrate": 3,
+    "tied_query_count": 0,
+    "trade_off_count": 0,
+    "trade_off_topics": [],
+    "unreviewed_move_count": 0,
+    "unservable": null,
+    "wave_readiness_notes": [
+      {
+        "line": "Not designed yet: run the Aurora MySQL schema design, then check the wave again.",
+        "readiness": "not_designed",
+        "wave": 1
+      },
+      {
+        "line": "Not designed yet: run the DynamoDB and DocumentDB schema design, then check the wave again.",
+        "readiness": "not_designed",
+        "wave": 2
+      }
+    ],
+    "waves": [
+      {
+        "accepted_warning_count": 0,
+        "accepted_warnings": [],
+        "critical_high_risks": 0,
+        "engines": [
+          "aurora_mysql"
+        ],
+        "heterogeneous_note": null,
+        "holds": [],
+        "kept_in_sync": [],
+        "kept_in_sync_tables": null,
+        "lists_relational_gaps": false,
+        "migrating": false,
+        "moved_by_later_waves": 3,
+        "moving_by_engine": null,
+        "moving_tables": null,
+        "next_steps": [
+          {
+            "engine": "aurora_mysql",
+            "line": "run the Aurora MySQL schema design",
+            "step": "design"
+          }
+        ],
+        "no_move": false,
+        "open_warning_count": 0,
+        "readiness": "not_designed",
+        "readiness_line": "Not designed yet: run the Aurora MySQL schema design, then check the wave again.",
+        "readiness_line_short": "Not designed yet: run the Aurora MySQL schema design, then check the wave again.",
+        "redesign_note": null,
+        "redesign_rounds": 0,
+        "rejected_warning_count": 0,
+        "rejected_warnings": [],
+        "review_warning_count": 0,
+        "review_warnings": [],
+        "served_by_engine": null,
+        "served_tables": 6,
+        "shared_in_wave": [],
+        "suggested": null,
+        "tables_only": 6,
+        "to_dos": [],
+        "views": 0,
+        "wave": 1
+      },
+      {
+        "accepted_warning_count": 0,
+        "accepted_warnings": [],
+        "critical_high_risks": 0,
+        "engines": [
+          "dynamodb",
+          "documentdb"
+        ],
+        "heterogeneous_note": null,
+        "holds": [],
+        "kept_in_sync": [
+          {
+            "owner": "aurora_mysql",
+            "sync": "CDC",
+            "table": "db.t4"
+          },
+          {
+            "owner": "aurora_mysql",
+            "sync": "CDC",
+            "table": "db.t5"
+          }
+        ],
+        "kept_in_sync_tables": 2,
+        "lists_relational_gaps": false,
+        "migrating": true,
+        "moved_by_later_waves": null,
+        "moving_by_engine": {
+          "documentdb": 1,
+          "dynamodb": 2
+        },
+        "moving_tables": 3,
+        "next_steps": [
+          {
+            "engine": "dynamodb",
+            "line": "run the DynamoDB schema design",
+            "step": "design"
+          },
+          {
+            "engine": "documentdb",
+            "line": "run the DocumentDB schema design",
+            "step": "design"
+          }
+        ],
+        "no_move": false,
+        "open_warning_count": 0,
+        "readiness": "not_designed",
+        "readiness_line": "Not designed yet: run the DynamoDB and DocumentDB schema design, then check the wave again.",
+        "readiness_line_short": "Not designed yet: run the DynamoDB and DocumentDB schema design, then check the wave again.",
+        "redesign_note": null,
+        "redesign_rounds": 0,
+        "rejected_warning_count": 0,
+        "rejected_warnings": [],
+        "review_warning_count": 0,
+        "review_warnings": [],
+        "served_by_engine": {
+          "documentdb": 3,
+          "dynamodb": 4
+        },
+        "served_tables": 5,
+        "shared_in_wave": [
+          {
+            "owner": "dynamodb",
+            "sync": "CDC",
+            "table": "db.t2"
+          }
+        ],
+        "suggested": null,
+        "tables_only": null,
+        "to_dos": [],
+        "views": null,
+        "wave": 2
+      }
+    ],
+    "workload_total_percent": 100.0
+  },
+  "flagged_unservable": [],
+  "job_id": "job-1",
+  "migration_waves": [
+    {
+      "cutover_query_count": null,
+      "engines": [
+        "aurora_mysql"
+      ],
+      "fronts": null,
+      "gate": "Parity validated.",
+      "gate_parts": null,
+      "homogeneity": "homogeneous",
+      "moves_from": [
+        "mysql"
+      ],
+      "no_move_reason": null,
+      "owned_counts_by_engine": null,
+      "query_count": 10,
+      "rationale": "The whole source database moves first.",
+      "serves_from": [],
+      "share_basis": "queries",
+      "table_count": 6,
+      "table_counts_by_engine": null,
+      "table_groups": null,
+      "table_owners": null,
+      "tables": [
+        "db.t1",
+        "db.t2",
+        "db.t3",
+        "db.t4",
+        "db.t5",
+        "db.t6"
+      ],
+      "title": "Move to Aurora MySQL",
+      "wave": 1,
+      "workload_share_percent": 33.3
+    },
+    {
+      "cutover_query_count": null,
+      "engines": [
+        "dynamodb",
+        "documentdb"
+      ],
+      "fronts": null,
+      "gate": "Parity confirmed.",
+      "gate_parts": null,
+      "homogeneity": null,
+      "moves_from": [
+        "aurora_mysql"
+      ],
+      "no_move_reason": null,
+      "owned_counts_by_engine": {
+        "documentdb": 1,
+        "dynamodb": 2
+      },
+      "query_count": 20,
+      "rationale": "Key-value and document reads.",
+      "serves_from": [],
+      "share_basis": "queries",
+      "table_count": 5,
+      "table_counts_by_engine": {
+        "documentdb": 3,
+        "dynamodb": 4
+      },
+      "table_groups": null,
+      "table_owners": [
+        {
+          "owner": "dynamodb",
+          "sync": "CDC",
+          "table": "db.t2"
+        },
+        {
+          "owner": "aurora_mysql",
+          "sync": "CDC",
+          "table": "db.t4"
+        },
+        {
+          "owner": "aurora_mysql",
+          "sync": "CDC",
+          "table": "db.t5"
+        }
+      ],
+      "tables": [
+        "db.t1",
+        "db.t2",
+        "db.t3",
+        "db.t4",
+        "db.t5"
+      ],
+      "title": "Move key-value and document-shaped data to DynamoDB and DocumentDB",
+      "wave": 2,
+      "workload_share_percent": 66.7
+    }
+  ],
+  "needs_deeper_analysis": false,
+  "pending_engine_choices": null,
+  "post_schema_reroutes": null,
+  "prose_style_rejections": [],
+  "query_groups": [],
+  "query_pattern_groups": null,
+  "query_traces": null,
+  "ranking": [
+    {
+      "analysis_confidence": null,
+      "assigned_queries": null,
+      "complexity_score": null,
+      "confidence_score": 80,
+      "cost_score": null,
+      "migration_complexity_avg": null,
+      "pattern_score": null,
+      "performance_score": null,
+      "rationale": null,
+      "routed_confidence": null,
+      "routed_confidence_basis": null,
+      "routed_confidence_evidence": null,
+      "routed_lead": null,
+      "routed_lead_count": null,
+      "routed_pinned_queries": null,
+      "routed_queries": null,
+      "routed_queries_without_table_evidence": null,
+      "routed_tables": null,
+      "target": "dynamodb",
+      "weight": null,
+      "workload_percent": 40.0
+    },
+    {
+      "analysis_confidence": null,
+      "assigned_queries": null,
+      "complexity_score": null,
+      "confidence_score": 70,
+      "cost_score": null,
+      "migration_complexity_avg": null,
+      "pattern_score": null,
+      "performance_score": null,
+      "rationale": null,
+      "routed_confidence": null,
+      "routed_confidence_basis": null,
+      "routed_confidence_evidence": null,
+      "routed_lead": null,
+      "routed_lead_count": null,
+      "routed_pinned_queries": null,
+      "routed_queries": null,
+      "routed_queries_without_table_evidence": null,
+      "routed_tables": null,
+      "target": "documentdb",
+      "weight": null,
+      "workload_percent": 26.7
+    },
+    {
+      "analysis_confidence": null,
+      "assigned_queries": null,
+      "complexity_score": null,
+      "confidence_score": 90,
+      "cost_score": null,
+      "migration_complexity_avg": null,
+      "pattern_score": null,
+      "performance_score": null,
+      "rationale": null,
+      "routed_confidence": null,
+      "routed_confidence_basis": null,
+      "routed_confidence_evidence": null,
+      "routed_lead": null,
+      "routed_lead_count": null,
+      "routed_pinned_queries": null,
+      "routed_queries": null,
+      "routed_queries_without_table_evidence": null,
+      "routed_tables": null,
+      "target": "aurora_mysql",
+      "weight": null,
+      "workload_percent": 33.3
+    }
+  ],
+  "recommended_architecture": {
+    "architecture_type": "polyglot",
+    "databases": [
+      {
+        "service": "dynamodb",
+        "table_count": 0
+      },
+      {
+        "service": "documentdb",
+        "table_count": 0
+      }
+    ]
+  },
+  "risk_assessment": {
+    "mitigation_strategies": null,
+    "overall_risk_level": "LOW",
+    "risks": []
+  },
+  "routine_followers": [],
+  "routine_units": [],
+  "schema_designs": {
+    "aurora_mysql": {
+      "status": "skipped"
+    }
+  },
+  "scope_unservable": [],
+  "source_table_count": 6,
+  "status": "completed",
+  "summary": "Synthetic report saved before #2162.",
+  "summary_deterministic": "Synthetic report saved before #2162.",
+  "summary_input_budget": null,
+  "summary_llm": null,
+  "summary_source": "deterministic",
+  "summary_validation_warnings": [],
+  "table_mappings": [],
+  "table_sources": null,
+  "tco_analysis": {
+    "assumptions": null,
+    "cost_breakdown": [
+      {
+        "collection_hit_ratio_billed_pct": null,
+        "collection_hit_ratio_pct": null,
+        "database": "dynamodb",
+        "min_billed_miss_pct": null,
+        "monthly_cost_usd": 100.0,
+        "price_list": null,
+        "read_io_hit_ratio_basis": null,
+        "sizing": null,
+        "source_memory_gb": null,
+        "target_memory_gb": null
+      },
+      {
+        "collection_hit_ratio_billed_pct": null,
+        "collection_hit_ratio_pct": null,
+        "database": "documentdb",
+        "min_billed_miss_pct": null,
+        "monthly_cost_usd": 200.0,
+        "price_list": null,
+        "read_io_hit_ratio_basis": null,
+        "sizing": null,
+        "source_memory_gb": null,
+        "target_memory_gb": null
+      },
+      {
+        "collection_hit_ratio_billed_pct": null,
+        "collection_hit_ratio_pct": null,
+        "database": "aurora_mysql",
+        "min_billed_miss_pct": null,
+        "monthly_cost_usd": 300.0,
+        "price_list": null,
+        "read_io_hit_ratio_basis": null,
+        "sizing": null,
+        "source_memory_gb": null,
+        "target_memory_gb": null
+      }
+    ],
+    "current_cost_known": true,
+    "current_monthly_cost": 500.0,
+    "eliminated_engine_costs": null,
+    "projected_monthly_cost": 600.0,
+    "retired_engine_savings": null,
+    "savings_percent": -20.0,
+    "unqueried_tables": null
+  },
+  "tied_queries": [],
+  "timestamp": "2026-11-12T00:00:00Z",
+  "trade_offs": [],
+  "unresolved_names": null,
+  "wave_redesign": null,
+  "wave_warning_decisions": null
+}
