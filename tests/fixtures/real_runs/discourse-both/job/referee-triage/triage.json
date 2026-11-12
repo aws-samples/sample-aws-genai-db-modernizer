@@ -1,6 +1,6 @@
 {
   "contract_version": "1.4",
-  "job_id": "61bd7de6",
+  "job_id": "b5dd22c9",
   "database_name": "discourse",
   "agent_type": "referee-triage",
   "selected_agents": [
@@ -4888,6 +4888,6 @@
     ]
   },
   "confidence_score": 100,
-  "timestamp": "2026-11-09T12:29:24.434359Z",
+  "timestamp": "2026-11-12T17:17:13.591332Z",
   "engine_scope": null
 }

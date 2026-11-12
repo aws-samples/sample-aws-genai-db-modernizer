@@ -4,8 +4,8 @@
     "agent_name": "documentdb-analysis-agent",
     "agent_version": "1.0.0",
     "target_database": "documentdb",
-    "analysis_timestamp": "2026-11-09T12:29:47.660616",
-    "analysis_duration_seconds": 19.253604
+    "analysis_timestamp": "2026-11-12T17:17:29.495555",
+    "analysis_duration_seconds": 12.100986
   },
   "table_recommendations": [
     {

@@ -1,12 +1,12 @@
 {
   "contract_version": "1.2",
-  "job_id": "61bd7de6",
+  "job_id": "b5dd22c9",
   "source_database": "discourse",
   "target_engine": "elasticache",
   "key_designs": [
     {
-      "key_pattern": "users:{username_lower}",
-      "data_type": "hash",
+      "key_pattern": "users:username_lower:{username_lower}",
+      "data_type": "string",
       "use_case": "caching",
       "source_tables": [
         "public.users"
@@ -14,35 +14,54 @@
       "fields_mapped": [
         "id",
         "username",
-        "username_lower",
         "name",
-        "title",
+        "username_lower",
+        "created_at",
+        "updated_at",
+        "last_posted_at",
+        "last_seen_at",
         "active",
         "admin",
         "moderator",
-        "staged",
-        "approved",
         "trust_level",
+        "approved",
+        "approved_by_id",
+        "approved_at",
+        "suspended_at",
+        "suspended_till",
+        "silenced_till",
+        "staged",
+        "title",
+        "uploaded_avatar_id",
         "locale",
         "primary_group_id",
         "flair_group_id",
-        "uploaded_avatar_id",
-        "suspended_till",
-        "silenced_till",
-        "last_seen_at",
-        "last_posted_at"
+        "views",
+        "flag_level",
+        "ip_address",
+        "registration_ip_address",
+        "date_of_birth",
+        "previous_visit_at",
+        "first_seen_at",
+        "last_emailed_at",
+        "group_locked_trust_level",
+        "manual_locked_trust_level",
+        "secure_identifier",
+        "last_seen_reviewable_id",
+        "required_fields_version",
+        "seen_notification_id"
       ],
       "ttl_seconds": 300,
-      "eviction_notes": "The 300 second TTL bounds how long a changed user row (suspension, silencing, trust level, username) stays stale when the delete after the owner write fails, and it keeps the key evictable under volatile-lru.",
+      "eviction_notes": "The 300 second TTL bounds how long a changed user row stays stale in the cache if the owner write path fails to delete the key. The TTL also keeps the key evictable when memory runs out.",
       "estimated_key_count": 53,
-      "estimated_avg_value_bytes": 600,
-      "rationale": "Query `-7551067` reads one users row by the unique username_lower and runs about 3.3 times a second. A hash holds the row as fields so HGETALL returns it in one round trip. The key is single-key and needs no hash tag; the lookup value username_lower is the key suffix.",
-      "example_key": "users:<username_lower>",
-      "example_value": "{\"id\": 42, \"username\": \"<username>\", \"username_lower\": \"<username_lower>\", \"active\": true, \"admin\": false, \"moderator\": false, \"staged\": false, \"trust_level\": 1, \"locale\": \"en\", \"suspended_till\": null, \"silenced_till\": null}"
+      "estimated_avg_value_bytes": 1200,
+      "rationale": "The source query reads one users row by the unique username_lower column and returns every column. A string holding the serialized row answers it with one GET and no joins. The lookup is single key, so no hash tag is needed and keys spread across all slots. Nothing writes the key except the cache fill.",
+      "example_key": "users:username_lower:<username>",
+      "example_value": "{\"id\": 1, \"username\": \"<username>\", \"username_lower\": \"<username>\", \"name\": \"<name>\", \"active\": true, \"admin\": false, \"moderator\": false, \"trust_level\": 1, \"staged\": false, \"ip_address\": \"192.0.2.10\", \"registration_ip_address\": \"192.0.2.10\", \"created_at\": \"2026-01-01T00:00:00Z\"}"
     },
     {
-      "key_pattern": "api_keys:{key_hash}",
-      "data_type": "hash",
+      "key_pattern": "api_keys:key_hash:{key_hash}",
+      "data_type": "string",
       "use_case": "caching",
       "source_tables": [
         "public.api_keys"
@@ -51,22 +70,27 @@
         "id",
         "user_id",
         "created_by_id",
-        "hidden",
-        "scope_mode",
+        "created_at",
+        "updated_at",
         "allowed_ips",
+        "hidden",
         "last_used_at",
-        "revoked_at"
+        "revoked_at",
+        "description",
+        "key_hash",
+        "truncated_key",
+        "scope_mode"
       ],
       "ttl_seconds": 60,
-      "eviction_notes": "The 60 second TTL bounds how long a revoked key keeps authenticating when the delete after the revocation fails, and it keeps the key evictable under volatile-lru. Only rows with revoked_at null are cached.",
+      "eviction_notes": "The 60 second TTL bounds how long a revoked key can still authenticate from the cache if the revoke path fails to delete the key. The TTL also keeps the key evictable when memory runs out.",
       "estimated_key_count": 1,
-      "estimated_avg_value_bytes": 300,
-      "rationale": "Query `70252307` looks up the one active API key by its hash, about 3.3 times a second, and the filter on revoked_at null plus ORDER BY id LIMIT returns at most one row. A hash with a short TTL serves the lookup with HGETALL. The key suffix is the key_hash column, a credential, so the example uses a placeholder.",
-      "example_key": "api_keys:<token>",
-      "example_value": "{\"id\": 1, \"user_id\": 42, \"created_by_id\": 42, \"hidden\": false, \"scope_mode\": 0, \"last_used_at\": null, \"revoked_at\": null}"
+      "estimated_avg_value_bytes": 400,
+      "rationale": "The source query finds the one active key (revoked_at IS NULL) for a hash and returns the row. A string holding the serialized row answers it with one GET. Only active keys are cached, and a hash with no active key is a miss served by the owning database. The lookup is single key, so no hash tag is needed.",
+      "example_key": "api_keys:key_hash:<token>",
+      "example_value": "{\"id\": 1, \"key_hash\": \"<token>\", \"truncated_key\": \"<token>\", \"user_id\": null, \"created_by_id\": 1, \"hidden\": false, \"revoked_at\": null, \"scope_mode\": 0, \"allowed_ips\": null, \"description\": \"<description>\", \"last_used_at\": \"2026-01-01T00:00:00Z\"}"
     },
     {
-      "key_pattern": "api_key_scopes:{api_key_id}",
+      "key_pattern": "api_key_scopes:api_key_id:{api_key_id}",
       "data_type": "string",
       "use_case": "caching",
       "source_tables": [
@@ -77,24 +101,26 @@
         "api_key_id",
         "resource",
         "action",
-        "allowed_parameters"
+        "allowed_parameters",
+        "created_at",
+        "updated_at"
       ],
       "ttl_seconds": 300,
-      "eviction_notes": "The 300 second TTL bounds how long a changed scope list stays stale, and it keeps the key evictable under volatile-lru. An empty list is cached as an empty JSON array so a key with no scopes does not reach the owner on every call.",
+      "eviction_notes": "The 300 second TTL bounds how long a changed scope list stays stale. The TTL also keeps the key evictable when memory runs out.",
       "estimated_key_count": 1,
-      "estimated_avg_value_bytes": 200,
-      "rationale": "Query `-5742163` returns all scope rows of one API key, about 3.3 times a second, and the average result is zero rows. One string holding the serialized array keeps the whole list in a single GET and works on every engine version.",
-      "example_key": "api_key_scopes:1",
-      "example_value": "[]"
+      "estimated_avg_value_bytes": 300,
+      "rationale": "The source query returns every scope row of one API key, and the rows are small. A string holding a JSON array of the rows answers it with one GET. An API key with no scopes is stored as an empty array, so repeated lookups for it do not reach the owning database until the TTL ends. The lookup is single key, so no hash tag is needed.",
+      "example_key": "api_key_scopes:api_key_id:1",
+      "example_value": "[{\"id\": 1, \"api_key_id\": 1, \"resource\": \"<resource>\", \"action\": \"<action>\", \"allowed_parameters\": null}]"
     }
   ],
   "access_patterns": [
     {
       "pattern_id": "EC-AP-1",
-      "description": "Look up a user by lowercase username from the cache, and fill the cache from the owner on a miss.",
-      "operation": "HGETALL",
-      "key_pattern": "users:{username_lower}",
-      "command_example": "HGETALL users:<username_lower>",
+      "description": "Look up a user row by lowercase username. A hit is one GET; a miss reads the owning database and fills the key.",
+      "operation": "GET",
+      "key_pattern": "users:username_lower:{username_lower}",
+      "command_example": "GET users:username_lower:<username>",
       "source_tables": [
         "public.users"
       ],
@@ -102,16 +128,15 @@
         "-7551067248247426933"
       ],
       "pipeline_commands": [
-        "HSET users:<username_lower> id 42 username <username> trust_level 1",
-        "EXPIRE users:<username_lower> 300"
+        "SET users:username_lower:<username> \"{...}\" EX 300"
       ]
     },
     {
       "pattern_id": "EC-AP-2",
-      "description": "Look up an active API key by its hash from the cache, and fill the cache from the owner on a miss.",
-      "operation": "HGETALL",
-      "key_pattern": "api_keys:{key_hash}",
-      "command_example": "HGETALL api_keys:<token>",
+      "description": "Look up the active API key row by key hash. A hit is one GET; a miss reads the owning database and fills the key only when an active key exists.",
+      "operation": "GET",
+      "key_pattern": "api_keys:key_hash:{key_hash}",
+      "command_example": "GET api_keys:key_hash:<token>",
       "source_tables": [
         "public.api_keys"
       ],
@@ -119,16 +144,15 @@
         "7025230785254451127"
       ],
       "pipeline_commands": [
-        "HSET api_keys:<token> id 1 user_id 42 hidden 0",
-        "EXPIRE api_keys:<token> 60"
+        "SET api_keys:key_hash:<token> \"{...}\" EX 60"
       ]
     },
     {
       "pattern_id": "EC-AP-3",
-      "description": "Read all scopes of an API key as one serialized list from the cache, and fill the cache from the owner on a miss.",
+      "description": "Read all scope rows of an API key. A hit is one GET; a miss reads the owning database and fills the key, with an empty array when the key has no scopes.",
       "operation": "GET",
-      "key_pattern": "api_key_scopes:{api_key_id}",
-      "command_example": "GET api_key_scopes:1",
+      "key_pattern": "api_key_scopes:api_key_id:{api_key_id}",
+      "command_example": "GET api_key_scopes:api_key_id:1",
       "source_tables": [
         "public.api_key_scopes"
       ],
@@ -136,36 +160,38 @@
         "-5742163561492595810"
       ],
       "pipeline_commands": [
-        "SET api_key_scopes:1 \"[]\" EX 300"
+        "SET api_key_scopes:api_key_id:1 \"[...]\" EX 300"
       ]
     }
   ],
   "cache_invalidation": [
     {
-      "key_pattern": "users:{username_lower}",
+      "key_pattern": "users:username_lower:{username_lower}",
       "strategy": "manual",
-      "description": "The application deletes the key after each owner write on the users row. A username change deletes the key of the old username_lower and of the new one. The 300 second TTL ends the staleness if a delete fails.",
+      "description": "After each owner write that inserts, updates or deletes a users row, the application deletes the key built from that row's username_lower. A username change deletes the key of the old name. If the delete fails, the key stays stale for at most the 300 second TTL. A read that must see the change at once reads the owning database.",
       "source_write_query_ids": [
+        "-2782077088915282901",
         "-439324983697871549",
         "-2497336206258084571",
-        "-2782077088915282901",
         "6393695394883266315",
         "-7268244878270074906",
-        "-7318606370788713916"
+        "-7318606370788713916",
+        "8321624443266976557",
+        "2150880814507944816"
       ]
     },
     {
-      "key_pattern": "api_keys:{key_hash}",
-      "strategy": "manual",
-      "description": "The application deletes the key when the owner revokes or changes the API key. The last_used_at update does not delete the key: the cached last_used_at is stale by up to the 60 second TTL.",
+      "key_pattern": "api_keys:key_hash:{key_hash}",
+      "strategy": "ttl",
+      "description": "The cached row carries last_used_at, which the owner updates on each use, so a cached copy is up to 60 seconds behind that column. A revoke deletes the key in the application. If that delete fails, a revoked key can authenticate from the cache for at most the 60 second TTL.",
       "source_write_query_ids": [
         "-2787986452481923624"
       ]
     },
     {
-      "key_pattern": "api_key_scopes:{api_key_id}",
+      "key_pattern": "api_key_scopes:api_key_id:{api_key_id}",
       "strategy": "ttl",
-      "description": "The collection captured no owner write on API key scopes, so the key expires after 300 seconds and a changed scope list is stale until then. A read that must see a scope change immediately reads the owner database.",
+      "description": "A change to a key's scopes becomes visible when the 300 second TTL ends, or at once when the application deletes the key after the owner write. The input holds no owner write on this table.",
       "source_write_query_ids": []
     }
   ],
@@ -173,13 +199,28 @@
   "migration_notes": [],
   "trade_offs": [
     {
-      "description": "User rows are cached by lowercase username with a 300 second TTL, and the application deletes the key after each owner write.",
-      "impact": "A suspension or silencing that is not followed by a successful delete is visible to cached reads for up to 300 seconds. A read that must see the change at once reads the owner database, which serves every cache miss.",
+      "description": "User rows are cached as one serialized string per lowercase username instead of a hash with one field per column.",
+      "impact": "A read returns the whole row in one GET, which matches the source query that returns every column. A change to one column rewrites the whole value, and the application deletes the key rather than patching it.",
       "source_tables": [
         "public.users"
       ],
       "target_tables": [
-        "users:{username_lower}"
+        "users:username_lower:{username_lower}"
+      ],
+      "query_ids": [
+        "-7551067248247426933"
+      ],
+      "engine": "elasticache",
+      "topic": "key_design"
+    },
+    {
+      "description": "A cached user row stays until the owner write path deletes its key, and for at most the 300 second TTL if that delete fails.",
+      "impact": "After a username, trust level or suspension change, a read that must see the change before the delete reads the owning database, which serves every cache miss and every write.",
+      "source_tables": [
+        "public.users"
+      ],
+      "target_tables": [
+        "users:username_lower:{username_lower}"
       ],
       "query_ids": [
         "-7551067248247426933"
@@ -188,13 +229,13 @@
       "topic": "consistency"
     },
     {
-      "description": "API key rows are cached by key hash with a 60 second TTL, and only keys with revoked_at null are cached.",
-      "impact": "A revoked key keeps authenticating for up to 60 seconds if the delete after the revocation fails. A hash that matches no active key is not cached, so every request with an unknown hash is served by the owner database.",
+      "description": "API key rows use a 60 second TTL, shorter than the other keys, because they gate authentication.",
+      "impact": "A revoked key stops authenticating when the revoke path deletes its key, and for at most 60 seconds if that delete fails. The shorter TTL costs one owner read per active key per minute.",
       "source_tables": [
         "public.api_keys"
       ],
       "target_tables": [
-        "api_keys:{key_hash}"
+        "api_keys:key_hash:{key_hash}"
       ],
       "query_ids": [
         "7025230785254451127"
@@ -203,47 +244,47 @@
       "topic": "consistency"
     },
     {
-      "description": "The key hash is a credential and forms part of the cache key name.",
-      "impact": "Key names appear in cache monitoring and slow logs, so the stored hash, never the raw API key, is used in the name and access to those tools is limited to operators.",
+      "description": "The cached API key row holds last_used_at, which the owner updates on every use of a key.",
+      "impact": "Reads of last_used_at from the cache are up to 60 seconds behind the owning database. The update itself stays on the owning database and does not touch the cache.",
       "source_tables": [
         "public.api_keys"
       ],
       "target_tables": [
-        "api_keys:{key_hash}"
+        "api_keys:key_hash:{key_hash}"
       ],
       "query_ids": [
         "7025230785254451127"
       ],
       "engine": "elasticache",
-      "topic": "operational"
+      "topic": "consistency"
     },
     {
-      "description": "API key scopes are cached as one serialized array per API key, with an empty array cached for a key with no scopes.",
-      "impact": "Scope changes are visible after the 300 second TTL expires, because no owner write on scopes was captured to trigger a delete. The array is read and written whole, so a single scope cannot be read alone.",
+      "description": "An API key with no scopes is cached as an empty JSON array for 300 seconds.",
+      "impact": "Repeated scope lookups for such a key are served from the cache. A scope added to the key reaches readers when the application deletes the key, or after the 300 second TTL.",
       "source_tables": [
         "public.api_key_scopes"
       ],
       "target_tables": [
-        "api_key_scopes:{api_key_id}"
+        "api_key_scopes:api_key_id:{api_key_id}"
       ],
       "query_ids": [
         "-5742163561492595810"
       ],
       "engine": "elasticache",
-      "topic": "key_design"
+      "topic": "query_translation"
     },
     {
-      "description": "All three workloads are single-key reads of small values, with an estimated total below 1 MB.",
-      "impact": "Every key sits in its own hash slot with no multi-key command, so no hash tag is needed and no slot is hot. Memory is not a constraint at this size, and every key carries a TTL so it stays evictable.",
+      "description": "Every key is read with a single-key command, so no key carries a hash tag.",
+      "impact": "Keys spread across all 16,384 hash slots, and no multi-key command or Lua script is needed. The row counts are small (53 users, 1 API key), so the cache holds well under 1 MB of values.",
       "source_tables": [
         "public.users",
         "public.api_keys",
         "public.api_key_scopes"
       ],
       "target_tables": [
-        "users:{username_lower}",
-        "api_keys:{key_hash}",
-        "api_key_scopes:{api_key_id}"
+        "users:username_lower:{username_lower}",
+        "api_keys:key_hash:{key_hash}",
+        "api_key_scopes:api_key_id:{api_key_id}"
       ],
       "query_ids": [
         "-7551067248247426933",
