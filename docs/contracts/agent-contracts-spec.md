@@ -149,6 +149,6 @@ The library entry point `assess()` has its own request and result, versioned apa
 CONTRIBUTING.md, "Contract Changes", owns the procedure. In short:
 
 1. Declare the bump kind with `uv run python scripts/bump_contract.py <contract> minor|major --reason "..." --issue N`. This writes one file under `src/contracts/pending/`.
-2. After your last rebase onto main, run `uv run python scripts/resolve_contract_versions.py`. It assigns the number and regenerates both snapshots.
+2. Leave the version, the Version History and both snapshots at main's and merge with the pending file: the release step (`uv run python scripts/resolve_contract_versions.py --release --issue N`) assigns every number and regenerates both snapshots in one commit. A MAJOR is the exception: after your last rebase, run `uv run python scripts/resolve_contract_versions.py` in the pull request, since the merge queue refuses a pending MAJOR.
 3. In tests, compare a written contract's version with `current_version(Model)`, never a literal.
 4. A MAJOR bump ships its adapter in the same change.

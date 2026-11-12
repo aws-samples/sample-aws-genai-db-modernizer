@@ -185,6 +185,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ),
     ("scripts/validate_schemas.py", "validate_schema_file", "schema"): "JSON Schema files",
     ("scripts/contract_schema_snapshot.py", "main", "<expr>"): "the contract schema snapshot",
+    ("scripts/resolve_contract_versions.py", "load", "<expr>"): (
+        "the two committed contract snapshots of a tree (generated test baselines, not "
+        "artifact contracts), compared by the hand-set guard (#2176)"
+    ),
     ("scripts/contract_value_snapshot.py", "main", "<expr>"): "the contract value snapshot",
     ("scripts/regenerate_baselines.py", "_contract_schema_stale", "committed"): (
         "the contract schema snapshot, compared with a fresh rebuild"

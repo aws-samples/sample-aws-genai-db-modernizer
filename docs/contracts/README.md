@@ -55,7 +55,7 @@ uv run python -c "from src.contracts.collector_output import CollectorOutputCont
 
 ## Changing a contract
 
-The procedure (declare the bump with `scripts/bump_contract.py`, assign the number with `scripts/resolve_contract_versions.py` after the last rebase) is in CONTRIBUTING.md under "Contract Changes" and summarised in section 5 of the spec.
+The procedure (declare the bump with `scripts/bump_contract.py` in the pull request; the release assigns the number with `scripts/resolve_contract_versions.py --release`, and a MAJOR is resolved in its own pull request) is in CONTRIBUTING.md under "Contract Changes" and summarised in section 5 of the spec.
 
 ## Related documentation
 

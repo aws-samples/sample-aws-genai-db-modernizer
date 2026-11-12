@@ -95,8 +95,10 @@ and `ci/e2e-llm.sh` build it for you.
 - Before fanning out, list each issue's files. Issues that share a file are
   not independent: land the shared extraction first, decide the merge order,
   then parallelize the rest.
-- Regenerate generated baselines (the routing snapshot, the contract schema
-  snapshot) on top of main on every rebase; never hand-merge them.
+- Regenerate generated baselines (the routing snapshot) on top of main on
+  every rebase; never hand-merge them. The contract snapshots, versions and
+  Version History stay at main's: a pull request adds only its pending file
+  (`scripts/bump_contract.py`) and the release resolves it (ADR-008 Decision 8).
   `uv run python scripts/regenerate_baselines.py --check` names the stale ones
   and their commands; `uv run python scripts/regenerate_baselines.py --reason
   "why it moved (#NNN)"` regenerates the stale ones (#1163).
@@ -309,5 +311,9 @@ Self-review checklist, from findings that recur in review. Each item says what t
 - The "Maintainer Decision" label marks an issue or PR waiting for a
   maintainer, and blocks a PR from merging. Agents may add it; agents never
   remove it unless a human explicitly says to in that session.
+- The `contract-major` and `contract-minor` labels (and the old
+  `Contract Major Approved`) approve an `assess()` contract bump. Agents may
+  apply them; agents never remove them unless the maintainer explicitly says
+  to in that session.
 - Maintainers mirroring this repo into a deployment target: see
   CONTRIBUTING.md's Maintainer Sync section (`scripts/maintainer-sync.sh`).

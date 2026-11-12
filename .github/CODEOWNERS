@@ -13,6 +13,12 @@
 # ever runs, and merging still needs one approving review either way.
 /.github/workflows/ @tebanieo
 
+# ci/ holds the scripts the required checks run (#2176). The contract-major-gate
+# workflow runs the base branch's copy of ci/contract_major_gate.py, so a pull
+# request cannot change what that check decides; this requests a review of any
+# other change under ci/ too (a request, not a requirement, as above).
+/ci/ @tebanieo
+
 # contrib/ holds a quarantined third-party snapshot (#1412), never built,
 # imported or tested; its ElastiCache prototype is reviewed by its domain owner.
 /contrib/ @tebanieo @nfunke

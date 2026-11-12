@@ -13,16 +13,19 @@ now declares the *kind* of bump instead of a number:
 
 which writes one file, ``src/contracts/pending/<contract>.<slug>.toml``. Its name is
 unique to the branch, so two pull requests never touch the same line for it. While a
-bump is pending the contract keeps main's version, Version History and snapshots,
-and the snapshot checks accept a shape change that the declared kind covers. After
-the last rebase, before the pull request enters the merge queue:
+bump is pending the contract keeps the last release's version, Version History and
+snapshots, and the snapshot checks accept a shape change that the declared kind covers.
+A pending MINOR merges as it is and waits on main; the release resolves every pending
+file once (#2176):
 
-    uv run python scripts/resolve_contract_versions.py
+    uv run python scripts/resolve_contract_versions.py --release --issue N
 
-assigns the next free number above main's, writes the Version History entry from
-the pending file, deletes it and regenerates both snapshots. The merge queue refuses
-a pending file (``resolve_contract_versions.py --check --require-resolved`` in the
-``validate-contracts`` job), so main never holds an unresolved bump.
+which moves each contract by the strongest kind declared for it, writes the Version
+History entry from the pending files, deletes them, regenerates both snapshots and
+commits it as one commit. The merge queue refuses a pending MAJOR
+(``resolve_contract_versions.py --check --refuse-pending-major`` in the
+``validate-contracts`` job): the pull request that makes one resolves it after its last
+rebase with ``uv run python scripts/resolve_contract_versions.py``.
 
 This module holds the parsing and the text edits both scripts use, so the unit tests
 (``tests/unit/scripts/test_contract_bumps.py``) cover them without git.
@@ -52,6 +55,7 @@ _VERSION_RE = re.compile(r"^(\d+)\.(\d+)$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _HEADING_RE = re.compile(r"^\s*Version [Hh]istory:\s*$")
 _ENTRY_RE = re.compile(r"^(\s*)-\s+(v?)(\d+)\.(\d+)\b")
+_LEAD_RE = re.compile(r"^-\s+v?\d+\.\d+\b\s*")
 _DEFAULT_RE = re.compile(
     r"(contract_version\s*:\s*str\s*=\s*Field\(\s*(?:default\s*=\s*)?\")(\d+\.\d+)(\")"
 )
@@ -136,7 +140,7 @@ def fragment_text(contract: str, kind: str, reason: str, issue: int | None) -> s
         raise BumpError("a pending bump needs a --reason: it becomes the Version History entry")
     lines = [
         "# A pending contract version bump (ADR-008 Decision 8). The number is assigned by",
-        f"# {RESOLVE_COMMAND} after the last rebase.",
+        f"# {RESOLVE_COMMAND} --release at release (a MAJOR: in its pull request).",
         f"contract = {json.dumps(contract)}",
         f"kind = {json.dumps(kind)}",
         f"reason = {json.dumps(' '.join(reason.split()), ensure_ascii=False)}",
@@ -385,35 +389,45 @@ def insert_history_entry(
     raise BumpError(f"no Version History in {where} has {current} as its newest entry{found}")
 
 
-def history_entries(source: str) -> list[str]:
-    """The text of every Version History entry of a module (module and class
-    docstrings), after its ``- X.Y (...):`` lead, with whitespace collapsed."""
+def history_lines_by_owner(source: str) -> dict[str, list[str]]:
+    """Every Version History entry line of a module, as written (whitespace collapsed),
+    keyed by the docstring that holds it: ``""`` for the module, else the class name.
+    ``resolve_contract_versions.hand_set_problems`` compares them between two trees."""
     tree = ast.parse(source)
     bare = source.splitlines()
-    owners: list[ast.Module | ast.ClassDef] = [tree]
-    owners += [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
-    entries: list[str] = []
-    for owner in owners:
+    owners: list[tuple[str, ast.Module | ast.ClassDef]] = [("", tree)]
+    owners += [(n.name, n) for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    found: dict[str, list[str]] = {}
+    for name, owner in owners:
         span = _docstring_lines(owner)
         if span is None:
             continue
         for history in _histories(bare, *span):
+            entries: list[str] = []
             current: list[str] = []
             for line in bare[history.first_entry : history.last_line + 1]:
                 entry = _ENTRY_RE.match(line)
                 if entry and entry.group(1) == history.indent:
                     if current:
                         entries.append(" ".join(current))
-                    current = [line[entry.end() :]]
+                    current = [line.strip()]
                 else:
                     current.append(line)
             if current:
                 entries.append(" ".join(current))
+            found.setdefault(name, []).extend(" ".join(e.split()) for e in entries)
+    return found
+
+
+def history_entries(source: str) -> list[str]:
+    """The text of every Version History entry of a module (module and class
+    docstrings), after its ``- X.Y (...):`` lead, with whitespace collapsed."""
     out = []
-    for text in entries:
-        text = " ".join(text.split())
-        lead = re.match(r"^(?:\([^)]*\))?\s*:?\s*", text)
-        out.append(text[lead.end() :] if lead else text)
+    for entries in history_lines_by_owner(source).values():
+        for line in entries:
+            text = _LEAD_RE.sub("", line, count=1)
+            lead = re.match(r"^(?:\([^)]*\))?\s*:?\s*", text)
+            out.append(text[lead.end() :] if lead else text)
     return out
 
 

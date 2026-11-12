@@ -4,9 +4,10 @@
 
 """Fail when a test pins a contract's current version (#1158 follow-up).
 
-``scripts/resolve_contract_versions.py`` moves a contract's version after the last
-rebase. A test that compares a written contract with a literal (``== "1.44"``)
-then fails on the resolved branch, after review, and needs a hand edit. Tests
+``scripts/resolve_contract_versions.py`` moves a contract's version after review (at
+release, or a MAJOR after the pull request's last rebase). A test that compares a
+written contract with a literal (``== "1.44"``) then fails on the resolved tree and
+needs a hand edit. Tests
 compare with ``current_version(Model)`` (``src/shared/contract_versioning.py``)
 instead.
 

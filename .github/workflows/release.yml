@@ -53,6 +53,13 @@ jobs:
               )
           "
 
+      - name: Refuse a tag with pending contract bumps
+        # The release resolve (CONTRIBUTING.md's Releases, step 2) assigns every pending
+        # contract bump's number before the tag (ADR-008 Decision 8, #2176). A tag on a
+        # commit that still holds a pending file would ship two shapes under one released
+        # number, so the release stops here, before anything is published.
+        run: uv run python scripts/resolve_contract_versions.py --check --require-resolved
+
       - name: Determine pre-release
         id: prerelease
         env:
