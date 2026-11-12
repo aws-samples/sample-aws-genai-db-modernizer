@@ -24,7 +24,13 @@ import pytest
 from src.agents.referee.migration_risks import build_migration_risks
 from src.report.engineering_report import _app_layer_notes_md, render_engineering_report_md
 from src.shared.design_text import design_prose_report, unsupported_pattern_detail
-from tests.report_concision import md_sections, repeated_paragraphs, repeated_statements
+from tests.report_concision import (
+    bare_ids,
+    known_query_ids,
+    md_sections,
+    repeated_paragraphs,
+    repeated_statements,
+)
 
 REPO = Path(__file__).resolve().parents[3]
 SAVED = REPO / "tests/fixtures/real_runs/wordpress-both/report.json"
@@ -178,3 +184,19 @@ def test_a_model_note_restating_a_column_default_sentence_states_it_once() -> No
     md = "\n".join(_app_layer_notes_md(report["schema_designs"]["aurora_mysql"]))
     assert md.count(ROWS) == 1
     assert "set these dates on insert" in md
+
+
+def test_a_query_id_in_a_waived_lists_shared_sentence_is_a_code_span() -> None:
+    # Review of #2168: the waived list's lead was escaped without the report's query ids,
+    # so an id in its shared sentence stayed bare, unlike the other three lists.
+    report: dict[str, Any] = json.loads(SAVED.read_text())
+    qid = next(iter(sorted(known_query_ids(report))))
+    shared = f"Query {qid[:8]} reads the same counter row that every single page view on the site also updates."
+    report["schema_designs"]["elasticache"]["served_by_waiver"] = [
+        {"source_query_ids": [Q[0]], "reason": f"First. {shared}"},
+        {"source_query_ids": [Q[1]], "reason": f"Second. {shared}"},
+    ]
+    md = render_engineering_report_md(design_prose_report(report))
+    [lead] = [ln for ln in md.splitlines() if ln.startswith("- For each of these:")]
+    assert f"`{qid[:8]}`" in lead
+    assert bare_ids(md, known_query_ids(report)) == []
