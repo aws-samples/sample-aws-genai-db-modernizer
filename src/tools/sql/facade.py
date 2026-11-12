@@ -172,7 +172,7 @@ _TSQL_DML_TOP_RE = re.compile(
 # T-SQL's ``OPTION (OPTIMIZE FOR (@p UNKNOWN, @q = 5))`` query hint: sqlglot's tsql
 # reader knows ``OPTIMIZE FOR UNKNOWN`` but not the per-variable list, and fails on the
 # whole statement (#2147), so the facade reads the list as ``OPTIMIZE FOR UNKNOWN``. A
-# plan hint names no table and states no fact; a list holding a literal or a comment is
+# plan hint names no table and states no fact; a list holding a string literal or a comment is
 # left for the fallback.
 _TSQL_OPTIMIZE_FOR_RE = re.compile(
     r"\bOPTIMIZE\s+FOR\s*\((?:[^()]|\([^()]*\))*\)",

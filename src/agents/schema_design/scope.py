@@ -254,16 +254,28 @@ def _collect(
     schema_output: dict,
     in_scope_tables: set[str],
     in_scope_queries: set[str],
+    no_table_queries: set[str] | None = None,
 ) -> tuple[dict[str, tuple[str, list[str]]], dict[str, list[str]]]:
-    """Group offending tables/queries with their locations (each reported once)."""
+    """Group offending tables/queries with their locations (each reported once).
+
+    A placeholder table (the collector's ``unknown``) named where the only queries are
+    ones that read no table (``no_table_queries``: in scope, ``source_tables`` empty) is
+    that query's echo of the collector, not a table the design adds (#2147): it is not
+    reported. Anywhere else, a placeholder is reported like any other table."""
+    refs = list(_references(specs, schema_output))
+    queries_at: dict[str, set[str]] = {}
+    for kind, value, location in refs:
+        if kind == "query":
+            queries_at.setdefault(location, set()).add(value.strip())
     bad_tables: dict[str, tuple[str, list[str]]] = {}
     bad_queries: dict[str, list[str]] = {}
-    for kind, value, location in _references(specs, schema_output):
+    for kind, value, location in refs:
         if kind == "table":
             key = normalize_table_name(value)
-            # A placeholder (the collector's ``unknown``) designs no table, and no
-            # query's ``source_tables`` lists one (#2147).
-            if not key or key in in_scope_tables or is_placeholder_table(value):
+            if not key or key in in_scope_tables:
+                continue
+            at = queries_at.get(location, set())
+            if is_placeholder_table(value) and at and at <= (no_table_queries or set()):
                 continue
             locations = bad_tables.setdefault(key, (value, []))[1]
         else:
@@ -310,8 +322,20 @@ def assess_schema_scope(engine: str, schema_output: dict, assignment: dict) -> S
     if _ENGINE_FIELDS.get(engine) is _AURORA:
         schema_output, warning_source = _split_aurora_patterns(schema_output)
 
+    no_table_queries = {
+        str(qa["query_id"]).strip()
+        for qa in assignment.get("query_assignments") or []
+        if isinstance(qa, dict)
+        and qa.get("query_id") is not None
+        and str(qa["query_id"]).strip() in in_scope_queries
+        and not [t for t in _values(qa, "source_tables") if not is_placeholder_table(t)]
+    }
     bad_tables, bad_queries = _collect(
-        _ENGINE_FIELDS.get(engine, ()), schema_output, in_scope_tables, in_scope_queries
+        _ENGINE_FIELDS.get(engine, ()),
+        schema_output,
+        in_scope_tables,
+        in_scope_queries,
+        no_table_queries,
     )
     table_owners = _table_owners(assignment)
 

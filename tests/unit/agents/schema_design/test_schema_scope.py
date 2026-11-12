@@ -158,18 +158,50 @@ def test_in_scope_design_passes(engine):
     )
 
 
-@pytest.mark.parametrize("engine", sorted(_ENGINES))
-def test_a_placeholder_table_on_a_query_with_no_resolved_table_is_no_violation(engine):
-    # #2147: such a query lists no table; a design that echoes the collector's
-    # ``unknown`` placeholder for it designs no table outside the scope.
-    build, other = _ENGINES[engine]
+def _placeholder_pattern(engine: str, query: str, table: str = "unknown") -> dict:
+    ids = "query_ids" if engine in ("dynamodb", "opensearch") else "source_query_ids"
+    return {"access_patterns": [{"pattern_id": "AP-1", ids: [query], "source_tables": [table]}]}
+
+
+def _with_no_table_query(engine: str, other: str) -> dict:
     assignment = _assignment(engine, other)
     assignment["query_assignments"].append(
         {"query_id": "q-none", "assigned_engine": engine, "source_tables": [], "in_scope": True}
     )
-    assert validate_schema_scope(engine, build("unknown", "q-none"), assignment) == []
+    return assignment
+
+
+@pytest.mark.parametrize("engine", sorted(_ENGINES))
+def test_a_placeholder_table_on_a_query_with_no_resolved_table_is_no_violation(engine):
+    # #2147: such a query lists no table; an access pattern that echoes the collector's
+    # ``unknown`` placeholder for it designs no table outside the scope.
+    _, other = _ENGINES[engine]
+    assignment = _with_no_table_query(engine, other)
+    assert validate_schema_scope(engine, _placeholder_pattern(engine, "q-none"), assignment) == []
+
+
+@pytest.mark.parametrize("engine", sorted(_ENGINES))
+def test_a_placeholder_table_anywhere_else_is_still_a_violation(engine):
+    build, other = _ENGINES[engine]
+    assignment = _with_no_table_query(engine, other)
+    # On a query that reads a real table.
+    on_real = validate_schema_scope(engine, _placeholder_pattern(engine, "q-users"), assignment)
+    assert _mentions(on_real, "'unknown'", f"Out of scope for {engine}")
+    # Beside a no-table query in the same pattern, the real-table query makes it a table.
+    both = _placeholder_pattern(engine, "q-none")
+    ids = next(k for k in both["access_patterns"][0] if k.endswith("query_ids"))
+    both["access_patterns"][0][ids].append("q-users")
+    assert _mentions(validate_schema_scope(engine, both, assignment), "'unknown'")
+    # A designed table (no query beside it) named for the placeholder.
     assert _mentions(
-        validate_schema_scope(engine, build("Unknown", "q-none"), assignment), "'Unknown'"
+        validate_schema_scope(engine, build("unknown", "q-none"), assignment), "unknown'"
+    )
+    # A real table that only looks like one is a table.
+    assert _mentions(
+        validate_schema_scope(
+            engine, _placeholder_pattern(engine, "q-none", "Unknown"), assignment
+        ),
+        "'Unknown'",
     )
 
 
