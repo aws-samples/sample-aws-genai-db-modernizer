@@ -8,7 +8,11 @@ the final owner instead -- stated identically, wherever it is said."""
 
 from __future__ import annotations
 
-from src.shared.migration_wave_engines import cache_front_description
+from src.shared.migration_wave_engines import (
+    CACHE_FRONT_REFERENCE,
+    cache_front_description,
+    cache_front_reference,
+)
 
 
 class TestCacheFrontDescription:
@@ -55,3 +59,25 @@ class TestCacheFrontDescription:
         assert desc == (
             "Aurora PostgreSQL in wave 2, then DocumentDB, DynamoDB once wave 3 moves these reads"
         )
+
+
+class TestCacheFrontReference:
+    """#2171: the staged front ("Aurora PostgreSQL in wave 2, then DocumentDB, DynamoDB
+    once wave 3 moves these reads") is the wave 2 rationale's; a sentence elsewhere
+    refers to it instead of repeating it."""
+
+    def test_a_staged_front_is_a_short_reference(self) -> None:
+        ref = cache_front_reference("aurora_postgresql", {"dynamodb": 2, "documentdb": 1})
+        assert ref == CACHE_FRONT_REFERENCE
+        assert "wave 2" not in ref and "once wave 3" not in ref
+
+    def test_a_one_stage_front_is_named_as_before(self) -> None:
+        for retained, owners in (
+            ("aurora_postgresql", {"aurora_postgresql": 3}),
+            ("aurora_mysql", {}),
+            (None, {"dynamodb": 3}),
+            (None, {}),
+        ):
+            assert cache_front_reference(retained, owners) == cache_front_description(
+                retained, owners
+            )
