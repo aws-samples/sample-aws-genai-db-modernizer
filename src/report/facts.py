@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared.adoption_facts import adoption_facts, slice_plan_facts
 from src.shared.cache_role import cache_role_sentence
 from src.shared.cutover_message import CUTOVER_MESSAGE
 from src.shared.report_facts import (
@@ -249,6 +250,14 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #1939: the words the deliverables print, from the
             # same function synthesis calls, over the stored rows and rules.
             missing["routines"] = with_routine_words(facts["routines"])
+        if "slice_plan" not in facts or "adoption" not in facts:
+            # A block written before 1.96 (#1128): the slice plan and the adoption paths
+            # from the same functions synthesis calls (ADR-032 Decision 4).
+            plan = facts["slice_plan"] if "slice_plan" in facts else slice_plan_facts(report)
+            if "slice_plan" not in facts:
+                missing["slice_plan"] = plan
+            if "adoption" not in facts:
+                missing["adoption"] = adoption_facts(report, plan)
         return {**facts, **missing} if missing else facts
     # #1992: a report with no facts block was written before the wave readiness check,
     # and states none: its designs carry no review counts to check.
