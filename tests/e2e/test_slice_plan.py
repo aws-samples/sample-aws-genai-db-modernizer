@@ -10,6 +10,8 @@ reads per step for a homogeneous source, one wave's engine per step otherwise) a
 stages a to d. Here every contract validator passes on each sample's plan, the plan
 covers every moving query exactly once and rolls up into the migration waves, it is the
 same under any hash seed, and a plan broken by hand is refused.
+
+``replay_stale``: the saved replay fixtures' report.json predates the computed plan.
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ from src.tools.validation.customer_text_guard import scan_json
 from tests.e2e.pipeline import REPO, PipelineResult, _env
 
 MOVING = {"owner", "replica_reads", "read_model"}
+
+# replay_stale: the saved replay fixtures' report.json was synthesized before the slice
+# plan was computed (#1698), so it stores no plan; a fresh e2e-llm run and the
+# deterministic runs do. Drop the marker when the fixtures are refreshed.
+pytestmark = pytest.mark.replay_stale
 
 
 def _report(run: PipelineResult) -> dict[str, Any]:
