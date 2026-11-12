@@ -12,9 +12,9 @@ templates), and every file the generators write, rendered here for both engines.
 The assessment's deliverables follow the same rule (#2107), with the same words: the source
 files that write the wave gates and the mitigations, the engineering and executive reports
 rendered from reports the current code built, and the skills whose model text reaches a
-deliverable. There, and only there, "in sync" may name a CDC copy's table role
-(``COPY_PHRASES``). ``tests/e2e/test_no_cutover_advice.py`` runs the same check on the
-samples' real deliverables, a model's included on an e2e-llm run.
+deliverable. "in sync" is banned there too, with no exception: a CDC copy is "kept current
+by CDC" from its owner (#2167). ``tests/e2e/test_no_cutover_advice.py`` runs the same check
+on the samples' real deliverables, a model's included on an e2e-llm run.
 """
 
 from __future__ import annotations
@@ -53,29 +53,8 @@ BANNED = {
     r"|\b(?:after|before|once|until|when|as\s+soon\s+as)\s+(?:you|they|the\s+customer)\s+"
     r"cut\s*over\b",
 }
-# "in sync" is allowed only in the phrases the code writes for a CDC copy of a table another
-# engine owns (a table role, never a readiness claim), and only in a sentence with no timing
-# word outside the phrase. Each phrase spans the "in sync" it allows.
-COPY_PHRASES = re.compile(
-    "|".join(
-        (
-            # "3 tables kept in sync from their owners", "a copy kept in sync from DynamoDB via CDC"
-            r"\bkept\s+in\s+sync\b(?:\s+(?:by\s+CDC\s+)?(?:from|via)\s+[^.;]*)?",
-            # "keep the Aurora PostgreSQL, DocumentDB copy in sync from DynamoDB via CDC until
-            # then" (until the later wave), "keep a DynamoDB copy of all of them in sync via CDC"
-            r"\bkeep\s+(?:the|a)\s+[^.;]{1,200}?\bcop(?:y|ies)\b(?:\s+of\s+[^.;]{1,60}?)?"
-            r"\s+in\s+sync\s+(?:from|via)\s+[^.;]*?(?:\s+until\s+then)?(?=[.;]|$)",
-            # "the consumer that keeps wp_posts and wp_postmeta in sync from DynamoDB",
-            # "copies CDC keeps in sync from a source of truth"
-            r"\bkeeps\s+(?:[^.;]{1,200}?\s+)?in\s+sync\s+from\s+[^.;]*",
-            # "build a dual-write path and keep the copies in sync"
-            r"\bkeep\s+the\s+copies\s+in\s+sync\b",
-        )
-    ),
-    re.I,
-)
-# Timing words the code writes next to a copy phrase about the plan's own waves or CDC, not
-# the cutover: a later wave or its gate ("dual-read by OpenSearch queries until wave 4", "via
+# Timing words model design text writes next to "in sync" about the plan's own waves or
+# CDC, not the cutover (``_model_text_flags``): a later wave or its gate ("dual-read by OpenSearch queries until wave 4", "via
 # CDC until then", "before this gate", "Before the Wave 3 gate", "before wave 3 starts",
 # "remain on Aurora MySQL once later waves have moved their share", "once the cache wave has
 # absorbed the read pressure") and replication's own
@@ -149,11 +128,10 @@ ALLOWED = {
         "connector has not passed the barrier it is not ready",
     ),
     ("src/tools/data_movement/initial_load.py", "return Readiness(ready=not reasons"),
-    # The assessment (#2107): a docstring, two comments and the no-wave line a report written
+    # The assessment (#2107): a docstring, a comment and the no-wave line a report written
     # before #2107 stored, recognised so it is replaced.
     ("src/agents/referee/synthesis_report.py", "reason, ready to sit next to its excerpt."),
     ("src/agents/referee/synthesis_report.py", 'application change) catches up", the same'),
-    ("src/agents/referee/synthesis_report.py", "story (#393) that keeps this in sync with"),
     ("src/shared/migration_risk_rules.py", '# "Before cutover, close" no-wave line a report'),
 }
 DOCS = (
@@ -182,7 +160,7 @@ SOURCES = (
 
 
 # The assessment's source files that write the wave gates, the mitigations and the contract
-# text (#2107): scanned with the deliverables' CDC copy phrases allowed.
+# text (#2107): scanned as deliverables, "in sync" included (#2167).
 ASSESSMENT_SOURCES = (
     "src/agents/referee/migration_wave_builders.py",
     "src/report/waves.py",
@@ -254,26 +232,11 @@ def _allowed(
         return True
     if deliverable and label == "cutover timing":
         return bool(WAVE_ONE_COUNT.search(line[:end]))
-    if deliverable and label == "in sync":
-        return _a_copy_phrase(line, end)
     return label == "ready" and any(
         m.start() <= start and end <= m.end()
         for pattern in READY_FORMS
         for m in re.finditer(pattern, line)
     )
-
-
-def _a_copy_phrase(line: str, end: int) -> bool:
-    """Whether the "in sync" ending at ``end`` is inside a COPY_PHRASES phrase, in a
-    sentence with no timing word outside that phrase."""
-    starts = [m.end() for m in re.finditer(r"[.!?]\s+", line[:end])]
-    first = starts[-1] if starts else 0
-    stop = re.search(r"[.!?](?:\s|$)", line[end:])
-    sentence = line[first : end + stop.start() + 1 if stop else len(line)]
-    at = end - first
-    if any(m.start() < at <= m.end() for m in COPY_PHRASES.finditer(sentence)):
-        return not TIMING_WORD.search(CDC_TIMING.sub("", sentence))
-    return False
 
 
 def _findings(
@@ -283,9 +246,8 @@ def _findings(
     deliverable: bool = False,
     model_text: bool = False,
 ) -> list[str]:
-    """Each banned match in ``text``. ``deliverable``: the assessment's text, where a CDC
-    copy's table role ("kept in sync from its owner") and wave 1's "all N queries at
-    cutover" count are allowed (#2107). ``model_text``: model-written design rationale and
+    """Each banned match in ``text``. ``deliverable``: the assessment's text, where wave
+    1's "all N queries at cutover" count is allowed (#2107); "in sync" never is (#2167). ``model_text``: model-written design rationale and
     review text, where only the cutover timing and readiness claims count
     (``MODEL_TEXT_LABELS``, ``READINESS_CLAIM``)."""
     found = []
@@ -523,30 +485,51 @@ def test_the_guard_catches_each_kind_of_advice_in_a_deliverable(advice: str) -> 
     assert _findings("sample", advice) != []  # and in step 1's text
 
 
+@pytest.mark.parametrize(
+    "copy",
+    [
+        # The phrases the guard let through before #2167, and the summary model's paraphrase
+        # of one (batch11112312's wordpress e2e-llm run).
+        "3 tables kept in sync from their owners.",
+        "52 of them read a copy of 13 tables that CDC keeps in sync from DynamoDB.",
+        "DynamoDB reads served from copies that change data capture (CDC) keeps in sync.",
+        "Build the consumer that keeps wp_posts and wp_postmeta in sync from DynamoDB.",
+        "DocumentDB owns them; keep a DynamoDB copy of all of them in sync via CDC.",
+        "Build the dual-write path and keep the copies in sync.",
+        "22 tables: 15 migrate, 2 kept in sync, 5 stay on Aurora MySQL.",
+    ],
+)
+@pytest.mark.passes_on_main
+def test_a_deliverable_never_says_in_sync(copy: str) -> None:
+    """#2167: no exception for a CDC copy's table role; a CDC copy is kept current."""
+    assert _findings("sample", copy, deliverable=True) != []
+
+
 @pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     "fine",
     [
         CUTOVER_MESSAGE,
         "Decommission the source MySQL database once you have completed your cutover.",
-        "3 tables kept in sync from their owners.",
-        "Build the consumer that keeps wp_posts and wp_postmeta in sync from DynamoDB.",
-        "Every other engine that reads a table reads a copy kept in sync from the owner.",
-        "DocumentDB owns them; keep a DynamoDB copy of all of them in sync via CDC.",
-        "DynamoDB owns them, so keep the Aurora PostgreSQL, DocumentDB copy in sync from "
+        "3 tables kept current by CDC from their owners.",
+        "Build the consumer that keeps wp_posts and wp_postmeta current from DynamoDB.",
+        "Every other engine that reads a table reads a copy kept current from the owner.",
+        "DocumentDB owns them; keep a DynamoDB copy of all of them current via CDC.",
+        "DynamoDB owns them, so keep the Aurora PostgreSQL, DocumentDB copy current from "
         "DynamoDB via CDC until then.",
-        "Build the dual-write path and keep the copies in sync.",
-        "The main exposures are the tables kept in sync by change data capture (CDC): test the "
+        "Build the dual-write path that keeps the copies current.",
+        "The main exposures are the tables kept current by change data capture (CDC): test the "
         "CDC replication before wave 3 starts.",
-        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and close calls).",
-        "Before the Wave 3 gate, close RISK-001 and RISK-002 (tables kept in sync).",
-        "17 source tables: 15 to move, 2 kept in sync from their owners Engines: DynamoDB Why: "
-        "the smallest data migration available once the cache wave has absorbed the reads.",
-        "17 source tables: 15 to move, 2 kept in sync from their owners. 5 queries remain on "
-        "Aurora MySQL once later waves have moved their share.",
+        "Close RISK-002 and RISK-004 before this gate (tables kept current by CDC and close "
+        "calls).",
+        "Before the Wave 3 gate, close RISK-001 and RISK-002 (tables kept current by CDC).",
+        "17 source tables: 15 to move, 2 kept current by CDC from their owners Engines: DynamoDB "
+        "Why: the smallest data migration available once the cache wave has absorbed the reads.",
+        "17 source tables: 15 to move, 2 kept current by CDC from their owners. 5 queries remain "
+        "on Aurora MySQL once later waves have moved their share.",
         "1 of the 3 tables stays dual-read by OpenSearch queries until wave 4; DynamoDB owns "
-        "them, so keep the OpenSearch copy in sync from DynamoDB via CDC until then.",
-        "A read on a replica reads a copy kept in sync from DynamoDB via CDC, so it sees a "
+        "them, so keep the OpenSearch copy current from DynamoDB via CDC until then.",
+        "A read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a "
         "write only after CDC applies it.",
         "The cutover script creates the triggers.",
         "Wave 1 moves the whole database in one cutover.",
@@ -565,8 +548,8 @@ SKILL_RULE = (
     "Cutover: the cutover is the customer's. The only sentence about it is \"The cutover is "
     'your responsibility." Never say when or how to cut over, switch or decommission (no '
     '"before cutover", "after cutover", "once replication has caught up", "when lag reaches '
-    'zero"), and never use "caught up", "in sync", "proven" or "ready" as readiness wording. '
-    "A copy that CDC keeps in sync from its owner is a table role and may be named so."
+    'zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write '
+    '"in sync": a copy that CDC keeps current from its owner is "kept current by CDC".'
 )
 # Each skill whose text reaches a deliverable, and the section that holds the rule (the one
 # its prompt loads).

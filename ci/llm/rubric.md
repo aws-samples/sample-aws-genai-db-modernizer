@@ -92,8 +92,8 @@ the deliverable.
   with `tables_served` and `owned_tables` first, then score `grounded`,
   `roadmap` and `contradictions`. Worked example (a wave gate): "13 tables stay
   dual-read by Aurora MySQL queries ... DynamoDB owns them, so keep the Aurora
-  MySQL copy in sync from DynamoDB" and, in the same gate, "3 tables Aurora
-  MySQL owns and keeps owning ... keep a DynamoDB copy of them in sync" are two
+  MySQL copy current from DynamoDB" and, in the same gate, "3 tables Aurora
+  MySQL owns and keeps owning ... keep a DynamoDB copy of them current" are two
   different groups of tables with two different owners. Compare the table
   names against `owned_tables`, never the counts. Both sentences are
   consistent, and neither is a defect for `roadmap` or `contradictions`.
@@ -174,7 +174,7 @@ resolved list, Migration trade-offs, Mitigation strategies and the wave gates.
 The executive report names engines and patterns, not identifiers (see its
 input above); the engineering report names the tables.
 
-Implied risks to look for: tables a wave keeps in sync across engines
+Implied risks to look for: tables a wave keeps current by CDC across engines
 (`kept_in_sync`, by owner, the report's own figure; `shared_in_wave`, a table
 one wave engine serves while another engine of the same wave owns it; and
 `tables_served_by_several_engines`:
@@ -186,10 +186,10 @@ value over its limit, the HIGH hot-partition rule), `unservable_queries`,
 `unresolved_ties`, and design trade-offs with a consequence.
 
 **An empty register.** No open risks is correct only when
-`migration_risk_facts` implies none (no table kept in sync, no unsupported
+`migration_risk_facts` implies none (no table kept current by CDC, no unsupported
 pattern, no app-layer note, no hot partition, nothing unservable or tied).
 Then score it 5 if the deliverables say so plainly. An empty register while
-`migration_risk_facts` lists tables kept in sync across engines, and no
+`migration_risk_facts` lists tables kept current by CDC across engines, and no
 deliverable raises that sync as a risk with a mitigation, scores 2. Resolved
 risks are routing outcomes, not migration risks: they do not fill the
 register.
@@ -223,7 +223,7 @@ number of defects is `roadmap_mismatch` plus `unclear_order`, and the generic
 count table scores it.
 
 - `roadmap_mismatch`: a wave lists a table whose engine in the wave is not in
-  that table's `tables_served`, and the wave does not list it as kept in sync.
+  that table's `tables_served`, and the wave does not list it as kept current by CDC.
 - `unclear_order`: a wave whose section, and the roadmap's introduction, state
   no reason at all for its position (a dependency, a risk or a business
   priority, in a "once", "before", "because" or "Why" sentence). A reason that
@@ -233,7 +233,7 @@ Not a defect: a wave that lists no tables because it is an overlay (a cache
 wave says what it fronts); a table moved whole in an early wave and moved on
 by a later wave when the roadmap says so ("later waves move 15 of the 50");
 shares of calls that overlap between waves; wave figures that reconcile through
-`facts.wave_figures` (tables served, moving and kept in sync); and a gate's
+`facts.wave_figures` (tables served, moving and kept current by CDC); and a gate's
 sync sentences, which the multi-engine rule above settles.
 
 - **1** — Six or more defects (a table sequenced into or via an engine the
@@ -298,7 +298,7 @@ counts only if the two quotes cannot both be true when read literally. Not a
 contradiction: a pair that conflicts only after an inference, a pair about
 two different groups of tables (compare the table names, not the counts, so
 "3 tables read and written by no captured query get a one-time copy" and "3
-tables Aurora MySQL owns keep a DynamoDB copy in sync" are about different
+tables Aurora MySQL owns keep a DynamoDB copy current" are about different
 tables), and a pair a rule above reconciles.
 
 - **1** — Six or more contradictions (the headline cap above limits a
@@ -314,7 +314,7 @@ Where to look when scoring each criterion (the inputs are above).
 
 - **grounded:** check claims in `executive_pdf` and `engineering_report` against
   `facts.totals`, `facts.engines` and `facts.wave_figures` (each wave's
-  served, moving and kept-in-sync table counts), with table placement per the
+  served, moving and kept-current table counts), with table placement per the
   multi-engine rule. For cost: `facts.tco` (`projected_monthly_cost`,
   `cost_breakdown`) and `facts.engines[].monthly_cost_usd`, against
   `executive_pdf > The numbers` (the cost tile and the cost by engine) and

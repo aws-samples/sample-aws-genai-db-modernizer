@@ -343,10 +343,17 @@ _NOT_MAPPED_RE = re.compile(
     r"The schema design has no target table yet for ([\d,]+) of the ([\d,]+) tables? "
     r"that migrates?: (.+?)\.(?: |$)"
 )
-# "137 source tables served: 69 migrate, 27 move to DocumentDB, 41 kept in sync"
-# (#1169), or "18 source tables" when the engine owns every table it serves.
+# "137 source tables served: 69 migrate, 27 move to DocumentDB, 41 kept current by CDC"
+# (#1169), or "18 source tables" when the engine owns every table it serves. A report
+# rendered before #2167 says "kept in sync" (``_KEPT``).
 _SCOPE_SPLIT_RE = re.compile(r"([\d,]+) source tables?(?: served: ([^()$]+?))?(?: \(|$)")
-_SCOPE_PART_RE = re.compile(rf"^([\d,]+) (migrate|kept in sync|move to ({_NAMES_RE}))$")
+_KEPT = "kept current by CDC|kept in sync"
+_SCOPE_PART_RE = re.compile(rf"^([\d,]+) (migrate|{_KEPT}|move to ({_NAMES_RE}))$")
+
+
+def _split_kind(label: str) -> str:
+    """The Scope cell's and the map heading's split label, either spelling (#2167)."""
+    return "kept" if re.fullmatch(_KEPT, label) else label
 
 
 def migration_map(f: Figures, heading: str, body: str) -> None:
@@ -363,7 +370,7 @@ def migration_map(f: Figures, heading: str, body: str) -> None:
         if not p:
             f.add("map:unparsed", part, "Migration map heading")
             continue
-        kind = {"migrate": "migrate", "kept in sync": "kept_in_sync"}.get(p.group(2), "rest")
+        kind = {"migrate": "migrate", "kept": "kept_in_sync"}.get(_split_kind(p.group(2)), "rest")
         split[kind] = split.get(kind, 0) + _int(p.group(1))
     for kind in ("migrate", "kept_in_sync", "rest"):
         f.add(f"map:{kind}", split.get(kind, 0), "Migration map heading")
@@ -399,7 +406,7 @@ def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
         key = (
             f"moveto:{eng}:{engine_id(p.group(3))}"
             if p.group(3)
-            else {"migrate": f"migrate:{eng}", "kept in sync": f"synced:{eng}"}[p.group(2)]
+            else {"migrate": f"migrate:{eng}", "kept": f"synced:{eng}"}[_split_kind(p.group(2))]
         )
         parts[key] = parts.get(key, 0) + _int(p.group(1))
     parts.setdefault(f"synced:{eng}", 0)
@@ -971,7 +978,7 @@ def engineering_figures(md_text: str) -> Figures:
             if st.group(4):
                 # #951: the wave's tables that move, beside the kept-in-sync line.
                 f.add(f"wave{n}:moving", _int(st.group(4)), where)
-        k = re.search(r"^- ([\d,]+) tables? kept in sync from their owner: ", text, re.M)
+        k = re.search(rf"^- ([\d,]+) tables? (?:{_KEPT}) from their owner: ", text, re.M)
         if k:
             f.add(f"wave{n}:synced", _int(k.group(1)), where)
         g = re.search(r"^- [\d,]+ table groups?:\n((?:  - .+\n?)+)", text, re.M)
@@ -1060,7 +1067,7 @@ def pdf_figures(text: str) -> Figures:
     # #951: a wave with tables kept in sync states both halves of its tables.
     for seg in re.finditer(r"WAVE (\d+) (.*?)(?=WAVE \d+ |$)", text):
         h = re.search(
-            r"([\d,]+) source tables?: ([\d,]+) to move, ([\d,]+) kept in sync from",
+            rf"([\d,]+) source tables?: ([\d,]+) to move, ([\d,]+) (?:{_KEPT}) from",
             seg.group(2),
         )
         if h:

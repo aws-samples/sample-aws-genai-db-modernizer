@@ -27,7 +27,11 @@ from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
 from src.shared.engine_names import display_engine
 from src.shared.move_reasons import consolidation_reason
-from src.shared.report_facts import replica_risk_text, shared_replica_risk_text
+from src.shared.report_facts import (
+    replica_risk_text,
+    shared_replica_risk_text,
+    shares_replica_risk,
+)
 from tests.report_concision import (
     bare_ids,
     known_query_ids,
@@ -103,8 +107,8 @@ def test_the_guards_find_what_they_look_for() -> None:
     or without a ';' in it. A known id outside a code span is caught; a hash a
     designer writes in prose is not a query id."""
     rows = [
-        "- `wp_posts`: Eventually consistent, 28 reads on Aurora read a copy kept in sync.",
-        "- `wp_users`: Eventually consistent, 2 reads on Aurora read a copy kept in sync.",
+        "- `wp_posts`: Eventually consistent, 28 reads on Aurora read a copy kept current by CDC.",
+        "- `wp_users`: Eventually consistent, 2 reads on Aurora read a copy kept current by CDC.",
     ]
     assert len(repeated_sentences("\n".join(rows))) == 1
     ids = {"f31a66f5" + "0" * 56}
@@ -118,6 +122,7 @@ def test_the_guards_find_what_they_look_for() -> None:
 # --- Sources of truth and replicas ---------------------------------------------
 
 
+@pytest.mark.passes_on_main
 def test_the_risk_is_stated_once_for_every_table(md: str, saved) -> None:
     body = section(md, "Sources of truth and replicas")
     risk = md_text(shared_replica_risk_text(["dynamodb"]))
@@ -129,9 +134,8 @@ def test_the_risk_is_stated_once_for_every_table(md: str, saved) -> None:
     rows = saved["facts"]["table_sources"]["replicated_tables"]
     assert len(rows) == 13
     for row in rows:
-        assert row["risk"] == replica_risk_text(
-            row["source_of_truth"], row["replica_engines"], row["replica_read_count"]
-        )
+        # Stored before #2167 ("kept in sync"): recognised as the standard sentence.
+        assert shares_replica_risk(row)
         assert f"| `{row['table']}` |" in body
 
 
@@ -168,8 +172,8 @@ def test_the_gate_refers_to_the_lists_its_section_shows_in_full(md: str, saved) 
     kept, written = parts[1]["items"], parts[0]["items"]
     assert len(kept) == 3 and len(written) == 13
     # The kept-in-sync bullet names the 3 tables; the gate refers to it.
-    assert "- 3 tables kept in sync from their owner: " in wave
-    assert "3 tables \\(the tables kept in sync above\\) Aurora MySQL owns" in gate
+    assert "- 3 tables kept current by CDC from their owner: " in wave
+    assert "3 tables \\(the tables kept current by CDC above\\) Aurora MySQL owns" in gate
     # The 13 tables DynamoDB writes are the rows of "Sources of truth and replicas".
     assert '13 tables \\(listed under "Sources of truth and replicas" below\\) stay' in gate
     for table in kept + written:
@@ -198,8 +202,8 @@ def test_a_kept_list_longer_than_the_line_shows_is_listed_once_in_full(report) -
     body = _wave(render_engineering_report_md(report), 3)
     gate = _gate(body)
     assert "(+2 more)" not in body
-    assert "\\(the tables kept in sync above\\)" in gate
-    kept_line = next(ln for ln in body.splitlines() if "kept in sync from their owner" in ln)
+    assert "\\(the tables kept current by CDC above\\)" in gate
+    kept_line = next(ln for ln in body.splitlines() if "kept current by CDC from their owner" in ln)
     for table in items:
         assert f"`{table}`" in kept_line, table
         assert md_text(table) not in gate, table

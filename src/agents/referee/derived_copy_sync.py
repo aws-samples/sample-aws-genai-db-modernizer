@@ -92,7 +92,7 @@ def _lines(sync: Mapping[str, Any]) -> dict[str, str]:
     rate = _count(sync["replayed_writes_per_second"])
     path = (
         f"Sync path: writes to {sources} go to {home}; {copies} "
-        f"{_plural(n, 'is a derived copy', 'are derived copies')}, kept in sync from the "
+        f"{_plural(n, 'is a derived copy', 'are derived copies')}, kept current from the "
         f"DynamoDB Streams of {home} by a consumer to build, replaying {rate} writes per second."
     )
     writes = "; ".join(
@@ -107,7 +107,7 @@ def _lines(sync: Mapping[str, Any]) -> dict[str, str]:
         f"{_plural(n, 'copy', 'copies')}' writes ({writes})."
     )
     summary = (
-        f"{n} derived {_plural(n, 'copy is', 'copies are')} kept in sync from DynamoDB "
+        f"{n} derived {_plural(n, 'copy is', 'copies are')} kept current from DynamoDB "
         f"Streams, replaying {rate} writes per second, for about "
         f"{_usd(sync['monthly_cost_usd'])} a month at on-demand prices."
     )

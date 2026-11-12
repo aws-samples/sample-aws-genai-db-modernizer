@@ -218,7 +218,7 @@ def _old_report() -> dict[str, Any]:
             ],
             "mitigation_strategies": [
                 "Analysis line.",
-                "Before the Wave 3 gate, close RISK-002 (tables kept in sync).",
+                "Before the Wave 3 gate, close RISK-002 (tables kept current by CDC).",
                 "After wave 3 (DynamoDB): compare the latency.",
             ],
         },
@@ -248,7 +248,7 @@ def test_an_old_report_gets_the_risk_its_facts_imply() -> None:
     ]
     assert [w["gate"] for w in new["migration_waves"]] == [
         "Close RISK-003 before this gate (flagged queries no other engine takes).",
-        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and flagged "
+        "Close RISK-002 and RISK-004 before this gate (tables kept current by CDC and flagged "
         "queries no other engine takes).",
     ]
     # The facts block counts them, as a new synthesis would.
@@ -317,7 +317,7 @@ def test_stored_gate_lines_with_other_labels_are_replaced_not_doubled() -> None:
     lines = new["risk_assessment"]["mitigation_strategies"]
     assert lines == ["Analysis line.", "After wave 3 (DynamoDB): compare the latency."]
     assert new["migration_waves"][-1]["gate"] == (
-        "Close RISK-002 and RISK-004 before this gate (tables kept in sync and flagged "
+        "Close RISK-002 and RISK-004 before this gate (tables kept current by CDC and flagged "
         "queries no other engine takes)."
     )
 

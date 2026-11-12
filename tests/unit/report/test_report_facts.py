@@ -56,7 +56,7 @@ def _wave1(tables: list[str], views: int = 0) -> dict[str, Any]:
 def _merged_report() -> dict[str, Any]:
     """Wave 2 merges DynamoDB and DocumentDB. DocumentDB serves ``t2``, which
     DynamoDB owns, and ``t4``, which Aurora owns: DynamoDB moves t1 and t2,
-    DocumentDB moves t3, and only t4 stays on its owner, kept in sync."""
+    DocumentDB moves t3, and only t4 stays on its owner, kept current by CDC."""
     tables = ["db.t1", "db.t2", "db.t3", "db.t4", "db.t5"]
     return {
         "job_id": "job-1",
@@ -185,7 +185,7 @@ def test_581_every_deliverable_shows_the_tile_figure_in_the_wave_headline() -> N
 
     md = render_engineering_report_md(report)
     assert _tables_migrate(md) == str(tile)
-    assert "- 1 table kept in sync from their owner: `db.t4` -> Aurora MySQL (CDC)" in md
+    assert "- 1 table kept current by CDC from their owner: `db.t4` -> Aurora MySQL (CDC)" in md
     assert "moves with its owner): `db.t2` -> DynamoDB (CDC)" in md
 
 
@@ -706,7 +706,7 @@ def test_595_no_reality_check_decision_no_section() -> None:
 
 def _mapped_merged_report() -> dict[str, Any]:
     """The merged report with a table map: t1 (DynamoDB) and t3 (DocumentDB) move,
-    t4 (labelled DynamoDB) is kept in sync from Aurora, t5 is mapped to the cache
+    t4 (labelled DynamoDB) is kept current by CDC from Aurora, t5 is mapped to the cache
     layer, t6 (labelled DynamoDB) no migrating wave serves, and t2, which moves,
     has no row."""
     report = _merged_report()
@@ -759,9 +759,10 @@ def test_1169_no_table_map_no_split() -> None:
     assert basis["migrating_tables_not_mapped"] == 0
 
 
+@pytest.mark.passes_on_main
 def test_1169_each_migration_target_splits_its_served_tables_as_the_wave_does() -> None:
     """#581's rule: a table another engine of the same wave owns moves to that engine;
-    only an owner outside the wave makes a table kept in sync."""
+    only an owner outside the wave makes a table kept current by CDC."""
     facts = _with_facts(_merged_report())["facts"]
     engines = {e["engine"]: e for e in facts["engines"]}
     # DocumentDB serves t2 (DynamoDB owns it), t3 (its own) and t4 (Aurora owns it).
@@ -798,7 +799,7 @@ def test_1169_the_reports_print_the_stored_split() -> None:
             e["kept_in_sync_tables"] = 9
             e["moves_to_tables"] = {"dynamodb": 5}
     md = render_engineering_report_md(report)
-    assert "## Migration map (5 tables: 7 migrate, 4 kept in sync)" in md
+    assert "## Migration map (5 tables: 7 migrate, 4 kept current by CDC)" in md
     assert (
         "The schema design has no target table yet for 2 of the 3 tables that migrate: "
         "`db.x`, `db.y`."
@@ -807,7 +808,7 @@ def test_1169_the_reports_print_the_stored_split() -> None:
         "Rows the schema design maps to DynamoDB that no query routed to DynamoDB reads "
         "stay on the source engine: `db.z`."
     ) in md
-    cell = "3 source tables served: 1 migrate, 5 move to DynamoDB, 9 kept in sync"
+    cell = "3 source tables served: 1 migrate, 5 move to DynamoDB, 9 kept current by CDC"
     assert f"| {cell} |" in md
     assert "In the Scope column, \u201cserved\u201d is the source tables" in md
     assert cell in executive_text(report)
@@ -822,6 +823,7 @@ def test_the_map_heading_keeps_the_source_engine_label_without_a_wave_1_engine()
     assert "2 stay on the source engine)" in md
 
 
+@pytest.mark.passes_on_main
 def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
     report = _with_facts(_mapped_merged_report())
     report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "stays": 1}
@@ -830,14 +832,16 @@ def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
     assert MAP_SPLIT_DEFINED_ABOVE not in md
     report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "kept_in_sync": 1}
     md = render_engineering_report_md(report)
-    # #1410: Target engines above defines migrate and kept in sync; the map refers to it.
+    # #1410: Target engines above defines migrate and kept current by CDC; the map refers to it.
     assert MAP_SPLIT_DEFINED_ABOVE in md
     assert "Migrate counts the mapped tables a migration wave moves" not in md
 
 
 def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
     md = render_engineering_report_md(_with_facts(_mapped_merged_report()))
-    assert ("## Migration map (5 tables: 2 migrate, 1 kept in sync, 2 stay on Aurora MySQL)") in md
+    assert (
+        "## Migration map (5 tables: 2 migrate, 1 kept current by CDC, 2 stay on Aurora MySQL)"
+    ) in md
     # #1642: "stay" names wave 1's engine, as wave 1's "the other N stay on" does.
     assert "stay on the source engine)" not in md
     assert "no target table yet for 1 of the 3 tables that migrate: `db.t2`." in md
@@ -860,7 +864,7 @@ def test_1169_a_scope_cell_with_nothing_kept_in_sync_stays_plain() -> None:
     wave["owned_counts_by_engine"] = {"dynamodb": 1, "documentdb": 1}
     md = render_engineering_report_md(_with_facts(report))
     assert md.count("| 1 source table |") == 2
-    assert "kept in sync |" not in md
+    assert "kept current by CDC |" not in md
     assert "In the Scope column, \u201cserved\u201d is the source tables" not in md
 
 
@@ -885,8 +889,8 @@ def test_1169_a_facts_block_written_before_1_42_gets_the_split() -> None:
     doc = {e["engine"]: e for e in facts["engines"]}["documentdb"]
     assert (doc["kept_in_sync_tables"], doc["moves_to_tables"]) == (1, {"dynamodb": 1})
     md = render_engineering_report_md(report)
-    assert "## Migration map (5 tables: 2 migrate, 1 kept in sync," in md
-    assert "3 source tables served: 1 migrate, 1 move to DynamoDB, 1 kept in sync" in md
+    assert "## Migration map (5 tables: 2 migrate, 1 kept current by CDC," in md
+    assert "3 source tables served: 1 migrate, 1 move to DynamoDB, 1 kept current by CDC" in md
 
 
 def test_1169_the_summary_names_the_table_map_and_states_the_split() -> None:

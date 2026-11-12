@@ -149,7 +149,7 @@ def test_the_wave_risks_are_raised_and_the_summary_counts_them(store) -> None:
     assert not any("Wave 2 gate" in s for s in strategies)
     wave = next(w for w in result["migration_waves"] if w["wave"] == 2)
     assert wave["gate"].endswith(
-        f"Close {sync[0]['risk_id']} before this gate (tables kept in sync)."
+        f"Close {sync[0]['risk_id']} before this gate (tables kept current by CDC)."
     )
 
 
@@ -199,7 +199,7 @@ def test_with_write_groups_the_sync_risks_follow_the_sources_of_truth(store) -> 
     assert "users" in sync["affected_tables"] and "rel_users" in sync["query_ids"]
     assert sync["description"].startswith(
         f"[dynamodb] Wave 2: {len(sync['query_ids'])} queries read 2 tables on an engine "
-        "that does not own them. 1 of them reads a copy of 1 table that CDC keeps in sync "
+        "that does not own them. 1 of them reads a copy of 1 table that CDC keeps current "
         "from DynamoDB"
     )
     assert sync["description"].endswith(

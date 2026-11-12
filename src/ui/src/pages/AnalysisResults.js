@@ -72,7 +72,7 @@ import { PROCEDURE_INTERNAL_GROUP, buildAuroraDesigns, isAuroraEngine, reasonTex
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, sharedMitigationRef, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
-// #358: engine display names come from the shared mapping (kept in sync with
+// #358: engine display names come from the shared mapping (checked against
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";

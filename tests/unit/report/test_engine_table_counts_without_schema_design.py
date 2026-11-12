@@ -129,11 +129,11 @@ def test_designed_engine_reads_its_tables_from_its_wave(
     rows = {e["engine"]: e for e in architecture._architecture_engines(rigged)}
     documentdb = rows["documentdb"]
     assert documentdb["role"] == "Migration target"
-    # The wave's 30 served, 26 owned (4 kept in sync from Aurora PostgreSQL), and
+    # The wave's 30 served, 26 owned (4 kept current by CDC from Aurora PostgreSQL), and
     # the design's own "incl. shared" count carried along.
     assert documentdb["migrates"] == 26
     assert documentdb["scope"] == (
-        "30 source tables served: 26 migrate, 4 kept in sync (86 incl. shared)"
+        "30 source tables served: 26 migrate, 4 kept current by CDC (86 incl. shared)"
     )
 
     # dynamodb has no wave here: its design figure (15) stands, counted once.

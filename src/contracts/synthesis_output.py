@@ -227,7 +227,7 @@ Version History:
   and monthly cost; the totals (engines, tables migrate, workload, cost); the
   table basis behind the deck's "N tables mapped" bullet with its design
   coverage (#533) and its mapped tables per role (#258's "21 migrate, 1 to the
-  cache layer"); each wave's served, moving and kept-in-sync tables, moving
+  cache layer"); each wave's served, moving and kept-current tables, moving
   from ``owned_counts_by_engine`` for the merged wave (#581), and wave 1's
   view count next to the tables-only ``source_table_count`` (#578); the open
   and resolved risk counts by severity, type and engine (and the one shared
@@ -416,9 +416,9 @@ Version History:
   gets them from ``src.report.facts.report_facts``.
 - 1.42 (2026-10-19, #1169): ``EngineFacts.kept_in_sync_tables`` and
   ``moves_to_tables`` split a migration target's served tables it does not own the
-  way the wave plan does (owner outside the wave: kept in sync; owner in the same
+  way the wave plan does (owner outside the wave: kept current by CDC; owner in the same
   wave: moves to that owner). ``TableBasis.mapped_tables_by_move`` is the Migration
-  map heading's split (migrate, kept in sync, cache layer, search read model, stays),
+  map heading's split (migrate, kept current by CDC, cache layer, search read model, stays),
   with ``migrating_tables_not_mapped`` (and ``_names``), the moving tables the map has
   no row for, and ``mapped_tables_not_served``, the rows mapped to a migration target
   that no query routed there reads. Backward compatible: they default to None, empty
@@ -823,7 +823,7 @@ class TableMapping(BaseModel):
         None,
         description=(
             "Every other engine with an in-scope query on the table, which reads a copy kept "
-            "in sync from the owner via CDC; most queries first"
+            "current from the owner via CDC; most queries first"
         ),
     )
     cached_by: str | None = Field(
@@ -1325,8 +1325,8 @@ class MigrationWave(BaseModel):
             "Per-engine count of tables that engine durably owns -- table_counts_by_"
             "engine's count minus that engine's own table_owners entries -- for a wave "
             "with more than one engine (#568 review). Only the owned subset actually "
-            "migrates; a served-but-not-owned table stays on its real owner, kept in "
-            "sync. None for a single-engine wave (derive it there as "
+            "migrates; a served-but-not-owned table stays on its real owner, kept current "
+            "by CDC. None for a single-engine wave (derive it there as "
             "table_count - len(table_owners or [])) and for a wave written before this "
             "field existed."
         ),
@@ -1418,7 +1418,7 @@ class EngineFacts(BaseModel):
         ge=0,
         description=(
             "Migration target only: of engine_source_tables, the tables an engine outside "
-            "its migration wave owns, kept in sync from that owner (the wave plan's rule, "
+            "its migration wave owns, kept current by CDC from that owner (the wave plan's rule, "
             "#581, #1169). None when it states no served count"
         ),
     )
@@ -1676,7 +1676,7 @@ class WaveFacts(BaseModel):
         description=(
             "Tables one of the wave's engines durably owns, the sum of "
             "owned_counts_by_engine for the merged wave (#581); for a read-model wave, "
-            "the served tables not kept in sync from an owner; for a cross-engine wave 1, "
+            "the served tables not kept current by CDC from an owner; for a cross-engine wave 1, "
             "every source table, views not included (#1120). None for a homogeneous or "
             "heterogeneous wave 1"
         ),
@@ -1684,13 +1684,15 @@ class WaveFacts(BaseModel):
     kept_in_sync_tables: int | None = Field(
         None,
         ge=0,
-        description="Tables owned outside the wave and kept in sync from it. None for wave 1",
+        description=(
+            "Tables owned outside the wave and kept current by CDC from it. None for wave 1"
+        ),
     )
     moving_by_engine: dict[str, int] | None = Field(None)
     served_by_engine: dict[str, int] | None = Field(None)
     kept_in_sync: list[TableOwner] = Field(
         default_factory=list,
-        description="One entry per kept-in-sync table, naming its owner outside the wave",
+        description="One entry per table kept current by CDC, naming its owner outside the wave",
     )
     shared_in_wave: list[TableOwner] = Field(
         default_factory=list,
@@ -2360,7 +2362,7 @@ class DynamoDBMergeReviewRow(BaseModel):
     authoritative_home: str = Field(..., description="The table that takes every write to them")
     derived_copies: list[str] = Field(
         default_factory=list,
-        description="The tables kept in sync from the home's DynamoDB Streams",
+        description="The tables kept current from the home's DynamoDB Streams",
     )
     risk_id: str | None = Field(
         None, description="The open design-conflict risk of the overlap, if the register has it"
@@ -3045,8 +3047,8 @@ class TableSourceFacts(BaseModel):
         description=(
             "Written tables whose every write has no engine in the customer's engine scope "
             "(#1329): the source database stays their writer (source_of_truth "
-            "``source_database``), and each engine that reads one holds a replica kept in "
-            "sync from it"
+            "``source_database``), and each engine that reads one holds a replica kept current "
+            "by CDC from it"
         ),
     )
 

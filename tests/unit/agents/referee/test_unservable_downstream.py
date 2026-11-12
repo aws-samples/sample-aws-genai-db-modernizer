@@ -475,7 +475,7 @@ class TestTheHeadlineTotals:
 class TestTheSourceDatabaseKeepsTheWrites:
     """The review's item 5 (ADR-031 Amendments 9 and 15): a table whose every write has no
     engine in the scope keeps the source database as its writer, and each in-scope engine
-    that reads it holds a replica kept in sync from it."""
+    that reads it holds a replica kept current from it."""
 
     def _assignment(self) -> dict[str, Any]:
         return {
@@ -525,7 +525,7 @@ class TestTheSourceDatabaseKeepsTheWrites:
         assert (ts["source_database_table_count"], ts["replicated_table_count"]) == (1, 1)
         (row,) = ts["replicated_tables"]
         assert (row["source_of_truth"], row["replica_engines"]) == ("source_database", ["dynamodb"])
-        assert "kept in sync from the source database via CDC" in row["risk"]
+        assert "kept current from the source database via CDC" in row["risk"]
         md = render_engineering_report_md(report)
         assert source_database_text(1) in md
         assert "| `app.orders` | Source database | Source database → DynamoDB | 1 |" in md

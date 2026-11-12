@@ -758,7 +758,7 @@ class TestTheFeasibilityReview:
         )
         assert f.message.startswith(
             "Table db.orders has its source of truth on DynamoDB and a replica on Aurora "
-            "PostgreSQL, kept in sync by CDC from DynamoDB to Aurora PostgreSQL. 1 read is "
+            "PostgreSQL, kept current by CDC from DynamoDB to Aurora PostgreSQL. 1 read is "
             "served by a replica (r1) and eventually consistent: a read can miss a write "
             "until it replicates. Writes own the data on DynamoDB."
         )
@@ -830,6 +830,7 @@ def _qas(engines: dict[str, str]) -> list[QueryAssignment]:
 
 
 class TestTheSourceOfTruth:
+    @pytest.mark.passes_on_main
     def test_the_owner_is_the_writer_not_the_plurality(self) -> None:
         """Three reads on Aurora and two writes on DynamoDB: Aurora is the table's
         plurality engine (a summary, Decision 1), DynamoDB its source of truth."""
@@ -849,7 +850,7 @@ class TestTheSourceOfTruth:
         assert table.source_of_truth == "dynamodb"
         assert table.replica_engines == ["aurora_postgresql"]
         assert _durable_owner(table.model_dump(), "aurora_postgresql") == "dynamodb"
-        # The Aurora wave keeps a copy of it in sync from DynamoDB, one way.
+        # The Aurora wave keeps a copy of it current from DynamoDB, one way.
         assert _table_owners_for_served([table.model_dump()], "aurora_postgresql", None) == [
             {"table": "db.orders", "owner": "dynamodb", "sync": "CDC"}
         ]
@@ -921,7 +922,7 @@ class TestTheSourceOfTruth:
                     "replica_read_count": 1,
                     "risk": (
                         "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept "
-                        "in sync from DynamoDB via CDC, so each sees a write only after CDC "
+                        "current from DynamoDB via CDC, so each sees a write only after CDC "
                         "applies it, behind by the replication lag; a read that must see its "
                         "own write should read from DynamoDB."
                     ),

@@ -1030,7 +1030,7 @@ def independent_homes(homes: list[_Home], access_patterns: list[dict]) -> list[d
                 _add_note(
                     ap,
                     f"write {kept}, the authoritative home of {shown_sources}; "
-                    f"{ap.get('table_name')} is a derived copy kept in sync from {kept}'s "
+                    f"{ap.get('table_name')} is a derived copy kept current from {kept}'s "
                     "DynamoDB Streams",
                 )
         notes.append(

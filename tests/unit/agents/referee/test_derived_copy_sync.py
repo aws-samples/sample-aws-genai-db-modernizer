@@ -4,7 +4,7 @@
 """The stream sync of DynamoDB derived copies is listed and priced (#1527).
 
 #333 gave a source table one authoritative DynamoDB home and turned its other homes
-into derived copies kept in sync from the home's stream. ``derived_copy_sync_facts``
+into derived copies kept current from the home's stream. ``derived_copy_sync_facts``
 lists each sync (source table, home, copies, writes a second that must be replayed)
 and prices it: DynamoDB Streams read request units (one unit per GetRecords call of up
 to 1 MB) plus the copies' write request units, each replayed item rounded up to 1 KB
@@ -255,7 +255,7 @@ class TestTheSentences:
         summary = self._sync()["summary_line"]
 
         assert "wp_posts" not in summary and "WpPosts" not in summary
-        assert "2 derived copies are kept in sync" in summary
+        assert "2 derived copies are kept current from DynamoDB Streams" in summary
         assert "$39.42 a month" in summary
 
     def test_one_copy_reads_in_the_singular(self):
@@ -263,7 +263,7 @@ class TestTheSentences:
         [sync] = _facts(_schema([put]), [_risk()])["syncs"]
 
         assert "wp_posts is a derived copy" in sync["path_line"]
-        assert sync["summary_line"].startswith("1 derived copy is kept in sync")
+        assert sync["summary_line"].startswith("1 derived copy is kept current from DynamoDB")
 
 
 class TestTheRate:

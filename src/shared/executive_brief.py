@@ -50,7 +50,7 @@ _RISK_KINDS = {
 # A risk with no rule here is named by its severity, type and engine.
 _EXPOSURES: dict[str, tuple[str, str]] = {
     "sync.wave": (
-        "the tables kept in sync by change data capture (CDC)",
+        "the tables kept current by change data capture (CDC)",
         "test the CDC replication",
     ),
     "routing.close_calls": (

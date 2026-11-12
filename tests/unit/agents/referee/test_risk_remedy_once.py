@@ -299,7 +299,7 @@ def test_a_backfilled_old_report_moves_its_gate_lines_into_the_roadmap() -> None
         "Gate 1. Close RISK-003 before this gate (flagged queries no other engine takes)."
     )
     assert gates[3] == (
-        "Gate 3. Close RISK-002 and RISK-004 before this gate (tables kept in sync and flagged "
+        "Gate 3. Close RISK-002 and RISK-004 before this gate (tables kept current by CDC and flagged "
         "queries no other engine takes)."
     )
     assert backfill_report_risks(new) is new

@@ -10,7 +10,7 @@ import { dynamodbMergeReviewsOf } from "../utils/reportFacts";
 /**
  * "DynamoDB merge-review decisions" (#1780): for each source table two or more design
  * groups each gave its own home, the authoritative home the DynamoDB group merge chose
- * and the derived copies kept in sync from its DynamoDB Streams, from report.json's
+ * and the derived copies kept current from its DynamoDB Streams, from report.json's
  * facts.dynamodb_merge_reviews -- the same lines the engineering report lists and the
  * same sentences the executive report states (src/report/merge_reviews.py). It only
  * formats the facts (ADR-032).

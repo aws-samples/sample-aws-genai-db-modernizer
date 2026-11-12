@@ -2719,7 +2719,7 @@ def replica_risk_text(source: str, replicas: list[str], read_count: int) -> str:
     source_name = "the source database" if source == SOURCE_DATABASE else display_engine(source)
     return (
         f"Eventually consistent: {read_count} {noun} on "
-        f"{', '.join(display_engine(e) for e in replicas)} read a copy kept in sync from "
+        f"{', '.join(display_engine(e) for e in replicas)} read a copy kept current from "
         f"{source_name} via CDC, so each sees a write only after CDC applies it, behind by "
         f"the replication lag; a read that must see its own write should read from "
         f"{source_name}."
@@ -2737,7 +2737,7 @@ def shared_replica_risk_text(sources: list[str]) -> str:
         listed = ", ".join(names[:-1]) + f" or {names[-1]}"
         source, mitigation = f"its source of truth ({listed})", "the source of truth"
     return (
-        f"Eventually consistent: a read on a replica reads a copy kept in sync from {source} "
+        f"Eventually consistent: a read on a replica reads a copy kept current from {source} "
         "via CDC, so it sees a write only after CDC applies it, behind by the replication "
         f"lag; a read that must see its own write should read from {mitigation}."
     )
@@ -2751,14 +2751,22 @@ def shares_replica_risk(row: dict[str, Any]) -> bool:
     """Whether a replicated table's stored ``risk`` is the standard sentence
     (``replica_risk_text`` over its own source, replicas and read count), so the
     deliverables state it once with ``shared_replica_risk_text`` (#1170, #1232).
-    A risk stored with other wording (an older report's) is not: each deliverable
-    prints it for its own table. Decided here once, never by a renderer."""
+    The same sentence as a report written before #2167 stored it ("a copy kept in
+    sync from") counts too, so that report states it in today's words. A risk stored
+    with other wording (an older report's) is not: each deliverable prints it for its
+    own table. Decided here once, never by a renderer."""
     count = row.get("replica_read_count")
     if not isinstance(count, int) or isinstance(count, bool):
         return False
     source = str(row.get("source_of_truth", ""))
     replicas = [str(e) for e in row.get("replica_engines") or []]
-    return bool(row.get("risk") == replica_risk_text(source, replicas, count))
+    text = replica_risk_text(source, replicas, count)
+    return row.get("risk") in (text, text.replace(_KEPT_CURRENT, _KEPT_BEFORE_2167, 1))
+
+
+# The replica risk's copy phrase, and how a report written before #2167 stored it.
+_KEPT_CURRENT = "a copy kept current from "
+_KEPT_BEFORE_2167 = "a copy kept in sync from "
 
 
 def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -2982,7 +2990,7 @@ def table_owner_reason(
     readers = [str(e) for e in line.get("also_read_by") or []]
     if readers:
         verb = "reads" if len(readers) == 1 else "read"
-        text += f"; {_engine_list(readers)} {verb} a copy kept in sync from {name} via CDC"
+        text += f"; {_engine_list(readers)} {verb} a copy kept current from {name} via CDC"
     return text + "."
 
 

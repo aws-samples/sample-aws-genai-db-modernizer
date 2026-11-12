@@ -44,7 +44,7 @@ Link width is traffic, in calls per second on a log scale, and busy links pull t
 
 - **Traffic** sizes links by calls per second.
 - **Moves together** marks, with dotted links, the queries that move as one unit (a table's writes and the queries co-dependent with them); select one to see its whole unit.
-- **Who writes** draws each table's writer (the query that writes or locks it, from the graph's `WRITES` edges, on the table's source of truth) solid, and its replica reads (served from a copy kept in sync by CDC) dashed. When the job's report was built from another assignment version than the graph (a reroute or an edit since, with the report not rebuilt yet), a read is drawn faint and dotted as "Reads, or reads a replica (report pending)", since the report's replica reads may no longer hold.
+- **Who writes** draws each table's writer (the query that writes or locks it, from the graph's `WRITES` edges, on the table's source of truth) solid, and its replica reads (served from a copy kept current by CDC) dashed. When the job's report was built from another assignment version than the graph (a reroute or an edit since, with the report not rebuilt yet), a read is drawn faint and dotted as "Reads, or reads a replica (report pending)", since the report's replica reads may no longer hold.
 - **Cost** sizes engines by their projected monthly cost.
 
 ## Waves

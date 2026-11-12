@@ -319,7 +319,7 @@ def test_the_replica_risk_names_no_query_hash_and_says_what_to_do() -> None:
     risk = row["risk"]
     assert not _HASH.search(risk), risk
     assert risk.startswith("Eventually consistent: 7 reads on Aurora MySQL")
-    assert "in sync from DynamoDB via CDC" in risk
+    assert "current from DynamoDB via CDC" in risk
     assert "behind by the replication lag" in risk, risk
     assert "a read that must see its own write should read from DynamoDB" in risk, risk
     assert "can miss" not in risk

@@ -4,7 +4,7 @@
 """The DynamoDB merge-review decisions, in every deliverable (#1780).
 
 When two design groups each gave a source table its own home, the DynamoDB group merge
-keeps one as the authoritative home and the others as derived copies kept in sync from
+keeps one as the authoritative home and the others as derived copies kept current from
 its DynamoDB Streams (#333). Synthesis copies each decision into
 ``schema_designs.dynamodb.merge_reviews``; the facts layer states them once in
 ``facts.dynamodb_merge_reviews`` (ADR-032), each linked to its design-conflict risk. The
@@ -158,7 +158,7 @@ def test_the_recorded_home_holds_after_members_are_added_to_the_copy() -> None:
     assert notes and all("write WpPosts, the authoritative home" in n for n in notes)
     risks = build_risk_assessment(_data(completed))["risks"]
     [risk] = [r for r in risks if r["risk_type"] == "DATA_CONSISTENCY"]
-    assert "in sync from WpPosts, the authoritative home" in risk["mitigation"]
+    assert "current from WpPosts, the authoritative home" in risk["mitigation"]
     [sync] = derived_copy_sync_facts(completed, risks, {})["syncs"]
     assert sync["authoritative_home"] == "WpPosts"
     fact = _report(_build_standard_schema_summary(completed), risks)["facts"]

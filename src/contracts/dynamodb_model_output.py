@@ -760,7 +760,7 @@ class DynamoDBTradeOff(TradeOff):
         None,
         description=(
             "Set by the group merge on its overlap review only: the other target tables, "
-            "kept in sync from the authoritative home's DynamoDB Streams"
+            "kept current from the authoritative home's DynamoDB Streams"
         ),
     )
 

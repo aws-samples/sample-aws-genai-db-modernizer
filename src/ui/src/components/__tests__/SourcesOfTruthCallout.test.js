@@ -69,9 +69,9 @@ afterEach(() => {
 });
 
 // The stored per-table risk (src/shared/report_facts.replica_risk_text).
-const RISK = 'Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
+const RISK = 'Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept current from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
 // The same risk once for every table (src/shared/report_facts.shared_replica_risk_text).
-const SHARED_DYNAMODB = 'Eventually consistent: a read on a replica reads a copy kept in sync from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
+const SHARED_DYNAMODB = 'Eventually consistent: a read on a replica reads a copy kept current from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
 
 const shipment = {
   table: 'trailgear.Shipment',
@@ -91,7 +91,7 @@ const order = {
   replica_read_query_ids: ['r3'],
   replica_read_count: 1,
   shares_replica_risk: true,
-  risk: 'Eventually consistent: 1 read on Aurora PostgreSQL, DocumentDB read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.',
+  risk: 'Eventually consistent: 1 read on Aurora PostgreSQL, DocumentDB read a copy kept current from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.',
 };
 
 const facts = {
@@ -152,7 +152,7 @@ describe('SourcesOfTruthCallout', () => {
     const fromPg = { ...order, table: 'trailgear.Item', source_of_truth: 'aurora_postgresql', replica_engines: ['opensearch'] };
     render({ ...facts, replicated_tables: [shipment, fromDocdb, order, fromPg] });
     expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(
-      'Every table above has this risk. Eventually consistent: a read on a replica reads a copy kept in sync from its source of truth (DynamoDB, DocumentDB or Aurora PostgreSQL) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the source of truth.'
+      'Every table above has this risk. Eventually consistent: a read on a replica reads a copy kept current from its source of truth (DynamoDB, DocumentDB or Aurora PostgreSQL) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the source of truth.'
     );
   });
 
@@ -196,7 +196,7 @@ describe('SourcesOfTruthCallout', () => {
   it('states the tables the source database keeps writing, like the reports', () => {
     render({ ...facts, source_database_table_count: 24 });
     expect(container.querySelector('[data-figure="source-database-tables"]').textContent).toBe(
-      "The source database stays the writer of 24 tables: no engine in the customer's engine scope can serve their writes. Each engine that reads one holds a replica kept in sync from the source database.",
+      "The source database stays the writer of 24 tables: no engine in the customer's engine scope can serve their writes. Each engine that reads one holds a replica kept current from the source database.",
     );
     render({ ...facts, source_database_table_count: 0 });
     expect(container.querySelector('[data-figure="source-database-tables"]')).toBeNull();

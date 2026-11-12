@@ -84,14 +84,14 @@ def pattern_example(key: str, applies_to: dict) -> str:
         return (
             f"{write} takes every write and the reads that need its latest state. "
             f"{_names(reads)} {verb} the reads {'it is' if len(reads) == 1 else 'they are'} "
-            f"built for, from a copy kept in sync from {write}."
+            f"built for, from a copy kept current by CDC from {write}."
         )
     if key == "MATERIALIZED_VIEW":
         source = display_engine(str(applies_to["source_engine"]))
         view = display_engine(str(applies_to["view_engine"]))
         return (
             f"{source} is the source of truth and takes every write. {view} keeps a read-only, "
-            f"denormalized copy of the data its queries read, kept in sync from {source}."
+            f"denormalized copy of the data its queries read, kept current from {source}."
         )
     if key == "EVENT_SOURCING":
         source = display_engine(str(applies_to["source_engine"]))

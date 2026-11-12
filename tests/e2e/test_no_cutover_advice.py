@@ -66,8 +66,12 @@ def test_the_engineering_report_gives_no_cutover_advice(run: PipelineResult) -> 
     assert roadmap.count(f"*{SENTENCE}*") == 1, run.db
 
 
+# replay_stale: the replay's saved summary was written before #2167 from a deterministic
+# risk that said "in sync", and the model paraphrased it; a fresh e2e-llm run is checked.
+@pytest.mark.replay_stale
 def test_the_executive_summary_gives_no_cutover_advice(run: PipelineResult) -> None:
-    """Named on its own so an e2e-llm failure points at the model's text."""
+    """Named on its own so an e2e-llm failure points at the model's text. ``replay_stale``:
+    the saved replay summary paraphrases the pre-#2167 "in sync" risk."""
     md = run.deliverable("engineering-report.md").read_text()
     summary = _summary(md)
     assert summary.strip(), run.db

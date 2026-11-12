@@ -160,8 +160,8 @@ def _kv_facts(moving: int = 15, kept: int = 3) -> dict:
 def test_the_wave_headline_says_what_the_tables_it_does_not_move_are() -> None:
     count, tables = _wave_headline_stats(_kv_wave(), _kv_facts())
     assert count + tables == (
-        "39 queries (36.4% of queries), 18 source tables: 15 to move, 3 kept in "
-        "sync from their owners"
+        "39 queries (36.4% of queries), 18 source tables: 15 to move, 3 kept current "
+        "by CDC from their owners"
     )
     assert "served" not in tables
 
@@ -169,14 +169,14 @@ def test_the_wave_headline_says_what_the_tables_it_does_not_move_are() -> None:
 def test_the_wave_headline_agrees_in_number_for_one_table() -> None:
     wave = {**_kv_wave(), "table_count": 1, "tables": ["db.t0"]}
     _, tables = _wave_headline_stats(wave, _kv_facts(moving=0, kept=1))
-    assert tables == ", 1 source table: 0 to move, 1 kept in sync from its owner"
+    assert tables == ", 1 source table: 0 to move, 1 kept current by CDC from its owner"
 
 
 def test_the_engineering_roadmap_states_how_many_tables_move() -> None:
     report = {"migration_waves": [_kv_wave()], "facts": {"engines": [], "waves": [_kv_facts()]}}
     md = "\n".join(_roadmap_md(report))
     assert "- 18 source tables (15 to move): " in md
-    assert "- 3 tables kept in sync from their owner: " in md
+    assert "- 3 tables kept current by CDC from their owner: " in md
 
 
 def test_a_wave_with_nothing_kept_in_sync_states_the_plain_count() -> None:

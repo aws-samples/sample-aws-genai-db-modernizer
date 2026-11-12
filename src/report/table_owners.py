@@ -25,7 +25,7 @@ from .formatting import plural_noun
 OWNER_RULE_SHORT = (
     "Each table has one owner, as in the wave plan: the engine that takes its writes; a "
     "table no query writes is owned by the engine that serves most of its queries. A cache "
-    "never owns a table. Every other engine that reads a table reads a copy kept in sync "
+    "never owns a table. Every other engine that reads a table reads a copy kept current "
     "from its owner via CDC."
 )
 OWNER_RULE = (

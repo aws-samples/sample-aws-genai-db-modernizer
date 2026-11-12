@@ -282,7 +282,7 @@ _BACKFILLED = {
     "retired_in_use_engines": lambda f: f.pop("retired_in_use_engines"),
     "unservable kinds": lambda f: f["unservable"].pop("no_fit_query_count"),
     "map split": lambda f: f["table_basis"].pop("mapped_tables_by_move"),
-    "kept in sync": lambda f: [e.pop("kept_in_sync_tables") for e in f["engines"]],
+    "kept current by CDC": lambda f: [e.pop("kept_in_sync_tables") for e in f["engines"]],
     "shares replica risk": lambda f: [
         r.pop("shares_replica_risk") for r in f["table_sources"]["replicated_tables"]
     ],
