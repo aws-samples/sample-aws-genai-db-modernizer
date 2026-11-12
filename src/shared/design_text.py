@@ -188,9 +188,13 @@ def design_prose_report(report: dict[str, Any]) -> dict[str, Any]:
     Synthesis writes a report that way; the deliverables and the results payload read a
     report through this too, so one synthesized before it shows the same text. The reality
     check's own trade-offs keep their place (``facts.reality_check_trade_offs`` points at
-    them by index) and their text. A report with nothing to change comes back unchanged
-    (the same object).
+    them by index) and their text. Sibling design entries that share a sentence are
+    grouped (#2165, ``shared_sentences.grouped_report``). A report with nothing to change
+    comes back unchanged (the same object).
     """
+    from src.shared.shared_sentences import grouped_report
+
+    report = grouped_report(report)
     out = report
     designs = report.get("schema_designs")
     if isinstance(designs, dict):

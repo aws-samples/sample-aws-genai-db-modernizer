@@ -41179,7 +41179,7 @@
       }
     },
     "schema_hash": "2b30be9f2e0af106e79ea906b95e329b1911d45a9543107e40a15d4d8b5ceaff",
-    "version": "1.96"
+    "version": "1.97"
   },
   "transformation_contract.StepContract": {
     "fields": {

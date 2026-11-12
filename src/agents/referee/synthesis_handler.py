@@ -129,6 +129,7 @@ from src.shared.report_facts import (
     wave_retained_engine,
 )
 from src.shared.routine_facts import read_routine_facts
+from src.shared.shared_sentences import grouped_report
 from src.shared.source_cache import cost_basis_fields
 from src.shared.trade_off_topics import predates_topics, trade_off_note_kind, trade_off_topic
 from src.storage.artifact_store import ArtifactStore
@@ -1571,6 +1572,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         # #1146: the in-scope queries grouped by query pattern, for facts.query_pattern_counts.
         "query_pattern_groups": _query_pattern_groups(data),
     }
+    # #2165: sibling design entries that share a sentence become one entry (and a cache
+    # risk's details list it once), so every deliverable reads the grouped form.
+    output_data = grouped_report(output_data)
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
     # #339: the per-query decision traces from the move ledger, for the
