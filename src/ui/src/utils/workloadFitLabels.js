@@ -12,7 +12,7 @@
  * this will work") to "fit" (how closely the engine's capabilities match the
  * access patterns of the queries routed to it).
  *
- * Kept in sync with `src/shared/workload_fit_labels.py` by hand --
+ * Mirrors `src/shared/workload_fit_labels.py` by hand --
  * `tests/unit/report/test_workload_fit_labels_js_sync.py` parses this file and
  * fails if the two drift, the same way `engineNames.js` is pinned to
  * `src/shared/engine_names.py` by `test_engine_names_js_sync.py`.

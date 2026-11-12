@@ -26,6 +26,8 @@ it owns no table), and the cache/owner share overlap note.
 
 from __future__ import annotations
 
+import pytest
+
 from src.agents.referee.migration_waves import _durable_owner, build_migration_waves
 
 RANKING = [
@@ -1169,6 +1171,7 @@ class TestQueryScopedTables:
     not ownership of the work a wave moves.
     """
 
+    @pytest.mark.passes_on_main
     def test_documentdb_wave_lists_every_table_its_queries_use(self):
         # #562 audit comment: on wordpress, the DocumentDB wave reported 4
         # tables while its 11 queries actually used 9 -- the 5 missing
@@ -1246,7 +1249,7 @@ class TestQueryScopedTables:
         assert doc_wave["query_count"] == 11
         assert doc_wave["table_count"] == 9
         assert sorted(doc_wave["tables"]) == sorted(set(owned) | set(synced))
-        # Every served-but-not-owned table is marked kept in sync with its
+        # Every served-but-not-owned table is marked kept current by CDC with its
         # real system of record (#562) -- an owner table is absent here, the
         # same convention the search/analytics wave already used.
         owners = {o["table"]: o["owner"] for o in doc_wave["table_owners"]}
@@ -1326,7 +1329,7 @@ class TestQueryScopedTables:
             known_tables={"wp_posts", "wp_legacy"},
         )
         doc_wave = next(w for w in waves if w["engines"] == ["documentdb"])
-        # DocumentDB serves both tables (owns wp_posts, kept in sync on
+        # DocumentDB serves both tables (owns wp_posts, kept current by CDC on
         # wp_legacy) -- #562's own fix, still intact.
         assert doc_wave["table_count"] == 2
         assert doc_wave["table_owners"] == [
@@ -1341,7 +1344,7 @@ class TestQueryScopedTables:
         # clause #568 review flagged as unreachable before this fix.
         assert "wp_legacy" in doc_wave["gate"]
         assert "Aurora MySQL owns (wave 1) and keeps owning" in doc_wave["gate"]
-        assert "keep a DocumentDB copy of them in sync via CDC" in doc_wave["gate"]
+        assert "keep a DocumentDB copy of them current via CDC" in doc_wave["gate"]
 
     def test_kept_in_sync_table_is_named_even_read_together_with_an_owned_table(self):
         # #568 review round 2, Important 2: on real discourse data,
@@ -1419,7 +1422,7 @@ class TestQueryScopedTables:
         assert "child_themes" in doc_wave["gate"]
         assert "post_actions" in doc_wave["gate"]
         assert "Aurora MySQL owns (wave 1) and keeps owning" in doc_wave["gate"]
-        assert "keep a DocumentDB copy of them in sync via CDC" in doc_wave["gate"]
+        assert "keep a DocumentDB copy of them current via CDC" in doc_wave["gate"]
         # Not a gap: both queries that read them are counted via the reverse
         # clause, not the "could not be resolved" fallback.
         assert "could not be resolved" not in doc_wave["gate"]

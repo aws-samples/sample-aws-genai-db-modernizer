@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.agents.referee.write_groups import collector_write_groups, table_sources
 from src.report.escaping import md_text
 from src.shared.engine_names import display_engine
@@ -90,6 +92,9 @@ def test_trailgear_shipments_insert_and_update_share_one_engine(
         assert len(engines) == 1, (assignment["version"], engines)
 
 
+# replay_stale: the replay's saved report.json stores the replica risk as worded before
+# #2167 ("kept in sync"); a fresh run stores today's "kept current".
+@pytest.mark.replay_stale
 def test_report_json_states_each_tables_source_of_truth_and_replicas(run: PipelineResult) -> None:
     report = _report(run)
     final = _versions(run)[-1]
@@ -105,9 +110,12 @@ def test_report_json_states_each_tables_source_of_truth_and_replicas(run: Pipeli
         for qid in row["replica_read_query_ids"]:
             assert engine[qid] in row["replica_engines"], (row["table"], qid)
         assert row["risk"].startswith("Eventually consistent: ")
-        assert f"in sync from {display_engine(row['source_of_truth'])} via CDC" in row["risk"]
+        assert f"kept current from {display_engine(row['source_of_truth'])} via CDC" in row["risk"]
 
 
+# replay_stale: the replay's saved report.json stores the replica risk as worded before
+# #2167 ("kept in sync"); a fresh run stores today's "kept current".
+@pytest.mark.replay_stale
 def test_every_deliverable_states_the_replicas(run: PipelineResult) -> None:
     """The engineering report lists the replicated tables with their CDC direction
     and risk, from the facts; the UI results page is checked in test_ui.py. The

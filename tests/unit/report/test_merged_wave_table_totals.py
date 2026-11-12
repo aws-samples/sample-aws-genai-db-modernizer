@@ -56,11 +56,15 @@ def test_fixture_has_a_merged_wave_with_no_table_overlap(report: dict[str, Any])
 def test_architecture_engines_credits_each_engine_its_own_share(report: dict[str, Any]) -> None:
     rows = {e["engine"]: e for e in architecture._architecture_engines(report)}
     # Scope shows each engine's own SERVED count -- never the union (200/200) --
-    # and, since #1169, how many of those migrate and how many are kept in sync.
-    assert rows["dynamodb"]["scope"] == "118 source tables served: 108 migrate, 10 kept in sync"
-    assert rows["documentdb"]["scope"] == "82 source tables served: 73 migrate, 9 kept in sync"
+    # and, since #1169, how many of those migrate and how many are kept current by CDC.
+    assert (
+        rows["dynamodb"]["scope"] == "118 source tables served: 108 migrate, 10 kept current by CDC"
+    )
+    assert (
+        rows["documentdb"]["scope"] == "82 source tables served: 73 migrate, 9 kept current by CDC"
+    )
     # "Tables migrate" counts only the OWNED (physically moving) subset --
-    # a served-but-not-owned table stays on its real owner, kept in sync.
+    # a served-but-not-owned table stays on its real owner, kept current by CDC.
     assert rows["dynamodb"]["migrates"] == 108
     assert rows["documentdb"]["migrates"] == 73
 

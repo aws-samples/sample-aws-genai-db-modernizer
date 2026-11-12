@@ -2411,7 +2411,7 @@ _UTILITY_PIN_RE = re.compile(r"utility/metadata statement")
 # can name -- shared with assignment_resolver.py (#572 review suggestion 7), which
 # builds that reason text, so the two can never show a different name for the same
 # capability. See src.shared.capability_labels's own docstring for the coverage
-# story (#393) that keeps this in sync with capability_registry.
+# story (#393) that keeps this matching capability_registry.
 _CAPABILITY_PIN_DISPLAY = CAPABILITY_DISPLAY_NAMES
 
 
@@ -2553,12 +2553,12 @@ def _overlap_mitigation(home: tuple[str, list[str]] | None) -> str:
     if home is None:
         return (
             "Consolidate to one table per source table, or document the "
-            "dual-write path and keep the copies in sync."
+            "dual-write path that keeps the copies current."
         )
     kept, copies = home
     shown = " and ".join([", ".join(copies[:-1]), copies[-1]] if len(copies) > 1 else copies)
     return (
-        f"Build the DynamoDB Streams consumer that keeps {shown} in sync from {kept}, the "
+        f"Build the DynamoDB Streams consumer that keeps {shown} current from {kept}, the "
         f"authoritative home, or move the access patterns on {shown} onto a global "
         f"secondary index of {kept}."
     )

@@ -33,15 +33,15 @@ SHARED_TABLES_NOTE = (
 
 
 # #1169: what a migration target's served tables split into, in the Scope cell, the
-# Migration map heading and the notes that define them. "Kept in sync" is the wave
+# Migration map heading and the notes that define them. "Kept current by CDC" is the wave
 # plan's rule (#581): an engine outside the wave owns the table.
 MIGRATE_LABEL = "migrate"
-KEPT_IN_SYNC_LABEL = "kept in sync"
+KEPT_IN_SYNC_LABEL = "kept current by CDC"
 KEPT_IN_SYNC_NOTE = (
     "In the Scope column, \u201cserved\u201d is the source tables a migration target\u2019s queries "
     "read. The tables it owns migrate, and the Total counts only those. A table another "
     "engine of the same wave owns moves to that engine. A table an engine outside the "
-    "wave owns stays there and is kept in sync from it, as in the wave plan."
+    "wave owns stays there and is kept current by CDC from it, as in the wave plan."
 )
 KEPT_IN_SYNC_SOURCES_NOTE = (
     "These counts are about reads; Sources of truth and replicas below lists where "
@@ -49,7 +49,7 @@ KEPT_IN_SYNC_SOURCES_NOTE = (
 )
 MAP_SPLIT_NOTE = (
     "Migrate counts the mapped tables a migration wave moves, which the Target engines "
-    "Total also counts; kept in sync counts the ones a migration wave reads while an "
+    "Total also counts; kept current by CDC counts the ones a migration wave reads while an "
     "engine outside that wave owns them, as in the wave plan."
 )
 
@@ -69,7 +69,7 @@ def _scope_text(e: dict[str, Any], report: dict[str, Any]) -> str:
         # tables mapped to another engine; say so when it does (#257).
         # #1169: when it does not own all of them, the cell says how many migrate
         # (the figure the Total counts), how many move to another engine of the same
-        # wave, and how many stay with an owner outside the wave, kept in sync.
+        # wave, and how many stay with an owner outside the wave, kept current by CDC.
         kept = e.get("kept_in_sync_tables") or 0
         moves_to = e.get("moves_to_tables") or {}
         parts = [f"{e.get('tables_migrate', 0)} {MIGRATE_LABEL}"]
@@ -135,7 +135,7 @@ _MAP_PHRASE = {
 
 
 def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]] | None = None) -> str:
-    """ ": 15 migrate, 3 kept in sync, 1 to the cache layer" for the migration map
+    """ ": 15 migrate, 3 kept current by CDC, 1 to the cache layer" for the migration map
     heading (#258, #1169).
 
     The counts are the facts layer's ``table_basis.mapped_tables_by_move``: a table

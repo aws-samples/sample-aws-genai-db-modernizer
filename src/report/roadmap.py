@@ -68,7 +68,7 @@ def _served_move_phrase(served: int, moving: int, kept: int) -> str:
     owner = "its owner" if kept == 1 else "their owners"
     return (
         f", {served} source {plural_noun(served, 'table')}: {moving} to move, "
-        f"{kept} kept in sync from {owner}"
+        f"{kept} kept current by CDC from {owner}"
     )
 
 
@@ -173,7 +173,7 @@ def _owner_lines_md(wf: dict[str, Any], kept_in_full: bool = False) -> list[str]
         # list of tables this wave does NOT own -- it names the real
         # owner elsewhere this wave keeps a synced copy of, so say that.
         out.append(
-            f"- {n} {plural_noun(n, 'table')} kept in sync from their owner: "
+            f"- {n} {plural_noun(n, 'table')} kept current by CDC from their owner: "
             f"{_owner_list_md(kept, None if kept_in_full else _OWNERS_SHOWN)}"
         )
     shared = wf.get("shared_in_wave") or []
@@ -253,7 +253,7 @@ def _gate_text(
         # Only a list shown in full above is referred to; a capped one is printed here.
         # The kept-in-sync line is never capped when this list is it (#1574).
         if _same_tables(items, kept):
-            out.append(" (the tables kept in sync above)")
+            out.append(" (the tables kept current by CDC above)")
         elif not tables[_TABLES_SHOWN:] and _same_tables(items, tables):
             out.append(" (the tables listed above)")
         elif _same_tables(items, written):

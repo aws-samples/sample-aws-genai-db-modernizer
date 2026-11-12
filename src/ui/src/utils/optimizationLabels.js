@@ -8,7 +8,7 @@
  * instead of a readable label; the retired HTML report had the fix, and the
  * results page took it over in #987).
  *
- * Kept in sync with `src/shared/optimization_labels.py`'s
+ * Mirrors `src/shared/optimization_labels.py`'s
  * `OPTIMIZATION_DISPLAY_NAMES` by hand -- `tests/unit/report/
  * test_optimization_labels_js_sync.py` parses this file and fails if the
  * two drift, the same way `engineNames.js` is pinned to

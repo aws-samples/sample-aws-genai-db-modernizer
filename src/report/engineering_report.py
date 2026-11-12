@@ -957,7 +957,7 @@ def _defines_kept_in_sync(engines: list[dict[str, Any]]) -> bool:
 
 # #1410: the Migration map refers to the definitions "Target engines" gave above.
 MAP_SPLIT_DEFINED_ABOVE = (
-    "Migrate and kept in sync are as Target engines above defines them; Migrate counts the "
+    "Migrate and kept current by CDC are as Target engines above defines them; Migrate counts the "
     "same tables as its Total."
 )
 

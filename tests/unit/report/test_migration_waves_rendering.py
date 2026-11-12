@@ -319,7 +319,7 @@ class TestEngineeringReportRoadmap:
         # this wave does NOT own -- it names the real owner it keeps a
         # synced copy from instead.
         assert (
-            "1 table kept in sync from their owner: "
+            "1 table kept current by CDC from their owner: "
             "`wordpress.wp_comments` -> Aurora MySQL (CDC)" in md
         )
 
@@ -428,9 +428,9 @@ class TestDeckUsesStoredWaves:
         "(wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups, "
         "wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, "
         "wordpress.wp_terms, wordpress.wp_users) stay dual-read by Aurora MySQL queries "
-        "until wave 4; keep them in sync via CDC until then. 2 queries read 2 tables "
+        "until wave 4; keep them current via CDC until then. 2 queries read 2 tables "
         "(wordpress.wp_options, wordpress.wp_postmeta) Aurora MySQL owns (wave 4); keep a "
-        "copy in sync via CDC. 3 queries could not be resolved to a table in "
+        "copy current via CDC. 3 queries could not be resolved to a table in "
         "either wave and are not counted in any table group."
     )
 

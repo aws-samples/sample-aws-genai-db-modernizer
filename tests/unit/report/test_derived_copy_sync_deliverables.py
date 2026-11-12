@@ -86,7 +86,7 @@ def test_the_executive_report_states_the_sync_without_a_table_name() -> None:
     )
 
     assert "Stream sync" in text
-    assert "2 derived copies are kept in sync from DynamoDB Streams" in text
+    assert "2 derived copies are kept current from DynamoDB Streams" in text
     assert "$39.42 a month" in text
     assert "wp_posts" not in text and "WpPosts" not in text
 

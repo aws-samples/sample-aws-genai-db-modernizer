@@ -67,7 +67,7 @@ def test_wordpress_merge_review_states_the_home_the_merge_recorded(
         for x in report["risk_assessment"]["risks"]
         if x["risk_type"] == "DATA_CONSISTENCY" and x["risk_id"] == decision["risk_id"]
     ]
-    assert "in sync from Posts, the authoritative home" in risk["mitigation"]
+    assert "current from Posts, the authoritative home" in risk["mitigation"]
     syncs = (report["facts"].get("derived_copy_sync") or {}).get("syncs") or []
     assert [(s["risk_id"], s["authoritative_home"]) for s in syncs] == [(risk["risk_id"], "Posts")]
 

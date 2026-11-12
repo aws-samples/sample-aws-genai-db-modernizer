@@ -560,7 +560,7 @@ def _search_wave(
         "share_basis": "queries",
         "rationale": (
             f"{n} search/analytics {query} ({share:.1f}% of queries) build a read model "
-            f"in {display_engine(engine)}, kept in sync (zero-ETL, OpenSearch Ingestion or CDC "
+            f"in {display_engine(engine)}, kept current (zero-ETL, OpenSearch Ingestion or CDC "
             f"per table) from {owner_names}, which keep durable ownership: every table it "
             f"serves still has an owner. {display_engine(engine)} never becomes the system of "
             "record, and recovery is always by re-indexing, never a data migration."
@@ -693,7 +693,7 @@ def wave_one_map_sentence(
 def _staying_basis(staying: tuple[int, int] | None) -> str:
     """ ": 192 migration-map rows that do not migrate and 40 tables and views the map does
     not list" (#1642): the basis of wave 1's staying count, so it reads against the
-    migration map's "80 migrate, 64 kept in sync, 128 stay"."""
+    migration map's "80 migrate, 64 kept current by CDC, 128 stay"."""
     if not staying:
         return ""
     in_map, unmapped = staying

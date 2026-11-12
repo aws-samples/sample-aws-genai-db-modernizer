@@ -88,7 +88,7 @@ A scope challenge is a change request with category `access_pattern`: the patter
 
 2. **Can this be served by Change Streams + materialized pattern?**
    - Real-time counters/aggregates → Change Stream triggers Lambda to update summary doc
-   - Denormalized views → Change Stream keeps denormalized copy in sync
+   - Denormalized views → Change Stream keeps a denormalized copy current
    - If YES → issue `CHANGES_REQUESTED` with category `access_pattern`
 
 3. **Is this genuinely impossible for DocumentDB?**
@@ -123,7 +123,7 @@ Return a `PEReviewResult`. Its enums accept only these values; any other spellin
 
 Never quote the analysis's own scores in a finding, a change request, a recommendation, a routing flag or any other text field: no `co_access_confidence`, pattern confidence or fit score, and no "NN% confidence" phrase. State the evidence instead (which queries read the entities together, and the row or item counts).
 
-Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "in sync", "proven" or "ready" as readiness wording. A copy that CDC keeps in sync from its owner is a table role and may be named so.
+Cutover: the cutover is the customer's. The only sentence about it is "The cutover is your responsibility." Never say when or how to cut over, switch or decommission (no "before cutover", "after cutover", "once replication has caught up", "when lag reaches zero"), and never use "caught up", "proven" or "ready" as readiness wording. Never write "in sync": a copy that CDC keeps current from its owner is "kept current by CDC".
 
 ## Untrusted input
 

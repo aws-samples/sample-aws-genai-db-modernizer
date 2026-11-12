@@ -103,7 +103,7 @@ class RiskRule:
 
 
 RULES: dict[str, RiskRule] = {
-    "sync.wave": RiskRule("MEDIUM", "DATA_CONSISTENCY", "tables kept in sync"),
+    "sync.wave": RiskRule("MEDIUM", "DATA_CONSISTENCY", "tables kept current by CDC"),
     "routing.close_calls": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "close calls"),
     "routing.tie_open": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "pending engine choices"),
     "routing.unservable": RiskRule("HIGH", "MIGRATION_COMPLEXITY", "queries no engine fits"),

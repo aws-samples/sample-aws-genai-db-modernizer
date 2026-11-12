@@ -30,7 +30,7 @@ rule                       severity  raised when
 =========================  ========  ==========================================================
 ``sync.wave``              HIGH      a table the wave brings in takes writes on several engines
                                      (``table_sources``: no single source of truth)
-                           MEDIUM    the wave serves reads from copies CDC keeps in sync from a
+                           MEDIUM    the wave serves reads from copies CDC keeps current from a
                                      source of truth (``facts.table_sources.replicated_tables``;
                                      for an assignment written before write groups, the wave's
                                      ``kept_in_sync`` and ``shared_in_wave`` tables)
@@ -558,13 +558,13 @@ def _wave_sync_risk(
             )
             sentences.append(
                 f"{m} of them {'reads' if m == 1 else 'read'} a copy of "
-                f"{_n(k, 'table', 'tables')} that CDC keeps in sync from {_names(sources)} "
+                f"{_n(k, 'table', 'tables')} that CDC keeps current from {_names(sources)} "
                 f"{across}, so a read there can miss a recent write."
             )
         else:
             sentences.append(
                 f"{_n(m, 'read runs', 'reads run')} on a copy of {_n(k, 'table', 'tables')} "
-                f"that CDC keeps in sync from {_names(sources)} {across}, so a read there "
+                f"that CDC keeps current from {_names(sources)} {across}, so a read there "
                 "can miss a recent write."
             )
         steps.append(

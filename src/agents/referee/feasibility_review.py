@@ -211,7 +211,7 @@ def _detect_read_write_splits(
                 message=(
                     f"Table {table} has its source of truth on {display_engine(source)} and "
                     f"{'a replica' if len(replicas) == 1 else 'replicas'} on "
-                    f"{_engine_names(replicas)}, kept in sync by CDC from "
+                    f"{_engine_names(replicas)}, kept current by CDC from "
                     f"{display_engine(source)} to {_engine_names(replicas)}. "
                     f"{len(replica_reads)} {'read is' if len(replica_reads) == 1 else 'reads are'} "
                     f"served by a replica ({_query_list(replica_reads)}) and eventually "

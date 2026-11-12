@@ -222,12 +222,12 @@ def test_tables_kept_in_sync_from_two_owners_state_the_sync_once():
     assert note == (
         " 1 query read 1 table (t_a) Aurora PostgreSQL owns (wave 1) and keeps owning, and "
         "1 query read 1 table (t_d) DocumentDB owns (wave 3) and keeps owning; keep a "
-        "DynamoDB copy of all of them in sync via CDC."
+        "DynamoDB copy of all of them current via CDC."
     )
     one = _table_group_coverage_note(
         {"t_own"}, synced[:1], queries[:1], "dynamodb", {"aurora_postgresql": 1}, 3
     )
-    assert one.endswith("and keeps owning; keep a DynamoDB copy of them in sync via CDC.")
+    assert one.endswith("and keeps owning; keep a DynamoDB copy of them current via CDC.")
 
 
 def test_dual_read_count_says_it_is_a_subset_of_the_tables_the_wave_moves():
@@ -245,7 +245,7 @@ def test_dual_read_count_says_it_is_a_subset_of_the_tables_the_wave_moves():
         (" 3 of the 5 tables moving to DynamoDB", ["t_a", "t_b", "t_c"]),
         (
             " stay dual-read by Aurora MySQL queries, which remain on Aurora MySQL; DynamoDB "
-            "owns them, so keep the Aurora MySQL copy in sync from DynamoDB via CDC. The other 2 "
+            "owns them, so keep the Aurora MySQL copy current from DynamoDB via CDC. The other 2 "
             "tables",
             ["t_d", "t_e"],
         ),

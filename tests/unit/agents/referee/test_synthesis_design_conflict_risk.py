@@ -95,7 +95,7 @@ def test_unresolved_overlap_becomes_a_medium_risk() -> None:
     home, copies = overlap_home(_overlap_trade_off(), access_patterns)
     assert (home, copies) == ("PostsAltTable", ["PostsTable"])
     assert risk["mitigation"] == (
-        "Build the DynamoDB Streams consumer that keeps PostsTable in sync from "
+        "Build the DynamoDB Streams consumer that keeps PostsTable current from "
         "PostsAltTable, the authoritative home, or move the access patterns on PostsTable "
         "onto a global secondary index of PostsAltTable."
     )
@@ -265,7 +265,7 @@ def test_real_merge_mitigation_names_the_home_the_description_names() -> None:
         if r["risk_type"] == "DATA_CONSISTENCY"
     ]
     assert risk["mitigation"] == (
-        f"Build the DynamoDB Streams consumer that keeps {copy} in sync from {kept}, the "
+        f"Build the DynamoDB Streams consumer that keeps {copy} current from {kept}, the "
         f"authoritative home, or move the access patterns on {copy} onto a global secondary "
         f"index of {kept}."
     )
@@ -285,7 +285,7 @@ def test_several_copies_are_named_together() -> None:
         if r["risk_type"] == "DATA_CONSISTENCY"
     ]
     assert risk["mitigation"] == (
-        "Build the DynamoDB Streams consumer that keeps A and C in sync from B, the "
+        "Build the DynamoDB Streams consumer that keeps A and C current from B, the "
         "authoritative home, or move the access patterns on A and C onto a global "
         "secondary index of B."
     )
@@ -301,5 +301,5 @@ def test_an_overlap_with_one_target_keeps_the_general_mitigation() -> None:
     ]
     assert risk["mitigation"] == (
         "Consolidate to one table per source table, or document the "
-        "dual-write path and keep the copies in sync."
+        "dual-write path that keeps the copies current."
     )

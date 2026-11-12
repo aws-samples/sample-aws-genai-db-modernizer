@@ -24,7 +24,7 @@ from .formatting import plural_noun, plural_verb
 
 SOURCES_OF_TRUTH_INTRO = (
     "Each table's writes land on one engine, its source of truth. An engine that serves "
-    "the table's reads keeps a copy in sync from it via CDC, so those reads are "
+    "the table's reads keeps a copy current from it via CDC, so those reads are "
     "eventually consistent."
 )
 
@@ -141,6 +141,6 @@ def source_database_text(n: int) -> str:
     return (
         f"The source database stays the writer of {n} {plural_noun(n, 'table')}: no engine "
         f"in the customer's engine scope can serve {plural_noun(n, 'its', 'their')} writes. "
-        f"Each engine that reads {plural_noun(n, 'it', 'one')} holds a replica kept in sync "
+        f"Each engine that reads {plural_noun(n, 'it', 'one')} holds a replica kept current "
         "from the source database."
     )

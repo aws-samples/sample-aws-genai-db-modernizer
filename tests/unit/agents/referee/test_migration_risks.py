@@ -86,7 +86,7 @@ def _one(risks: list[dict[str, Any]], rule: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Tables kept in sync: one risk per wave
+# Tables kept current by CDC: one risk per wave
 # ---------------------------------------------------------------------------
 
 
@@ -117,7 +117,7 @@ def test_replicated_tables_are_one_medium_sync_risk_for_their_wave() -> None:
     assert risk["wave"] == 3
     # A merged wave's risk is filed under no single engine.
     assert risk["description"] == (
-        "Wave 3: 3 reads run on a copy of 2 tables that CDC keeps in sync from DocumentDB "
+        "Wave 3: 3 reads run on a copy of 2 tables that CDC keeps current from DocumentDB "
         "and DynamoDB across 2 engine pairs, so a read there can miss a recent write."
     )
     assert "sources of truth section" in risk["mitigation"]
@@ -182,7 +182,7 @@ def test_a_one_time_copy_folds_into_the_waves_cdc_risk() -> None:
     assert risk["affected_tables"] == ["db.a", "db.c"]
     assert risk["description"] == (
         "[dynamodb] Wave 3: 2 queries read 2 tables on an engine that does not own them. "
-        "1 of them reads a copy of 1 table that CDC keeps in sync from DynamoDB across 1 "
+        "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB across 1 "
         "engine pair, so a read there can miss a recent write. The other table is written "
         "by no captured query, so a one-time copy serves it."
     )
@@ -217,7 +217,7 @@ def test_the_sync_risk_counts_both_directions_of_the_waves_copies() -> None:
     # against 531 query ids): all of them first, then the ones on a CDC copy.
     assert risk["description"] == (
         "[dynamodb] Wave 3: 3 queries read 3 tables on an engine that does not own them. "
-        "1 of them reads a copy of 1 table that CDC keeps in sync from DynamoDB across "
+        "1 of them reads a copy of 1 table that CDC keeps current from DynamoDB across "
         "1 engine pair, so a read there can miss a recent write. The other 2 tables are "
         "written by no captured query, so a one-time copy serves them."
     )
@@ -309,7 +309,7 @@ def test_with_owner_lines_each_waves_risk_counts_the_shared_per_wave_tables() ->
     assert sync[0]["query_ids"] == ["r1", "r2"]
     assert sync[0]["description"] == (
         "[dynamodb] Wave 2: 2 queries read 2 tables on an engine that does not own them. "
-        "1 of them reads a copy of 1 table that CDC keeps in sync from Aurora MySQL across "
+        "1 of them reads a copy of 1 table that CDC keeps current from Aurora MySQL across "
         "1 engine pair, so a read there can miss a recent write. The other table is written "
         "by no captured query, so a one-time copy serves it. Across the plan, 3 tables are "
         "read on an engine that does not own them; this wave's gate brings in 2."

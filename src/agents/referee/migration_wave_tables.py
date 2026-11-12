@@ -461,7 +461,7 @@ def _table_group_coverage_parts(
                         "text": f" {_stay_verb(n)} dual-read by "
                         + ", ".join(parts)
                         + f"; {display_engine(engine)} owns them, so keep the {other_names} "
-                        f"copy in sync from {display_engine(engine)} via CDC until then.",
+                        f"copy current from {display_engine(engine)} via CDC until then.",
                         "items": [],
                     },
                 ]
@@ -489,7 +489,7 @@ def _table_group_coverage_parts(
                         "text": f" {_stay_verb(n)} dual-read by "
                         + ", ".join(parts)
                         + f"; {display_engine(engine)} owns them, so keep the {other_names} "
-                        f"copy in sync from {display_engine(engine)} via CDC.",
+                        f"copy current from {display_engine(engine)} via CDC.",
                         "items": [],
                     },
                 ]
@@ -531,7 +531,7 @@ def _table_group_coverage_parts(
             last = i == len(owners) - 1
             tail = (
                 f"; keep a {display_engine(engine)} copy of "
-                f"{'all of them' if len(owners) > 1 else 'them'} in sync via CDC."
+                f"{'all of them' if len(owners) > 1 else 'them'} current via CDC."
                 if last
                 else ", and"
             )

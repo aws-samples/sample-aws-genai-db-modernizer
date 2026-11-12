@@ -45,7 +45,7 @@ class QueryType(str, Enum):
 
 
 class NormalizedDataType(str, Enum):
-    """Keep in sync with ``src/contracts/collector_output.py::NormalizedDataType``
+    """Mirrors ``src/contracts/collector_output.py::NormalizedDataType``
     (duplicated to keep this contract standalone; the projection re-casts by
     value). ``decimal`` is exact; ``floating_point`` is approximate and never
     resolves to a constrained NUMERIC/DECIMAL target type (#156)."""
@@ -75,7 +75,7 @@ class ForeignKeyAction(str, Enum):
 
 
 class QueryLogSource(str, Enum):
-    # NOTE: keep in sync with src/contracts/collector_output.py::QueryLogSource.
+    # NOTE: mirrors src/contracts/collector_output.py::QueryLogSource.
     # This is a local duplicate to keep this contract standalone; drift here
     # causes schema-design agents to crash on the re-cast at line ~435.
     # When adding a new source, add it in both places.

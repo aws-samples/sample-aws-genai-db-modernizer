@@ -203,7 +203,7 @@ def _reason(writes: dict[str, int], queries: dict[str, int], retained: str | Non
 def test_table_reason_by_writes() -> None:
     assert _reason({"dynamodb": 2}, {"dynamodb": 2, "aurora_mysql": 1}) == (
         "DynamoDB takes every statement that writes it (2 statements); Aurora MySQL reads "
-        "a copy kept in sync from DynamoDB via CDC."
+        "a copy kept current from DynamoDB via CDC."
     )
 
 
@@ -211,7 +211,7 @@ def test_table_reason_by_most_queries() -> None:
     assert _reason({}, {"dynamodb": 1}) == "No statement writes it; DynamoDB serves its only query."
     assert _reason({}, {"dynamodb": 3, "aurora_mysql": 1}) == (
         "No statement writes it; DynamoDB serves 3 of its 4 queries, more than any other "
-        "engine that can own a table; Aurora MySQL reads a copy kept in sync from DynamoDB "
+        "engine that can own a table; Aurora MySQL reads a copy kept current from DynamoDB "
         "via CDC."
     )
 
