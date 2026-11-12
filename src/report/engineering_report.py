@@ -1619,7 +1619,11 @@ def render_engineering_report_md(
                     "",
                 ]
                 out += _shared_lines(
-                    dz, waived, "served_by_waiver", lambda u: _unsupported_pattern_md(u, query_ids)
+                    dz,
+                    waived,
+                    "served_by_waiver",
+                    lambda u: _unsupported_pattern_md(u, query_ids),
+                    query_ids,
                 )
                 out.append("")
             notes = dz.get("migration_notes") or []
