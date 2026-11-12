@@ -6,8 +6,9 @@
 ``scripts/run_data_movement_plan.py`` runs on a copy of each finished job (wordpress,
 discourse, trailgear, and the designed wordpress job) and writes one plan per step plus
 the job's hub plan.
-Each plan must be the registered contract, follow the job's ``migration_waves`` (same
-count and order), move wave 1 with DMS and every later wave with Debezium, give every
+Each plan must be the registered contract, follow the job's steps (``facts.slice_plan``'s
+``plan_steps``, each naming its phase wave, or the ``migration_waves`` without a slice plan;
+#1698), move step 1 with DMS and every later step with Debezium, give every
 table a wave's targets read a hub topic or an unsupported entry, and make the cache
 wave's target a ``cache`` replica of the engine it fronts. The plans are the same
 bytes under any hash seed, and a job with no cache wave (wordpress scoped to Aurora
@@ -86,14 +87,25 @@ def _check_plans(
     plans: list[DataMovementPlan], hub: HubPlan | None, report: dict, assignment: dict
 ) -> None:
     waves = report["migration_waves"]
-    assert [p.wave for p in plans] == [w["wave"] for w in waves]
-    assert [p.step for p in plans] == [w["wave"] for w in waves]
+    by_wave = {w["wave"]: w for w in waves}
+    # One plan per step, numbered as facts.slice_plan numbers it (#1698, ADR-033 Decision
+    # 1); without a slice plan, one per migration wave.
+    steps = ((report.get("facts") or {}).get("slice_plan") or {}).get("plan_steps") or []
+    expected = [(s["step_number"], s["phase_wave"]) for s in steps] or [
+        (w["wave"], w["wave"]) for w in waves
+    ]
+    assert [(p.step, p.wave) for p in plans] == expected
+    shared = {w for w in by_wave if [st["phase_wave"] for st in steps].count(w) > 1}
+    for plan, step in zip(plans, steps, strict=True) if steps else ():
+        if plan.wave in shared:
+            # A wave of several steps: each step's plan holds its own engine only.
+            assert {t.engine for t in plan.targets} == {step["engine"]}, plan.step
     # Wordpress and the other samples have later waves, so the job has a hub plan.
     assert hub is not None and len(waves) > 1
     assert hub.topics and hub.cdc.tool == "debezium"
     assert all(t.key_columns and t.cleanup_policy == "compact" for t in hub.topics)
     assert all(t.topic.startswith(f"{hub.cdc.topic_prefix}.") for t in hub.topics)
-    assert [p.title for p in plans] == [w["title"] for w in waves]
+    assert [p.title for p in plans] == [by_wave[p.wave]["title"] for p in plans]
     assert {p.wave_count for p in plans} == {len(waves)}
     assert {p.assignment_version for p in plans} == {report["assignment_summary"]["version"]}
 
@@ -102,7 +114,8 @@ def _check_plans(
     assert wave1.hub == []
     assert [t.engine for t in wave1.targets] == list(waves[0]["engines"])
 
-    for plan, wave in zip(later, waves[1:], strict=True):
+    for plan in later:
+        wave = by_wave[plan.wave]
         assert plan.cdc.tool == "debezium"
         assert plan.cdc == hub.cdc and plan.hub == []
         read = {t for target in plan.targets for t in target.tables}
@@ -127,7 +140,8 @@ def _check_plans(
         if qa.get("in_scope", True):
             for t in qa.get("source_tables") or []:
                 assigned.setdefault((qa["assigned_engine"], t), set()).add(qa["query_id"])
-    for plan, wave in zip(later, waves[1:], strict=True):
+    for plan in later:
+        wave = by_wave[plan.wave]
         lagging = {(r.table, r.engine): set(r.read_query_ids) for r in plan.gates.lagging_reads}
         reverse = {(u.table, u.engine) for u in plan.unsupported if u.kind == "reverse_replication"}
         for (table, engine), ids in lagging.items():
@@ -150,8 +164,8 @@ def _check_plans(
     # The committed price table carries the DMS, MSK and MSK Connect sections (#1424), so a
     # plan states its cost from them, or names the one thing it could not price: a hub
     # table the collector did not measure.
-    table = price_table()
-    dms = table.section("dms.replication")
+    prices = price_table()
+    dms = prices.section("dms.replication")
     hub_gaps = [u for u in hub.unsupported if u.kind == "cost"]
     assert (hub.monthly_cost_usd is not None) != bool(hub_gaps)
     assert all(u.item == "hub_storage" for u in hub_gaps)
@@ -174,7 +188,7 @@ def _check_plans(
             assert plan.monthly_cost_usd is not None and not gaps, plan.wave
 
 
-def test_each_sample_job_gets_one_valid_plan_per_wave(run: PipelineResult, tmp_path: Path) -> None:
+def test_each_sample_job_gets_one_valid_plan_per_step(run: PipelineResult, tmp_path: Path) -> None:
     root = _copy_job(run, tmp_path)
     plans, hub = _plan_job(root, run.db, run.job_id)
     report = _report(root, run.db, run.job_id)

@@ -65,6 +65,10 @@ dependencies = [
     # checks (#1935). BSD-3-Clause; pglast (GPL-3.0-or-later) is not used. Exact pin:
     # a libpg_query bump can change parse results, so a bump is its own PR.
     "pgparse==1.0.3",
+    # Graph algorithms behind the slice plan's dependency graph (#1698): betweenness and
+    # Louvain community detection, seeded. BSD-3-Clause. Below 4: a major release can
+    # change community results, so a bump is its own PR.
+    "networkx>=3.4,<4",
 ]
 
 [project.optional-dependencies]

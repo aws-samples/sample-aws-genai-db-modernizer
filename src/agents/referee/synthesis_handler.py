@@ -42,6 +42,7 @@ from src.agents.referee.query_pattern import (
 )
 from src.agents.referee.routine_units import following, routine_unit_facts, routine_units_of
 from src.agents.referee.schema_fields import field_list
+from src.agents.referee.slice_inputs import slice_inputs
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.summary_input_slim import slim_summary_input
 from src.agents.referee.synthesis_data import SynthesisData, load_synthesis_data
@@ -1707,6 +1708,15 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
                 assignment_version,
                 result.get("migration_waves"),
             )
+        ),
+        # #1129, #1698: the slice plan's move units, graph and steps, from the effective
+        # assignment and the collection.
+        slice_inputs=(
+            slice_inputs(
+                data.assignment, data.collector, output_data.get("routine_followers") or []
+            )
+            if data.assignment
+            else None
         ),
     )
 
