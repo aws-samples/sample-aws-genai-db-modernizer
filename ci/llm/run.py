@@ -2458,7 +2458,8 @@ def _scan_file(raw: bytes, suffix: str, session: bool = False) -> _Scanned:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             return _Scanned(None, [("not valid UTF-8", None)])
-    result = redact(text, key_names=True, emails=True, session=session)
+    # Model-written text: prose under a token or API key name is no finding (#2179).
+    result = redact(text, key_names=True, emails=True, session=session, narrow_key_names=True)
     if not result.findings:
         return _Scanned(raw, [])
     findings: list[tuple[str, int | None]] = list(result.findings)

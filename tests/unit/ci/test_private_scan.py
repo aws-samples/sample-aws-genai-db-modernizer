@@ -275,3 +275,50 @@ def test_an_all_digit_group_key_is_a_hash_not_an_account(text: str) -> None:
 @pytest.mark.passes_on_main  # the group-key exception must not hide a real account id
 def test_an_account_id_outside_a_group_key_is_still_found(text: str) -> None:
     assert private_scan.identity_findings(text) == ["aws account id at line 1"]
+
+
+def test_every_kind_a_scan_reports_is_printable() -> None:
+    """The command line prints a finding only as a ``PRINTABLE_KINDS`` constant: every
+    kind the scans can report is listed, so a real finding is never printed as
+    unlisted."""
+    from src.shared import secret_scan
+
+    own = {kind for kind, _ in (*secret_scan._OWN_SHAPE_RES, *secret_scan._EXTRA_SECRET_RES)}
+    plugins = {p["name"] for p in secret_scan._PLUGINS}
+    util = pytest.importorskip("detect_secrets.core.plugins.util")
+    plugin_kinds = {
+        kind for kind, cls in util.get_mapping_from_secret_type_to_class().items()
+        if cls.__name__ in plugins
+    }  # fmt: skip
+    identity = {kind for kind, _ in private_scan._IDENTITY_RES} | {"aws account id"}
+    reported = own | plugin_kinds | identity | secret_scan.KEY_NAME_KINDS | {"bare secret key"}
+    assert (
+        reported | secret_scan.IP_KINDS | {secret_scan.EMAIL_KIND} <= private_scan.PRINTABLE_KINDS
+    )
+
+
+def test_the_command_line_never_prints_text_a_finding_carries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A finding is printed as its listed kind and line number, rebuilt from constants:
+    even a finding string that carried the matched value prints without it (#2180)."""
+    leaked = "q9Zk3vLmP0aB7cXy" + "W2rT8nE5"  # pragma: allowlist secret
+    path = tmp_path / "report.json.gz"
+    path.write_bytes(gzip.compress(b"{}\n", mtime=0))
+    monkeypatch.setattr(
+        private_scan,
+        "compressed_file_findings",
+        lambda _path: [
+            "token value at line 3",
+            f"token value at line 4 {leaked}",
+            f"{leaked} at line 5",
+        ],
+    )
+    assert private_scan.main([str(path)]) == 1
+    out, err = capsys.readouterr()
+    assert leaked not in out + err
+    assert out.splitlines() == [
+        f"{path}: token value at line 3",
+        f"{path}: unlisted finding kind at line 0",
+        f"{path}: unlisted finding kind at line 5",
+    ]

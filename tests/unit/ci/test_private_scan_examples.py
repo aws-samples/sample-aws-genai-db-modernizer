@@ -12,10 +12,12 @@ names its kind, never a whole line, and a private-key block whole.
 from __future__ import annotations
 
 import json
+import random
+import string
 
 import pytest
 
-from ci.llm import private_scan
+from ci.llm import private_scan, replay, run
 
 # Built at run time so no scanner reads a credential-shaped literal in this file.
 _LOOKS_REAL = "q9Zk3vLmP0aB7cXy" + "W2rT8nE5"  # pragma: allowlist secret
@@ -209,7 +211,7 @@ def test_a_value_that_cannot_be_placed_makes_the_redaction_incomplete(monkeypatc
     monkeypatch.setattr(
         secret_scan,
         "_line_hits",
-        lambda body, emails: [("token value", None)] if _LOOKS_REAL in body else [],
+        lambda body, emails, *_: [("token value", None)] if _LOOKS_REAL in body else [],
     )
     result = private_scan.redact(f"a\nkey: {_LOOKS_REAL}\nb\n")
     assert result.findings == [("token value", 2)]
@@ -570,3 +572,409 @@ def test_redact_records_each_finding_s_key_name_never_its_value() -> None:
     }
     names = json.dumps(sorted(result.keys.values()))
     assert _LOOKS_REAL not in names and _OTHER not in names
+
+
+# ---------------------------------------------------------------------------
+# #2179: prose after "token:" or "api_key:" is no credential on the CI scans of
+# model-written text, a real value still is, and every other scan stays strict
+# ---------------------------------------------------------------------------
+
+# Built at run time so no scanner reads a credential-shaped literal in this file.
+_GITHUB = "gh" + "p_" + "Wxyz7" * 8  # pragma: allowlist secret
+_AWS_ID = "AKIA" + "QWERTYUIOPASDFGH"  # pragma: allowlist secret
+_JWT_VALUE = ".".join(  # pragma: allowlist secret
+    ["ey" + "JhbGciOiJIUzI1NiJ9", "ey" + "JzdWIiOiIxIn0", "c2lnbmF0dXJl"]
+)
+_SYMBOLS = "Abc123" + "!xyz789"  # pragma: allowlist secret
+# The flagged discourse design text, rewritten generically.
+_TOKEN_PROSE = (
+    "Validate a token: GetItem on the tokens table by token_hash, then check the "
+    "expiry and the scope in the application."
+)
+
+
+def _upload(text: str) -> tuple[list[str], str | None]:
+    """What the e2e-llm upload's scan (``ci/llm/run.py`` ``_scan_file``, the narrowed
+    path) finds in ``text`` as a Markdown file: its kinds, and the text it uploads
+    (``None``: withheld)."""
+    scanned = run._scan_file(text.encode("utf-8"), ".md")
+    uploaded = None if scanned.raw is None else scanned.raw.decode("utf-8")
+    return sorted({kind for kind, _ in scanned.findings}), uploaded
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"description": _TOKEN_PROSE}),
+        json.dumps({"description": _TOKEN_PROSE}, indent=2),
+        json.dumps(json.dumps({"description": _TOKEN_PROSE})),
+        "- **Validate a token**: GetItem on the tokens table by token_hash",
+        "token: GetItem",
+        "- api_key: the tenant's key is compared with the stored digest",
+        "Token: compared in the application, never stored in plain text.",
+        "api_key: BatchGetItem",
+        pytest.param("api key: BatchGetItem", marks=pytest.mark.passes_on_main),
+        "token: BatchGetItem, then TransactWriteItems on the sessions table",
+        "token: GetItem(token_hash) on the email-tokens table",
+        # No key name at all ("api key" has a space): main never flagged it either.
+        pytest.param(
+            "api key: rotated by the application every 90 days",
+            marks=pytest.mark.passes_on_main,
+        ),
+        "api_key: issued per tenant and stored hashed",
+        "-- token: looked up by token_hash, then expired_at is checked",
+        "/* api_key: compared against the stored hash */",
+        "    -- reset_token: written once, read by GetItem",
+        "| token | Validate by GetItem on token_hash |",
+        "| token_hash | String | partition key |",
+        "| attribute | token |\n|---|---|\n| a | GetItem by token_hash |\n",
+    ],
+    ids=[
+        "json-string",
+        "pretty-json",
+        "double-escaped-json",
+        "markdown-bold",
+        "token-word",
+        "markdown-list-api-key",
+        "sentence-token",
+        "api-key-camel-case",
+        "api-key-words-camel-case",
+        "camel-case-operations",
+        "identifier-punctuation",
+        "api-key-words",
+        "api-key-prose",
+        "sql-line-comment",
+        "sql-block-comment",
+        "sql-comment-key",
+        "table-row-prose",
+        "table-row-type",
+        "table-column-prose",
+    ],
+)
+def test_prose_after_a_credential_key_name_is_no_finding(text: str) -> None:
+    assert _upload(text) == ([], text)
+    assert replay.job_private_data(text) == []
+
+
+@pytest.mark.passes_on_main  # fail-closed: real values main already found stay found
+@pytest.mark.parametrize(
+    ("line", "kind"),
+    [
+        ("token: " + _GITHUB, "token value"),
+        ("password=" + _SYMBOLS, "password value"),
+        ("password: " + _SYMBOLS, "password value"),
+        ("api_key: " + _AWS_ID, "api key value"),
+        ("token: " + _JWT_VALUE, "token value"),
+        (json.dumps({"description": "Validate a token: " + _GITHUB}), "token value"),
+        ('password: "correct horse battery staple"', "password value"),  # pragma: allowlist secret
+        ("password: 'GetItem'", "password value"),  # pragma: allowlist secret
+        ('token: \\"' + "GetItem" + '\\"', "token value"),
+        ("password: " + "87654321", "password value"),
+        ("password: Abc!defgh", "password value"),
+        ("-- password: " + _SYMBOLS, "password value"),
+        ("| token | " + _GITHUB + " |", "token value"),
+        ("| token | 'GetItem' |", "token value"),
+        ("| user | password |\n|---|---|\n| app | " + _SYMBOLS + " |\n", "password value"),
+        ('| user | password |\n|---|---|\n| app | "GetItem" |\n', "password value"),
+        ("password=hunterxyz", "password value"),
+    ],
+    ids=[
+        "github-token",
+        "password-assignment",
+        "yaml-password",
+        "aws-key-id",
+        "jwt",
+        "token-inside-prose",
+        "quoted-passphrase",
+        "quoted-word",
+        "escaped-quoted-word",
+        "digits",
+        "symbol",
+        "sql-comment",
+        "table-row",
+        "quoted-table-row",
+        "table-column",
+        "quoted-table-column",
+        "letters-after-equals",
+    ],
+)
+@pytest.mark.parametrize("plugins", [True, False], ids=["with-plugins", "regex-only"])
+def test_a_value_that_looks_like_a_secret_after_a_key_name_is_still_found(
+    line: str, kind: str, plugins: bool, monkeypatch
+) -> None:
+    if not plugins:  # a deployed image, without detect-secrets (#1933)
+        from src.shared import secret_scan
+
+        monkeypatch.setattr(secret_scan, "_scan_line", None)
+        monkeypatch.setattr(secret_scan, "_transient_settings", None)
+    kinds, uploaded = _upload(line)
+    assert kind in kinds, kinds
+    # Redacted in place (a provider credential's own marker may cover the value), or
+    # withheld whole (a cloud credential).
+    assert uploaded is None or "[REDACTED:" in uploaded
+
+
+@pytest.mark.parametrize(
+    ("value", "secret"),
+    [
+        ("Ab1!xyz", True),
+        ("ab12cd", True),
+        ("123456", True),
+        ("GetItemByTokenHash", False),
+        ("GetItem(token_hash)", False),
+        ("email-tokens", False),
+        ("TTL", False),
+        ("HTTPHeader", False),
+        ("DynamoDB", False),
+        ("token_hash", False),
+        ("12345678", True),
+        ("192.0.2.5", True),
+        (_AWS_ID, True),
+        ("sk_live_" + "Abcdefgh" * 3, True),
+        ("approved:", True),
+        ("two words1", True),
+        ("two words", False),
+        ("Abcdefgh" * 3 + "Ab", True),
+        ("qzxwvkjhgfdsaplmnbvc", True),
+        ("QZXWVKJHGFDSAPLMNBVC", True),
+    ],
+    ids=[
+        "short-symbol",
+        "short-letters-and-digits",
+        "short-digits",
+        "camel-case",
+        "call",
+        "dashed",
+        "acronym",
+        "leading-acronym",
+        "trailing-acronym",
+        "identifier",
+        "digits",
+        "dotted-digits",
+        "known-format",
+        "stripe-letters-only",
+        "colon",
+        "spaces-and-a-digit",
+        "spaces",
+        "over-the-word-length",
+        "random-lower-case",
+        "random-upper-case",
+    ],
+)
+def test_what_looks_like_a_secret_is_exactly_as_stated(value: str, secret: bool) -> None:
+    from src.shared import secret_scan
+
+    assert secret_scan._looks_like_secret(value) is secret
+
+
+_LETTERS = "hunter" + "xyz"  # pragma: allowlist secret
+
+
+@pytest.mark.passes_on_main  # fail-closed: the narrowing never reaches a password key
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: " + _LETTERS,  # pragma: allowlist secret
+        "  db_password: " + _LETTERS,  # pragma: allowlist secret
+        "pwd: " + _LETTERS,
+        "passwd: " + _LETTERS,
+        "client_secret: " + _LETTERS,  # pragma: allowlist secret
+        "password: GetItem",  # pragma: allowlist secret
+        "- password: the user's hash is compared with the stored digest",
+        "/* password: compared against the stored hash */",
+        "| password | " + _LETTERS + " |",
+        "| user | password |\n|---|---|\n| app | " + _LETTERS + " |\n",
+    ],
+    ids=[
+        "yaml-letters",
+        "yaml-db-password",
+        "pwd",
+        "passwd",
+        "secret",
+        "camel-case-word",
+        "prose",
+        "sql-comment",
+        "table-row",
+        "table-column",
+    ],
+)
+@pytest.mark.parametrize("plugins", [True, False], ids=["with-plugins", "regex-only"])
+def test_a_password_value_after_a_colon_stays_as_strict_as_before(
+    text: str, plugins: bool, monkeypatch
+) -> None:
+    if not plugins:  # a deployed image, without detect-secrets (#1933)
+        from src.shared import secret_scan
+
+        monkeypatch.setattr(secret_scan, "_scan_line", None)
+        monkeypatch.setattr(secret_scan, "_transient_settings", None)
+    kinds, _uploaded = _upload(text)
+    assert "password value" in kinds, kinds
+
+
+def _random_letters(rng: random.Random, n: int) -> str:
+    return "".join(rng.choice(string.ascii_letters) for _ in range(n))
+
+
+# 40 random letters, drawn at run time so no scanner reads a credential-shaped literal.
+_RANDOM_40 = _random_letters(random.Random(40), 40)
+
+
+def _regex_only(monkeypatch) -> None:
+    """A deployed image, without detect-secrets (#1933)."""
+    from src.shared import secret_scan
+
+    monkeypatch.setattr(secret_scan, "_scan_line", None)
+    monkeypatch.setattr(secret_scan, "_transient_settings", None)
+
+
+@pytest.mark.passes_on_main  # main flagged every one; the PR's first cut narrowed them
+@pytest.mark.parametrize("value", [_RANDOM_40, "GetItem"], ids=["random-letters", "word"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "secret_key: {v}",
+        "aws_secret_key: {v}",
+        "private_key: {v}",
+        "priv_key: {v}",
+        "access_key: {v}",
+        "client_key: {v}",
+        "auth_key: {v}",
+        "db_key: {v}",
+        "database_key: {v}",
+        "account_key: {v}",
+        "service_key: {v}",
+        "-- secret_key: {v}",
+        "| secret_key | {v} |",
+        "| user | private_key |\n|---|---|\n| app | {v} |\n",
+    ],
+    ids=[
+        "secret-key",
+        "aws-secret-key",
+        "private-key",
+        "priv-key",
+        "access-key",
+        "client-key",
+        "auth-key",
+        "db-key",
+        "database-key",
+        "account-key",
+        "service-key",
+        "sql-comment",
+        "table-row",
+        "table-column",
+    ],
+)
+@pytest.mark.parametrize("plugins", [True, False], ids=["with-plugins", "regex-only"])
+def test_only_token_and_api_key_names_are_narrowed_every_other_key_stays_strict(
+    form: str, value: str, plugins: bool, monkeypatch
+) -> None:
+    """#2179 review, Important 1: ``secret_key``, ``private_key``, ``access_key`` and the
+    rest of the ``api key value`` names are not ``token`` or ``api_key``."""
+    if not plugins:
+        _regex_only(monkeypatch)
+    kinds, _uploaded = _upload(form.format(v=value))
+    assert "api key value" in kinds, kinds
+
+
+# Where a token or API key value is read after a key name, as the narrowing sees it.
+_NARROWED_FORMS = (
+    "token: {v}",
+    "api_key: {v}",
+    "x-api-key: {v}",
+    "refresh_token: {v}",
+    "apiKey: {v}",
+    "  auth:\n    token: {v}\n",
+    "token: `{v}`",
+    "token: {v}.",
+    "| token | {v} |",
+    "| api_key | {v} |",
+    "| user | token |\n|---|---|\n| app | {v} |\n",
+    "-- token: {v}",
+    "/* api_key: {v} */",
+)
+
+
+@pytest.mark.passes_on_main  # main flagged them; the PR's first cut did not
+def test_a_random_run_of_letters_after_a_token_or_api_key_name_is_still_found() -> None:
+    """#2179 review, Important 2: a value is prose only when every piece is word-shaped,
+    so random letters-only tokens are found again (at least 99% of a seeded sample of
+    random 20-letter mixed-case values, spread over every narrowed form), and the PR's
+    prose examples (``test_prose_after_a_credential_key_name_is_no_finding``) still
+    pass."""
+    from src.shared import secret_scan
+
+    rng = random.Random(2179)
+    values = [_random_letters(rng, 20) for _ in range(1300)]
+    missed = []
+    with secret_scan.scan_session():
+        for i, value in enumerate(values):
+            form = _NARROWED_FORMS[i % len(_NARROWED_FORMS)]
+            kinds, _uploaded = _upload(form.format(v=value))
+            if not {"token value", "api key value"} & set(kinds):
+                missed.append(form)
+    assert len(missed) <= len(values) // 100, (len(missed), missed[:5])
+
+
+@pytest.mark.passes_on_main  # main flagged them; the PR's first cut did not
+@pytest.mark.parametrize(
+    "form", _NARROWED_FORMS, ids=lambda f: f.split("{")[0].strip(" |-/*\n") or "row"
+)
+@pytest.mark.parametrize("plugins", [True, False], ids=["with-plugins", "regex-only"])
+def test_forty_random_letters_in_every_narrowed_form_are_found(
+    form: str, plugins: bool, monkeypatch
+) -> None:
+    if not plugins:
+        _regex_only(monkeypatch)
+    kinds, _uploaded = _upload(form.format(v=_RANDOM_40))
+    assert {"token value", "api key value"} & set(kinds), kinds
+
+
+@pytest.mark.passes_on_main  # main flagged them; the PR's first cut did not
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token: 123456",
+        "api_key: 1234567",
+        "token: ab12cd",
+        "token: 42",
+        "api_key: " + "sk_" + "live_" + "Abcdefgh" * 3,
+        "token: " + "rk_" + "test_" + "Abcdefgh" * 3,
+    ],
+    ids=["otp", "seven-digits", "short-alphanumeric", "short-count", "stripe", "stripe-restricted"],
+)
+@pytest.mark.parametrize("plugins", [True, False], ids=["with-plugins", "regex-only"])
+def test_short_digits_and_a_letters_only_stripe_key_are_found(
+    line: str, plugins: bool, monkeypatch
+) -> None:
+    """#2179 review, Suggestions 1 and 2: a digit is never part of a word, at any length
+    (an OTP such as ``token: 123456``), and a Stripe key is a known format even when its
+    body is letters only (the regex-only images have no Stripe plugin)."""
+    if not plugins:
+        _regex_only(monkeypatch)
+    kinds, _uploaded = _upload(line)
+    assert {"token value", "api key value"} & set(kinds), kinds
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-- token: looked up by token_hash, then expired_at is checked",
+        "/* api_key: compared against the stored hash */",
+        "token: GetItem",
+        "| token | Validate by GetItem on token_hash |",
+        "-- token: " + _RANDOM_40,
+    ],
+    ids=["sql-line-comment", "sql-block-comment", "word", "table-row", "random-letters"],
+)
+def test_the_default_scan_is_strict_and_only_the_ci_scans_narrow(text: str) -> None:
+    """#2179 review, Important 3: ``secret_findings`` and ``secret_kinds`` (the
+    collector's routine bodies) stay strict by default; only the CI scans of
+    model-written text pass ``narrow_key_names=True``."""
+    from src.shared import secret_scan
+
+    assert {"token value", "api key value"} & secret_scan.secret_kinds(text)
+    assert secret_scan.secret_findings(text)
+    assert private_scan.secret_findings(text)
+    assert private_scan.redact(text).text != text
+    narrowed = private_scan.secret_findings(text, narrow_key_names=True)
+    assert (narrowed == []) is (text != "-- token: " + _RANDOM_40)

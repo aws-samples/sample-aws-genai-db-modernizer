@@ -24,7 +24,14 @@ A designer's example values are allowed (#2053), exactly as
 ``address/prefix``) lies in a documentation range, a key-name finding (``KEY_NAME_KINDS``)
 when its value is one angle-bracket placeholder (``<token>``), a ``[REDACTED:<kind>]``
 marker or a SQL bind parameter (``?``, ``$1``), and an email when its domain is one RFC
-2606 reserves. Nothing else is allowed. A JSON escape (``\\n``, ``\\t``, ``\\u2014``, an
+2606 reserves. Nothing else is allowed. The scans here read model-written text (the
+upload, the replay fixtures), so they pass ``narrow_key_names=True`` (#2179): an unquoted
+value after a ``token`` or ``api_key`` name with ``key:`` or in a Markdown table counts
+only when it looks like a secret (a known token format, or any piece that is not a
+word or an identifier: a digit, a symbol, a random run of letters), so design prose
+such as "Validate a token: GetItem ..." is no finding. Every other key name (passwords,
+``secret_key``, ``private_key`` ...) stays strict, and so does the collector's scan of
+routine bodies, which keeps the default. A JSON escape (``\\n``, ``\\t``, ``\\u2014``, an
 escaped backslash) right before an address does not hide it.
 
 ``redact`` replaces each flagged value with that marker, outermost span first, so a
@@ -239,7 +246,11 @@ def _marker_for(line: str, start: int, end: int, kind: str) -> str:
 
 
 def redact(
-    text: str, key_names: bool = True, emails: bool = False, session: bool = False
+    text: str,
+    key_names: bool = True,
+    emails: bool = False,
+    session: bool = False,
+    narrow_key_names: bool = False,
 ) -> Redaction:
     """Replace every value ``secret_findings`` (with ``emails``, also each email at a
     domain that is not an example one) flags in ``text`` by its ``redaction_marker``.
@@ -248,7 +259,7 @@ def redact(
     breaks, so later line numbers hold). Then, per line, the flagged spans are merged
     and replaced outermost first: only the values change, never a whole line, so JSON
     stays valid. A value that cannot be placed, or a line still flagged afterwards,
-    makes the result ``complete=False``."""
+    makes the result ``complete=False``. ``narrow_key_names`` as in ``secret_findings``."""
     findings: list[tuple[str, int]] = key_material(text, session=session)
     complete = True
 
@@ -259,12 +270,14 @@ def redact(
     unblocked = _KEY_BLOCK_RE.sub(_block, text)
     out: list[str] = []
     keys: dict[tuple[str, int], set[str]] = {}
-    for number, line, body, hits, table in _scan_lines(unblocked, key_names, emails):
+    for number, line, body, hits, table in _scan_lines(
+        unblocked, key_names, emails, narrow_key_names
+    ):
         if not hits:
             out.append(line)
             continue
         findings += [(kind, number) for kind in sorted({kind for kind, _ in hits})]
-        for kind, _span, key in _pair_matches(body) + table:
+        for kind, _span, key in _pair_matches(body, narrow_key_names) + table:
             if key_names or kind not in KEY_NAME_KINDS:
                 keys.setdefault((kind, number), set()).add(key)
         placed = [(kind, span) for kind, span in hits if span is not None]
@@ -273,7 +286,8 @@ def redact(
         redacted = body
         for kind, start, end in reversed(_merge(placed)):
             redacted = redacted[:start] + _marker_for(redacted, start, end, kind) + redacted[end:]
-        if any(h for h in _line_hits(redacted, emails) if key_names or h[0] not in KEY_NAME_KINDS):
+        rescan = _line_hits(redacted, emails, narrow_key_names)
+        if any(h for h in rescan if key_names or h[0] not in KEY_NAME_KINDS):
             complete = False
         out.append(redacted + line[len(body) :])
     return Redaction(
@@ -361,10 +375,13 @@ def read_text(path: Path) -> str:
 
 def compressed_file_findings(path: Path) -> list[str]:
     """Both scans over the decompressed text of ``path``; a transcript gets the
-    credential-shape scan only (no key-name findings, which prose trips)."""
+    credential-shape scan only (no key-name findings, which prose trips). A fixture is a
+    saved e2e-llm job, model-written text, so its key names are narrowed as on upload
+    (#2179)."""
     text = read_text(path)
     key_names = not path.name.startswith("transcript.")
-    return secret_findings(text, key_names=key_names) + identity_findings(text)
+    findings = secret_findings(text, key_names=key_names, narrow_key_names=True)
+    return findings + identity_findings(text)
 
 
 def _compressed_files(paths: list[Path]) -> list[Path]:
@@ -377,6 +394,62 @@ def _compressed_files(paths: list[Path]) -> list[Path]:
     return out
 
 
+# Every finding kind a scan here can report: the repository's own rules, detect-secrets'
+# plugin types and the identity scan. The command line prints a finding only as one of
+# these constants and its line number, so nothing the scan read (a matched value) can
+# reach the output, whatever a finding string holds.
+PRINTABLE_KINDS = frozenset(
+    {
+        *KEY_NAME_KINDS,
+        *IP_KINDS,
+        EMAIL_KIND,
+        "AWS Access Key",
+        "Private Key",
+        "google api key",
+        "slack webhook",
+        "bearer token",
+        "aws secret access key",
+        "bare secret key",
+        "Artifactory Credentials",
+        "Azure Storage Account access key",
+        "Basic Auth Credentials",
+        "Cloudant Credentials",
+        "Discord Bot Token",
+        "GitHub Token",
+        "GitLab Token",
+        "IBM COS HMAC Credentials",
+        "IBM Cloud IAM Key",
+        "JSON Web Token",
+        "Mailchimp Access Key",
+        "NPM tokens",
+        "OpenAI Token",
+        "PyPI Token",
+        "SendGrid API Key",
+        "Slack Token",
+        "SoftLayer Credentials",
+        "Square OAuth Secret",
+        "Stripe Access Key",
+        "Telegram Bot Token",
+        "Twilio API Key",
+        *(kind for kind, _rx in _IDENTITY_RES),
+        "aws account id",
+    }
+)
+_UNLISTED_KIND = "unlisted finding kind"
+_FINDING_RE = re.compile(r"(?P<kind>.+) at line (?P<line>\d+)")
+
+
+def printable_finding(hit: str) -> str:
+    """``"<kind> at line N"`` rebuilt from ``PRINTABLE_KINDS`` and the line number alone
+    (an unlisted or malformed finding prints as ``_UNLISTED_KIND``), never the finding
+    string itself."""
+    m = _FINDING_RE.fullmatch(hit)
+    raw = m.group("kind") if m else ""
+    kind = next((k for k in sorted(PRINTABLE_KINDS) if k == raw), _UNLISTED_KIND)
+    line = int(m.group("line")) if m else 0
+    return f"{kind} at line {line}"
+
+
 def main(argv: list[str] | None = None) -> int:
     paths = [Path(a) for a in (sys.argv[1:] if argv is None else argv)]
     status = 0
@@ -387,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{path}: cannot be read: {exc}")
             return 2
         for hit in found:
-            print(f"{path}: {hit}")
+            print(f"{path}: {printable_finding(hit)}")
         status = 1 if found else status
     return status
 
