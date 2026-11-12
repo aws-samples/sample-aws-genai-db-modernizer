@@ -397,6 +397,7 @@ def test_a_customer_pick_of_the_follower_itself_stays(tmp_path) -> None:
     assert qas["order-insert"].assigned_engine == "dynamodb"
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_a_post_schema_reroute_and_its_rollback_move_it(pipeline) -> None:
     store, version = pipeline
     handler = PostSchemaRouting(store, redesign=lambda *a, **k: None)
@@ -409,7 +410,8 @@ def test_a_post_schema_reroute_and_its_rollback_move_it(pipeline) -> None:
             reason="the design cannot serve it",
             score_after=50.0,
         )
-        for qid in ("order-insert", "app-order-update")
+        # The table's writes move as one (ADR-031 Amendment 9; a split is refused, #2152).
+        for qid in ("order-insert", "app-order-update", "app-order-delete")
     ]
     rerouted = handler._rerouted_assignment(
         JOB, DB, copy.deepcopy(assignment), version, version + 1, routings
@@ -864,8 +866,12 @@ def _unplaced(store: LocalArtifactStore, version: int) -> None:
     assert [m["to_engine"] for m in moves][-1:] == ["unservable"]
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_a_sweep_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
+    # Routing never splits a routine unit, and a version that does is refused (#2152):
+    # with no routine units, the sweep can still split the routine's leaders.
     with pytest.MonkeyPatch.context() as mp:
+        _without_routine_units(mp)
         _sweep_moving(mp, "app-orders", "documentdb")
         store, final = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())
     assert _by_id(store, 1)["order-tmp"]["assigned_engine"] == "dynamodb"
@@ -914,8 +920,12 @@ def test_a_customer_pick_of_one_statement_moves_its_routine_and_the_follower(tmp
     assert qas["order-insert"] == qas["order-tmp"] == "documentdb"
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_a_post_schema_reroute_that_splits_its_routine_makes_it_unservable(tmp_path) -> None:
-    store, version = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())
+    # As the sweep's test: with no routine units, a reroute can split the leaders (#2152).
+    with pytest.MonkeyPatch.context() as mp:
+        _without_routine_units(mp)
+        store, version = _run(tmp_path, scope=SCOPE, collection=_two_leader_collection())
     handler = PostSchemaRouting(store, redesign=lambda *a, **k: None)
     routing = QueryRouting(
         query_id="app-orders",

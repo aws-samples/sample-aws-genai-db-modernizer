@@ -587,6 +587,8 @@ class PostSchemaRouting:
             analysis_outputs,
             dead_engines=before - after,
             keep_cache_overlay=True,
+            writer="post-schema reroute",
+            baseline=assignment,
         )
         # Refuse a version whose engines do not follow from ``version`` plus
         # its own Moves (an engine set without move_ledger, #616).

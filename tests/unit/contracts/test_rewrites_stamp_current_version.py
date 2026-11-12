@@ -81,6 +81,7 @@ def test_the_synthesis_cache_overlay_patch_writes_the_current_version(tmp_path: 
     assert written["contract_version"] == version
 
 
+@pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
 def test_the_reality_check_revision_writes_the_current_version(tmp_path: Path) -> None:
     from src.agents.referee.reality_check_handler import write_reality_check_result
     from tests.unit.agents.referee.ledger_fakes import recorded_ledger
@@ -115,7 +116,7 @@ def test_the_reality_check_revision_writes_the_current_version(tmp_path: Path) -
         "before_distribution": {"opensearch": 1, "aurora_mysql": 1},
         "after_distribution": {"aurora_mysql": 2},
         "collector_output": {},
-        "analysis_outputs": {},
+        "analysis_outputs": {"aurora_mysql": {}, "opensearch": {}},
         # The version the revision spreads its fields from.
         "assignment": {
             "contract_version": current_version(Assignment),

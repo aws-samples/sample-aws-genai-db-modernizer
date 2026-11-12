@@ -690,11 +690,15 @@ class TestRefreshConsolidatedAssignment:
         assert overlay["calls_per_second"] == 30.0
         assert overlay["call_share_percent"] == 30.0
 
+    @pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
     def test_keep_cache_overlay_with_nothing_cached_leaves_no_summary(self) -> None:
         raw = self._cached_raw()
         raw["query_assignments"][0].update(cache_engine=None, cache_pattern=None)
         out = refresh_consolidated_assignment(
-            raw, self._cache_collector(), {"aurora_mysql": {}}, keep_cache_overlay=True
+            raw,
+            self._cache_collector(),
+            {"aurora_mysql": {}, "dynamodb": {}},
+            keep_cache_overlay=True,
         )
         assert out["cache_overlay"] is None
 

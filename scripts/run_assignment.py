@@ -86,8 +86,13 @@ def main() -> None:
 
     # Run assignment resolver
     from src.agents.referee.assignment_handler import run_assignment_resolver
+    from src.agents.referee.assignment_validator import InvalidAssignment
 
-    run_assignment_resolver(args.job_id, args.db, store)
+    try:
+        run_assignment_resolver(args.job_id, args.db, store)
+    except InvalidAssignment as exc:
+        # #2152: a hard validation error; no version was written.
+        _error(str(exc))
 
     # Read results: the resolver writes next_assignment_version (v1 on a fresh
     # job, v3+ on a re-run), so read the version it just wrote.

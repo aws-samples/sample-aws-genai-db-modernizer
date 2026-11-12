@@ -652,6 +652,7 @@ def write_reality_check_result(
         result["collector_output"],
         result["analysis_outputs"],
         dead_engines=eliminated,
+        baseline=result["assignment"],
     )
     # #1327: checked again on what is written, after the refresh recomputed each
     # query's cache fields (the check in ``_check_replay`` ran before it).

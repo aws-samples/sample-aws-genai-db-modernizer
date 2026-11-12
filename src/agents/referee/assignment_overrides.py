@@ -26,7 +26,11 @@ from src.agents.referee.assignment_resolver import (
     derive_table_assignments,
     retained_engine_for,
 )
-from src.agents.referee.assignment_validator import AssignmentValidator
+from src.agents.referee.assignment_validator import (
+    AssignmentValidator,
+    InvalidAssignment,
+    legacy_engines,
+)
 from src.agents.referee.aurora_choice import AURORA_ENGINES, source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
@@ -168,13 +172,14 @@ class UnknownQuery(AssignmentOverrideError):
         super().__init__(f"Query {query_id} not found in current assignment")
 
 
-class AssignmentValidationFailed(AssignmentOverrideError):
-    """The overridden assignment failed validation with hard errors."""
+class AssignmentValidationFailed(AssignmentOverrideError, InvalidAssignment):
+    """The overridden assignment failed validation with hard errors (nothing written).
 
-    def __init__(self, errors: list[str], warnings: list[str]) -> None:
-        self.errors = errors
-        self.warnings = warnings
-        super().__init__("Assignment validation failed with hard errors")
+    An :class:`InvalidAssignment` too, the error every version writer raises (#2152),
+    so a caller that catches either reports it."""
+
+    def __init__(self, errors: list[str], warnings: list[str], writer: str = "") -> None:
+        InvalidAssignment.__init__(self, errors, warnings, writer)
 
 
 class LosingAuroraEngineOverride(AssignmentOverrideError):
@@ -544,6 +549,12 @@ def _load_for_edit(
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
     return _EditInputs(raw, collector_output, analysis_outputs, triage, stored_state, ledger)
+
+
+def _legacy_baseline(loaded: _EditInputs) -> dict[str, str] | None:
+    """The stored version's own engines (before any in-memory normalisation) when it
+    was saved before every unit was placed whole (``assignment_validator.legacy_engines``)."""
+    return legacy_engines(loaded.raw, {q: e for q, (e, _) in loaded.stored_state.items()})
 
 
 def _earlier_versions(store: _Store, database_name: str, job_id: str, raw: dict) -> list[dict]:
@@ -1043,9 +1054,14 @@ def apply_assignment_overrides(
     )
     new_assignment.cache_overlay = CacheOverlaySummary(**summary) if summary else None
 
-    validation = AssignmentValidator().validate(new_assignment, collector_output, analysis_outputs)
+    validation = AssignmentValidator().validate(
+        new_assignment,
+        collector_output,
+        analysis_outputs,
+        legacy_baseline=_legacy_baseline(loaded),
+    )
     if not validation.valid:
-        raise AssignmentValidationFailed(validation.errors, validation.warnings)
+        raise AssignmentValidationFailed(validation.errors, validation.warnings, "customer gate")
 
     new_assignment.validation_warnings = scope_warnings + validation.warnings + replaced.warnings
 
@@ -1312,8 +1328,9 @@ def _propagate_codependent_overrides(
     the caller enforces by rejecting the batch when ``excluded`` is non-empty.
     This function itself only reports the violations; it does not raise.
 
-    Best-effort: any error building the groups leaves the explicit overrides intact
-    and propagates nothing — propagation is an enhancement, never a blocker.
+    Fails closed (#2152): an error building the groups raises
+    :class:`AssignmentValidationFailed`, so the edit is refused and nothing is
+    written; it never skips the one-writer rejection and the propagation.
 
     ``decided_ids`` (#1003) are the overrides the decide-for-me rule made, not the
     customer: a query pulled along only by them is the rule's Move (actor
@@ -1344,8 +1361,16 @@ def _propagate_codependent_overrides(
             else collector_routine_units(collector_output)
         )
         groups = placement_groups(co_groups, write_groups, routine_members)
-    except Exception:  # noqa: BLE001 - never block a customer edit on a grouping error
-        return [], []
+    except Exception as exc:  # noqa: BLE001 - fails closed (#2152, #2154): refused, not skipped
+        raise AssignmentValidationFailed(
+            [
+                "ERROR: The placement units (co-dependency groups, write groups and "
+                f"routine units) could not be built ({type(exc).__name__}), so the edit "
+                "cannot keep them whole."
+            ],
+            [],
+            "customer gate",
+        ) from exc
     tables_written_by = write_group_tables(write_groups)
     # A routine unit's member moves with its routine (#1654): its reason names it.
     routines_of: dict[str, list[str]] = {}
@@ -1516,6 +1541,8 @@ def refresh_consolidated_assignment(
     *,
     dead_engines: set[str] | None = None,
     keep_cache_overlay: bool = False,
+    writer: str = "reality check",
+    baseline: Mapping | None = None,
 ) -> dict:
     """Refresh a Reality-Check consolidated assignment dict (ADR-029 Layers B+E).
 
@@ -1536,6 +1563,11 @@ def refresh_consolidated_assignment(
     reads only the analyses of the engines that own queries, never the cache's, so
     re-evaluating would clear every cached read. A cache changes after approval only
     through the synthesis safety net, which records its own note.
+
+    A hard validation error raises :class:`InvalidAssignment` naming ``writer`` (the
+    pass that will write the dict, #2152), so the version is never written.
+    ``baseline`` is the stored version the dict derives from: a split it already had
+    is kept as a warning when it was saved before units were placed whole.
     """
     qa_dicts = raw.get("query_assignments", [])
     qas = [
@@ -1573,8 +1605,16 @@ def refresh_consolidated_assignment(
         co_dependency_groups=co_dependency_groups,
         validation_warnings=[],
         unresolved_table_names=unresolved_table_names,
+        # The units the version saves (#1654), so the check reads the same ones.
+        routine_units=[
+            RoutineUnit.model_validate(u) for u in routine_units_for(raw, collector_output)
+        ],
     )
-    validation = AssignmentValidator().validate(probe, collector_output, analysis_outputs)
+    validation = AssignmentValidator().validate(
+        probe, collector_output, analysis_outputs, legacy_baseline=legacy_engines(baseline)
+    )
+    if not validation.valid:
+        raise InvalidAssignment(validation.errors, validation.warnings, writer)
 
     out = dict(raw)
     out["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
@@ -1902,10 +1942,15 @@ def reroute_split_writes(
         )
     _recompute_derived_views(new_assignment, collector_output)
     validation = AssignmentValidator().validate(
-        new_assignment, collector_output, loaded.analysis_outputs
+        new_assignment,
+        collector_output,
+        loaded.analysis_outputs,
+        legacy_baseline=_legacy_baseline(loaded),
     )
     if not validation.valid:
-        raise AssignmentValidationFailed(validation.errors, validation.warnings)
+        raise AssignmentValidationFailed(
+            validation.errors, validation.warnings, "source-of-truth reroute"
+        )
     new_assignment.validation_warnings = [*validation.warnings, *pin_conflicts]
     check_replay(
         new_assignment.moves,

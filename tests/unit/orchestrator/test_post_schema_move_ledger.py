@@ -207,6 +207,7 @@ class TestTheRefreshSeesTheEngineTheRerouteEmptied:
     records the refresh compares against, so an engine the reroute empties is
     still a dead engine there, exactly as on main."""
 
+    @pytest.mark.passes_on_main  # #2152 only gave its fixture the analysed engines/whole units
     def test_dead_engines_and_pruned_warnings_match_main(self, tmp_path) -> None:
         from src.agents.referee import assignment_overrides
 
@@ -235,7 +236,9 @@ class TestTheRefreshSeesTheEngineTheRerouteEmptied:
         real_refresh = assignment_overrides.refresh_consolidated_assignment
         seen: list[tuple[list[str], list[str], bool]] = []
 
-        def spy(raw, collector, analysis_outputs, *, dead_engines=None, keep_cache_overlay=False):
+        def spy(
+            raw, collector, analysis_outputs, *, dead_engines=None, keep_cache_overlay=False, **kw
+        ):
             seen.append((sorted(analysis_outputs), sorted(dead_engines or []), keep_cache_overlay))
             return real_refresh(
                 raw,
@@ -243,6 +246,7 @@ class TestTheRefreshSeesTheEngineTheRerouteEmptied:
                 analysis_outputs,
                 dead_engines=dead_engines,
                 keep_cache_overlay=keep_cache_overlay,
+                **kw,  # the writer and baseline the version's check reads (#2152)
             )
 
         with patch.object(assignment_overrides, "refresh_consolidated_assignment", spy):

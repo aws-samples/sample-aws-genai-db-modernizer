@@ -135,12 +135,6 @@ def report(pipeline) -> dict:
 
 
 @pytest.fixture(scope="module")
-def no_aurora(tmp_path_factory) -> tuple[LocalArtifactStore, int]:
-    """No Aurora engine analysed: the utility pin has no engine to pin to."""
-    return _run(tmp_path_factory.mktemp("no-aurora"), aurora=False)
-
-
-@pytest.fixture(scope="module")
 def saved_before(tmp_path_factory) -> Iterator[tuple[LocalArtifactStore, int]]:
     """An assignment as the resolver wrote it before #1876 (no statement is
     procedure-internal there, so each went through the tie-break), synthesized now."""
@@ -295,20 +289,19 @@ def test_the_ui_and_the_engineering_report_say_the_same_sentence(n: int) -> None
     assert en[key].replace("{{count}}", str(n)) == _procedure_internal_text(n)
 
 
-def test_with_no_aurora_engine_nothing_is_labelled_procedure_internal(no_aurora) -> None:
-    store, version = no_aurora
-    v1 = _assignment(store)
-    for qid in PROCEDURE_INTERNAL:
-        # Every analysed engine is gated off, so the Aurora fallback places it, unpinned.
-        assert v1[qid]["pinned"] is None
-        assert "procedure-internal" not in v1[qid]["assignment_reason"]
-        # Routed like any other query, it keeps its collected placeholder.
-        assert v1[qid]["source_tables"] == ["unknown"]
-    assert any(v1[qid]["assigned_engine"] in AURORA for qid in PROCEDURE_INTERNAL)
-    report = _report(store, version)
-    assert PROCEDURE_INTERNAL_GROUP_LABEL not in _group_names(report)
-    assert report["facts"]["query_group_counts"]["procedure_internal_queries"] == 0
-    assert "procedure-internal" not in render_engineering_report_md(report)
+def test_with_no_aurora_analysis_the_first_assignment_is_refused(tmp_path) -> None:
+    """No Aurora engine analysed: every analysed engine is gated off these statements, so
+    the Aurora fallback would place them on an engine that did not analyse them, a hard
+    error that writes no version (#2152)."""
+    with pytest.raises(RuntimeError) as refused:  # InvalidAssignment, named so main loads
+        _run(tmp_path, aurora=False)
+    assert type(refused.value).__name__ == "InvalidAssignment"
+    assert "first assignment" in str(refused.value)
+    errors = getattr(refused.value, "errors", [])
+    assert any("which did not analyze it" in e for e in errors)
+    assert not LocalArtifactStore(base_dir=str(tmp_path)).exists(
+        f"{DB}/{JOB}/assignment/v1/assignment.json"
+    )
 
 
 def test_an_assignment_saved_before_is_not_labelled_procedure_internal(saved_before) -> None:

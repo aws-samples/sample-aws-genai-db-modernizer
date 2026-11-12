@@ -161,10 +161,16 @@ def main() -> None:
     _JOB.update(store=store, db=args.db, job_id=args.job_id)
     clear_failure_marker(store, args.db, args.job_id, _PHASE)
 
-    if args.finalize:
-        run_finalize(store, args.job_id, args.db, args.assignment_version)
-    else:
-        run_standard(store, args.job_id, args.db, args.assignment_version, args.llm_mode)
+    from src.agents.referee.assignment_validator import InvalidAssignment
+
+    try:
+        if args.finalize:
+            run_finalize(store, args.job_id, args.db, args.assignment_version)
+        else:
+            run_standard(store, args.job_id, args.db, args.assignment_version, args.llm_mode)
+    except InvalidAssignment as exc:
+        # #2152: the revised version failed validation with hard errors; not written.
+        _error(str(exc))
 
 
 def _job_ctx():

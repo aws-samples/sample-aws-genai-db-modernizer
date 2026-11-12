@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 
 from src.agents.referee.assignment_resolver import AssignmentResolver
-from src.agents.referee.assignment_validator import AssignmentValidator
+from src.agents.referee.assignment_validator import AssignmentValidator, InvalidAssignment
 from src.agents.referee.query_pattern import write_access_patterns
 from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
@@ -33,7 +33,8 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     3. Read collector output
     4. Determine the next version number
     5. Call AssignmentResolver.resolve()
-    6. Call AssignmentValidator.validate()
+    6. Call AssignmentValidator.validate(); raise InvalidAssignment on a hard error
+       (#2152), writing nothing
     7. Write assignment and validation artifacts
     """
     start_time = time.time()
@@ -89,6 +90,9 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
         f"[assignment] Validation: valid={validation.valid}, "
         f"{len(validation.warnings)} warnings, {len(validation.errors)} errors"
     )
+    if not validation.valid:
+        # #2152: a hard error stops the version; nothing is written.
+        raise InvalidAssignment(validation.errors, validation.warnings, "first assignment")
 
     # Store validation warnings on the assignment artifact
     assignment = assignment.model_copy(update={"validation_warnings": validation.warnings})
