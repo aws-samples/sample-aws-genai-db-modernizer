@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -99,8 +100,110 @@ def test_every_part_done_and_nothing_running_blocks_with_the_next_step(run_hook,
     assert "\n" not in res.stderr.strip()
 
 
-def test_a_part_still_running_is_a_legitimate_wait(run_hook, project) -> None:
-    tasks = [{"id": "a1", "type": "local_agent", "description": "DynamoDB design, part 3 of 3"}]
+PART_1 = {"id": "a1", "type": "local_agent", "description": "DynamoDB design, part 1 of 3"}
+
+
+def _launch(agent: str, when: datetime) -> dict:
+    """The session log's record of an async Agent launch (Claude Code 2.1.x)."""
+    text = f"Async agent launched successfully.\nagentId: {agent} (internal ID)"
+    return {
+        "type": "user",
+        "isSidechain": False,
+        "timestamp": when.isoformat().replace("+00:00", "Z"),
+        "message": {"role": "user", "content": [{"type": "tool_result", "content": text}]},
+        "toolUseResult": {"isAsync": True, "status": "async_launched", "agentId": agent},
+    }
+
+
+def _waiting(res) -> bool:
+    return bool(res.blocked and "still running" in res.stderr and "--wait-for-report" in res.stderr)
+
+
+def test_a_headless_turn_never_ends_while_a_part_is_still_running(run_hook, project) -> None:
+    """#2175: the wordpress run's orchestrator ended its turn while DynamoDB part 1 ran;
+    600 s after that last turn Claude Code stopped the part and the session ended with no
+    result line. Under --auto the stop is blocked, and the reason names the bounded wait."""
+    records = [
+        _rec("user", AUTO_PROMPT),
+        _launch("a1", datetime.now(UTC) - timedelta(minutes=4)),
+        _rec("assistant", "DynamoDB part 1 is still running, so I'm ending the turn."),
+    ]
+    tasks = [PART_1, {"id": "b1", "type": "local_bash", "description": "keep"}]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=tasks), env=_env(project))
+    assert _waiting(res), res.stderr
+    assert "1 subagent(s) you dispatched are still running (DynamoDB design, part 1 of 3)" in (
+        res.stderr
+    )
+    assert (
+        f"`uv run python scripts/run_schema_design.py --job-id {JOB} --db {DB} "
+        "--wait-for-report 110`" in res.stderr
+    )
+    assert "MODERNIZE_RESULT: failed" not in res.stderr
+    assert "\n" not in res.stderr.strip()
+
+
+def test_the_later_cli_task_type_and_an_unknown_launch_still_wait(run_hook, project) -> None:
+    # 2.1.304 sends type "subagent" with agent_type; no launch record means no age.
+    tasks = [{"id": "zz", "type": "subagent", "agent_type": "general-purpose", "description": "x"}]
+    res = run_hook(SCRIPT, _event(project, background_tasks=tasks), env=_env(project))
+    assert _waiting(res), res.stderr
+
+
+def test_a_subagent_out_past_the_hang_limit_asks_for_the_failed_line(run_hook, project) -> None:
+    """#2175: a subagent that never reports must end the run with a clear failed line,
+    not leave it to the CLI's silent stop."""
+    records = [
+        _rec("user", AUTO_PROMPT),
+        _launch("a1", datetime.now(UTC) - timedelta(minutes=31)),
+        _rec("assistant", "Waiting."),
+    ]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=[PART_1]), env=_env(project))
+    assert res.blocked, res.stderr
+    assert "'DynamoDB design, part 1 of 3' was dispatched 31 minutes ago" in res.stderr
+    assert (
+        "`MODERNIZE_RESULT: failed phase=schema_design reason=subagent DynamoDB design, part 1 "
+        "of 3 did not report within 30 minutes`" in res.stderr
+    )
+    assert "--wait-for-report" not in res.stderr
+
+
+def test_a_launch_inside_the_limit_or_of_another_agent_is_not_hung(run_hook, project) -> None:
+    records = [
+        _rec("user", AUTO_PROMPT),
+        _launch("other", datetime.now(UTC) - timedelta(hours=2)),
+        _launch("a1", datetime.now(UTC) - timedelta(minutes=29)),
+        _rec("assistant", "Waiting."),
+    ]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=[PART_1]), env=_env(project))
+    assert _waiting(res), res.stderr
+
+
+def test_a_subagent_launch_record_never_counts(run_hook, project) -> None:
+    # A launch a subagent's own sidechain logged is not the orchestrator's dispatch.
+    old = _launch("a1", datetime.now(UTC) - timedelta(hours=2))
+    old["isSidechain"] = True
+    records = [_rec("user", AUTO_PROMPT), old, _rec("assistant", "Waiting.")]
+    res = run_hook(SCRIPT, _event(project, records, background_tasks=[PART_1]), env=_env(project))
+    assert _waiting(res), res.stderr
+
+
+@pytest.mark.passes_on_main
+def test_an_interactive_run_or_a_result_line_may_end_the_turn_while_a_part_runs(
+    run_hook, project
+) -> None:
+    """Interactive, the session waits for the next report: ending the turn is the #2121
+    saving and stays allowed. A run that already wrote its result line may stop too."""
+    interactive = [_rec("user", AUTO_PROMPT.replace(" --auto", "")), _rec("assistant", "")]
+    event = _event(project, interactive, background_tasks=[PART_1])
+    assert _allowed(run_hook(SCRIPT, event, env=_env(project)))
+    done = "MODERNIZE_RESULT: failed phase=schema_design reason=subagent x did not report"
+    event = _event(project, background_tasks=[PART_1], last_assistant_message=done)
+    assert _allowed(run_hook(SCRIPT, event, env=_env(project)))
+
+
+@pytest.mark.passes_on_main
+def test_a_background_shell_alone_is_a_legitimate_wait(run_hook, project) -> None:
+    tasks = [{"id": "b1", "type": "local_bash", "description": "x", "command": "uv run x"}]
     assert _allowed(run_hook(SCRIPT, _event(project, background_tasks=tasks), env=_env(project)))
 
 

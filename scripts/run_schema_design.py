@@ -13,6 +13,7 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status --wait 60
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --wait-for-report 110
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
         --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
@@ -466,6 +467,63 @@ def run_status(
             line = _status_line(store, job_id, db, engine, assignment_version)
         if line["status"] in _PENDING_STATUSES:
             line["wait_timed_out"] = True
+    _output(line)
+
+
+# --wait-for-report (#2175): what a headless /modernize --auto orchestrator runs instead of
+# ending its turn while a subagent it dispatched is still running. Claude Code stops a
+# headless session's subagents 10 minutes after its last turn, so the turn must not end;
+# this keeps it going for a bounded time and returns as soon as a design or review lands.
+# Each mark appears once and never goes away, so an edit of a draft never wakes it again.
+def _report_marks(job_dir: Path) -> set[str]:
+    """What the job's design and review subagents have finished so far: every DynamoDB
+    group draft and finalized design output, and every design trace with a recorded
+    review, as paths under ``job_dir``. Read-only."""
+    marks: set[str] = set()
+    for vdir in sorted(job_dir.glob("schema-*/v*")):
+        if not vdir.is_dir():
+            continue
+        for path in vdir.glob("schema_draft_group_*.json"):
+            marks.add(path.relative_to(job_dir).as_posix())
+        if (vdir / "schema_output.json").is_file():
+            marks.add((vdir / "schema_output.json").relative_to(job_dir).as_posix())
+        for path in vdir.glob("design_trace*.json"):
+            try:
+                trace = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(trace, dict) and isinstance(trace.get("pe_review"), dict):
+                marks.add(path.relative_to(job_dir).as_posix() + "#pe_review")
+    return marks
+
+
+def run_wait_for_report(
+    job_dir: Path, wait: float, *, sleep=None, clock=None, marks=_report_marks
+) -> None:
+    """Wait up to ``wait`` seconds (capped at ``_MAX_WAIT_SECONDS``) for a design or review
+    to land, then print one line: ``"status": "landed"`` with the new ``landed`` marks as
+    soon as one appears, or ``"status": "no_change"`` when the wait ran out. Read-only."""
+    import time
+
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    start = clock()
+    deadline = start + min(wait, _MAX_WAIT_SECONDS)
+    before = marks(job_dir)
+    new: set[str] = set()
+    while not new and clock() < deadline:
+        sleep(min(_WAIT_POLL_SECONDS, max(deadline - clock(), 0)))
+        new = marks(job_dir) - before
+    line: dict = {
+        "status": "landed" if new else "no_change",
+        "waited_s": round(clock() - start, 1),
+    }
+    if new:
+        line["landed"] = sorted(new)[:10]
+    line["next"] = (
+        "read the reports that came in; while a subagent you dispatched has not reported, "
+        "run this again; after the last report, run the Done signal's status commands"
+    )
     _output(line)
 
 
@@ -950,7 +1008,6 @@ def main() -> None:
     parser.add_argument("--db", required=True, help="Database name")
     parser.add_argument(
         "--engine",
-        required=True,
         choices=sorted(_ALL_ENGINES),
         help="Target engine to design schema for",
     )
@@ -993,6 +1050,18 @@ def main() -> None:
             f"finalize_pending), re-read it until it is not, for at most SECONDS (capped at "
             f"{_MAX_WAIT_SECONDS}), then print one line; a wait that ran out adds "
             '"wait_timed_out": true'
+        ),
+    )
+    parser.add_argument(
+        "--wait-for-report",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Headless /modernize --auto only (#2175): instead of ending the turn while a "
+            "subagent is still running, wait until a design or review lands (a group draft, a "
+            "finalized output or a recorded review appears), for at most SECONDS (capped at "
+            f"{_MAX_WAIT_SECONDS}), then print one line. Read-only; needs no --engine"
         ),
     )
     parser.add_argument(
@@ -1049,6 +1118,20 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
+    if args.wait_for_report is not None:
+        if args.wait_for_report <= 0:
+            _error("--wait-for-report takes a number of seconds, more than 0")
+        if any(
+            (args.status, args.wait, args.finalize, args.split, args.merge, args.check_costs_all)
+        ) or (args.check_costs is not None):
+            _error("--wait-for-report goes on its own (with --job-id and --db)")
+        job_dir = Path(args.artifact_root) / args.db / args.job_id
+        if not job_dir.is_dir():
+            _error(f"no artifacts for {args.db}/{args.job_id} under {args.artifact_root}")
+        run_wait_for_report(job_dir, args.wait_for_report)
+        return
+    if args.engine is None:
+        _error("--engine is required")
     if args.wait and not args.status:
         _error("--wait only goes with --status")
     if args.wait < 0:

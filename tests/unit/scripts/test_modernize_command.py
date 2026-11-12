@@ -1411,6 +1411,81 @@ def test_the_waiting_rule_names_the_stop_hook_that_holds_it() -> None:
     assert (REPO_ROOT / "scripts" / "hooks" / "require_modernize_result.py").exists()
 
 
+_WAIT_FOR_REPORT = (
+    "`uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} "
+    "--wait-for-report 110`"
+)
+
+
+def _hook_module():
+    import importlib.util
+
+    path = REPO_ROOT / "scripts" / "hooks" / "require_modernize_result.py"
+    spec = importlib.util.spec_from_file_location("require_modernize_result", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_headless_run_waits_instead_of_ending_the_turn_while_a_subagent_runs() -> None:
+    """#2175: a headless orchestrator ended its turn while DynamoDB part 1 ran; Claude Code
+    stopped the part 10 minutes after that last turn and the run ended with no result line.
+    Under --auto the Waiting Rule runs the bounded wait instead; interactive runs keep
+    ending the turn (the #2121 saving)."""
+    waiting = _modernize_text().split("## Waiting Rule", 1)[1].split("## Subagent Dispatch", 1)[0]
+    waiting = " ".join(waiting.split())
+    assert (
+        "**Headless (`--auto`), never end a turn while a subagent you dispatched is still "
+        "running** (#2175)" in waiting
+    )
+    assert "10 minutes after its last turn" in waiting
+    assert f"under `--auto` run this instead, on its own and with no text: {_WAIT_FOR_REPORT}" in (
+        waiting
+    )
+    assert "It is a wait, not a status check" in waiting
+    assert "Run it again while a subagent you dispatched has not reported" in waiting
+    assert (
+        "A subagent that has not reported 30 minutes after its dispatch is hung: end with "
+        "`MODERNIZE_RESULT: failed phase=<phase> reason=subagent <its description> did not "
+        "report within 30 minutes`" in waiting
+    )
+    # Interactive keeps #2121's empty turn end.
+    assert "end the turn with no text and no tool call, and check nothing until it reports" in (
+        waiting
+    )
+    assert "`Blocked: ... still running ...`" in waiting
+
+
+def test_phase_6_done_signals_wait_under_auto_after_dispatch_and_between_reports() -> None:
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    design = phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
+    assert (
+        'Under `--auto`, every "end the turn with no text" below, and the end of the turn right '
+        "after the two dispatch messages, means the Waiting Rule's `--wait-for-report 110` "
+        "instead (#2175)" in design
+    )
+    review = phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
+    assert (
+        "Under `--auto`, run the Waiting Rule's `--wait-for-report 110` instead of ending the "
+        "turn, after the review dispatch too (#2175)" in review
+    )
+    wave = " ".join((COMMANDS_DIR / "wave-edit.md").read_text().split())
+    assert f"under `--auto`, run {_WAIT_FOR_REPORT} on its own instead" in wave
+
+
+def test_the_command_text_and_the_stop_hook_name_the_same_wait_and_limit() -> None:
+    hook = _hook_module()
+    text = " ".join(_modernize_text().split())
+    assert f"--wait-for-report {hook.WAIT_SECONDS}`" in text
+    assert f"within {hook.HUNG_AFTER_SECONDS // 60} minutes" in text
+    reason = hook._waiting_reason("j1", "d1", [{"id": "a", "description": "x"}])
+    assert (
+        "`uv run python scripts/run_schema_design.py --job-id j1 --db d1 --wait-for-report "
+        f"{hook.WAIT_SECONDS}`"
+    ) in reason
+
+
 # ---------------------------------------------------------------------------
 # #355 item 2 / #763 lever 1: a shared cached prefix for the DynamoDB group drafts
 # ---------------------------------------------------------------------------

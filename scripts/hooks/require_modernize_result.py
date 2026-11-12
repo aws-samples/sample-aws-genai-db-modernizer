@@ -22,14 +22,29 @@ Checked against the 2.1.288 CLI e2e-llm installs (its Stop input schema: ``backg
 is an empty array when nothing is in flight). ``stop_hook_active`` is not an allow: a second
 "Still waiting" after a block is the stall this hook exists for, and the cap bounds it.
 
+Running subagents under ``--auto`` (#2175). A headless (``claude -p``) session whose turn
+ends while subagents run is not paused forever: Claude Code stops every background task
+still running 10 minutes after the session's last turn (``CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS``,
+600000 by default) and ends the session. A wordpress run lost its result line that way: its
+orchestrator ended five turns in a row while DynamoDB part 1 was still out, the part made
+no progress for 13 minutes, and 600 s after the last turn the CLI killed it and interrupted
+the session. So under ``--auto`` a stop while a subagent (``background_tasks`` entry of
+type ``subagent`` or ``local_agent``) is still running is blocked too, and the reason names
+the bounded wait, ``run_schema_design.py --wait-for-report 110``, which keeps the turn going
+and returns as soon as a design or review lands. A subagent dispatched more than
+``HUNG_AFTER_SECONDS`` ago (its launch time is the session log's ``timestamp`` on the Agent
+result that names its ``agentId``) is hung: the reason then asks for the ``failed`` result
+line. Interactive runs are not blocked: there the session waits for the next report.
+
 The hook blocks only when all of these hold:
 
 - the event is the main agent's ``Stop`` (an ``agent_id`` or another event allows);
-- no background task is running (a part still designing is a legitimate wait). A CLI that
-  sends no ``background_tasks`` gets the narrower artifact test below instead;
 - the session's latest slash command is ``/modernize`` with ``--auto`` (or ``-y``): an
   interactive run legitimately stops to ask the user;
-- no top-level ``MODERNIZE_RESULT:`` line was written yet (the last message included).
+- no top-level ``MODERNIZE_RESULT:`` line was written yet (the last message included);
+- a subagent is still running (the wait or hung reason above), or no background task is
+  running at all (a background shell alone is a legitimate wait). A CLI that sends no
+  ``background_tasks`` gets the narrower artifact test below instead.
 
 With no ``background_tasks`` field it blocks only when the job's latest DynamoDB split, with no
 merge run on it, has a readable draft for every group and either no group review request written
@@ -51,7 +66,9 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +84,15 @@ _COMMAND = re.compile(
 _ID = re.compile(r"[A-Za-z0-9_-]+")
 _DB = re.compile(r"[A-Za-z0-9_.-]+")
 _AUTO = re.compile(r"(?:^|\s)(?:--auto|-y)(?:\s|$)")
+_AGENT_ID = re.compile(r"agentId:\s*([A-Za-z0-9_-]+)")
+# The task types of a subagent in the Stop input's ``background_tasks`` (the 2.1.288 CLI
+# sends ``local_agent``, later ones the display name ``subagent``).
+_SUBAGENT_TYPES = {"local_agent", "subagent"}
+# A subagent that has not reported this long after its dispatch is hung (#2175). The
+# slowest design seen in e2e-llm runs took about 13 minutes (DocumentDB on discourse).
+HUNG_AFTER_SECONDS = 30 * 60
+# The bounded wait a headless orchestrator runs instead of ending its turn (#2175).
+WAIT_SECONDS = 110
 
 
 def _is_subagent(rec: dict[str, Any]) -> bool:
@@ -96,14 +122,41 @@ def _command(text: str) -> tuple[str, str] | None:
     return None
 
 
-def session_state(lines: Iterator[str]) -> tuple[bool, bool]:
+def _launch(rec: dict[str, Any]) -> tuple[str, float] | None:
+    """``(agent id, launch epoch seconds)`` of a top-level async Agent result, if it is one."""
+    result = rec.get("toolUseResult")
+    agent = result.get("agentId") if isinstance(result, dict) else None
+    if not isinstance(agent, str):
+        message = rec.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        found = _AGENT_ID.search(json.dumps(content)) if isinstance(content, list) else None
+        agent = found.group(1) if found else None
+    stamp = rec.get("timestamp")
+    if not agent or not isinstance(stamp, str):
+        return None
+    try:
+        return agent, datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def session_state(
+    lines: Iterator[str], launches: dict[str, float] | None = None
+) -> tuple[bool, bool]:
     """``(auto_modernize, terminal)`` from the session transcript's lines: whether the latest
     top-level slash command is ``/modernize --auto``, and whether a top-level assistant message
-    already wrote a ``MODERNIZE_RESULT`` line. Only lines naming a command or the result are
-    parsed, so a long transcript reads fast."""
+    already wrote a ``MODERNIZE_RESULT`` line. Only lines naming a command, the result or an
+    agent launch are parsed, so a long transcript reads fast. ``launches``, when given, gets
+    each async subagent's launch time by its agent id (#2175)."""
     auto, terminal = False, False
     for line in lines:
-        if "command-name" not in line and RESULT not in line and '"/modernize' not in line:
+        launch_line = launches is not None and "agentId" in line
+        if (
+            not launch_line
+            and "command-name" not in line
+            and RESULT not in line
+            and '"/modernize' not in line
+        ):
             continue
         try:
             rec = json.loads(line)
@@ -111,6 +164,11 @@ def session_state(lines: Iterator[str]) -> tuple[bool, bool]:
             continue
         if not isinstance(rec, dict) or _is_subagent(rec):
             continue
+        if launch_line and rec.get("type") == "user" and launches is not None:
+            launch = _launch(rec)
+            if launch:
+                launches.setdefault(launch[0], launch[1])
+                continue
         for text in _texts(rec):
             if rec.get("type") == "user":
                 command = _command(text)
@@ -219,26 +277,81 @@ def _reason(job: str, db: str, parts: tuple[int, int] | None, reviewed: int | No
     )
 
 
-def decide(event: dict[str, Any], project: Path) -> str | None:
+def _subagents(tasks: Any) -> list[dict[str, Any]]:
+    """The running subagents among the Stop input's ``background_tasks``."""
+    if not isinstance(tasks, list):
+        return []
+    return [
+        t
+        for t in tasks
+        if isinstance(t, dict) and (t.get("type") in _SUBAGENT_TYPES or "agent_type" in t)
+    ]
+
+
+def _label(task: dict[str, Any]) -> str:
+    text = " ".join(str(task.get("description") or task.get("id") or "a subagent").split())
+    return text[:80]
+
+
+def _waiting_reason(job: str, db: str, agents: list[dict[str, Any]]) -> str:
+    names = "; ".join(_label(a) for a in agents[:3]) + (" ..." if len(agents) > 3 else "")
+    return (
+        f"Blocked: {len(agents)} subagent(s) you dispatched are still running ({names}) and "
+        "this /modernize --auto run is headless: Claude Code stops a headless session's "
+        "subagents 10 minutes after its last turn, so never end the turn while one runs. "
+        f"Run `uv run python scripts/run_schema_design.py --job-id {job} --db {db} "
+        f"--wait-for-report {WAIT_SECONDS}` on its own, then go on from its line and the "
+        "reports that came in (Waiting Rule)."
+    )
+
+
+def _hung_reason(phase: str, task: dict[str, Any], minutes: int) -> str:
+    label = _label(task)
+    return (
+        f"Blocked: the subagent '{label}' was dispatched {minutes} minutes ago and has not "
+        f"reported; a headless run treats a subagent that has not reported within "
+        f"{HUNG_AFTER_SECONDS // 60} minutes as hung. End the run now with "
+        f"`MODERNIZE_RESULT: failed phase={phase} reason=subagent {label} did not report "
+        f"within {HUNG_AFTER_SECONDS // 60} minutes`."
+    )
+
+
+def _phase(project: Path) -> str:
+    state = _read_json(project / ".modernizer-state.json")
+    phase = state.get("current_phase") if isinstance(state, dict) else None
+    return phase if isinstance(phase, str) and _ID.fullmatch(phase) else "schema_design"
+
+
+def decide(event: dict[str, Any], project: Path, now: float | None = None) -> str | None:
     """The block reason, or None to allow the stop."""
     if event.get("agent_id") or event.get("hook_event_name") not in (None, "Stop"):
         return None
     tasks = event.get("background_tasks")
-    if isinstance(tasks, list) and tasks:
-        return None  # a subagent is still running: a legitimate wait
     last = event.get("last_assistant_message")
     if isinstance(last, str) and _RESULT_LINE.search(last):
         return None
     path = event.get("transcript_path")
     if not isinstance(path, str) or not path:
         return None
+    agents = _subagents(tasks)
+    if isinstance(tasks, list) and tasks and not agents:
+        return None  # only a background shell is running: a legitimate wait
+    launches: dict[str, float] = {}
     with open(path, encoding="utf-8", errors="replace") as fh:
-        auto, terminal = session_state(iter(fh))
+        auto, terminal = session_state(iter(fh), launches)
     if not auto or terminal:
         return None
     job = _job(project)
     if job is None:
         return None
+    if agents:
+        # Headless, a turn that ends while subagents run can end the run (#2175).
+        now = time.time() if now is None else now
+        for agent in agents:
+            launched = launches.get(str(agent.get("id")))
+            if launched is not None and now - launched >= HUNG_AFTER_SECONDS:
+                return _hung_reason(_phase(project), agent, int((now - launched) // 60))
+        return _waiting_reason(job[0], job[1], agents)
     root = Path(os.environ.get("ARTIFACT_DIR") or project / "artifacts")
     if not root.is_absolute():
         root = project / root

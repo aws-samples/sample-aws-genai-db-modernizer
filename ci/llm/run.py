@@ -1350,6 +1350,44 @@ def _iter_modernize_result_matches(
     return matches
 
 
+_INTERRUPTED = "[Request interrupted by user]"
+
+
+def stopped_background_tasks(records: list[dict[str, Any]]) -> list[str]:
+    """The descriptions of the session's background tasks that Claude Code stopped (a
+    ``task_updated`` to ``killed``) when the session then ended interrupted (a
+    ``[Request interrupted by user]`` message, which the stopped subagent's stream carries),
+    in the order they were stopped (#2175). A headless session that ends its turn while
+    subagents run is cut off this way 10 minutes after its last turn. Empty when the session
+    was not interrupted or nothing was stopped."""
+    interrupted = False
+    for rec in records:
+        if rec.get("type") != "user":
+            continue
+        message = rec.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+        for block in blocks:
+            if isinstance(block, dict) and _INTERRUPTED in str(block.get("text") or ""):
+                interrupted = True
+    if not interrupted:
+        return []
+    names: dict[str, str] = {}
+    stopped: list[str] = []
+    for rec in records:
+        if rec.get("type") != "system":
+            continue
+        task = str(rec.get("task_id") or "")
+        if rec.get("subtype") == "task_started" and task:
+            names[task] = str(rec.get("description") or task)
+        patch = rec.get("patch") if rec.get("subtype") == "task_updated" else None
+        if isinstance(patch, dict) and patch.get("status") == "killed" and task:
+            label = names.get(task, task)
+            if label not in stopped:
+                stopped.append(label)
+    return stopped
+
+
 def check_transcript(
     path: Path,
     mode: str,
@@ -1540,6 +1578,15 @@ def check_transcript(
 
     matches = _iter_modernize_result_matches(records)
     if not matches:
+        stopped = stopped_background_tasks(records)
+        if stopped:
+            raise fail(
+                "no 'MODERNIZE_RESULT: complete ...' line found anywhere in the transcript: the "
+                f"session was interrupted after Claude Code stopped {len(stopped)} background "
+                f"task(s) still running after the last turn ({'; '.join(stopped[:5])}), its "
+                "headless background-wait ceiling (CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, 10 "
+                "minutes by default; #2175)"
+            )
         raise fail("no 'MODERNIZE_RESULT: complete ...' line found anywhere in the transcript")
 
     kind, match = matches[-1]  # last one wins
@@ -2011,6 +2058,8 @@ def build_results_row(
         "explore": None,
     }
     missing_required = False
+    # Why ``pass`` is false, one short line each (#2175): a failed run is never silent.
+    missing: list[str] = []
 
     job_id = db = model = cost_usd = num_turns = tokens_in = tokens_out = duration_s = None
     transcript_error: str | None = None
@@ -2025,6 +2074,7 @@ def build_results_row(
     summary = _load_json(transcript_summary_path)
     if summary is None:
         missing_required = True
+        missing.append(f"missing or unreadable input: {transcript_summary_path.name}")
     else:
         if "error" in summary:
             checks["transcript"] = False
@@ -2070,6 +2120,10 @@ def build_results_row(
         nonlocal missing_required
         if path is None or not path.is_file():
             missing_required = True
+            missing.append(
+                f"missing junit file for {'/'.join(categories)}"
+                + (f": {path.name}" if path is not None else "")
+            )
             return
         try:
             buckets = parse_junit_counts(path)
@@ -2081,6 +2135,7 @@ def build_results_row(
             if buckets[category]["total"] == 0:
                 checks[category] = None
                 missing_required = True
+                missing.append(f"no {category} tests ran ({path.name})")
             else:
                 checks[category] = buckets[category]["failed"] == 0
 
@@ -2095,6 +2150,7 @@ def build_results_row(
     judge_payload = _load_json(judge_path)
     if judge_payload is None:
         missing_required = True
+        missing.append(f"missing or unreadable input: {judge_path.name}")
     elif "error" in judge_payload:
         checks["judge"] = False
     else:
@@ -2114,6 +2170,7 @@ def build_results_row(
         explore_payload = _load_json(explore_path)
         if explore_payload is None:
             missing_required = True
+            missing.append(f"missing or unreadable input: {explore_path.name}")
         elif "pass" not in explore_payload:
             checks["explore"] = False
         else:
@@ -2139,6 +2196,13 @@ def build_results_row(
     if explore_path is not None:
         required.append("explore")
     overall_pass = (not missing_required) and all(checks.get(k) is True for k in required)
+    fail_reasons = list(dict.fromkeys(missing)) + [
+        f"check {k} is {'false' if checks.get(k) is False else 'null'}"
+        for k in required
+        if checks.get(k) is not True
+    ]
+    if transcript_error and checks["transcript"] is False:
+        fail_reasons.append(f"transcript: {_truncate(transcript_error)}")
 
     # Cost reporting (#355, #745, #763): the per-agent table, its error, the soft
     # budget. Warnings only: none of this changes `pass`.
@@ -2197,6 +2261,7 @@ def build_results_row(
         "judge_input": judge_input,
         "explore": explore_section,
         "pass": overall_pass,
+        **({} if overall_pass else {"fail_reasons": fail_reasons}),
     }
 
 
@@ -2543,6 +2608,13 @@ def _mark_results(out_dir: Path, scan: dict) -> None:
     # keeps a run that passed everything else.
     row["private_scan"] = {**scan, "pass_before_scan": row.get("pass") is True}
     row["pass"] = False
+    reasons = row.get("fail_reasons") if isinstance(row.get("fail_reasons"), list) else []
+    withheld = scan.get("withheld") or []
+    row["fail_reasons"] = [
+        *reasons,
+        f"private scan: {scan.get('findings')} finding(s); {len(withheld)} file(s) withheld "
+        f"for human review (see {scan.get('manifest') or 'job.findings.json'})",
+    ]
     tmp = results.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(row, indent=2) + "\n")
     tmp.replace(results)
@@ -2682,6 +2754,7 @@ def _withhold_everything(out_dir: Path, reason: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     row = {"schema_version": 2, "error": f"{reason}; every upload was withheld"}
     row["pass"] = False
+    row["fail_reasons"] = [row["error"]]
     (out_dir / "results.json").write_text(json.dumps(row) + "\n")
 
 
