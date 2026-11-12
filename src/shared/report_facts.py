@@ -1780,6 +1780,13 @@ CLOSE_CALL_MARGIN = 5.0
 CLOSE_CALL_IDS_SHOWN = 5
 
 
+def _choice_table(table: object) -> str:
+    """A choice's table, or "No source table" for a statement that reads no table (#2147)."""
+    from src.shared.placeholder_tables import NO_SOURCE_TABLE_LABEL, is_placeholder_table
+
+    return NO_SOURCE_TABLE_LABEL if is_placeholder_table(table) else str(table)
+
+
 def engine_choice_facts(report: Mapping[str, Any]) -> dict[str, Any]:
     """The pending engine choices' figures (#1003): how many choices (one per
     table) and the tied queries they cover, the same grouped by tied engines
@@ -1801,7 +1808,7 @@ def engine_choice_facts(report: Mapping[str, Any]) -> dict[str, Any]:
                 "engines": list(engines),
                 "choice_count": len(rows),
                 "query_count": sum(len(c.get("query_ids") or []) for c in rows),
-                "tables": sorted(str(c.get("table") or "") for c in rows),
+                "tables": sorted(_choice_table(c.get("table")) for c in rows),
             }
             for engines, rows in sorted(pairs.items())
         ],
@@ -1812,7 +1819,7 @@ def engine_choice_facts(report: Mapping[str, Any]) -> dict[str, Any]:
                 "engine": engine,
                 "choice_count": len(rows),
                 "query_count": sum(len(d.get("query_ids") or []) for d in rows),
-                "tables": sorted(str(d.get("table") or "") for d in rows),
+                "tables": sorted(_choice_table(d.get("table")) for d in rows),
             }
             for engine, rows in sorted(by_engine.items())
         ],

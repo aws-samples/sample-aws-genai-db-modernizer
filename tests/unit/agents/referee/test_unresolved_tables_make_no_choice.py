@@ -7,9 +7,10 @@ The collector writes ``tables_accessed: ["unknown"]`` for a statement it names n
 for (a constant ``SELECT`` over a derived one-row table, say). Routing used to copy the
 placeholder into ``source_tables``, and when such a statement tied, the per-table
 choices grouped it under a "table" named ``unknown``: ``--auto`` then recorded an
-engine choice for it. A placeholder is no table: no query lists one, no choice is built
-for queries that read no resolved table, and a job saved before the fix still loads
-without showing one.
+engine choice for it. A placeholder is no table: no query lists one, a tied statement that
+reads no resolved table is a choice of its own (``query:<id>``, "No source table") that
+``--auto`` settles like any other, and a job saved before the fix still loads, its
+``unknown`` decision read as those per-statement choices.
 """
 
 from __future__ import annotations
@@ -98,22 +99,52 @@ class TestNoQueryListsAPlaceholderTable:
         ]
 
 
-class TestNoChoiceForAStatementWithNoTable:
-    def test_a_tied_statement_on_the_unknown_placeholder_is_no_choice(self):
+class TestAStatementWithNoTableIsItsOwnChoice:
+    def test_a_tied_statement_on_the_unknown_placeholder_is_its_own_choice(self):
         qas = [_qa("q1", ["unknown"]), _qa("q2", ["unknown"])]
-        assert build_pending_choices(qas, _collector([], []), None) == []
+        choices = build_pending_choices(qas, _collector([], []), None)
+        assert [(c.choice_id, c.table, c.tables, c.query_ids) for c in choices] == [
+            ("query:q1", "", [], ["q1"]),
+            ("query:q2", "", [], ["q2"]),
+        ]
+        assert all("reads no table" in c.why_tied for c in choices)
 
-    def test_a_tied_statement_with_no_table_at_all_is_no_choice(self):
-        # It used to become a choice named after the query (``query:q1``).
-        assert build_pending_choices([_qa("q1", [])], _collector([], []), None) == []
+    def test_a_tied_statement_with_no_table_at_all_is_its_own_choice(self):
+        (choice,) = build_pending_choices([_qa("q1", [])], _collector([], []), None)
+        assert (choice.choice_id, choice.table) == ("query:q1", "")
+
+    def test_decide_for_me_settles_it_with_a_reason_that_names_no_table(self):
+        from src.agents.referee.pending_choices import choice_overrides, decided_reason
+
+        qas = [_qa("q1", ["unknown"]), _qa("s1", ["app.t"], tied=None)]
+        choices = build_pending_choices(qas, _collector([], ["app.t"]), None)
+        engine_of, auto, _ = choice_overrides(choices, decide=True)
+        assert set(engine_of) == {"q1"} and auto["q1"].table == ""
+        pick = auto["q1"]
+        assert decided_reason(pick.engine, pick.alternatives, pick.table, pick.reason) == (
+            "Placed on Aurora PostgreSQL: it tied with DynamoDB, and this statement reads no "
+            "table. Decided automatically, review if needed."
+        )
+        assert pick.engine == "aurora_postgresql"  # the settled workload's engine
+
+    def test_a_real_tables_decided_reason_still_names_it(self):
+        from src.agents.referee.pending_choices import decided_reason
+
+        assert decided_reason("dynamodb", ["documentdb"], "app.posts", "Higher score.") == (
+            "Placed on DynamoDB: it tied with DocumentDB on table posts. Higher score. "
+            "Decided automatically, review if needed."
+        )
 
     def test_the_placeholder_never_becomes_the_home_of_a_real_tables_query(self):
         # Two queries touch ``unknown`` and one touches ``app.t``: the most-touched
         # table used to be the placeholder, so the real table's query went under it.
         qas = [_qa("q1", ["unknown"]), _qa("q2", ["unknown"]), _qa("q3", ["app.t", "unknown"])]
-        (choice,) = build_pending_choices(qas, _collector([], ["app.t"]), None)
-        assert (choice.choice_id, choice.table, choice.tables) == ("app.t", "app.t", ["app.t"])
-        assert choice.query_ids == ["q3"]
+        choices = build_pending_choices(qas, _collector([], ["app.t"]), None)
+        assert [(c.choice_id, c.table, c.tables, c.query_ids) for c in choices] == [
+            ("app.t", "app.t", ["app.t"], ["q3"]),
+            ("query:q1", "", [], ["q1"]),
+            ("query:q2", "", [], ["q2"]),
+        ]
 
     def test_a_statement_with_no_table_in_a_tables_unit_stays_in_its_choice(self):
         # A unit (here a routine's statements) is one choice whatever its members read:
@@ -137,6 +168,7 @@ class TestNoChoiceForAStatementWithNoTable:
         assert [(c.choice_id, c.query_ids) for c in choices] == [
             ("app.a", ["q1"]),
             ("app.b", ["q3"]),
+            ("query:q2", ["q2"]),
         ]
 
 
@@ -188,12 +220,41 @@ def _legacy_assignment() -> dict[str, Any]:
 
 
 class TestAJobSavedBeforeTheFixStillLoads:
-    def test_it_validates_and_its_placeholder_decision_no_longer_holds(self):
+    def test_its_placeholder_decision_holds_as_one_choice_per_statement(self):
         saved = _legacy_assignment()
         model = Assignment.model_validate(saved)
         assert model.auto_decided_choices[0].table == "unknown"
         held = auto_decisions_still_holding(model.auto_decided_choices, model.query_assignments)
-        assert held == []
+        assert [(d.choice_id, d.table, d.query_ids, d.engine) for d in held] == [
+            ("query:q1", "", ["q1"], "aurora_postgresql"),
+            ("query:q2", "", ["q2"], "aurora_postgresql"),
+        ]
+        assert all(d.reason == "Level before rounding." for d in held)
+
+    def test_reading_it_maps_the_decision_and_rewords_its_statements_reasons(self):
+        from src.agents.referee.pending_choices import map_placeholder_choices
+
+        saved = _legacy_assignment()
+        mapped = map_placeholder_choices(saved)
+        assert [d["choice_id"] for d in mapped["auto_decided_choices"]] == ["query:q1", "query:q2"]
+        by_id = {qa["query_id"]: qa for qa in mapped["query_assignments"]}
+        for qid in ("q1", "q2"):
+            assert by_id[qid]["assignment_reason"] == (
+                "Placed on Aurora PostgreSQL: it tied with DynamoDB, and this statement reads "
+                "no table. Decided automatically, review if needed."
+            )
+            assert by_id[qid]["source_tables"] == []
+        assert by_id["q3"] == saved["query_assignments"][2]
+        Assignment.model_validate(mapped)
+        # The saved file itself is left as it was.
+        assert saved["auto_decided_choices"][0]["table"] == "unknown"
+
+    def test_an_assignment_with_no_placeholder_decision_is_unchanged(self):
+        from src.agents.referee.pending_choices import map_placeholder_choices
+
+        saved = _legacy_assignment()
+        saved["auto_decided_choices"] = []
+        assert map_placeholder_choices(saved) == saved
 
     def test_a_real_tables_decision_beside_it_still_holds(self):
         saved = _legacy_assignment()
@@ -206,9 +267,9 @@ class TestAJobSavedBeforeTheFixStillLoads:
         held = auto_decisions_still_holding(
             [*model.auto_decided_choices, real], model.query_assignments
         )
-        assert held == [real]
+        assert [d.choice_id for d in held] == ["query:q1", "query:q2", "app.t"]
 
-    def test_its_open_placeholder_ties_build_no_choice(self):
+    def test_its_open_placeholder_ties_are_choices_per_statement(self):
         saved = _legacy_assignment()
         for qa in saved["query_assignments"][:2]:
             qa["tied_engines"] = list(PAIR)
@@ -220,7 +281,8 @@ class TestAJobSavedBeforeTheFixStillLoads:
             ],
             ["app.t"],
         )
-        assert pending_choices_from(saved, collector, {}, {}) == []
+        choices = pending_choices_from(saved, collector, {}, {})
+        assert [(c.choice_id, c.table) for c in choices] == [("query:q1", ""), ("query:q2", "")]
 
 
 def test_the_access_pattern_record_lists_no_placeholder_table():
@@ -236,3 +298,63 @@ def test_the_access_pattern_record_lists_no_placeholder_table():
     rows = {r["query_id"]: r for r in access_patterns_record(collector)["queries"]}
     assert rows["q1"]["tables"] == ["app.users"]
     assert rows["q2"]["tables"] == []
+
+
+class TestEveryDeliverableShowsNoSourceTable:
+    """A choice for a statement that reads no table is "No source table" wherever a
+    choice's table is shown, never ``unknown`` and never a bare ``query:`` id."""
+
+    def _choices(self):
+        qas = [_qa("q1", ["unknown"]), _qa("s1", ["app.t"], tied=None)]
+        return build_pending_choices(qas, _collector([], ["app.t"]), None)
+
+    def test_the_engineering_report(self):
+        from src.report.engine_choices import auto_decided_md, pending_choices_md
+
+        (choice,) = self._choices()
+        report = {
+            "pending_engine_choices": [choice.model_dump(mode="json")],
+            "auto_decided_choices": [
+                {
+                    "choice_id": "query:q1",
+                    "table": "",
+                    "query_ids": ["q1"],
+                    "engine": "aurora_postgresql",
+                    "alternatives": ["dynamodb"],
+                    "rule": "settled_workload",
+                    "reason": "Level before rounding.",
+                    "decided_in_version": 3,
+                }
+            ],
+        }
+        md = "\n".join(pending_choices_md(report) + auto_decided_md(report))
+        assert "| No source table (`q1`) |" in md
+        assert "### No source table (`q1`) (1 query)" in md
+        assert "`unknown`" not in md and "`query:q1`" not in md
+
+    def test_the_review_chat_and_the_gate_summary(self):
+        from src.agents.referee.assignment_review import render_pending_choices
+        from src.report.printed_summary import render_gate_block
+
+        (choice,) = self._choices()
+        assert "### query:q1 (No source table) (1 queries" in render_pending_choices([choice])
+        gate = {
+            "pending_choices": [
+                {"choice": "query:q1", "table": "No source table", "queries": 1, "why_tied": "x"}
+            ]
+        }
+        assert "- No source table (`query:q1`) (1 query): x" in render_gate_block(
+            gate, database_name="app", job_id="j1"
+        )
+
+    def test_the_facts_layer(self):
+        from src.shared.report_facts import engine_choice_facts
+
+        (choice,) = self._choices()
+        facts = engine_choice_facts(
+            {
+                "pending_engine_choices": [choice.model_dump(mode="json")],
+                "auto_decided_choices": [],
+            }
+        )
+        assert facts["pending_choice_pairs"][0]["tables"] == ["No source table"]

@@ -33,12 +33,14 @@ unit; the choice then ties between the engines they all tie on (or, with fewer
 than two in common, every engine any of them ties on).
 
 A placeholder table (``placeholder_tables.is_placeholder_table``: the collector's
-``unknown``, a dummy ``DUAL``) is no table, so it is never a choice's table (#2147). A
-choice whose queries read no table that resolved is no table's choice and is not built:
-those queries stay on the engine the tie placeholder gave them, their tie stays open
-(``QueryAssignment.tied_engines``), and the deliverables list them under "No source
-table". A decision ``--auto`` saved on a placeholder table before #2147 no longer holds
-(:func:`auto_decisions_still_holding`).
+``unknown``, a dummy ``DUAL``) is no table, so it is never a choice's table or home
+(#2147). A tied statement that reads no table that resolved (and shares no placement
+unit with one that does) is a choice of its own, named ``query:<query_id>``, with an
+empty ``table``: the deliverables, the gate and the UI show it as "No source table",
+and ``--auto`` decides it by the same ``decide_for_me`` rules as any other choice. A
+decision ``--auto`` saved on a placeholder table before #2147 is read as those
+per-statement choices (:func:`per_query_placeholder_decisions`,
+:func:`map_placeholder_choices`).
 
 A choice's scores are the shared scorer's (``score_query_for_engine``), averaged
 over its queries with the shared group rule (``co_dependency.group_engine_scores``,
@@ -50,6 +52,7 @@ a write group's call-weighted mean): ``score`` is what routing compared,
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -78,7 +81,12 @@ from src.agents.referee.write_groups import (
 )
 from src.contracts.assignment_models import AutoDecidedChoice, ChoiceEngine, PendingEngineChoice
 from src.shared.engine_names import display_engine
-from src.shared.placeholder_tables import is_placeholder_table
+from src.shared.placeholder_tables import (
+    PLACEHOLDER_TABLE_NAMES,
+    choice_table_label,
+    is_placeholder_table,
+    no_table_choice_id,
+)
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -112,7 +120,8 @@ class EngineNotTied(EngineChoiceError):
     def __init__(self, choice: PendingEngineChoice, engine: str) -> None:
         options = " or ".join(display_engine(e) for e in choice.tied_engines)
         super().__init__(
-            f"{display_engine(engine)} is not one of the tied engines for {choice.table}: "
+            f"{display_engine(engine)} is not one of the tied engines for "
+            f"{choice.table or choice_table_label(choice.table)}: "
             f"choose {options}."
         )
         self.choice_id = choice.choice_id
@@ -279,29 +288,28 @@ def build_pending_choices(
     components: dict[str, list[str]] = {}
     for qid in sorted(tied):
         components.setdefault(union.find(qid), []).append(qid)
-    # A choice is a table's (#2147): tied queries none of which reads a table that
-    # resolved are no table's choice. They stay where the tie placeholder put them,
-    # listed as open ties under "No source table".
-    components = {
-        root: members for root, members in components.items() if any(tables_of[q] for q in members)
-    }
 
     settled = settled_counts(
         qas, exclude=RoutineFollowers.from_collector(collector_output).routine_of
     )
     unresolved_views = _unresolved_views(collector_output)
-    raw: list[tuple[str, list[str]]] = []
+    raw: list[tuple[str, str, list[str]]] = []
     for members in components.values():
         homes = Counter(home_of[q] for q in members if home_of[q])
-        table = sorted(homes, key=lambda t: (-homes[t], t))[0] if homes else f"query:{members[0]}"
-        raw.append((table, members))
-    raw.sort(key=lambda item: (item[0], item[1][0]))
+        if homes:
+            table = sorted(homes, key=lambda t: (-homes[t], t))[0]
+            raw.append((table, table, members))
+        else:
+            # A statement that reads no table is a choice of its own, named for the
+            # query and for no table (#2147): the deliverables call it "No source table".
+            raw.append((no_table_choice_id(members[0]), "", members))
+    raw.sort(key=lambda item: (item[0], item[2][0]))
 
     choices: list[PendingEngineChoice] = []
     seen: Counter[str] = Counter()
-    for table, members in raw:
-        seen[table] += 1
-        choice_id = table if seen[table] == 1 else f"{table}#{seen[table]}"
+    for name, table, members in raw:
+        seen[name] += 1
+        choice_id = name if seen[name] == 1 else f"{name}#{seen[name]}"
         choices.append(
             _choice(
                 choice_id,
@@ -402,7 +410,13 @@ def _choice(
         current_engines=sorted(current),
         options=choice_engines,
         why_tied=_why_tied(engines, whole, unrounded)
-        + _view_note(members, query_by_id, unresolved_views or {}),
+        + _view_note(members, query_by_id, unresolved_views or {})
+        + (
+            ""
+            if table
+            else " This statement reads no table, so it has no table to score and every "
+            "engine scores it the same."
+        ),
         decide_for_me_engine=pick,
         decide_for_me_rule=rule,
         decide_for_me_reason=_pick_reason(pick, rule, kind, engines, unrounded, settled),
@@ -601,8 +615,84 @@ def auto_decisions_still_holding(
     }
     return [
         d
-        for d in decisions
-        # A decision saved on a placeholder table before #2147 was no table's choice.
-        if not is_placeholder_table(d.table)
-        and all(state.get(q) == (d.engine, False) for q in d.query_ids)
+        for d in per_query_placeholder_decisions(decisions)
+        if all(state.get(q) == (d.engine, False) for q in d.query_ids)
     ]
+
+
+def per_query_placeholder_decisions(
+    decisions: Iterable[AutoDecidedChoice],
+) -> list[AutoDecidedChoice]:
+    """``decisions`` with each one an assignment saved before #2147 made for a placeholder
+    table (the collector's ``unknown``) mapped onto the choices its statements have now:
+    one per statement, named ``query:<query_id>``, for no table. The engine, scores, rule
+    and reason are the saved decision's."""
+    out: list[AutoDecidedChoice] = []
+    for d in decisions:
+        if not is_placeholder_table(d.table):
+            out.append(d)
+            continue
+        out.extend(
+            d.model_copy(update={"choice_id": no_table_choice_id(q), "table": "", "query_ids": [q]})
+            for q in d.query_ids
+        )
+    return out
+
+
+def decided_reason(engine: str, alternatives: Iterable[str], table: str, reason: str) -> str:
+    """The reason ``--auto``'s pick gives each query of its choice (#1003); a choice for a
+    statement that reads no table names no table (#2147)."""
+    others = _names(alternatives)
+    if is_placeholder_table(table):
+        return (
+            f"Placed on {display_engine(engine)}: it tied with {others}, and this statement "
+            "reads no table. Decided automatically, review if needed."
+        )
+    return (
+        f"Placed on {display_engine(engine)}: it tied with {others} on table {_bare(table)}. "
+        f"{reason} Decided automatically, review if needed."
+    )
+
+
+# The reason a pick for a placeholder table wrote before #2147 (``decided_reason``'s
+# table branch with ``unknown`` and the like), read back as the reason it writes now.
+_LEGACY_PLACEHOLDER_REASON_RE = re.compile(
+    r"^Placed on (?P<engine>.+?): it tied with (?P<others>.+?) on table "
+    rf"(?:{'|'.join(re.escape(n) for n in sorted(PLACEHOLDER_TABLE_NAMES))})\. .*"
+    r"Decided automatically, review if needed\.$",
+    re.S,
+)
+
+
+def map_placeholder_choices(assignment: Mapping[str, Any]) -> dict[str, Any]:
+    """A saved assignment as the code since #2147 writes it: each ``--auto`` decision
+    made for a placeholder table split per statement (:func:`per_query_placeholder_decisions`),
+    and each of its statements' reasons worded as :func:`decided_reason` words it, so
+    the decided list and the per-query reasons agree. Any other assignment is returned
+    unchanged (as a copy)."""
+    out = dict(assignment)
+    raw = [d for d in out.get("auto_decided_choices") or [] if isinstance(d, Mapping)]
+    legacy = [d for d in raw if is_placeholder_table(d.get("table"))]
+    if not legacy:
+        return out
+    decisions = [AutoDecidedChoice.model_validate(d) for d in raw]
+    out["auto_decided_choices"] = [
+        d.model_dump(mode="json") for d in per_query_placeholder_decisions(decisions)
+    ]
+    affected = {str(q) for d in legacy for q in d.get("query_ids") or []}
+    qas = []
+    for qa in out.get("query_assignments") or []:
+        if isinstance(qa, Mapping) and str(qa.get("query_id")) in affected:
+            qa = dict(qa)
+            match = _LEGACY_PLACEHOLDER_REASON_RE.match(str(qa.get("assignment_reason") or ""))
+            if match:
+                qa["assignment_reason"] = (
+                    f"Placed on {match['engine']}: it tied with {match['others']}, and this "
+                    "statement reads no table. Decided automatically, review if needed."
+                )
+            qa["source_tables"] = [
+                t for t in qa.get("source_tables") or [] if not is_placeholder_table(t)
+            ]
+        qas.append(qa)
+    out["query_assignments"] = qas
+    return out

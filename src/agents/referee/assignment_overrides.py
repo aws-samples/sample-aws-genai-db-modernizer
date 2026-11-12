@@ -67,7 +67,11 @@ from src.agents.referee.move_ledger import (
     ledger_for,
     state_of,
 )
-from src.agents.referee.pending_choices import AutoPick, auto_decisions_still_holding
+from src.agents.referee.pending_choices import (
+    AutoPick,
+    auto_decisions_still_holding,
+    decided_reason,
+)
 from src.agents.referee.query_pattern import read_analysis_outputs, write_access_patterns
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.routine_units import (
@@ -1188,16 +1192,7 @@ def _apply_auto_pick(
             previous_tied_engines=sorted(qa.tied_engines),
         ),
     )
-    others = _join_names(pick.alternatives)
-    qa.assignment_reason = (
-        f"Placed on {display_engine(pick.engine)}: it tied with {others} on table "
-        f"{pick.table.rsplit('.', 1)[-1]}. {pick.reason} Decided automatically, review if needed."
-    )
-
-
-def _join_names(engines: Iterable[str]) -> str:
-    names = [display_engine(e) for e in engines]
-    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    qa.assignment_reason = decided_reason(pick.engine, pick.alternatives, pick.table, pick.reason)
 
 
 def _auto_decisions(

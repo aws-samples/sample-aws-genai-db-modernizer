@@ -10,6 +10,7 @@ from typing import Any
 
 from src.shared.engine_names import display_engine
 from src.shared.flag_reasons import flag_reason_text
+from src.shared.placeholder_tables import NO_SOURCE_TABLE_LABEL, is_placeholder_table
 from src.shared.report_facts import (
     CONSOLIDATED_FROM_TO_RE,
     ENGINE_BY_NAME,
@@ -59,6 +60,18 @@ def _bare_table(table: Any) -> str:
     return str(table or "?").rsplit(".", 1)[-1]
 
 
+def _choice_name(choice: dict[str, Any]) -> str:
+    """A choice's table as a Markdown cell: the bare table name in code, or "No source
+    table" and its one query for a statement that reads no table (#2147; an empty
+    ``table``, or a placeholder a report saved before it named)."""
+    table = choice.get("table")
+    if not is_placeholder_table(table):
+        return f"`{escaping.md_code(_bare_table(table))}`"
+    ids = [str(q) for q in choice.get("query_ids") or []]
+    one = f" (`{escaping.md_code(ids[0])}`)" if len(ids) == 1 else ""
+    return f"{NO_SOURCE_TABLE_LABEL}{one}"
+
+
 def _decide_line(choice: dict[str, Any]) -> str:
     """The "Decide for me" bullet. A pick made on the unrounded score names the engine
     and the rule only: the scores are in the section's table (#1558). Any other rule
@@ -93,7 +106,7 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
         engines = ", ".join(_score_pair(e) for e in c.get("options") or [] if isinstance(e, dict))
         listed = c.get("current_engines") or [c.get("current_engine", "")]
         out.append(
-            f"| `{escaping.md_code(_bare_table(c.get('table')))}` "
+            f"| {_choice_name(c)} "
             f"| {len(c.get('query_ids') or [])} "
             f"| {escaping.md_cell(engines)} "
             f"| {escaping.md_cell(', '.join(display_engine(str(e)) for e in listed))} "
@@ -108,7 +121,7 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
     option_stated: dict[str, str] = {}
     for c in choices:
         ids = c.get("query_ids") or []
-        table = f"`{escaping.md_code(_bare_table(c.get('table')))}`"
+        table = _choice_name(c)
         options = [
             (
                 escaping.md_text(display_engine(str(e.get("engine", "")))),
@@ -172,7 +185,7 @@ def auto_decided_md(report: dict[str, Any]) -> list[str]:
     for d in decided:
         alternatives = ", ".join(display_engine(e) for e in d.get("alternatives") or [])
         out.append(
-            f"| `{escaping.md_code(_bare_table(d.get('table')))}` "
+            f"| {_choice_name(d)} "
             f"| {len(d.get('query_ids') or [])} "
             f"| {escaping.md_cell(display_engine(str(d.get('engine', ''))))} "
             f"| {escaping.md_cell(alternatives)} "
