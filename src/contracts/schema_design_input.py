@@ -589,10 +589,14 @@ class SchemaDesignGroupsManifest(BaseModel):
       10) and peak_to_avg_ratio to None (was 3): growth is a stated scenario and the
       peak comes from the source's metrics; added optional
       AgentQueryPattern.rate_window_basis, so a sampled rate takes no peak factor.
+    - 1.8 (2026-11-12, #2141): Added optional ``unit_cuts`` to the groups manifest: the
+      placement units (co-dependency groups, write groups, routine units) the design
+      split designs in two or more parts, each with its parts and reason; a manifest
+      written before has none, and still loads.
     """
 
     contract_version: str = Field(
-        default="1.7", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.8", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str

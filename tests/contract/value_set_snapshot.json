@@ -977,7 +977,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_input.ForeignKeyAction": {
     "module": "schema_design_input",
@@ -988,7 +988,7 @@
       "SET DEFAULT",
       "SET NULL"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_input.MigrationComplexity": {
     "module": "schema_design_input",
@@ -997,7 +997,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_input.NormalizedDataType": {
     "module": "schema_design_input",
@@ -1017,7 +1017,7 @@
       "uuid",
       "xml"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_input.QueryLogSource": {
     "module": "schema_design_input",
@@ -1031,7 +1031,7 @@
       "slow_query_log",
       "v_dollar_sql"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_input.QueryType": {
     "module": "schema_design_input",
@@ -1043,7 +1043,7 @@
       "SELECT",
       "UPDATE"
     ],
-    "version": "1.7"
+    "version": "1.8"
   },
   "schema_design_output.TradeOffGroupTopic": {
     "module": "schema_design_output",
