@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from scripts import run_report
 from src.storage.local_store import LocalArtifactStore
+from tests.branding import hits as product_name_hits
 
 FIXTURE = Path(__file__).resolve().parents[1] / "report" / "fixtures" / "e2e09_report.json"
 DB, JOB = "discourse", "job-x"
@@ -125,7 +125,7 @@ def test_index_lists_each_file_its_audience_and_the_assignment_version(tmp_path:
     assert "Assessment Data (JSON)" in index
     # Branding: the one product name, nothing else.
     assert "Database Modernizer Assessment Tool" in index
-    assert not re.search(r"transform|\bATX\b", index, re.IGNORECASE)
+    assert product_name_hits(index) == []
 
 
 def test_an_older_version_is_refused_and_leaves_the_deliverables_folder_alone(
