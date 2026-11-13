@@ -75,6 +75,11 @@ skipped** with reason `llm_mode=none: every schema designer needs a model`
 (every designer needs a model). `run_assessment.py` always runs the analysis
 phase deterministically, whatever `--llm-mode` says.
 
+Synthesis needs a design or a skip record (`schema-<engine>/v<N>/schema_output.json`
+with `status: "skipped"` and its reason) for every engine it designs, and fails naming
+any engine with neither (#2154). A run without a model and `run_schema_design.py --skip`
+write skip records, and the deliverables say why each was not designed. <!-- claim: tests/unit/agents/referee/test_synthesis_needs_every_design.py::test_an_engine_with_neither_a_design_nor_a_skip_record_fails, tests/unit/agents/referee/test_synthesis_needs_every_design.py::test_llm_mode_none_synthesis_records_the_skip_and_passes, tests/e2e/test_pipeline.py::test_a_run_without_a_model_records_every_design_as_skipped_and_says_why -->
+
 ## Setup
 
 ```bash
