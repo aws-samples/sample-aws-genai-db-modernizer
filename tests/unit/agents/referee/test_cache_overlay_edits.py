@@ -310,7 +310,7 @@ class TestCustomerPin:
 
 
 def test_safety_net_drop_is_persisted(tmp_path):
-    from src.agents.referee.synthesis_handler import run_synthesis
+    from tests.design_records import run_synthesis
 
     store = _store_with(
         tmp_path,

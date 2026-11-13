@@ -40,6 +40,7 @@ import pytest
 
 from src.storage.local_store import LocalArtifactStore
 from src.tools.database.collection_text import extract_json_object
+from tests.design_records import skip_undesigned_effective
 
 REPO = Path(__file__).resolve().parents[3]
 SAMPLE = "trailgear"
@@ -288,6 +289,8 @@ def run_every_model_input(
         for engine in ("dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql"):
             _quietly(run_schema_design.run_external, ext_store, job, db, engine, 1)
         _quietly(run_schema_design.run_split, ext_store, job, db, "dynamodb", 1)
+        # A design the stand-in left unfinished gets a skip record (#2154).
+        skip_undesigned_effective(ext_store, db, job)
         _quietly(run_assessment.phase_synthesis, ext_store, job, db, "external")
 
         # The Bedrock calls, with a stand-in model.
@@ -342,6 +345,8 @@ def run_every_model_input(
             ],
         )
         _quietly(_dispatch_llm_redesign, bjob, bdb, "dynamodb", {}, request, bed_store)
+        # A design the stand-in left unfinished gets a skip record (#2154).
+        skip_undesigned_effective(bed_store, bdb, bjob)
         _quietly(run_assessment.phase_synthesis, bed_store, bjob, bdb, "bedrock")
         # The free-text answer check (boto3, refused by the recorder).
         question = AgentQuestion(

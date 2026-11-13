@@ -19,8 +19,8 @@ import pytest
 
 from src.agents.referee.assignment_overrides import apply_assignment_overrides
 from src.agents.referee.reality_check_handler import write_reality_check_result
-from src.agents.referee.synthesis_handler import run_synthesis
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis
 from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 DB = "shop"
