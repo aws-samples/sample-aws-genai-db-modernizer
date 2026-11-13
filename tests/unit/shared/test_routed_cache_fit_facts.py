@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_report import build_ranking
 from src.api.main import app
 from src.api.routes import results
@@ -25,6 +24,7 @@ from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.shared.report_facts import analysis_overview_facts, routed_cache_fit_facts
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import load_synthesis_data
 
 DB = "db"
 JOB = "job-1"

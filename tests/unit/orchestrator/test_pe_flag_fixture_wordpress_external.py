@@ -38,6 +38,7 @@ from src.agents.referee.assignment_overrides import mark_assignment_customer_app
 from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 from src.orchestrator.local_orchestrator import LocalOrchestrator
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import skip_undesigned_effective
 from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
 from tests.shared_runs import cached_run, copy_run
 
@@ -248,6 +249,8 @@ def headless(tmp_path_factory) -> dict:
     again = run.route()
 
     common = ["--job-id", JOB, "--db", DB, "--artifact-root", str(root)]
+    # The engines the stand-in designer leaves undesigned get a skip record (#2154).
+    skip_undesigned_effective(LocalArtifactStore(base_dir=str(root)), DB, JOB)
     _run("synthesis", ["scripts/run_synthesis.py", *common, "--llm-mode", "none"], run.result)
     _run("report", ["scripts/run_report.py", *common], run.result)
     [full_id] = [q for q in _engine_of(v2) if q.startswith(FLAGGED_PREFIX)]

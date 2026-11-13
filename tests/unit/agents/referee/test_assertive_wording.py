@@ -352,8 +352,8 @@ def test_the_synthesized_report_names_no_single_write_engine_when_two_own_writes
 ) -> None:
     """End to end through synthesis: the assignment's write groups reach the
     pattern recompute, so the stale CQRS line the reality check wrote is replaced."""
-    from src.agents.referee.synthesis_handler import run_synthesis_deterministic
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import run_synthesis_deterministic
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     db, job = "shop", "job-951"

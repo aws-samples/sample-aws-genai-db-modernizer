@@ -65,7 +65,7 @@ def test_the_bump_moves_the_current_version_and_restores_it() -> None:
 
 
 def test_the_synthesis_cache_overlay_patch_writes_the_current_version(tmp_path: Path) -> None:
-    from src.agents.referee.synthesis_handler import run_synthesis
+    from tests.design_records import run_synthesis
     from tests.unit.agents.referee import test_cache_safety_net_notes_reset as overlay
 
     store = LocalArtifactStore(base_dir=str(tmp_path))

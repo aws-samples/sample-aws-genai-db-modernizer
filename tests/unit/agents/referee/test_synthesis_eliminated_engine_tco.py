@@ -19,8 +19,8 @@ from __future__ import annotations
 import pytest
 
 from src.agents.referee.synthesis_grounding import never_justified_engines
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-eliminated-tco"

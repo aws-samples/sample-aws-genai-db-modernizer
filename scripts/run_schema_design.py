@@ -187,8 +187,10 @@ def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
 def run_external(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Prepare LLM input payload and write it; print awaiting_llm status."""
     from src.agents.prompt_framing import with_untrusted_notice
-    from src.agents.schema_design.handler import prepare_schema_design_input
+    from src.agents.schema_design.handler import clear_design_skip, prepare_schema_design_input
 
+    # The design supersedes a skip record of the engine on this version (#2154).
+    clear_design_skip(store, db, job_id, engine, assignment_version)
     llm_request = prepare_schema_design_input(
         job_id=job_id,
         database_name=db,
@@ -658,6 +660,7 @@ def run_skip(store, job_id: str, db: str, engine: str, assignment_version: int) 
     """
     from src.agents.schema_design.output_contract import write_schema_output
     from src.contracts.skipped_placeholders import SkippedSchemaOutput
+    from src.shared.design_records import USER_SKIP_REASON
 
     line = _status_line(store, job_id, db, engine, assignment_version)
     if line["status"] in ("complete", "merged"):
@@ -665,7 +668,7 @@ def run_skip(store, job_id: str, db: str, engine: str, assignment_version: int) 
     key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
     placeholder = SkippedSchemaOutput(
         target_type=engine,
-        reason="Skipped at the user's request after its design failed",
+        reason=USER_SKIP_REASON,
         assignment_version=assignment_version,
     )
     write_schema_output(store, key, placeholder.model_dump(mode="json"), engine)

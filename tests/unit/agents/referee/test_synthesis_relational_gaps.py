@@ -7,14 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agents.referee.synthesis_handler import (
-    _write_synthesis_report,
-    run_synthesis_deterministic,
-)
+from src.agents.referee.synthesis_handler import _write_synthesis_report
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.facts import report_facts
 from src.shared.migration_risk_rules import GAP_RISK_SEVERITY, wave_gate_lines
 from src.shared.report_facts import compute_report_facts
+from tests.design_records import run_synthesis_deterministic
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import DB, JOB
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import store as seeded_store
 

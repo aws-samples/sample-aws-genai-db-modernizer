@@ -22,8 +22,8 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     reality_check_settled_engines,
 )
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 
 DB = "shop"
 JOB = "job-rc-eliminated"

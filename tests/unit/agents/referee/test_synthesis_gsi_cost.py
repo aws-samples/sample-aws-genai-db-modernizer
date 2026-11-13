@@ -13,6 +13,7 @@ from src.agents.referee.synthesis_handler import (
     _write_synthesis_report,
     run_synthesis_deterministic,
 )
+from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
 from src.contracts.synthesis_output import ReportFacts
 from src.shared.engine_names import display_engine
 from tests.unit.agents.referee.test_synthesis_llm_seam import _COLLECTOR, _SCHEMA_DDB, _mock_store
@@ -110,14 +111,15 @@ def _report(schema: dict | None, in_scope: bool = True, *, extra_write: str | No
             return collector
         if "schema-dynamodb/" in path and path.endswith("schema_output.json"):
             if schema is None:
-                raise FileNotFoundError(path)
+                # No design: the skip record a run without a model writes (#2154).
+                return {"status": "skipped", "reason": SCHEMA_DESIGN_SKIP_REASON_NO_LLM}
             return schema
         found: dict = read(path)
         return found
 
     def exists_(path: str) -> bool:
         if "schema-dynamodb/" in path:
-            return schema is not None and path.endswith("schema_output.json")
+            return path.endswith("schema_output.json")
         return path.endswith("assignment/v1/assignment.json") or exists(path)
 
     store.read_json.side_effect = read_json

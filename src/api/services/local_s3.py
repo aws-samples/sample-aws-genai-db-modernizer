@@ -200,7 +200,11 @@ class LocalS3Service:
             version = resolve_effective_assignment_version(self._store, database_name, job_id)
             if version <= 0:
                 return None, 0
-            data = load_synthesis_data(self._store, job_id, database_name, version)
+            # The routed fit reads no design, and a job still designing has only
+            # some of them (#2154).
+            data = load_synthesis_data(
+                self._store, job_id, database_name, version, schema_design_expected=False
+            )
             fit = routed_fits_of(data).get(engine)
         except Exception:
             logger.warning(

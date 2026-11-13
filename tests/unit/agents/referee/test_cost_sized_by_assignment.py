@@ -284,11 +284,9 @@ def test_the_guard_catches_a_reader() -> None:
 def test_the_summary_model_sees_each_kept_engines_tco_figure(tmp_path) -> None:
     """The ranking the summary model reads carries each kept engine's TCO row figure,
     never the whole-collection analysis estimate next to it (#1195)."""
-    from src.agents.referee.synthesis_handler import (
-        prepare_synthesis_llm_input,
-        run_synthesis_deterministic,
-    )
+    from src.agents.referee.synthesis_handler import prepare_synthesis_llm_input
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import run_synthesis_deterministic
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     db, job = "shop", "j"
@@ -473,8 +471,8 @@ def test_without_an_assignment_nothing_is_added() -> None:
 def test_synthesis_stores_them_on_wave_ones_engine(tmp_path) -> None:
     """End to end through synthesis: wave 1 moves the MySQL source to Aurora MySQL, the
     TCO stores the unread table there, and the ranking states the same figure."""
-    from src.agents.referee.synthesis_handler import run_synthesis_deterministic
     from src.storage.local_store import LocalArtifactStore
+    from tests.design_records import run_synthesis_deterministic
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     db, job = "shop", "j"

@@ -106,9 +106,12 @@ def _latest_report(store: ArtifactStore, db: str, job_id: str) -> dict | None:
 
 
 def _has_schema_designs(store: ArtifactStore, db: str, job_id: str) -> bool:
+    from src.shared.design_records import is_real_design_key
+
     prefix = f"{db}/{job_id}/"
+    # A skip record (#2154) is no design: a run without a model writes one per engine.
     return any(
-        key.startswith(f"{prefix}schema-") and key.endswith("/schema_output.json")
+        key.startswith(f"{prefix}schema-") and is_real_design_key(key, store.read_json)
         for key in store.list_prefix(prefix)
     )
 

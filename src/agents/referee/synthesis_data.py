@@ -26,6 +26,7 @@ from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.agents.referee.synthesis_report import collected_first
 from src.agents.schema_design.design_trace import read_design_trace
 from src.contracts.schema_design_trace import DesignTrace
+from src.shared.design_records import skip_reason
 from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers
@@ -50,6 +51,9 @@ class EngineArtifacts:
     # #2141: the placement units the design split cut across parts (its groups
     # manifest's ``unit_cuts``), so synthesis states them; empty when there is none.
     unit_cuts: list[dict] = field(default_factory=list)
+    # #2154: the stored reason of the engine's skip record (its design was skipped);
+    # None when it has a design, or no record at all.
+    design_skip_reason: str | None = None
 
 
 @dataclass
@@ -117,8 +121,14 @@ def load_synthesis_data(
     yet, so its absence is no warning (#1390).
 
     Missing artifacts are logged as warnings, not errors — the synthesis
-    handler must be resilient to partial data (e.g., schema design not
-    implemented for all engines).
+    handler must be resilient to partial data — with one exception (#2154,
+    maintainer decision): with ``schema_design_expected`` and a versioned
+    assignment, every engine that gets a design on it
+    (``assignment_versioning.schema_design_engines``) needs a design or a skip
+    record (``src.shared.design_records``), or this raises
+    :class:`MissingSchemaDesigns` naming the engines and the version. A skip
+    record's reason is kept on the engine (``design_skip_reason``), so the
+    deliverables say why it was not designed.
     """
     data = SynthesisData(job_id=job_id, database_name=database_name)
 
@@ -292,9 +302,18 @@ def load_synthesis_data(
         else:
             schema_key = f"{database_name}/{job_id}/schema-{engine}/schema_output.json"
 
+        stored_design = _read_artifact(
+            store, schema_key, required=False, missing_level=design_missing
+        )
+        artifacts.design_skip_reason = skip_reason(stored_design)
+        if artifacts.design_skip_reason is not None and not stored_design.get("excluded_queries"):
+            # A skip record is no design (#2154): every reader sees what it saw with no
+            # file (no coverage, no cache safety net). A merge's placeholder keeps the
+            # queries it left out, which the report lists.
+            stored_design = {}
         artifacts.schema_design, rejections = clean_schema_design_prose(
             engine,
-            _read_artifact(store, schema_key, required=False, missing_level=design_missing),
+            stored_design,
             collector_identifiers(data.collector),
             # #1914: a trade-off's fallback sentence names its tables in its "Affects" order.
             order_source_tables=collected_first(data),
@@ -322,8 +341,41 @@ def load_synthesis_data(
             "yes" if artifacts.design_trace is not None else "no",
         )
 
+    if schema_design_expected and assignment_version > 0:
+        _require_every_design(store, database_name, job_id, assignment_version, data)
     _apply_cache_safety_net(data)
     return data
+
+
+class MissingSchemaDesigns(RuntimeError):
+    """An engine synthesis designs has neither a design nor a skip record (#2154)."""
+
+
+def _require_every_design(
+    store: ArtifactStore, database_name: str, job_id: str, version: int, data: SynthesisData
+) -> None:
+    """Raise :class:`MissingSchemaDesigns` for the engines that get a design on
+    ``version`` but have neither a readable design nor a skip record. The message names
+    only the engines and the version."""
+    from src.storage.assignment_versioning import schema_design_engines
+
+    expected = schema_design_engines(store, database_name, job_id, version)
+    # An engine synthesis drops (no in-scope query once a saved version is read the way
+    # the code writes it now, e.g. a legacy cache owner) is not reported: it needs none.
+    missing = [
+        e
+        for e in expected
+        if e in data.engines
+        and not (data.engines[e].schema_design or data.engines[e].design_skip_reason is not None)
+    ]
+    if missing:
+        raise MissingSchemaDesigns(
+            "Synthesis needs a schema design or a skip record for every engine of "
+            f"assignment v{version}: {', '.join(missing)} "
+            f"{'has' if len(missing) == 1 else 'have'} neither. Run "
+            f"{'its' if len(missing) == 1 else 'their'} schema design, or skip "
+            f"{'it' if len(missing) == 1 else 'them'}, first."
+        )
 
 
 def _unit_cuts(store: ArtifactStore, base_key: str) -> list[dict]:

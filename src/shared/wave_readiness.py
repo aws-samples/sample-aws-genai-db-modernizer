@@ -55,6 +55,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from src.shared.design_records import skip_phrase
 from src.shared.engine_names import display_engine
 from src.shared.risk_severity import severity_of
 
@@ -443,6 +444,7 @@ def wave_readiness(
     review_warnings_by_engine: Mapping[str, list[Mapping[str, Any]]] | None = None,
     wave_edits: Mapping[int, Mapping[str, Any]] | None = None,
     to_dos_by_wave: Mapping[int, Sequence[str]] | None = None,
+    skipped_by_engine: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per wave, in order: ``wave``, ``readiness``, ``suggested`` (True when
     suggested, False when held, None otherwise), ``holds``, ``next_steps`` and the
@@ -459,6 +461,8 @@ def wave_readiness(
     ``wave_edits`` is :func:`wave_edit_facts` (#2067): a suggested wave's line states the
     customer's decision on its warnings. ``to_dos_by_wave`` (wave -> sentences, #1938)
     are the customer's to-dos a wave's line ends with ("To do: ..."); they hold nothing.
+    ``skipped_by_engine`` (engine -> the stored reason of its skip record, #2154): a wave
+    not designed because a design was skipped says why.
     """
     designed = {str(e) for e in designed_engines}
     unserved = unserved_by_engine or {}
@@ -528,10 +532,28 @@ def wave_readiness(
             steps = [
                 _step("design", e, f"run the {display_engine(e)} schema design") for e in missing
             ]
-            line = (
-                f"Not designed yet: run the {_names(missing)} schema design, then check the "
-                "wave again."
-            )
+            skipped = skipped_by_engine or {}
+            if all(e in skipped for e in missing):
+                why = "; ".join(
+                    " ".join(
+                        p
+                        for p in (
+                            f"the {display_engine(e)} design was skipped",
+                            skip_phrase(skipped[e]),
+                        )
+                        if p
+                    )
+                    for e in missing
+                )
+                line = (
+                    f"Not designed: {why}. Run the {_names(missing)} schema design, then "
+                    "check the wave again."
+                )
+            else:
+                line = (
+                    f"Not designed yet: run the {_names(missing)} schema design, then check "
+                    "the wave again."
+                )
         elif unreviewed:
             readiness = "not_reviewed"
             steps = [

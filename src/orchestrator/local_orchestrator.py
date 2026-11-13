@@ -743,8 +743,11 @@ class LocalOrchestrator(Orchestrator):
         progression = self._load_progression(job_id)
         recorded: list[Phase] = []
         prefix = f"{database_name}/{job_id}/"
+        from src.shared.design_records import is_real_design_key
+
+        # A skip record (#2154) is no design: a run without a model writes one per engine.
         designed = any(
-            key.startswith(f"{prefix}schema-") and key.endswith("/schema_output.json")
+            key.startswith(f"{prefix}schema-") and is_real_design_key(key, self.store.read_json)
             for key in self.store.list_prefix(prefix)
         )
         for phase in (Phase.ASSIGNMENT_REVIEW, Phase.SCHEMA_DESIGN, Phase.SYNTHESIS):

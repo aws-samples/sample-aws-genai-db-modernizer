@@ -32,6 +32,7 @@ from src.contracts.synthesis_output import (
 )
 from src.shared.adoption_facts import adoption_facts
 from src.shared.slice_plan import build_slice_plan
+from tests.design_records import skip_undesigned
 from tests.unit.agents.referee import slice_plan_jobs as job
 
 GATE = (
@@ -400,6 +401,7 @@ def test_synthesis_asks_the_customer_gate_and_passes_its_answer(
     monkeypatch.setattr(handler, "relational_gate_failures", gate)
     monkeypatch.setattr(handler, "slice_inputs", inputs)
     store = seeded_store.__wrapped__(tmp_path)  # type: ignore[attr-defined]
+    skip_undesigned(store, DB, JOB, 1)  # the schema design phase without a model (#2154)
     handler.run_synthesis_deterministic(JOB, DB, store, assignment_version=1)
     assert built == [answer]
     ((assignment, collector, analyses, triage),) = asked

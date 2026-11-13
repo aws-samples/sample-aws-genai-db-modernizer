@@ -21,8 +21,8 @@ engine, even though ``after_distribution`` still shows the engine owning a query
 from __future__ import annotations
 
 from src.agents.referee.reality_check_handler import write_reality_check_result
-from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
+from tests.design_records import run_synthesis_deterministic
 from tests.unit.agents.referee.ledger_fakes import recorded_ledger, records_from_moves
 
 DB = "shop"
